@@ -3,6 +3,7 @@ import { gameLoop } from '../game/gameLoop.js';
 import { isBuildingType } from '../game/rules.js';
 import { isTechnologyType } from '../game/techTree.js';
 import { emptyShipCounts, isShipType, SHIP_TYPES } from '../game/ships.js';
+import { isDefenseType } from '../game/defenses.js';
 import { isFleetMission, planFlight } from '../game/fleets.js';
 import { buildSystemMap } from '../services/mapService.js';
 import { requireAuth } from './middleware.js';
@@ -74,6 +75,24 @@ gameRouter.post('/bases/:baseId/ships', async (req, res) => {
   }
 
   const result = await gameLoop.orderShips(req.userId as string, req.params.baseId, body.type, quantity);
+  res.status(result.ok ? 200 : 409).json(result);
+});
+
+/** Заказать стационарную оборону на верфи. */
+gameRouter.post('/bases/:baseId/defenses', async (req, res) => {
+  const body = req.body as { type?: unknown; quantity?: unknown } | undefined;
+  if (!isDefenseType(body?.type)) {
+    res.status(400).json({ error: 'Неизвестный тип обороны' });
+    return;
+  }
+
+  const quantity = positiveInt(body?.quantity ?? 1);
+  if (quantity === null) {
+    res.status(400).json({ error: 'Количество должно быть целым положительным числом' });
+    return;
+  }
+
+  const result = await gameLoop.orderDefenses(req.userId as string, req.params.baseId, body.type, quantity);
   res.status(result.ok ? 200 : 409).json(result);
 });
 

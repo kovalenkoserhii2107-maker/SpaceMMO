@@ -10,7 +10,9 @@ import {
 } from '../game/rules.js';
 import { economyBonuses, emptyTechLevels, researchCost, researchSeconds } from '../game/techTree.js';
 import { shipUnitSeconds, SHIP_TYPES, type ShipCounts } from '../game/ships.js';
-import { planFlight } from '../game/fleets.js';
+import { fleetCapacity, planFlight } from '../game/fleets.js';
+import { plunderAmount, resolveBattle } from '../game/combat.js';
+import { emptyDefenseCounts, type DefenseCounts } from '../game/defenses.js';
 
 const richness = { metal: 1.0, crystal: 1.0, deuterium: 1.0, energy: 1.0 };
 const techs = emptyTechLevels();
@@ -70,5 +72,46 @@ console.log('\n--- Логистика (реактивный двигатель �
           `трюмы ${plan.capacity}, топливо туда-обратно ${plan.fuel} De`,
       );
     }
+  }
+}
+
+console.log('\n--- Бой (Этап 5) ---');
+{
+  const noDefense = emptyDefenseCounts();
+  const cases: Array<[string, ShipCounts, ShipCounts, DefenseCounts]> = [
+    [
+      '6 истребителей + 4 транспорта против 6 ракетных',
+      { PROBE: 0, TRANSPORTER: 4, LIGHT_FIGHTER: 6 },
+      { PROBE: 0, TRANSPORTER: 0, LIGHT_FIGHTER: 0 },
+      { ROCKET_LAUNCHER: 6, LASER_TURRET: 0 },
+    ],
+    [
+      '1 транспорт против 4 ракетных',
+      { PROBE: 0, TRANSPORTER: 1, LIGHT_FIGHTER: 0 },
+      { PROBE: 0, TRANSPORTER: 0, LIGHT_FIGHTER: 0 },
+      { ROCKET_LAUNCHER: 4, LASER_TURRET: 0 },
+    ],
+    [
+      '10 истребителей против 3 лазеров и 2 истребителей',
+      { PROBE: 0, TRANSPORTER: 0, LIGHT_FIGHTER: 10 },
+      { PROBE: 0, TRANSPORTER: 0, LIGHT_FIGHTER: 2 },
+      { ROCKET_LAUNCHER: 0, LASER_TURRET: 3 },
+    ],
+  ];
+
+  for (const [label, attackerShips, defenderShips, defenderDefenses] of cases) {
+    const outcome = resolveBattle(
+      { ships: attackerShips, defenses: noDefense },
+      { ships: defenderShips, defenses: defenderDefenses },
+    );
+    const capacity = fleetCapacity(outcome.attackerSurvivors);
+    const loot = plunderAmount({ metal: 100000, crystal: 100000 }, capacity);
+    console.log(
+      `${label}: победа — ${outcome.winner === 'ATTACKER' ? 'атакующий' : 'защитник'}, ` +
+        `мощь ${Math.round(outcome.attackerPower.strength)} против ${Math.round(outcome.defenderPower.strength)}, ` +
+        `потери атакующего ${(outcome.attackerLossRatio * 100).toFixed(0)}%, ` +
+        `защитника ${(outcome.defenderLossRatio * 100).toFixed(0)}%, ` +
+        `вывезти можно ${loot.metal + loot.crystal}`,
+    );
   }
 }

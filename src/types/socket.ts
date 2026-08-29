@@ -2,6 +2,7 @@ import type { BuildingType, ResourceAmounts } from '../game/rules.js';
 import type { Requirement, TechLevels, TechnologyType } from '../game/techTree.js';
 import type { ShipCounts, ShipType } from '../game/ships.js';
 import type { FleetMission } from '../game/fleets.js';
+import type { DefenseCounts, DefenseType } from '../game/defenses.js';
 import type { PlanetView } from '../game/fogOfWar.js';
 
 export interface BuildingCard {
@@ -33,6 +34,17 @@ export interface TechnologyCard {
 
 export interface ShipCard {
   type: ShipType;
+  label: string;
+  description: string;
+  cost: ResourceAmounts;
+  unitSeconds: number;
+  owned: number;
+  canAfford: boolean;
+  requirements: Requirement[];
+}
+
+export interface DefenseCard {
+  type: DefenseType;
   label: string;
   description: string;
   cost: ResourceAmounts;
@@ -77,10 +89,21 @@ export interface BaseSnapshot {
   buildings: BuildingCard[];
   technologies: TechnologyCard[];
   ships: ShipCard[];
+  defenseCards: DefenseCard[];
   fleet: ShipCounts;
+  defenses: DefenseCounts;
   shipQueue: Array<{
     id: string;
     type: ShipType;
+    label: string;
+    quantity: number;
+    remaining: number;
+    unitSeconds: number;
+    nextUnitInSeconds: number;
+  }>;
+  defenseQueue: Array<{
+    id: string;
+    type: DefenseType;
     label: string;
     quantity: number;
     remaining: number;

@@ -63,6 +63,7 @@
           <button type="button" class="tab" data-tab="shipyard">Верфь</button>
           <button type="button" class="tab" data-tab="map">Карта системы</button>
           <button type="button" class="tab" data-tab="market">Хаб и биржа</button>
+          <button type="button" class="tab" data-tab="war">Оборона и войны</button>
         </nav>
 
         <section data-panel="buildings">
@@ -79,6 +80,11 @@
           <div id="fleet" class="fleet"></div>
           <div id="ship-queue" class="queue"></div>
           <div id="ships" class="cards"></div>
+
+          <h3 class="section-title">Стационарная оборона</h3>
+          <div id="defense-summary" class="fleet"></div>
+          <div id="defense-queue" class="queue"></div>
+          <div id="defenses" class="cards"></div>
         </section>
 
         <section data-panel="map" hidden>
@@ -152,6 +158,14 @@
 
           <h3 class="section-title">Последние сделки</h3>
           <div id="trade-log" class="queue"></div>
+        </section>
+
+        <section data-panel="war" hidden>
+          <h3 class="section-title">Дипломатия</h3>
+          <div id="diplomacy" class="queue"></div>
+
+          <h3 class="section-title">Отчеты о боях</h3>
+          <div id="battles" class="battles"></div>
         </section>
 
         <p id="build-message" class="build-message" hidden></p>

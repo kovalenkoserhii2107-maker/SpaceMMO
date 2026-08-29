@@ -149,9 +149,12 @@ export function energyOutput(
   return (BASE_ENERGY_OUTPUT + solar) * bonuses.energy;
 }
 
-/** Суммарное потребление энергии постройками базы. */
-export function energyUsage(levels: BuildingLevels): number {
-  let total = 0;
+/**
+ * Суммарное потребление энергии базой: постройки плюс стационарная оборона.
+ * Расход обороны приходит числом, чтобы модуль правил не зависел от модуля обороны.
+ */
+export function energyUsage(levels: BuildingLevels, defenseDrain = 0): number {
+  let total = Math.max(0, defenseDrain);
   for (const type of BUILDING_TYPES) {
     total += drain(ENERGY_DRAIN[type], levels[type]);
   }
@@ -171,8 +174,9 @@ export function energyEfficiency(
   levels: BuildingLevels,
   richness: PlanetRichness,
   bonuses: EconomyBonuses = NEUTRAL_BONUSES,
+  defenseDrain = 0,
 ): number {
-  const usage = energyUsage(levels);
+  const usage = energyUsage(levels, defenseDrain);
   if (usage <= 0) return 1;
   const output = energyOutput(levels, richness, bonuses);
   return Math.min(1, output / usage);
@@ -183,8 +187,9 @@ export function productionPerSecond(
   levels: BuildingLevels,
   richness: PlanetRichness,
   bonuses: EconomyBonuses = NEUTRAL_BONUSES,
+  defenseDrain = 0,
 ): ResourceAmounts {
-  const efficiency = energyEfficiency(levels, richness, bonuses);
+  const efficiency = energyEfficiency(levels, richness, bonuses, defenseDrain);
   return {
     metal: mineOutput('METAL_MINE', levels, richness.metal, bonuses) * efficiency,
     crystal: mineOutput('CRYSTAL_MINE', levels, richness.crystal, bonuses) * efficiency,

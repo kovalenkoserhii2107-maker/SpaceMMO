@@ -75,6 +75,11 @@
     tradeLog: $('trade-log'),
     cargoMetalLabel: $('cargo-metal-label'),
     cargoCrystalLabel: $('cargo-crystal-label'),
+    defenses: $('defenses'),
+    defenseSummary: $('defense-summary'),
+    defenseQueue: $('defense-queue'),
+    diplomacy: $('diplomacy'),
+    battles: $('battles'),
   };
 
   const PLANET_TYPES = {
@@ -165,6 +170,7 @@
     connectSocket();
     await loadMap();
     await loadMarket();
+    await loadWar();
   }
 
   function authHeaders() {
@@ -205,6 +211,7 @@
     }
     if (state.activeTab === 'map') void loadMap();
     if (state.activeTab === 'market') void loadMarket();
+    if (state.activeTab === 'war') void loadWar();
   });
 
   /* ---------- Рендер ---------- */
@@ -297,6 +304,7 @@
     renderCards(base);
     renderFleet(base);
     renderQueue(base);
+    renderDefenses(base);
     renderFleetList();
     renderFleetMarkers();
     if (map.data) renderPlanetInfo();
@@ -322,7 +330,7 @@
    * Карточки создаются один раз на базу и дальше обновляются точечно:
    * полная перерисовка каждую секунду ломала бы клики по кнопкам.
    */
-  const cards = { buildings: new Map(), technologies: new Map(), ships: new Map() };
+  const cards = { buildings: new Map(), technologies: new Map(), ships: new Map(), defenses: new Map() };
   let cardsBaseId = null;
 
   function renderCards(base) {
@@ -332,6 +340,7 @@
       el.buildings.innerHTML = '';
       el.technologies.innerHTML = '';
       el.ships.innerHTML = '';
+      el.defenses.innerHTML = '';
 
       for (const building of base.buildings) {
         cards.buildings.set(building.type, createActionCard(el.buildings, building.label, '', () =>
@@ -344,6 +353,9 @@
       for (const ship of base.ships) {
         cards.ships.set(ship.type, createShipCard(el.ships, ship, base.baseId));
       }
+      for (const item of base.defenseCards) {
+        cards.defenses.set(item.type, createDefenseCard(el.defenses, item, base.baseId));
+      }
     }
 
     for (const building of base.buildings) {
@@ -354,6 +366,9 @@
     }
     for (const ship of base.ships) {
       updateShipCard(cards.ships.get(ship.type), base, ship);
+    }
+    for (const item of base.defenseCards) {
+      updateShipCard(cards.defenses.get(item.type), base, item, 'На позиции');
     }
   }
 
@@ -424,6 +439,28 @@
     return { ...shell, button, quantity };
   }
 
+  function createDefenseCard(container, item, baseId) {
+    const shell = createCardShell(container, item.label, item.description);
+
+    const order = document.createElement('div');
+    order.className = 'order';
+    const quantity = document.createElement('input');
+    quantity.type = 'number';
+    quantity.min = '1';
+    quantity.max = '100';
+    quantity.value = '1';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'primary';
+    button.textContent = 'Построить';
+    button.addEventListener('click', () =>
+      send(`/api/bases/${baseId}/defenses`, { type: item.type, quantity: Number(quantity.value) }));
+
+    order.append(quantity, button);
+    shell.article.appendChild(order);
+    return { ...shell, button, quantity };
+  }
+
   function fillCost(card, cost, resources) {
     setCostPart(card.costMetal, '◼', cost.metal, resources.metal);
     setCostPart(card.costCrystal, '◆', cost.crystal, resources.crystal);
@@ -478,11 +515,11 @@
       : `Изучить ур. ${tech.nextLevel}`;
   }
 
-  function updateShipCard(card, base, ship) {
+  function updateShipCard(card, base, ship, ownedLabel = 'В ангаре') {
     if (!card) return;
-    card.level.textContent = `В ангаре: ${ship.owned}`;
+    card.level.textContent = `${ownedLabel}: ${ship.owned}`;
     fillCost(card, ship.cost, base.resources);
-    card.time.textContent = `Время постройки: ${fmtTime(ship.unitSeconds)} за корабль`;
+    card.time.textContent = `Время постройки: ${fmtTime(ship.unitSeconds)} за штуку`;
     fillRequirements(card, ship.requirements);
 
     const locked = ship.requirements.length > 0;
@@ -566,7 +603,7 @@
   const map = { data: null, selectedId: null, selectedKind: 'PLANET', hoverId: null, plan: null, planTimer: null };
 
   const MISSION_OPTIONS = {
-    PLANET: [['TRANSPORT', 'Транспортировка'], ['SCAN', 'Разведка зондом']],
+    PLANET: [['TRANSPORT', 'Транспортировка'], ['SCAN', 'Разведка зондом'], ['ATTACK', 'Атака']],
     HUB: [['HUB_DELIVERY', 'Доставка на хаб'], ['HUB_PICKUP', 'Вывоз с хаба']],
   };
 
@@ -989,6 +1026,7 @@
     }
     await loadMap();
     await loadMarket();
+    await loadWar();
   }
 
   function renderFleetList() {
@@ -1269,6 +1307,158 @@
   for (const node of [el.orderSide, el.orderResource, el.orderQuantity, el.orderPrice]) {
     node.addEventListener('input', updateOrderHint);
     node.addEventListener('change', updateOrderHint);
+  }
+
+
+  /* ---------- Этап 5: оборона, бои, дипломатия ---------- */
+
+  const DEFENSE_LABELS = { ROCKET_LAUNCHER: 'Ракетные установки', LASER_TURRET: 'Лазерные орудия' };
+  const war = { data: null };
+
+  async function loadWar() {
+    try {
+      const response = await fetch('/api/war', { headers: authHeaders() });
+      if (!response.ok) return;
+      war.data = await response.json();
+      renderDiplomacy();
+      renderBattles();
+    } catch (error) {
+      /* подтянется на следующем обновлении */
+    }
+  }
+
+  function renderDiplomacy() {
+    el.diplomacy.innerHTML = '';
+    const players = (war.data && war.data.players) || [];
+
+    if (!players.length) {
+      const empty = document.createElement('div');
+      empty.className = 'queue-item';
+      empty.textContent = 'В системе нет других колоний';
+      el.diplomacy.appendChild(empty);
+      return;
+    }
+
+    for (const player of players) {
+      const item = document.createElement('div');
+      item.className = 'queue-item war-item';
+
+      const info = document.createElement('div');
+      const title = document.createElement('b');
+      title.textContent = `${player.username} · ${player.planetName}`;
+      const status = document.createElement('div');
+      status.className = player.atWar ? 'status-war' : 'status-peace';
+      status.textContent = player.atWar
+        ? `война${player.declaredByMe ? ' (объявили мы)' : ' (объявили нам)'}`
+        : 'мир';
+      info.append(title, status);
+
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = player.atWar ? 'ghost' : 'primary';
+      button.textContent = player.atWar ? 'Заключить мир' : 'Объявить войну';
+      button.addEventListener('click', async () => {
+        await send(`/api/war/${player.atWar ? 'peace' : 'declare'}`, { targetId: player.userId });
+        await loadWar();
+        await loadMap();
+      });
+
+      item.append(info, button);
+      el.diplomacy.appendChild(item);
+    }
+  }
+
+  function renderBattles() {
+    el.battles.innerHTML = '';
+    const battles = (war.data && war.data.battles) || [];
+
+    if (!battles.length) {
+      const empty = document.createElement('div');
+      empty.className = 'queue-item';
+      empty.textContent = 'Боев еще не было';
+      el.battles.appendChild(empty);
+      return;
+    }
+
+    for (const battle of battles) {
+      const card = document.createElement('article');
+      card.className = `battle ${battle.victory ? 'win' : 'loss'}`;
+
+      const header = document.createElement('header');
+      const title = document.createElement('h4');
+      title.textContent = `${battle.attackerName} → ${battle.defenderName} · ${battle.planetName}`;
+      const verdict = document.createElement('span');
+      verdict.className = 'verdict';
+      verdict.textContent = battle.victory
+        ? (battle.role === 'ATTACKER' ? 'победа: атака удалась' : 'победа: атака отбита')
+        : (battle.role === 'ATTACKER' ? 'поражение: флот разбит' : 'поражение: оборона пала');
+      header.append(title, verdict);
+
+      const powers = document.createElement('div');
+      powers.className = 'line';
+      powers.innerHTML =
+        `роль: <b>${battle.role === 'ATTACKER' ? 'атакующий' : 'защитник'}</b> · ` +
+        `мощь атаки <b>${fmt(battle.attackerPower)}</b> против обороны <b>${fmt(battle.defenderPower)}</b>`;
+
+      const losses = document.createElement('div');
+      losses.className = 'line';
+      losses.innerHTML =
+        `мои потери: <b>${describeLosses(battle.myLosses)}</b><br>` +
+        `потери противника: <b>${describeLosses(battle.enemyLosses)}</b>`;
+
+      const plunder = document.createElement('div');
+      plunder.className = 'line';
+      const looted = battle.plunder.metal + battle.plunder.crystal > 0;
+      plunder.innerHTML = looted
+        ? `награблено: <b>${fmt(battle.plunder.metal)}</b> металла и <b>${fmt(battle.plunder.crystal)}</b> кристаллов` +
+          `${battle.role === 'DEFENDER' ? ' (вывезено с нашего склада)' : ''}`
+        : 'ресурсы не вывозились';
+
+      const when = document.createElement('div');
+      when.className = 'line';
+      when.textContent = new Date(battle.createdAt).toLocaleString('ru-RU');
+
+      card.append(header, powers, losses, plunder, when);
+      el.battles.appendChild(card);
+    }
+  }
+
+  function describeLosses(losses) {
+    const real = (losses || []).filter((item) => item.lost > 0);
+    if (!real.length) return 'без потерь';
+    return real.map((item) => `${item.label} −${item.lost} из ${item.before}`).join(', ');
+  }
+
+  function renderDefenses(base) {
+    el.defenseSummary.innerHTML = '';
+    for (const [type, label] of Object.entries(DEFENSE_LABELS)) {
+      const item = document.createElement('div');
+      const value = document.createElement('b');
+      value.textContent = fmt(base.defenses[type] || 0);
+      item.append(value, document.createTextNode(label));
+      el.defenseSummary.appendChild(item);
+    }
+
+    el.defenseQueue.innerHTML = '';
+    if (!base.defenseQueue.length) {
+      const empty = document.createElement('div');
+      empty.className = 'queue-item';
+      empty.textContent = 'Очередь обороны пуста';
+      el.defenseQueue.appendChild(empty);
+    } else {
+      base.defenseQueue.forEach((job, index) => {
+        const item = document.createElement('div');
+        item.className = 'queue-item';
+        const title = document.createElement('b');
+        title.textContent = `${job.label} — осталось ${job.remaining} из ${job.quantity}`;
+        const timer = document.createElement('span');
+        timer.textContent = index === 0
+          ? `следующая через ${fmtTime(job.nextUnitInSeconds)}`
+          : `в очереди · по ${fmtTime(job.unitSeconds)}`;
+        item.append(title, timer);
+        el.defenseQueue.appendChild(item);
+      });
+    }
   }
 
   /* ---------- Старт ---------- */

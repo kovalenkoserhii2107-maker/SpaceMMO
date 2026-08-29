@@ -2,6 +2,7 @@
 import type {
   BaseSnapshot,
   BuildingCard,
+  DefenseCard,
   FleetSnapshot,
   ResearchSnapshot,
   ShipCard,
@@ -37,6 +38,17 @@ import {
 } from './techTree.js';
 import { describeComposition, MISSION_LABELS, type FleetMission } from './fleets.js';
 import {
+  DEFENSE_TYPES,
+  defenseCost,
+  defenseDescription,
+  defenseEnergyUsage,
+  defenseLabel,
+  defenseUnitSeconds,
+  missingDefenseRequirements,
+  type DefenseCounts,
+  type DefenseType,
+} from './defenses.js';
+import {
   missingShipRequirements,
   shipCost,
   shipDescription,
@@ -52,6 +64,16 @@ export interface BuildJobState {
   targetLevel: number;
   startedAt: number;
   finishesAt: number;
+}
+
+export interface DefenseJobState {
+  id: string;
+  type: DefenseType;
+  quantity: number;
+  remaining: number;
+  unitSeconds: number;
+  nextUnitAt: number;
+  createdAt: number;
 }
 
 export interface ShipJobState {
@@ -113,6 +135,8 @@ export interface BaseRuntimeState {
   buildJob: BuildJobState | null;
   shipJobs: ShipJobState[];
   ships: ShipCounts;
+  defenseJobs: DefenseJobState[];
+  defenses: DefenseCounts;
   lastTickAt: number;
   /** Изменились ресурсы/уровни — нужна периодическая запись. */
   dirty: boolean;
@@ -142,7 +166,12 @@ export interface UserRuntimeState {
 export function accrue(state: BaseRuntimeState, techs: TechLevels, seconds: number): void {
   if (!Number.isFinite(seconds) || seconds <= 0) return;
 
-  const perSecond = productionPerSecond(state.levels, state.richness, economyBonuses(techs));
+  const perSecond = productionPerSecond(
+    state.levels,
+    state.richness,
+    economyBonuses(techs),
+    defenseEnergyUsage(state.defenses),
+  );
   const next = {
     metal: state.resources.metal + perSecond.metal * seconds,
     crystal: state.resources.crystal + perSecond.crystal * seconds,
@@ -164,9 +193,10 @@ export function accrue(state: BaseRuntimeState, techs: TechLevels, seconds: numb
 
 export function toSnapshot(state: BaseRuntimeState, user: UserRuntimeState, now: number): BaseSnapshot {
   const bonuses = economyBonuses(user.techs);
+  const defenseDrain = defenseEnergyUsage(state.defenses);
   const output = energyOutput(state.levels, state.richness, bonuses);
-  const usage = energyUsage(state.levels);
-  const efficiency = energyEfficiency(state.levels, state.richness, bonuses);
+  const usage = energyUsage(state.levels, defenseDrain);
+  const efficiency = energyEfficiency(state.levels, state.richness, bonuses, defenseDrain);
 
   return {
     baseId: state.id,
@@ -183,7 +213,9 @@ export function toSnapshot(state: BaseRuntimeState, user: UserRuntimeState, now:
       crystal: round(state.resources.crystal),
       deuterium: round(state.resources.deuterium),
     },
-    productionPerSecond: roundAll(productionPerSecond(state.levels, state.richness, bonuses)),
+    productionPerSecond: roundAll(
+      productionPerSecond(state.levels, state.richness, bonuses, defenseDrain),
+    ),
     energy: {
       output: round(output),
       usage: round(usage),
@@ -202,7 +234,9 @@ export function toSnapshot(state: BaseRuntimeState, user: UserRuntimeState, now:
     buildings: BUILDING_TYPES.map((type) => buildingCard(type, state)),
     technologies: TECHNOLOGY_TYPES.map((tech) => technologyCard(tech, state, user)),
     ships: SHIP_TYPES.map((type) => shipCard(type, state, user)),
+    defenseCards: DEFENSE_TYPES.map((type) => defenseCard(type, state, user)),
     fleet: { ...state.ships },
+    defenses: { ...state.defenses },
     shipQueue: state.shipJobs.map((job) => ({
       id: job.id,
       type: job.type,
@@ -212,6 +246,34 @@ export function toSnapshot(state: BaseRuntimeState, user: UserRuntimeState, now:
       unitSeconds: job.unitSeconds,
       nextUnitInSeconds: Math.max(0, Math.ceil((job.nextUnitAt - now) / 1000)),
     })),
+    defenseQueue: state.defenseJobs.map((job) => ({
+      id: job.id,
+      type: job.type,
+      label: defenseLabel(job.type),
+      quantity: job.quantity,
+      remaining: job.remaining,
+      unitSeconds: job.unitSeconds,
+      nextUnitInSeconds: Math.max(0, Math.ceil((job.nextUnitAt - now) / 1000)),
+    })),
+  };
+}
+
+function defenseCard(
+  type: DefenseType,
+  state: BaseRuntimeState,
+  user: UserRuntimeState,
+): DefenseCard {
+  const cost = defenseCost(type);
+
+  return {
+    type,
+    label: defenseLabel(type),
+    description: defenseDescription(type),
+    cost,
+    unitSeconds: defenseUnitSeconds(type, state.levels.SHIPYARD),
+    owned: state.defenses[type],
+    canAfford: hasEnoughResources(state.resources, cost),
+    requirements: missingDefenseRequirements(type, state.levels, user.techs),
   };
 }
 

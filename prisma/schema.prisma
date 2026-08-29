@@ -3,7 +3,7 @@
 // ЭТАП 2: Research, ResearchJob, BuildJob, Ship, ShipJob.
 // ЭТАП 3: Fleet (полеты флота), PlanetScan (туман войны).
 // ЭТАП 4: TradeHub, HubStorage, MarketOrder, Trade + баланс криптогривны.
-// Модели будущего этапа (оборона и бой) НЕ создаются.
+// ЭТАП 5: Defense, DefenseJob, BattleReport, WarDeclaration.
 
 generator client {
   provider = "prisma-client"
@@ -24,15 +24,19 @@ model User {
   createdAt    DateTime @default(now())
   lastSeenAt   DateTime @default(now())
 
-  bases       Base[]
-  researches  Research[]
-  researchJob ResearchJob?
-  fleets      Fleet[]
-  scans       PlanetScan[]
-  hubStorages HubStorage[]
-  orders      MarketOrder[]
-  purchases   Trade[]       @relation("TradeBuyer")
-  sales       Trade[]       @relation("TradeSeller")
+  bases        Base[]
+  researches   Research[]
+  researchJob  ResearchJob?
+  fleets       Fleet[]
+  scans        PlanetScan[]
+  hubStorages  HubStorage[]
+  orders       MarketOrder[]
+  purchases    Trade[]          @relation("TradeBuyer")
+  sales        Trade[]          @relation("TradeSeller")
+  attacksMade  BattleReport[]   @relation("BattleAttacker")
+  attacksTaken BattleReport[]   @relation("BattleDefender")
+  warsStarted  WarDeclaration[] @relation("WarAggressor")
+  warsAgainst  WarDeclaration[] @relation("WarTarget")
 
   @@map("users")
 }
@@ -73,11 +77,12 @@ model Planet {
   /// Коэффициент инсоляции — множитель выработки солнечных электростанций.
   energyRichness    Float
 
-  system     SolarSystem  @relation(fields: [systemId], references: [id], onDelete: Cascade)
-  base       Base?
-  scans      PlanetScan[]
-  fleetsFrom Fleet[]      @relation("FleetOrigin")
-  fleetsTo   Fleet[]      @relation("FleetTarget")
+  system        SolarSystem    @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  base          Base?
+  scans         PlanetScan[]
+  fleetsFrom    Fleet[]        @relation("FleetOrigin")
+  fleetsTo      Fleet[]        @relation("FleetTarget")
+  battleReports BattleReport[]
 
   @@unique([systemId, position])
   @@index([systemId])
@@ -116,6 +121,8 @@ model Base {
   buildJob    BuildJob?
   shipJobs    ShipJob[]
   ships       Ship[]
+  defenses    Defense[]
+  defenseJobs DefenseJob[]
   researchJob ResearchJob?
 
   @@index([userId])
@@ -177,6 +184,83 @@ model Ship {
 
   @@unique([baseId, type])
   @@map("ships")
+}
+
+/// Стационарная оборона планеты. Летать не может, гибнет в бою безвозвратно.
+model Defense {
+  id     String      @id @default(cuid())
+  baseId String
+  type   DefenseType
+  count  Int         @default(0)
+
+  base Base @relation(fields: [baseId], references: [id], onDelete: Cascade)
+
+  @@unique([baseId, type])
+  @@map("defenses")
+}
+
+/// Очередь постройки обороны на верфи — устроена так же, как очередь кораблей.
+model DefenseJob {
+  id          String      @id @default(cuid())
+  baseId      String
+  type        DefenseType
+  remaining   Int
+  quantity    Int
+  unitSeconds Float
+  nextUnitAt  DateTime
+  createdAt   DateTime    @default(now())
+
+  base Base @relation(fields: [baseId], references: [id], onDelete: Cascade)
+
+  @@index([baseId, createdAt])
+  @@map("defense_jobs")
+}
+
+/// Отчет о бое: доступен обеим сторонам, состав и потери лежат в data.
+model BattleReport {
+  id         String       @id @default(cuid())
+  attackerId String
+  defenderId String
+  planetId   String
+  winner     BattleWinner
+
+  plunderMetal   Float @default(0)
+  plunderCrystal Float @default(0)
+
+  data      Json
+  createdAt DateTime @default(now())
+
+  attacker User   @relation("BattleAttacker", fields: [attackerId], references: [id], onDelete: Cascade)
+  defender User   @relation("BattleDefender", fields: [defenderId], references: [id], onDelete: Cascade)
+  planet   Planet @relation(fields: [planetId], references: [id], onDelete: Cascade)
+
+  @@index([attackerId, createdAt])
+  @@index([defenderId, createdAt])
+  @@map("battle_reports")
+}
+
+/// Объявление войны. Атака возможна только при активной войне между игроками.
+model WarDeclaration {
+  id          String   @id @default(cuid())
+  aggressorId String
+  targetId    String
+  declaredAt  DateTime @default(now())
+
+  aggressor User @relation("WarAggressor", fields: [aggressorId], references: [id], onDelete: Cascade)
+  target    User @relation("WarTarget", fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@unique([aggressorId, targetId])
+  @@map("war_declarations")
+}
+
+enum DefenseType {
+  ROCKET_LAUNCHER
+  LASER_TURRET
+}
+
+enum BattleWinner {
+  ATTACKER
+  DEFENDER
 }
 
 /// Заказ на верфи. Очередь обрабатывается по порядку создания, корабли выходят поштучно.
@@ -361,6 +445,7 @@ enum FleetMission {
   SCAN
   HUB_DELIVERY
   HUB_PICKUP
+  ATTACK
 }
 
 enum FleetStatus {

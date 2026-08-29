@@ -224,6 +224,43 @@ async function testFleetValidation() {
   );
 }
 
+/* ---------- 7. Бой и дипломатия ---------- */
+async function testCombatGuards() {
+  const mine = await state(ids.admiralToken);
+  const myPlanet = mine.bases[0].planetId;
+  const map = (await api('GET', '/api/map', ids.admiralToken)).data;
+  const enemy = map.planets.find((p) => !p.isOwn);
+
+  const attack = (body) => api('POST', `/api/bases/${ids.admiralBase}/fleets`, ids.admiralToken, body);
+
+  const self = await attack({ targetPlanetId: myPlanet, mission: 'ATTACK', ships: { LIGHT_FIGHTER: 1 }, cargo: {} });
+  check('атака собственной планеты отклонена', self.status >= 400, JSON.stringify(self.data));
+
+  const probes = await attack({ targetPlanetId: enemy.planetId, mission: 'ATTACK', ships: { PROBE: 2 }, cargo: {} });
+  check('атака одними зондами отклонена', probes.status >= 400, JSON.stringify(probes.data));
+
+  // Убеждаемся, что войны нет, и проверяем запрет атаки.
+  const diplomacy = (await api('GET', '/api/war', ids.admiralToken)).data;
+  const target = diplomacy.players.find((p) => p.planetName === enemy.name);
+  if (target?.atWar) await api('POST', '/api/war/peace', ids.admiralToken, { targetId: target.userId });
+
+  const noWar = await attack({ targetPlanetId: enemy.planetId, mission: 'ATTACK', ships: { LIGHT_FIGHTER: 1 }, cargo: {} });
+  check('атака без объявления войны отклонена', noWar.status >= 400, JSON.stringify(noWar.data));
+
+  const myId = mine.user.id;
+  const selfWar = await api('POST', '/api/war/declare', ids.admiralToken, { targetId: myId });
+  check('война самому себе отклонена', selfWar.status >= 400, JSON.stringify(selfWar.data));
+
+  const badTarget = await api('POST', '/api/war/declare', ids.admiralToken, { targetId: 'нет-такого' });
+  check('война несуществующему игроку отклонена', badTarget.status >= 400, JSON.stringify(badTarget.data));
+
+  const badDefense = await api('POST', `/api/bases/${ids.admiralBase}/defenses`, ids.admiralToken, { type: 'DEATH_RAY', quantity: 1 });
+  check('неизвестный тип обороны отклонен', badDefense.status >= 400, JSON.stringify(badDefense.data));
+
+  const negDefense = await api('POST', `/api/bases/${ids.admiralBase}/defenses`, ids.admiralToken, { type: 'ROCKET_LAUNCHER', quantity: -5 });
+  check('отрицательный заказ обороны отклонен', negDefense.status >= 400, JSON.stringify(negDefense.data));
+}
+
 async function main() {
   console.log('=== 1. Валидация ордеров ===');
   await testOrderValidation();
@@ -237,6 +274,8 @@ async function main() {
   await testCreditRace();
   console.log('\n=== 6. Логистические аномалии ===');
   await testFleetValidation();
+  console.log('\n=== 7. Бой и дипломатия ===');
+  await testCombatGuards();
 
   const failed = results.filter((r) => !r.passed);
   console.log(`\n=== ИТОГ: ${results.length - failed.length}/${results.length} пройдено ===`);

@@ -20,6 +20,7 @@ import type {
 } from '../types/socket.js';
 import {
   accrue,
+  type DefenseJobState,
   fleetSnapshots,
   researchSnapshot,
   toSnapshot,
@@ -39,6 +40,17 @@ import {
 } from './fleets.js';
 import { storageCapacity, storageUsed } from './market.js';
 import type { ScanPayload } from './fogOfWar.js';
+import {
+  DEFENSE_TYPES,
+  defenseCost,
+  defenseUnitSeconds,
+  emptyDefenseCounts,
+  MAX_DEFENSE_ORDER,
+  missingDefenseRequirements,
+  type DefenseCounts,
+  type DefenseType,
+} from './defenses.js';
+import { plunderAmount, resolveBattle, type SideForces } from './combat.js';
 import {
   buildSeconds,
   emptyLevels,
@@ -156,6 +168,8 @@ class GameLoop {
             buildJob: true,
             shipJobs: { orderBy: { createdAt: 'asc' } },
             ships: true,
+            defenseJobs: { orderBy: { createdAt: 'asc' } },
+            defenses: true,
           },
         },
       },
@@ -190,6 +204,9 @@ class GameLoop {
     for (const base of row.bases) {
       const ships = emptyShipCounts();
       for (const ship of base.ships) ships[ship.type] = ship.count;
+
+      const defenses = emptyDefenseCounts();
+      for (const item of base.defenses) defenses[item.type] = item.count;
 
       const levels = emptyLevels();
       levels.METAL_MINE = base.metalMineLevel;
@@ -239,6 +256,16 @@ class GameLoop {
           createdAt: job.createdAt.getTime(),
         })),
         ships,
+        defenseJobs: base.defenseJobs.map<DefenseJobState>((job) => ({
+          id: job.id,
+          type: job.type,
+          quantity: job.quantity,
+          remaining: job.remaining,
+          unitSeconds: job.unitSeconds,
+          nextUnitAt: job.nextUnitAt.getTime(),
+          createdAt: job.createdAt.getTime(),
+        })),
+        defenses,
         // Догоняем не больше суток простоя.
         lastTickAt: Math.max(base.lastTickAt.getTime(), now - MAX_OFFLINE_SECONDS * 1000),
         dirty: false,
@@ -422,6 +449,24 @@ class GameLoop {
       if (mission === 'TRANSPORT' && !planet.base) {
         return { ok: false, error: 'На планете нет колонии — груз выгружать некуда' };
       }
+
+      if (mission === 'ATTACK') {
+        if (!planet.base) return { ok: false, error: 'Атаковать необитаемую планету бессмысленно' };
+        if (planet.base.userId === userId) {
+          return { ok: false, error: 'Нельзя атаковать собственную колонию' };
+        }
+        const war = await prisma.warDeclaration.findFirst({
+          where: {
+            OR: [
+              { aggressorId: userId, targetId: planet.base.userId },
+              { aggressorId: planet.base.userId, targetId: userId },
+            ],
+          },
+        });
+        if (!war) {
+          return { ok: false, error: 'Сначала объяви войну этому игроку' };
+        }
+      }
       targetPlanetId = planet.id;
       targetPosition = planet.position;
     }
@@ -522,6 +567,61 @@ class GameLoop {
       select: { position: true },
     });
     return planet?.position ?? null;
+  }
+
+  /** Заказ стационарной обороны. Очередь своя, но правила те же, что у кораблей. */
+  async orderDefenses(
+    userId: string,
+    baseId: string,
+    type: DefenseType,
+    quantity: number,
+  ): Promise<ActionResult> {
+    const user = await this.getUser(userId);
+    const base = user?.bases.get(baseId);
+    if (!user || !base) return { ok: false, error: 'База не найдена' };
+
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > MAX_DEFENSE_ORDER) {
+      return { ok: false, error: `Количество должно быть от 1 до ${MAX_DEFENSE_ORDER}` };
+    }
+
+    const missing = missingDefenseRequirements(type, base.levels, user.techs);
+    if (missing.length > 0) {
+      return { ok: false, error: 'Не выполнены требования для постройки обороны' };
+    }
+
+    const cost = multiplyResources(defenseCost(type), quantity);
+    if (!hasEnoughResources(base.resources, cost)) {
+      return { ok: false, error: 'Недостаточно ресурсов' };
+    }
+
+    const now = Date.now();
+    const unitSeconds = defenseUnitSeconds(type, base.levels.SHIPYARD);
+    subtractResources(base.resources, cost);
+    base.defenseJobs.push({
+      id: randomUUID(),
+      type,
+      quantity,
+      remaining: quantity,
+      unitSeconds,
+      nextUnitAt: this.defenseQueueEndsAt(base, now) + unitSeconds * 1000,
+      createdAt: now,
+    });
+    base.dirty = true;
+    base.jobsDirty = true;
+
+    await this.persistAndEmit(userId);
+    return { ok: true, message: `Заказ принят: ${quantity} шт., по ${unitSeconds} с за установку` };
+  }
+
+  private defenseQueueEndsAt(base: BaseRuntimeState, now: number): number {
+    const head = base.defenseJobs[0];
+    if (!head) return now;
+
+    let end = Math.max(head.nextUnitAt, now) + (head.remaining - 1) * head.unitSeconds * 1000;
+    for (const job of base.defenseJobs.slice(1)) {
+      end += job.remaining * job.unitSeconds * 1000;
+    }
+    return end;
   }
 
   /** Момент, когда верфь освободится от уже стоящих в очереди заказов. */
@@ -635,6 +735,7 @@ class GameLoop {
     for (const base of user.bases.values()) {
       this.accrueTo(base, user, now);
       if (this.settleShipJobs(base, now)) structural = true;
+      if (this.settleDefenseJobs(base, now)) structural = true;
     }
 
     return structural;
@@ -665,6 +766,34 @@ class GameLoop {
         const finishedAt = job.nextUnitAt;
         base.shipJobs.shift();
         const next = base.shipJobs[0];
+        if (next) next.nextUnitAt = finishedAt + next.unitSeconds * 1000;
+      } else {
+        job.nextUnitAt += job.unitSeconds * 1000;
+      }
+    }
+
+    if (changed) base.jobsDirty = true;
+    return changed;
+  }
+
+  /** Выпускает готовые оборонительные установки — та же логика, что у верфи. */
+  private settleDefenseJobs(base: BaseRuntimeState, now: number): boolean {
+    let changed = false;
+    let steps = 0;
+
+    while (base.defenseJobs.length > 0 && steps < MAX_QUEUE_STEPS) {
+      steps += 1;
+      const job = base.defenseJobs[0];
+      if (!job || job.nextUnitAt > now) break;
+
+      base.defenses[job.type] += 1;
+      job.remaining -= 1;
+      changed = true;
+
+      if (job.remaining <= 0) {
+        const finishedAt = job.nextUnitAt;
+        base.defenseJobs.shift();
+        const next = base.defenseJobs[0];
         if (next) next.nextUnitAt = finishedAt + next.unitSeconds * 1000;
       } else {
         job.nextUnitAt += job.unitSeconds * 1000;
@@ -773,6 +902,11 @@ class GameLoop {
       return;
     }
 
+    if (fleet.mission === 'ATTACK' && fleet.targetPlanetId) {
+      await this.resolveAttack(fleet, now);
+      return;
+    }
+
     if (fleet.mission === 'HUB_DELIVERY' && fleet.targetHubId) {
       await this.unloadToHub(fleet);
       return;
@@ -784,6 +918,161 @@ class GameLoop {
     }
 
     await prisma.fleet.update({ where: { id: fleet.id }, data: { status: 'RETURNING' } });
+  }
+
+  /**
+   * Бой при прилете атакующего флота.
+   *
+   * Расчет боя, списание уничтоженных кораблей и пушек, грабеж склада,
+   * судьба флота и отчет — все в одной транзакции: частично примененный бой
+   * означал бы задвоенные потери или воскресшие корабли после перезапуска.
+   */
+  private async resolveAttack(fleet: FleetRow, now: number): Promise<void> {
+    const planetId = fleet.targetPlanetId as string;
+    const planet = await prisma.planet.findUnique({
+      where: { id: planetId },
+      include: { base: true },
+    });
+
+    if (!planet?.base) {
+      // Колонию успели покинуть — атаковать некого, флот разворачивается.
+      await prisma.fleet.update({ where: { id: fleet.id }, data: { status: 'RETURNING' } });
+      return;
+    }
+
+    const defenderBaseId = planet.base.id;
+    const defenderId = planet.base.userId;
+
+    // Сначала сбрасываем состояние защитника в БД, чтобы бой считался по актуальным силам.
+    await this.flushBaseOwner(defenderBaseId);
+
+    const attackerShips: ShipCounts = {
+      PROBE: fleet.probes,
+      TRANSPORTER: fleet.transporters,
+      LIGHT_FIGHTER: fleet.lightFighters,
+    };
+
+    const result = await prisma.$transaction(async (tx) => {
+      const base = await tx.base.findUniqueOrThrow({
+        where: { id: defenderBaseId },
+        include: { ships: true, defenses: true },
+      });
+
+      const defenderShips = emptyShipCounts();
+      for (const ship of base.ships) defenderShips[ship.type] = ship.count;
+      const defenderDefenses = emptyDefenseCounts();
+      for (const item of base.defenses) defenderDefenses[item.type] = item.count;
+
+      const attacker: SideForces = { ships: attackerShips, defenses: emptyDefenseCounts() };
+      const defender: SideForces = { ships: defenderShips, defenses: defenderDefenses };
+      const outcome = resolveBattle(attacker, defender);
+
+      // Грабеж: только победивший атакующий и только в пределах уцелевших трюмов.
+      const plunder =
+        outcome.winner === 'ATTACKER'
+          ? plunderAmount(
+              { metal: base.metal, crystal: base.crystal },
+              fleetCapacity(outcome.attackerSurvivors),
+            )
+          : { metal: 0, crystal: 0 };
+
+      // Потери защитника: корабли и оборона списываются безвозвратно.
+      for (const type of SHIP_TYPES) {
+        await tx.ship.upsert({
+          where: { baseId_type: { baseId: defenderBaseId, type } },
+          create: { baseId: defenderBaseId, type, count: outcome.defenderSurvivorShips[type] },
+          update: { count: outcome.defenderSurvivorShips[type] },
+        });
+      }
+      for (const type of DEFENSE_TYPES) {
+        await tx.defense.upsert({
+          where: { baseId_type: { baseId: defenderBaseId, type } },
+          create: { baseId: defenderBaseId, type, count: outcome.defenderSurvivorDefenses[type] },
+          update: { count: outcome.defenderSurvivorDefenses[type] },
+        });
+      }
+
+      if (plunder.metal > 0 || plunder.crystal > 0) {
+        await tx.base.update({
+          where: { id: defenderBaseId },
+          data: { metal: { decrement: plunder.metal }, crystal: { decrement: plunder.crystal } },
+        });
+      }
+
+      const survivorCount =
+        outcome.attackerSurvivors.PROBE +
+        outcome.attackerSurvivors.TRANSPORTER +
+        outcome.attackerSurvivors.LIGHT_FIGHTER;
+
+      if (survivorCount > 0) {
+        await tx.fleet.update({
+          where: { id: fleet.id },
+          data: {
+            status: 'RETURNING',
+            probes: outcome.attackerSurvivors.PROBE,
+            transporters: outcome.attackerSurvivors.TRANSPORTER,
+            lightFighters: outcome.attackerSurvivors.LIGHT_FIGHTER,
+            cargoMetal: plunder.metal,
+            cargoCrystal: plunder.crystal,
+          },
+        });
+      } else {
+        // Флот уничтожен полностью — возвращаться некому.
+        await tx.fleet.delete({ where: { id: fleet.id } });
+      }
+
+      const [attackerUser, defenderUser] = await Promise.all([
+        tx.user.findUniqueOrThrow({ where: { id: fleet.userId }, select: { username: true } }),
+        tx.user.findUniqueOrThrow({ where: { id: defenderId }, select: { username: true } }),
+      ]);
+
+      await tx.battleReport.create({
+        data: {
+          attackerId: fleet.userId,
+          defenderId,
+          planetId,
+          winner: outcome.winner,
+          plunderMetal: plunder.metal,
+          plunderCrystal: plunder.crystal,
+          data: toJson({
+            planetName: planet.name,
+            attackerName: attackerUser.username,
+            defenderName: defenderUser.username,
+            attackerForces: attackerShips,
+            defenderForces: { ships: defenderShips, defenses: defenderDefenses },
+            attackerPower: outcome.attackerPower,
+            defenderPower: outcome.defenderPower,
+            attackerLosses: outcome.attackerLosses,
+            defenderLosses: outcome.defenderLosses,
+            attackerSurvivors: outcome.attackerSurvivors,
+            plunder,
+            foughtAt: now,
+          }),
+        },
+      });
+
+      return { outcome, plunder, defenderBaseId };
+    });
+
+    // Приводим состояние защитника в памяти к тому, что записал бой.
+    this.applyBattleToMemory(result.defenderBaseId, result.outcome, result.plunder);
+  }
+
+  /** Синхронизация памяти защитника после боя: потери и грабеж уже в БД. */
+  private applyBattleToMemory(
+    baseId: string,
+    outcome: ReturnType<typeof resolveBattle>,
+    plunder: { metal: number; crystal: number },
+  ): void {
+    const base = this.findLoadedBase(baseId);
+    if (!base) return;
+
+    for (const type of SHIP_TYPES) base.ships[type] = outcome.defenderSurvivorShips[type];
+    for (const type of DEFENSE_TYPES) base.defenses[type] = outcome.defenderSurvivorDefenses[type];
+    base.resources.metal = Math.max(0, base.resources.metal - plunder.metal);
+    base.resources.crystal = Math.max(0, base.resources.crystal - plunder.crystal);
+    base.dirty = true;
+    base.jobsDirty = true;
   }
 
   /**
@@ -1088,6 +1377,40 @@ class GameLoop {
             }),
           );
         }
+
+        operations.push(
+          prisma.defenseJob.deleteMany({
+            where: { baseId: base.id, id: { notIn: base.defenseJobs.map((job) => job.id) } },
+          }),
+        );
+        for (const job of base.defenseJobs) {
+          operations.push(
+            prisma.defenseJob.upsert({
+              where: { id: job.id },
+              create: {
+                id: job.id,
+                baseId: base.id,
+                type: job.type,
+                quantity: job.quantity,
+                remaining: job.remaining,
+                unitSeconds: job.unitSeconds,
+                nextUnitAt: new Date(job.nextUnitAt),
+                createdAt: new Date(job.createdAt),
+              },
+              update: { remaining: job.remaining, nextUnitAt: new Date(job.nextUnitAt) },
+            }),
+          );
+        }
+
+        for (const type of DEFENSE_TYPES) {
+          operations.push(
+            prisma.defense.upsert({
+              where: { baseId_type: { baseId: base.id, type } },
+              create: { baseId: base.id, type, count: base.defenses[type] },
+              update: { count: base.defenses[type] },
+            }),
+          );
+        }
       }
     }
 
@@ -1140,8 +1463,8 @@ class GameLoop {
   }
 }
 
-/** ScanPayload — обычный объект; Prisma требует индексируемый тип для Json. */
-function toJson(payload: ScanPayload): Prisma.InputJsonObject {
+/** Prisma требует индексируемый тип для Json-полей, обычные объекты не подходят. */
+function toJson(payload: object): Prisma.InputJsonObject {
   return payload as unknown as Prisma.InputJsonObject;
 }
 

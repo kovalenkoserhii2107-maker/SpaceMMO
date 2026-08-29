@@ -411,3 +411,29 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   font: inherit;
   font-size: 11px;
 }
+
+/* ---------- Этап 5: оборона, бои, дипломатия ---------- */
+.battles { display: grid; gap: 12px; }
+
+.battle {
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
+}
+.battle.win { border-color: rgba(74, 222, 128, 0.4); }
+.battle.loss { border-color: rgba(248, 113, 113, 0.4); }
+.battle header { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.battle h4 { margin: 0; font-size: 14px; }
+.battle .verdict { font-size: 12px; }
+.battle.win .verdict { color: var(--ok); }
+.battle.loss .verdict { color: var(--err); }
+.battle .line { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.battle .line b { color: var(--text); }
+
+.war-item { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.war-item .status-war { color: var(--err); font-size: 12px; }
+.war-item .status-peace { color: var(--muted); font-size: 12px; }
