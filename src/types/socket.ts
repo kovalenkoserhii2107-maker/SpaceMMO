@@ -32,10 +32,21 @@ export interface TechnologyCard {
   busy: boolean;
 }
 
+/** Боевой профиль юнита: тип урона и слои защиты. */
+export interface CombatProfileView {
+  damage: number;
+  damageType: string;
+  damageLabel: string;
+  shield: number;
+  armor: number;
+  hull: number;
+}
+
 export interface ShipCard {
   type: ShipType;
   label: string;
   description: string;
+  combat: CombatProfileView;
   cost: ResourceAmounts;
   unitSeconds: number;
   owned: number;
@@ -47,6 +58,7 @@ export interface DefenseCard {
   type: DefenseType;
   label: string;
   description: string;
+  combat: CombatProfileView;
   cost: ResourceAmounts;
   unitSeconds: number;
   owned: number;

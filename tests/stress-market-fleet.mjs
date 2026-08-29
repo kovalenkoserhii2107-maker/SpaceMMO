@@ -312,6 +312,61 @@ async function testExpeditionGuards() {
   );
 }
 
+/* ---------- 9. Классы кораблей и типы урона (Этап 10) ---------- */
+async function testCombatClasses() {
+  const mine = await state(ids.admiralToken);
+  const base = mine.bases[0];
+  const byType = Object.fromEntries(base.ships.map((s) => [s.type, s]));
+
+  check(
+    'новые классы доступны на верфи',
+    Boolean(byType.HEAVY_CRUISER && byType.ION_FRIGATE),
+    Object.keys(byType).join(', '),
+  );
+
+  check(
+    'у крейсера кинетический урон и броня',
+    byType.HEAVY_CRUISER?.combat?.damageType === 'KINETIC' && byType.HEAVY_CRUISER?.combat?.armor > 0,
+    JSON.stringify(byType.HEAVY_CRUISER?.combat),
+  );
+  check(
+    'у ионного фрегата ионный урон и щиты',
+    byType.ION_FRIGATE?.combat?.damageType === 'ION' && byType.ION_FRIGATE?.combat?.shield > 0,
+    JSON.stringify(byType.ION_FRIGATE?.combat),
+  );
+  check(
+    'истребитель лазерный и без щитов с броней',
+    byType.LIGHT_FIGHTER?.combat?.damageType === 'LASER' &&
+      byType.LIGHT_FIGHTER?.combat?.shield === 0 &&
+      byType.LIGHT_FIGHTER?.combat?.armor === 0,
+    JSON.stringify(byType.LIGHT_FIGHTER?.combat),
+  );
+  check(
+    'транспорт и зонд без оружия',
+    byType.TRANSPORTER?.combat?.damage === 0 && byType.PROBE?.combat?.damage === 0,
+  );
+
+  const defenses = Object.fromEntries(base.defenseCards.map((d) => [d.type, d]));
+  check(
+    'ракетная установка кинетическая, лазерное орудие со щитами',
+    defenses.ROCKET_LAUNCHER?.combat?.damageType === 'KINETIC' &&
+      defenses.LASER_TURRET?.combat?.damageType === 'LASER' &&
+      defenses.LASER_TURRET?.combat?.shield > 0,
+    JSON.stringify(defenses.LASER_TURRET?.combat),
+  );
+
+  const map = (await api('GET', '/api/map', ids.admiralToken)).data;
+  const enemy = map.planets.find((p) => !p.isOwn);
+  const unarmed = await api('POST', `/api/bases/${ids.admiralBase}/fleets`, ids.admiralToken, {
+    targetPlanetId: enemy.planetId, mission: 'ATTACK', ships: { TRANSPORTER: 1 }, cargo: {},
+  });
+  check(
+    'атака безоружным флотом отклонена',
+    unarmed.status >= 400 && /вооруженный/.test(unarmed.data.error || ''),
+    JSON.stringify(unarmed.data),
+  );
+}
+
 async function main() {
   console.log('=== 1. Валидация ордеров ===');
   await testOrderValidation();
@@ -329,6 +384,8 @@ async function main() {
   await testCombatGuards();
   console.log('\n=== 8. Экспедиции ===');
   await testExpeditionGuards();
+  console.log('\n=== 9. Классы кораблей и типы урона ===');
+  await testCombatClasses();
 
   const failed = results.filter((r) => !r.passed);
   console.log(`\n=== ИТОГ: ${results.length - failed.length}/${results.length} пройдено ===`);

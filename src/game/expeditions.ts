@@ -7,7 +7,7 @@
  */
 import { emptyDefenseCounts } from './defenses.js';
 import { resolveBattle, type BattleOutcome } from './combat.js';
-import { emptyShipCounts, SHIP_TYPES, type ShipCounts } from './ships.js';
+import { emptyShipCounts, shipLabel, SHIP_TYPES, type ShipCounts } from './ships.js';
 import type { TechLevels } from './techTree.js';
 
 /** Абстрактная «16-я позиция» системы — точка выхода в глубокий космос. */
@@ -175,7 +175,7 @@ function resolveAmbush(ships: ShipCounts, capacity: number, level: number, rng: 
       battle,
       survivors: emptyShipCounts(),
       summary:
-        `Засада пиратов (истребителей: ${pirates.LIGHT_FIGHTER}, транспортов: ${pirates.TRANSPORTER}). ` +
+        `Засада пиратов (${describePirates(pirates)}). ` +
         'Флот уничтожен полностью — связь потеряна.',
     };
   }
@@ -189,7 +189,7 @@ function resolveAmbush(ships: ShipCounts, capacity: number, level: number, rng: 
     battle,
     survivors: { ...battle.attackerSurvivors },
     summary:
-      `Засада пиратов отбита (истребителей: ${pirates.LIGHT_FIGHTER}, транспортов: ${pirates.TRANSPORTER}). ` +
+      `Засада пиратов отбита (${describePirates(pirates)}). ` +
       `Из трюмов противника подняли ${trophy} металла.`,
   };
 }
@@ -200,13 +200,27 @@ function resolveAmbush(ships: ShipCounts, capacity: number, level: number, rng: 
  * Астрофизика снижает силу засады: опытный штурман выбирает маршруты безопаснее.
  */
 function generatePirates(ships: ShipCounts, level: number, rng: Rng): ShipCounts {
-  const playerFighters = ships.LIGHT_FIGHTER + Math.floor(ships.TRANSPORTER / 2);
+  const playerFighters =
+    ships.LIGHT_FIGHTER +
+    Math.floor(ships.TRANSPORTER / 2) +
+    ships.HEAVY_CRUISER * 3 +
+    ships.ION_FRIGATE * 2;
   const scale = randomBetween(0.4, 1.1, rng) * Math.max(0.4, 1 - level * 0.05);
 
   const pirates = emptyShipCounts();
   pirates.LIGHT_FIGHTER = Math.max(1, Math.round(playerFighters * scale));
   pirates.TRANSPORTER = Math.floor(pirates.LIGHT_FIGHTER * randomBetween(0, 0.4, rng));
+  // Серьезный флот встречает и серьезную засаду: у пиратов появляются крейсера.
+  if (playerFighters > 12) {
+    pirates.HEAVY_CRUISER = Math.max(1, Math.round(playerFighters * scale * 0.15));
+  }
   return pirates;
+}
+
+function describePirates(pirates: ShipCounts): string {
+  return SHIP_TYPES.filter((type) => pirates[type] > 0)
+    .map((type) => `${shipLabel(type)}: ${pirates[type]}`)
+    .join(', ');
 }
 
 export function fleetIsEmpty(ships: ShipCounts): boolean {

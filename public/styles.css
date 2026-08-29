@@ -573,3 +573,14 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   color: var(--text);
   font: inherit;
 }
+
+/* ---------- Этап 10: боевые профили юнитов ---------- */
+.combat-line {
+  font-size: 11px;
+  color: var(--accent-2);
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(157, 123, 255, 0.08);
+  border: 1px solid rgba(157, 123, 255, 0.18);
+}
+.combat-line:empty { display: none; }

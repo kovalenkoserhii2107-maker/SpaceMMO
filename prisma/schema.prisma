@@ -9,6 +9,7 @@
 // ЭТАП 8: User отвечает только за авторизацию, игровая личность вынесена
 // в Commander, добавлены достижения.
 // ЭТАП 9: синдикаты, общий банк, заявки на вступление и войны альянсов.
+// ЭТАП 10: новые классы кораблей под систему типов урона.
 
 generator client {
   provider = "prisma-client"
@@ -524,6 +525,8 @@ model Fleet {
   probes        Int @default(0)
   transporters  Int @default(0)
   lightFighters Int @default(0)
+  heavyCruisers Int @default(0)
+  ionFrigates   Int @default(0)
 
   /// Груз на борту (дейтерий возится только как топливо).
   cargoMetal      Float @default(0)
@@ -715,6 +718,8 @@ enum ShipType {
   PROBE
   TRANSPORTER
   LIGHT_FIGHTER
+  HEAVY_CRUISER
+  ION_FRIGATE
 }
 
 enum SystemAnomaly {

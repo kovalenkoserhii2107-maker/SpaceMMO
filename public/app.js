@@ -117,7 +117,13 @@
     TOXIC: 'Токсичная',
   };
 
-  const SHIP_LABELS = { PROBE: 'Зонды', TRANSPORTER: 'Транспорты', LIGHT_FIGHTER: 'Истребители' };
+  const SHIP_LABELS = {
+    PROBE: 'Зонды',
+    TRANSPORTER: 'Транспорты',
+    LIGHT_FIGHTER: 'Истребители',
+    HEAVY_CRUISER: 'Крейсера',
+    ION_FRIGATE: 'Фрегаты',
+  };
 
   const fmt = (value) => Math.floor(value).toLocaleString('ru-RU');
   const fmtRate = (value) => `+${value.toFixed(2)}/с`;
@@ -632,16 +638,19 @@
     const costDeuterium = document.createElement('span');
     cost.append(costMetal, costCrystal, costDeuterium);
 
+    const combat = document.createElement('div');
+    combat.className = 'combat-line';
+
     const time = document.createElement('div');
     time.className = 'time';
 
     const reqs = document.createElement('div');
     reqs.className = 'reqs';
 
-    article.append(header, desc, cost, time, reqs);
+    article.append(header, desc, combat, cost, time, reqs);
     container.appendChild(article);
 
-    return { article, level, costMetal, costCrystal, costDeuterium, time, reqs };
+    return { article, level, costMetal, costCrystal, costDeuterium, combat, time, reqs };
   }
 
   function createActionCard(container, title, description, onClick) {
@@ -752,9 +761,22 @@
       : `Изучить ур. ${tech.nextLevel}`;
   }
 
+  /** Строка боевого профиля: тип урона и слои защиты — по ней собирают контр-флот. */
+  function combatLine(combat) {
+    if (!combat) return '';
+    const attack = combat.damage > 0 ? `урон ${combat.damage} (${combat.damageLabel})` : 'без оружия';
+    const layers = [
+      combat.shield > 0 ? `щиты ${combat.shield}` : null,
+      combat.armor > 0 ? `броня ${combat.armor}` : null,
+      `корпус ${combat.hull}`,
+    ].filter(Boolean);
+    return `${attack} · ${layers.join(' · ')}`;
+  }
+
   function updateShipCard(card, base, ship, ownedLabel = 'В ангаре') {
     if (!card) return;
     card.level.textContent = `${ownedLabel}: ${ship.owned}`;
+    if (card.combat) card.combat.textContent = combatLine(ship.combat);
     fillCost(card, ship.cost, base.resources);
     card.time.textContent = `Время постройки: ${fmtTime(ship.unitSeconds)} за штуку`;
     fillRequirements(card, ship.requirements);
@@ -1774,7 +1796,7 @@
       powers.className = 'line';
       powers.innerHTML =
         `роль: <b>${battle.role === 'ATTACKER' ? 'атакующий' : 'защитник'}</b> · ` +
-        `мощь атаки <b>${fmt(battle.attackerPower)}</b> против обороны <b>${fmt(battle.defenderPower)}</b>`;
+        `огневая мощь <b>${fmt(battle.attackerPower)}</b> против <b>${fmt(battle.defenderPower)}</b>`;
 
       const losses = document.createElement('div');
       losses.className = 'line';
@@ -1794,7 +1816,24 @@
       when.className = 'line';
       when.textContent = new Date(battle.createdAt).toLocaleString('ru-RU');
 
-      card.append(header, powers, losses, plunder, when);
+      card.append(header, powers, losses);
+
+      // Куда ушел урон — главный ответ на вопрос «почему я проиграл».
+      for (const [report, title] of [
+        [battle.myDamage, 'мой урон'],
+        [battle.enemyDamage, 'урон противника'],
+      ]) {
+        if (!report) continue;
+        const line = document.createElement('div');
+        line.className = 'line';
+        const mix = (report.damageMix || []).map((d) => d.label).join(', ') || 'без оружия';
+        line.innerHTML =
+          `${title} (${mix}): щиты поглотили <b>${fmt(report.shield)}</b>, ` +
+          `броня <b>${fmt(report.armor)}</b>, по корпусу прошло <b>${fmt(report.hull)}</b>`;
+        card.appendChild(line);
+      }
+
+      card.append(plunder, when);
       el.battles.appendChild(card);
     }
   }
@@ -2267,8 +2306,26 @@
 
       const actions = document.createElement('div');
       actions.className = 'member-actions';
-      // Управление составом — только у лидера.
+      // Лидер правит всем составом, офицер может исключить рядового.
+      if (!isLeader && mine.role === 'OFFICER' && member.role === 'MEMBER') {
+        const kick = document.createElement('button');
+        kick.type = 'button';
+        kick.className = 'ghost';
+        kick.textContent = 'Исключить';
+        kick.addEventListener('click', () =>
+          syndicateAction(`/api/syndicates/members/${member.commanderId}/kick`));
+        actions.appendChild(kick);
+      }
+
       if (isLeader && member.role !== 'LEADER') {
+        const crown = document.createElement('button');
+        crown.type = 'button';
+        crown.className = 'ghost';
+        crown.textContent = 'Сделать лидером';
+        crown.addEventListener('click', () =>
+          syndicateAction(`/api/syndicates/members/${member.commanderId}/role`, { role: 'LEADER' }));
+        actions.appendChild(crown);
+
         const promote = document.createElement('button');
         promote.type = 'button';
         promote.className = 'ghost';

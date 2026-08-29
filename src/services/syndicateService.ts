@@ -346,15 +346,22 @@ export async function reviewApplication(
   };
 }
 
-/** Исключение участника — право лидера. */
+/**
+ * Исключение участника.
+ * Лидер исключает кого угодно, офицер — только рядовых: иначе офицеры могли бы
+ * вычистить друг друга и самого лидера.
+ */
 export async function kickMember(commanderId: string, targetId: string): Promise<SyndicateResult> {
-  const access = await requireRole(commanderId, ['LEADER']);
+  const access = await requireRole(commanderId, ['LEADER', 'OFFICER']);
   if (!access.ok) return access;
-  if (targetId === commanderId) return { ok: false, error: 'Лидер не может исключить себя', status: 409 };
+  if (targetId === commanderId) return { ok: false, error: 'Нельзя исключить самого себя', status: 409 };
 
   const target = await prisma.commander.findUnique({ where: { id: targetId } });
   if (!target || target.syndicateId !== access.syndicateId) {
     return { ok: false, error: 'Этот командир не в твоем синдикате', status: 404 };
+  }
+  if (access.role === 'OFFICER' && target.syndicateRole !== 'MEMBER') {
+    return { ok: false, error: 'Офицер может исключать только рядовых участников', status: 403 };
   }
 
   await prisma.commander.update({
@@ -370,9 +377,10 @@ export async function setRole(
   targetId: string,
   role: SyndicateRole,
 ): Promise<SyndicateResult> {
+  if (role === 'LEADER') return transferLeadership(commanderId, targetId);
+
   const access = await requireRole(commanderId, ['LEADER']);
   if (!access.ok) return access;
-  if (role === 'LEADER') return { ok: false, error: 'Передача лидерства пока не поддерживается', status: 400 };
   if (targetId === commanderId) return { ok: false, error: 'Лидер не меняет собственную роль', status: 409 };
 
   const target = await prisma.commander.findUnique({ where: { id: targetId } });
@@ -387,11 +395,46 @@ export async function setRole(
   };
 }
 
+/**
+ * Передача лидерства: синдикат не должен умирать вместе с уходом лидера.
+ * Старый лидер становится офицером, новый получает все права — одной транзакцией,
+ * чтобы синдикат ни на мгновение не остался без лидера.
+ */
+export async function transferLeadership(
+  commanderId: string,
+  targetId: string,
+): Promise<SyndicateResult> {
+  const access = await requireRole(commanderId, ['LEADER']);
+  if (!access.ok) return access;
+  if (targetId === commanderId) return { ok: false, error: 'Ты и так лидер', status: 409 };
+
+  const target = await prisma.commander.findUnique({ where: { id: targetId } });
+  if (!target || target.syndicateId !== access.syndicateId) {
+    return { ok: false, error: 'Этот командир не в твоем синдикате', status: 404 };
+  }
+
+  try {
+    await prisma.$transaction([
+      prisma.syndicate.update({ where: { id: access.syndicateId }, data: { leaderId: targetId } }),
+      prisma.commander.update({ where: { id: targetId }, data: { syndicateRole: 'LEADER' } }),
+      prisma.commander.update({ where: { id: commanderId }, data: { syndicateRole: 'OFFICER' } }),
+    ]);
+  } catch (error) {
+    return toError(error, 'Не удалось передать лидерство');
+  }
+
+  return { ok: true, message: `${target.nickname} теперь лидер синдиката` };
+}
+
 export async function leaveSyndicate(commanderId: string): Promise<SyndicateResult> {
   const access = await requireRole(commanderId, ['LEADER', 'OFFICER', 'MEMBER']);
   if (!access.ok) return access;
   if (access.role === 'LEADER') {
-    return { ok: false, error: 'Лидер не может выйти: распусти синдикат или передай дела', status: 409 };
+    return {
+      ok: false,
+      error: 'Лидер не может выйти: передай лидерство участнику или распусти синдикат',
+      status: 409,
+    };
   }
 
   await prisma.commander.update({

@@ -587,6 +587,8 @@ class GameLoop {
         probes: ships.PROBE,
         transporters: ships.TRANSPORTER,
         lightFighters: ships.LIGHT_FIGHTER,
+        heavyCruisers: ships.HEAVY_CRUISER,
+        ionFrigates: ships.ION_FRIGATE,
         cargoMetal: outboundCargo.metal,
         cargoCrystal: outboundCargo.crystal,
         pickupMetal: request.metal,
@@ -1058,11 +1060,7 @@ class GameLoop {
    * рейсом, через ту же логику, что и торговый груз.
    */
   private async resolveExpeditionArrival(fleet: FleetRow, systemId: string): Promise<void> {
-    const ships: ShipCounts = {
-      PROBE: fleet.probes,
-      TRANSPORTER: fleet.transporters,
-      LIGHT_FIGHTER: fleet.lightFighters,
-    };
+    const ships = fleetShips(fleet);
 
     const commander = await this.getCommander(fleet.commanderId);
     const techs = commander ? commander.techs : emptyTechLevels();
@@ -1083,6 +1081,8 @@ class GameLoop {
             probes: result.survivors.PROBE,
             transporters: result.survivors.TRANSPORTER,
             lightFighters: result.survivors.LIGHT_FIGHTER,
+            heavyCruisers: result.survivors.HEAVY_CRUISER,
+            ionFrigates: result.survivors.ION_FRIGATE,
             cargoMetal: metal,
             cargoCrystal: crystal,
             cargoAntimatter: result.loot.antimatter,
@@ -1106,8 +1106,9 @@ class GameLoop {
             survivors: result.survivors,
             pirates: result.pirates,
             losses: result.battle ? result.battle.attackerLosses : [],
-            attackerPower: result.battle ? result.battle.attackerPower.strength : 0,
-            piratePower: result.battle ? result.battle.defenderPower.strength : 0,
+            attackerPower: result.battle ? result.battle.attackerPower.effectiveHp : 0,
+            piratePower: result.battle ? result.battle.defenderPower.effectiveHp : 0,
+            damageReport: result.battle ? result.battle.attackerDamageReport : null,
           }),
         },
       });
@@ -1151,11 +1152,7 @@ class GameLoop {
     // Сначала сбрасываем состояние защитника в БД, чтобы бой считался по актуальным силам.
     await this.flushBaseOwner(defenderBaseId);
 
-    const attackerShips: ShipCounts = {
-      PROBE: fleet.probes,
-      TRANSPORTER: fleet.transporters,
-      LIGHT_FIGHTER: fleet.lightFighters,
-    };
+    const attackerShips = fleetShips(fleet);
 
     const result = await prisma.$transaction(async (tx) => {
       const base = await tx.base.findUniqueOrThrow({
@@ -1217,6 +1214,8 @@ class GameLoop {
             probes: outcome.attackerSurvivors.PROBE,
             transporters: outcome.attackerSurvivors.TRANSPORTER,
             lightFighters: outcome.attackerSurvivors.LIGHT_FIGHTER,
+            heavyCruisers: outcome.attackerSurvivors.HEAVY_CRUISER,
+            ionFrigates: outcome.attackerSurvivors.ION_FRIGATE,
             cargoMetal: plunder.metal,
             cargoCrystal: plunder.crystal,
           },
@@ -1263,6 +1262,8 @@ class GameLoop {
             defenderForces: { ships: defenderShips, defenses: defenderDefenses },
             attackerPower: outcome.attackerPower,
             defenderPower: outcome.defenderPower,
+            attackerDamageReport: outcome.attackerDamageReport,
+            defenderDamageReport: outcome.defenderDamageReport,
             attackerLosses: outcome.attackerLosses,
             defenderLosses: outcome.defenderLosses,
             attackerSurvivors: outcome.attackerSurvivors,
@@ -1333,11 +1334,7 @@ class GameLoop {
 
   /** Погрузка товара со склада хаба в трюмы — обратно повезем домой. */
   private async loadFromHub(fleet: FleetRow, hubId: string): Promise<void> {
-    const capacity = fleetCapacity({
-      PROBE: fleet.probes,
-      TRANSPORTER: fleet.transporters,
-      LIGHT_FIGHTER: fleet.lightFighters,
-    });
+    const capacity = fleetCapacity(fleetShips(fleet));
 
     await prisma.$transaction(async (tx) => {
       const storage = await tx.hubStorage.findUnique({
@@ -1374,11 +1371,7 @@ class GameLoop {
    * посреди операции либо задвоил бы корабли, либо потерял их.
    */
   private async handleReturn(fleet: FleetRow): Promise<void> {
-    const ships: ShipCounts = {
-      PROBE: fleet.probes,
-      TRANSPORTER: fleet.transporters,
-      LIGHT_FIGHTER: fleet.lightFighters,
-    };
+    const ships = fleetShips(fleet);
 
     await this.flushBaseOwner(fleet.originBaseId);
 
@@ -1718,6 +1711,17 @@ function toJson(payload: object): Prisma.InputJsonObject {
   return payload as unknown as Prisma.InputJsonObject;
 }
 
+/** Состав флота из строки БД: колонки хранят только базовые классы, остальные — ноль. */
+function fleetShips(fleet: FleetRow): ShipCounts {
+  const ships = emptyShipCounts();
+  ships.PROBE = fleet.probes;
+  ships.TRANSPORTER = fleet.transporters;
+  ships.LIGHT_FIGHTER = fleet.lightFighters;
+  ships.HEAVY_CRUISER = fleet.heavyCruisers;
+  ships.ION_FRIGATE = fleet.ionFrigates;
+  return ships;
+}
+
 /** Заказ в очереди верфи: одинаково устроен для кораблей и обороны. */
 interface QueueJob<T extends string = string> {
   type: T;
@@ -1752,6 +1756,8 @@ function toFleetRuntime(row: FleetRow): FleetRuntimeState {
       PROBE: row.probes,
       TRANSPORTER: row.transporters,
       LIGHT_FIGHTER: row.lightFighters,
+      HEAVY_CRUISER: row.heavyCruisers,
+      ION_FRIGATE: row.ionFrigates,
     },
     cargo: {
       metal: row.cargoMetal,

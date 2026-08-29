@@ -5,6 +5,7 @@
 import type { ResourceAmounts } from './rules.js';
 import type { TechLevels } from './techTree.js';
 import { SHIP_TYPES, shipLabel, type ShipCounts, type ShipType } from './ships.js';
+import { hasWeapons } from './combat.js';
 
 const FLEET_MISSIONS = [
   'TRANSPORT',
@@ -49,6 +50,9 @@ const FLIGHT_PROFILES: Record<ShipType, FlightProfile> = {
   PROBE: { speed: 200, cargo: 0, fuelPerSecond: 0.05, antimatterPerDistance: 0.2 },
   TRANSPORTER: { speed: 100, cargo: 2000, fuelPerSecond: 0.4, antimatterPerDistance: 1.5 },
   LIGHT_FIGHTER: { speed: 150, cargo: 50, fuelPerSecond: 0.2, antimatterPerDistance: 0.8 },
+  // Тяжелые классы медленнее и прожорливее: за огневую мощь платят логистикой.
+  HEAVY_CRUISER: { speed: 90, cargo: 300, fuelPerSecond: 0.8, antimatterPerDistance: 2.5 },
+  ION_FRIGATE: { speed: 120, cargo: 150, fuelPerSecond: 0.6, antimatterPerDistance: 2.0 },
 };
 
 /** Базовое время перелета между соседними орбитами, секунды. */
@@ -213,8 +217,9 @@ export function canJump(techs: TechLevels): boolean {
 export function validateComposition(mission: FleetMission, ships: ShipCounts): string | null {
   if (fleetSize(ships) <= 0) return 'Не выбран ни один корабль';
   if (mission === 'SCAN' && ships.PROBE <= 0) return 'Для разведки нужен хотя бы один зонд';
-  if (mission === 'ATTACK' && ships.LIGHT_FIGHTER <= 0 && ships.TRANSPORTER <= 0) {
-    return 'Для атаки нужны боевые корабли или транспорты';
+  // Что считается вооруженным, знает боевой модуль — списка классов здесь нет.
+  if (mission === 'ATTACK' && !hasWeapons(ships)) {
+    return 'Для атаки нужен хотя бы один вооруженный корабль';
   }
   if (mission === 'EXPEDITION' && ships.PROBE === fleetSize(ships)) {
     return 'Одни зонды не выдержат экспедицию — нужен хотя бы один корабль с трюмом';

@@ -10,9 +10,9 @@ import {
   upgradeCost,
 } from '../game/rules.js';
 import { economyBonuses, emptyTechLevels, researchCost, researchSeconds } from '../game/techTree.js';
-import { shipUnitSeconds, SHIP_TYPES, type ShipCounts } from '../game/ships.js';
+import { emptyShipCounts, shipUnitSeconds, SHIP_TYPES, type ShipCounts } from '../game/ships.js';
 import { fleetCapacity, planFlight } from '../game/fleets.js';
-import { plunderAmount, resolveBattle } from '../game/combat.js';
+import { resolveBattle } from '../game/combat.js';
 import { expeditionSlots, resolveExpedition } from '../game/expeditions.js';
 import { defenseUnitSeconds, emptyDefenseCounts, type DefenseCounts } from '../game/defenses.js';
 
@@ -62,9 +62,9 @@ console.log('\n--- Логистика (реактивный двигатель �
 {
   const drive = { ...emptyTechLevels(), COMBUSTION_DRIVE: 1 };
   const cases: Array<[string, ShipCounts]> = [
-    ['1 зонд', { PROBE: 1, TRANSPORTER: 0, LIGHT_FIGHTER: 0 }],
-    ['2 транспорта', { PROBE: 0, TRANSPORTER: 2, LIGHT_FIGHTER: 0 }],
-    ['транспорт + 5 истребителей', { PROBE: 0, TRANSPORTER: 1, LIGHT_FIGHTER: 5 }],
+    ['1 зонд', { ...emptyShipCounts(), PROBE: 1, TRANSPORTER: 0, LIGHT_FIGHTER: 0 }],
+    ['2 транспорта', { ...emptyShipCounts(), PROBE: 0, TRANSPORTER: 2, LIGHT_FIGHTER: 0 }],
+    ['транспорт + 5 истребителей', { ...emptyShipCounts(), PROBE: 0, TRANSPORTER: 1, LIGHT_FIGHTER: 5 }],
   ];
   for (const [label, ships] of cases) {
     for (const distance of [1, 3]) {
@@ -78,27 +78,41 @@ console.log('\n--- Логистика (реактивный двигатель �
   }
 }
 
-console.log('\n--- Бой (Этап 5) ---');
+console.log('\n--- Бой: типы урона и слои защиты (Этап 10) ---');
 {
+  const fleet = (partial: Partial<ShipCounts>): ShipCounts => ({ ...emptyShipCounts(), ...partial });
   const noDefense = emptyDefenseCounts();
+
   const cases: Array<[string, ShipCounts, ShipCounts, DefenseCounts]> = [
     [
-      '6 истребителей + 4 транспорта против 6 ракетных',
-      { PROBE: 0, TRANSPORTER: 4, LIGHT_FIGHTER: 6 },
-      { PROBE: 0, TRANSPORTER: 0, LIGHT_FIGHTER: 0 },
-      { ROCKET_LAUNCHER: 6, LASER_TURRET: 0 },
+      'кинетические крейсера против ионных фрегатов (равная цена)',
+      fleet({ HEAVY_CRUISER: 10 }),
+      fleet({ ION_FRIGATE: 13 }),
+      emptyDefenseCounts(),
     ],
     [
-      '1 транспорт против 4 ракетных',
-      { PROBE: 0, TRANSPORTER: 1, LIGHT_FIGHTER: 0 },
-      { PROBE: 0, TRANSPORTER: 0, LIGHT_FIGHTER: 0 },
-      { ROCKET_LAUNCHER: 4, LASER_TURRET: 0 },
+      'ионные фрегаты против брони крейсеров (тот же бой наоборот)',
+      fleet({ ION_FRIGATE: 13 }),
+      fleet({ HEAVY_CRUISER: 10 }),
+      emptyDefenseCounts(),
     ],
     [
-      '10 истребителей против 3 лазеров и 2 истребителей',
-      { PROBE: 0, TRANSPORTER: 0, LIGHT_FIGHTER: 10 },
-      { PROBE: 0, TRANSPORTER: 0, LIGHT_FIGHTER: 2 },
-      { ROCKET_LAUNCHER: 0, LASER_TURRET: 3 },
+      'кинетические крейсера против лазерных турелей со щитами',
+      fleet({ HEAVY_CRUISER: 6 }),
+      fleet({}),
+      { ROCKET_LAUNCHER: 0, LASER_TURRET: 12 },
+    ],
+    [
+      'ионные фрегаты против тех же турелей',
+      fleet({ ION_FRIGATE: 8 }),
+      fleet({}),
+      { ROCKET_LAUNCHER: 0, LASER_TURRET: 12 },
+    ],
+    [
+      'лазерные истребители против ракетных установок',
+      fleet({ LIGHT_FIGHTER: 20 }),
+      fleet({}),
+      { ROCKET_LAUNCHER: 10, LASER_TURRET: 0 },
     ],
   ];
 
@@ -107,16 +121,30 @@ console.log('\n--- Бой (Этап 5) ---');
       { ships: attackerShips, defenses: noDefense },
       { ships: defenderShips, defenses: defenderDefenses },
     );
-    const capacity = fleetCapacity(outcome.attackerSurvivors);
-    const loot = plunderAmount({ metal: 100000, crystal: 100000 }, capacity);
+    const report = outcome.attackerDamageReport;
     console.log(
-      `${label}: победа — ${outcome.winner === 'ATTACKER' ? 'атакующий' : 'защитник'}, ` +
-        `мощь ${Math.round(outcome.attackerPower.strength)} против ${Math.round(outcome.defenderPower.strength)}, ` +
+      `${label}:\n` +
+        `    победа — ${outcome.winner === 'ATTACKER' ? 'атакующий' : 'защитник'}, ` +
         `потери атакующего ${(outcome.attackerLossRatio * 100).toFixed(0)}%, ` +
-        `защитника ${(outcome.defenderLossRatio * 100).toFixed(0)}%, ` +
-        `вывезти можно ${loot.metal + loot.crystal}`,
+        `защитника ${(outcome.defenderLossRatio * 100).toFixed(0)}%\n` +
+        `    урон атакующего (${report.damageMix.map((d) => d.label).join(', ')}): ` +
+        `щиты поглотили ${report.shield}, броня ${report.armor}, по корпусу ${report.hull}`,
     );
   }
+}
+
+console.log('\n--- Детерминированность боя ---');
+{
+  const attacker = { ships: { ...emptyShipCounts(), HEAVY_CRUISER: 7, LIGHT_FIGHTER: 12 }, defenses: emptyDefenseCounts() };
+  const defender = { ships: { ...emptyShipCounts(), ION_FRIGATE: 9 }, defenses: { ROCKET_LAUNCHER: 5, LASER_TURRET: 4 } };
+
+  const runs = Array.from({ length: 50 }, () => {
+    const outcome = resolveBattle(attacker, defender);
+    return `${outcome.winner}:${outcome.attackerLossRatio}:${outcome.defenderLossRatio}:` +
+      `${outcome.attackerDamageReport.shield}/${outcome.attackerDamageReport.armor}/${outcome.attackerDamageReport.hull}`;
+  });
+  const unique = new Set(runs);
+  console.log(`50 прогонов одного боя дали ${unique.size} уникальных результатов: ${[...unique][0]}`);
 }
 
 console.log('\n--- Этап 6: антиматерия и аномалии ---');
@@ -137,7 +165,7 @@ console.log('\n--- Этап 6: антиматерия и аномалии ---');
 console.log('\n--- Этап 6: гиперпрыжки ---');
 {
   const home = { position: 2, system: { galaxyX: 4, galaxyY: 4 } };
-  const fleet: ShipCounts = { PROBE: 0, TRANSPORTER: 3, LIGHT_FIGHTER: 2 };
+  const fleet: ShipCounts = { ...emptyShipCounts(), PROBE: 0, TRANSPORTER: 3, LIGHT_FIGHTER: 2 };
   for (const [label, drive] of [['гипердвигатель ур.1', 1], ['гипердвигатель ур.4', 4]] as const) {
     const withDrive = { ...emptyTechLevels(), COMBUSTION_DRIVE: 1, HYPERDRIVE: drive };
     for (const target of [{ galaxyX: 7, galaxyY: 8 }, { galaxyX: 15, galaxyY: 16 }]) {
@@ -164,7 +192,7 @@ console.log('\n--- Этап 7: искажение времени на верфи
 
 console.log('\n--- Этап 7: экспедиции ---');
 {
-  const fleet: ShipCounts = { PROBE: 0, TRANSPORTER: 4, LIGHT_FIGHTER: 6 };
+  const fleet: ShipCounts = { ...emptyShipCounts(), PROBE: 0, TRANSPORTER: 4, LIGHT_FIGHTER: 6 };
   const capacity = fleetCapacity(fleet);
 
   for (const level of [1, 4, 9]) {
@@ -198,8 +226,8 @@ console.log('\n--- Этап 7: экспедиции ---');
 
 console.log('\n--- Этап 7: все ветви событийного движка ---');
 {
-  const strong: ShipCounts = { PROBE: 0, TRANSPORTER: 3, LIGHT_FIGHTER: 12 };
-  const weak: ShipCounts = { PROBE: 0, TRANSPORTER: 1, LIGHT_FIGHTER: 0 };
+  const strong: ShipCounts = { ...emptyShipCounts(), PROBE: 0, TRANSPORTER: 3, LIGHT_FIGHTER: 12 };
+  const weak: ShipCounts = { ...emptyShipCounts(), PROBE: 0, TRANSPORTER: 1, LIGHT_FIGHTER: 0 };
   const techs1 = { ...emptyTechLevels(), ASTROPHYSICS: 1 };
 
   /** Подсовываем заранее заданную последовательность бросков. */

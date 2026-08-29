@@ -119,9 +119,6 @@ check('лидер назначил офицера', promote.status === 200, JSON
 const officerApprove = await api('POST', `/api/syndicates/applications/${fresh[0].id}/approve`, undefined, officer.token);
 check('офицер МОЖЕТ одобрить заявку', officerApprove.status === 200, JSON.stringify(officerApprove.data));
 
-const officerKick = await api('POST', `/api/syndicates/members/${member.id}/kick`, undefined, officer.token);
-check('офицер НЕ может исключать (право лидера)', officerKick.status === 403, `HTTP ${officerKick.status}`);
-
 const officerDisband = await api('POST', '/api/syndicates/disband', undefined, officer.token);
 check('офицер не может распустить синдикат', officerDisband.status === 403, `HTTP ${officerDisband.status}`);
 
@@ -190,10 +187,59 @@ check(
 const peace = await api('POST', '/api/war/syndicate/peace', { targetSyndicateId: rivalId }, leader.token);
 check('лидер заключил мир', peace.status === 200, JSON.stringify(peace.data));
 
+/* ---------- Права офицера на исключение (Этап 10) ---------- */
+const officerKicksMember = await api('POST', `/api/syndicates/members/${outsider.id}/kick`, undefined, officer.token);
+check(
+  'офицер МОЖЕТ исключить рядового участника',
+  officerKicksMember.status === 200,
+  JSON.stringify(officerKicksMember.data),
+);
+
+// Возвращаем исключенного и делаем его офицером, чтобы проверить защиту равных.
+await api('POST', `/api/syndicates/${syndicateId}/apply`, undefined, outsider.token);
+const reapply = (await api('GET', '/api/syndicates', undefined, leader.token)).data.mine.applications;
+await api('POST', `/api/syndicates/applications/${reapply[0].id}/approve`, undefined, leader.token);
+await api('POST', `/api/syndicates/members/${outsider.id}/role`, { role: 'OFFICER' }, leader.token);
+
+const officerKicksOfficer = await api('POST', `/api/syndicates/members/${outsider.id}/kick`, undefined, officer.token);
+check(
+  'офицер НЕ может исключить другого офицера',
+  officerKicksOfficer.status === 403,
+  JSON.stringify(officerKicksOfficer.data),
+);
+
+const officerKicksLeaderTry = await api('POST', `/api/syndicates/members/${(await api('GET', '/api/syndicates', undefined, leader.token)).data.mine.members.find((m) => m.role === 'LEADER').commanderId}/kick`, undefined, officer.token);
+check(
+  'офицер НЕ может исключить лидера',
+  officerKicksLeaderTry.status === 403,
+  JSON.stringify(officerKicksLeaderTry.data),
+);
+
+/* ---------- Передача лидерства (Этап 10) ---------- */
+const memberTransfer = await api('POST', `/api/syndicates/members/${member.id}/role`, { role: 'LEADER' }, member.token);
+check('рядовой участник не может передать лидерство', memberTransfer.status === 403, `HTTP ${memberTransfer.status}`);
+
+const transfer = await api('POST', `/api/syndicates/members/${officer.id}/role`, { role: 'LEADER' }, leader.token);
+check('лидер передал лидерство офицеру', transfer.status === 200, JSON.stringify(transfer.data));
+
+const afterTransfer = (await api('GET', '/api/syndicates', undefined, officer.token)).data.mine;
+const oldLeader = afterTransfer.members.find((m) => m.nickname.includes('Адмирал') || m.role === 'OFFICER');
+check(
+  'новый лидер получил права, старый стал офицером',
+  afterTransfer.role === 'LEADER' && afterTransfer.members.some((m) => m.role === 'OFFICER'),
+  `роли: ${afterTransfer.members.map((m) => m.role).join(', ')}`,
+);
+
+const oldLeaderDisband = await api('POST', '/api/syndicates/disband', undefined, leader.token);
+check('бывший лидер больше не может распустить синдикат', oldLeaderDisband.status === 403, `HTTP ${oldLeaderDisband.status}`);
+
+// Возвращаем лидерство, чтобы уборка прошла от исходного аккаунта.
+await api('POST', `/api/syndicates/members/${(await api('GET', '/api/syndicates', undefined, officer.token)).data.mine.members.find((m) => m.role === 'OFFICER' && m.nickname.includes('Адмирал')).commanderId}/role`, { role: 'LEADER' }, officer.token);
+
 /* ---------- Уборка ---------- */
-await api('POST', '/api/syndicates/leave', undefined, member.token);
-await api('POST', '/api/syndicates/leave', undefined, officer.token);
-await api('POST', '/api/syndicates/leave', undefined, outsider.token);
+for (const account of [member, officer, outsider]) {
+  await api('POST', '/api/syndicates/leave', undefined, account.token);
+}
 const disband = await api('POST', '/api/syndicates/disband', undefined, leader.token);
 check('лидер распустил синдикат', disband.status === 200, JSON.stringify(disband.data));
 await api('POST', '/api/syndicates/disband', undefined, rival.token);

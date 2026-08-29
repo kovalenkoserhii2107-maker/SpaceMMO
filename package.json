@@ -14,7 +14,8 @@
     "prisma:migrate": "prisma migrate dev",
     "check:rules": "tsx src/scripts/checkRules.ts",
     "audit": "tsc -p tsconfig.audit.json",
-    "legacy:password": "tsx src/scripts/legacyPassword.ts"
+    "legacy:password": "tsx src/scripts/legacyPassword.ts",
+    "test:stand": "tsx src/scripts/testStand.ts"
   },
   "keywords": [],
   "author": "",

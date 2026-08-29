@@ -38,6 +38,7 @@ import {
   type TechnologyType,
 } from './techTree.js';
 import { describeComposition, MISSION_LABELS, type FleetMission } from './fleets.js';
+import { defenseCombatProfile, shipCombatProfile } from './combat.js';
 import {
   DEFENSE_TYPES,
   defenseCost,
@@ -281,6 +282,7 @@ function defenseCard(
     type,
     label: defenseLabel(type),
     description: defenseDescription(type),
+    combat: defenseCombatProfile(type),
     cost,
     unitSeconds: defenseUnitSeconds(type, state.levels.SHIPYARD, systemModifiers(state.anomaly)),
     owned: state.defenses[type],
@@ -347,6 +349,7 @@ function shipCard(type: ShipType, state: BaseRuntimeState, commander: CommanderR
     type,
     label: shipLabel(type),
     description: shipDescription(type),
+    combat: shipCombatProfile(type),
     cost,
     unitSeconds: shipUnitSeconds(type, state.levels.SHIPYARD, systemModifiers(state.anomaly)),
     owned: state.ships[type],

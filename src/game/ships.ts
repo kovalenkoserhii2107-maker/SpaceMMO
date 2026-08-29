@@ -1,12 +1,25 @@
 /**
- * Верфь и базовые классы кораблей (Этап 2).
- * Перемещение флота, грузоподъемность и бой — следующие этапы, здесь только постройка.
+ * Верфь и классы кораблей.
+ *
+ * Этап 10: у каждого класса появился боевой профиль — тип урона и слои защиты.
+ * Экономика (цена, время, требования) живет здесь, а математика боя — в combat.ts.
  */
-import { NEUTRAL_MODIFIERS, type BuildingLevels, type ResourceAmounts, type SystemModifiers } from './rules.js';
+import {
+  NEUTRAL_MODIFIERS,
+  type BuildingLevels,
+  type ResourceAmounts,
+  type SystemModifiers,
+} from './rules.js';
 import type { Requirement, TechLevels, TechnologyType } from './techTree.js';
 import { techLabel } from './techTree.js';
 
-export const SHIP_TYPES = ['PROBE', 'TRANSPORTER', 'LIGHT_FIGHTER'] as const;
+export const SHIP_TYPES = [
+  'PROBE',
+  'TRANSPORTER',
+  'LIGHT_FIGHTER',
+  'HEAVY_CRUISER',
+  'ION_FRIGATE',
+] as const;
 
 export type ShipType = (typeof SHIP_TYPES)[number];
 
@@ -17,7 +30,7 @@ export function isShipType(value: unknown): value is ShipType {
 }
 
 export function emptyShipCounts(): ShipCounts {
-  return { PROBE: 0, TRANSPORTER: 0, LIGHT_FIGHTER: 0 };
+  return { PROBE: 0, TRANSPORTER: 0, LIGHT_FIGHTER: 0, HEAVY_CRUISER: 0, ION_FRIGATE: 0 };
 }
 
 interface ShipDefinition {
@@ -33,7 +46,7 @@ interface ShipDefinition {
 const SHIPS: Record<ShipType, ShipDefinition> = {
   PROBE: {
     label: 'Зонд-разведчик',
-    description: 'Дешевый разведывательный дрон.',
+    description: 'Дешевый разведывательный дрон. Без оружия и защиты.',
     cost: { metal: 60, crystal: 20, deuterium: 10 },
     baseSeconds: 20,
     shipyardLevel: 1,
@@ -41,7 +54,7 @@ const SHIPS: Record<ShipType, ShipDefinition> = {
   },
   TRANSPORTER: {
     label: 'Малый транспорт',
-    description: 'Грузовое судно для перевозки ресурсов.',
+    description: 'Грузовое судно. Без оружия, только корпус.',
     cost: { metal: 200, crystal: 60, deuterium: 20 },
     baseSeconds: 60,
     shipyardLevel: 2,
@@ -49,11 +62,27 @@ const SHIPS: Record<ShipType, ShipDefinition> = {
   },
   LIGHT_FIGHTER: {
     label: 'Легкий истребитель',
-    description: 'Базовый боевой корабль сопровождения.',
+    description: 'Лазерный урон, только корпус. Дешев и универсален.',
     cost: { metal: 300, crystal: 100, deuterium: 0 },
     baseSeconds: 45,
     shipyardLevel: 2,
     requires: { COMBUSTION_DRIVE: 1 },
+  },
+  HEAVY_CRUISER: {
+    label: 'Тяжелый крейсер',
+    description: 'Кинетический урон и толстая броня. Ломает броню, вязнет в щитах.',
+    cost: { metal: 1200, crystal: 400, deuterium: 100 },
+    baseSeconds: 180,
+    shipyardLevel: 3,
+    requires: { COMBUSTION_DRIVE: 2 },
+  },
+  ION_FRIGATE: {
+    label: 'Ионный фрегат',
+    description: 'Ионный урон и сильные щиты. Разбирает щиты, буксует против брони.',
+    cost: { metal: 500, crystal: 600, deuterium: 150 },
+    baseSeconds: 150,
+    shipyardLevel: 4,
+    requires: { HYPERSPACE_PHYSICS: 1 },
   },
 };
 

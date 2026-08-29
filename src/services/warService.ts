@@ -60,18 +60,31 @@ export interface DiplomacyView {
     enemyLosses: Array<{ label: string; lost: number; before: number }>;
     attackerPower: number;
     defenderPower: number;
+    /** Куда ушел мой урон и урон противника: щиты, броня, корпус. */
+    myDamage: DamageReport | null;
+    enemyDamage: DamageReport | null;
     createdAt: number;
   }>;
+}
+
+/** Сводка о том, куда ушел урон стороны — основа понятного отчета. */
+interface DamageReport {
+  shield: number;
+  armor: number;
+  hull: number;
+  damageMix: Array<{ type: string; label: string; amount: number }>;
 }
 
 interface BattleData {
   planetName: string;
   attackerName: string;
   defenderName: string;
-  attackerPower: { strength: number };
-  defenderPower: { strength: number };
+  attackerPower: { effectiveHp: number; firepower: number };
+  defenderPower: { effectiveHp: number; firepower: number };
   attackerLosses: Array<{ label: string; lost: number; before: number }>;
   defenderLosses: Array<{ label: string; lost: number; before: number }>;
+  attackerDamageReport?: DamageReport;
+  defenderDamageReport?: DamageReport;
   plunder: { metal: number; crystal: number };
 }
 
@@ -206,8 +219,10 @@ export async function getDiplomacy(commanderId: string): Promise<DiplomacyView> 
         plunder: { metal: report.plunderMetal, crystal: report.plunderCrystal },
         myLosses: role === 'ATTACKER' ? data.attackerLosses : data.defenderLosses,
         enemyLosses: role === 'ATTACKER' ? data.defenderLosses : data.attackerLosses,
-        attackerPower: Math.round(data.attackerPower.strength),
-        defenderPower: Math.round(data.defenderPower.strength),
+        attackerPower: Math.round(data.attackerPower?.firepower ?? 0),
+        defenderPower: Math.round(data.defenderPower?.firepower ?? 0),
+        myDamage: (role === 'ATTACKER' ? data.attackerDamageReport : data.defenderDamageReport) ?? null,
+        enemyDamage: (role === 'ATTACKER' ? data.defenderDamageReport : data.attackerDamageReport) ?? null,
         createdAt: report.createdAt.getTime(),
       };
     }),
