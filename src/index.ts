@@ -10,6 +10,7 @@ import { authRouter } from './routes/auth.js';
 import { gameRouter } from './routes/game.js';
 import { marketRouter } from './routes/market.js';
 import { warRouter } from './routes/war.js';
+import { syndicateRouter } from './routes/syndicate.js';
 import { verifyToken } from './services/authService.js';
 import { prisma } from './db/prisma.js';
 import { ensureAchievements } from './services/achievementService.js';
@@ -34,6 +35,7 @@ app.get('/api/health', (_req, res: Response<HealthResponse>) => {
 app.use('/api/auth', authRouter);
 app.use('/api/market', marketRouter);
 app.use('/api/war', warRouter);
+app.use('/api/syndicates', syndicateRouter);
 app.use('/api', gameRouter);
 
 const httpServer = createServer(app);

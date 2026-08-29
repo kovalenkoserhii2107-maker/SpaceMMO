@@ -8,6 +8,7 @@
 // ЭТАП 7: экспедиции в глубокий космос и PvE-события.
 // ЭТАП 8: User отвечает только за авторизацию, игровая личность вынесена
 // в Commander, добавлены достижения.
+// ЭТАП 9: синдикаты, общий банк, заявки на вступление и войны альянсов.
 
 generator client {
   provider = "prisma-client"
@@ -57,27 +58,137 @@ model Commander {
   battlesWon  Int @default(0)
   battlesLost Int @default(0)
 
+  /// Членство в синдикате (Этап 9).
+  syndicateId   String?
+  syndicateRole SyndicateRole?
+
   createdAt  DateTime @default(now())
   lastSeenAt DateTime @default(now())
 
-  user         User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  bases        Base[]
-  researches   Research[]
-  researchJob  ResearchJob?
-  fleets       Fleet[]
-  scans        PlanetScan[]
-  hubStorages  HubStorage[]
-  orders       MarketOrder[]
-  purchases    Trade[]                @relation("TradeBuyer")
-  sales        Trade[]                @relation("TradeSeller")
-  expeditions  ExpeditionReport[]
-  attacksMade  BattleReport[]         @relation("BattleAttacker")
-  attacksTaken BattleReport[]         @relation("BattleDefender")
-  warsStarted  WarDeclaration[]       @relation("WarAggressor")
-  warsAgainst  WarDeclaration[]       @relation("WarTarget")
-  achievements CommanderAchievement[]
+  user             User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  syndicate        Syndicate?             @relation("SyndicateMembers", fields: [syndicateId], references: [id], onDelete: SetNull)
+  leadingSyndicate Syndicate?             @relation("SyndicateLeader")
+  applications     SyndicateApplication[] @relation("ApplicationAuthor")
+  reviewed         SyndicateApplication[] @relation("ApplicationReviewer")
+  bankOperations   SyndicateTransaction[]
+  bases            Base[]
+  researches       Research[]
+  researchJob      ResearchJob?
+  fleets           Fleet[]
+  scans            PlanetScan[]
+  hubStorages      HubStorage[]
+  orders           MarketOrder[]
+  purchases        Trade[]                @relation("TradeBuyer")
+  sales            Trade[]                @relation("TradeSeller")
+  expeditions      ExpeditionReport[]
+  attacksMade      BattleReport[]         @relation("BattleAttacker")
+  attacksTaken     BattleReport[]         @relation("BattleDefender")
+  warsStarted      WarDeclaration[]       @relation("WarAggressor")
+  warsAgainst      WarDeclaration[]       @relation("WarTarget")
+  achievements     CommanderAchievement[]
 
   @@map("commanders")
+}
+
+/// Синдикат — объединение командиров с общим банком и дипломатией.
+model Syndicate {
+  id       String @id @default(cuid())
+  name     String @unique
+  /// Короткий тег для отображения рядом с позывным.
+  tag      String @unique
+  leaderId String @unique
+
+  createdAt DateTime @default(now())
+
+  leader       Commander              @relation("SyndicateLeader", fields: [leaderId], references: [id], onDelete: Cascade)
+  members      Commander[]            @relation("SyndicateMembers")
+  bank         SyndicateBank?
+  applications SyndicateApplication[]
+  transactions SyndicateTransaction[]
+  warsStarted  SyndicateWar[]         @relation("SyndicateWarAggressor")
+  warsAgainst  SyndicateWar[]         @relation("SyndicateWarTarget")
+
+  @@map("syndicates")
+}
+
+/// Общий счет синдиката: пополняется пожертвованиями участников.
+model SyndicateBank {
+  id          String @id @default(cuid())
+  syndicateId String @unique
+  credits     Float  @default(0)
+
+  syndicate Syndicate @relation(fields: [syndicateId], references: [id], onDelete: Cascade)
+
+  @@map("syndicate_banks")
+}
+
+/// Журнал операций банка: видно, кто сколько внес.
+model SyndicateTransaction {
+  id          String          @id @default(cuid())
+  syndicateId String
+  commanderId String?
+  kind        SyndicateTxKind
+  amount      Float
+  comment     String?
+  createdAt   DateTime        @default(now())
+
+  syndicate Syndicate  @relation(fields: [syndicateId], references: [id], onDelete: Cascade)
+  commander Commander? @relation(fields: [commanderId], references: [id], onDelete: SetNull)
+
+  @@index([syndicateId, createdAt])
+  @@map("syndicate_transactions")
+}
+
+/// Заявка на вступление. Одобряет лидер или офицер.
+model SyndicateApplication {
+  id          String            @id @default(cuid())
+  syndicateId String
+  commanderId String
+  status      ApplicationStatus @default(PENDING)
+
+  createdAt    DateTime  @default(now())
+  resolvedAt   DateTime?
+  resolvedById String?
+
+  syndicate  Syndicate  @relation(fields: [syndicateId], references: [id], onDelete: Cascade)
+  commander  Commander  @relation("ApplicationAuthor", fields: [commanderId], references: [id], onDelete: Cascade)
+  resolvedBy Commander? @relation("ApplicationReviewer", fields: [resolvedById], references: [id], onDelete: SetNull)
+
+  @@unique([syndicateId, commanderId])
+  @@map("syndicate_applications")
+}
+
+/// Война между синдикатами. Объявляют лидеры и офицеры.
+model SyndicateWar {
+  id           String   @id @default(cuid())
+  aggressorId  String
+  targetId     String
+  declaredById String?
+  declaredAt   DateTime @default(now())
+
+  aggressor Syndicate @relation("SyndicateWarAggressor", fields: [aggressorId], references: [id], onDelete: Cascade)
+  target    Syndicate @relation("SyndicateWarTarget", fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@unique([aggressorId, targetId])
+  @@map("syndicate_wars")
+}
+
+enum SyndicateRole {
+  LEADER
+  OFFICER
+  MEMBER
+}
+
+enum ApplicationStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+enum SyndicateTxKind {
+  DONATION
+  FOUNDING
+  PAYOUT
 }
 
 /// Каталог достижений. Наполняется при старте сервера.

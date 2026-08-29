@@ -58,6 +58,7 @@ import {
 } from './defenses.js';
 import { plunderAmount, resolveBattle, type SideForces } from './combat.js';
 import { checkArchitect, checkPirateBane } from '../services/achievementService.js';
+import { canAttack } from '../services/warService.js';
 import {
   buildSeconds,
   emptyLevels,
@@ -508,16 +509,13 @@ class GameLoop {
         if (planet.base.commanderId === commanderId) {
           return { ok: false, error: 'Нельзя атаковать собственную колонию' };
         }
-        const war = await prisma.warDeclaration.findFirst({
-          where: {
-            OR: [
-              { aggressorId: commanderId, targetId: planet.base.commanderId },
-              { aggressorId: planet.base.commanderId, targetId: commanderId },
-            ],
-          },
-        });
-        if (!war) {
-          return { ok: false, error: 'Сначала объяви войну этому игроку' };
+        // Право на атаку определяет дипломатия: личная война у одиночек
+        // или война синдикатов у тех, кто состоит в альянсе.
+        if (!(await canAttack(commanderId, planet.base.commanderId))) {
+          return {
+            ok: false,
+            error: 'Нет состояния войны с этим командиром: объяви войну сам или через синдикат',
+          };
         }
       }
 

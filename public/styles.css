@@ -535,3 +535,41 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .achievement.unlocked { opacity: 1; border-color: rgba(126, 231, 135, 0.4); }
 .achievement .icon { font-size: 22px; }
 .achievement .when { font-size: 11px; color: var(--ok); }
+
+/* ---------- Этап 9: синдикаты ---------- */
+.syndicate-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+@media (max-width: 900px) { .syndicate-grid { grid-template-columns: 1fr; } }
+
+.syndicate-header {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.syndicate-header h3 { margin: 0 0 4px; font-size: 18px; }
+.syndicate-header .tag { color: var(--accent); }
+.syndicate-header .bank { text-align: right; font-size: 13px; color: var(--muted); }
+.syndicate-header .bank b { display: block; font-size: 20px; color: #7ee787; }
+
+.member-row { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.member-row .role { font-size: 11px; color: var(--muted); }
+.member-row .role.LEADER { color: var(--accent); }
+.member-row .role.OFFICER { color: var(--accent-2); }
+.member-actions { display: flex; gap: 6px; }
+.member-actions button { padding: 4px 10px; font-size: 11px; }
+
+.donate-form { display: flex; gap: 8px; align-items: center; }
+.donate-form input {
+  flex: 1;
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(8, 12, 24, 0.8);
+  color: var(--text);
+  font: inherit;
+}

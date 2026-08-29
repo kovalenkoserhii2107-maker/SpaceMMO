@@ -40,6 +40,7 @@
     commanderAvatar: $('commander-avatar'),
     avatarPicker: $('avatar-picker'),
     achievements: $('achievements'),
+    syndicatePanel: $('syndicate-panel'),
     userName: $('user-name'),
     connStatus: $('conn-status'),
     logout: $('logout'),
@@ -439,6 +440,7 @@
       void loadGalaxy();
     }
     if (state.activeTab === 'market') void loadMarket();
+    if (state.activeTab === 'syndicate') void loadSyndicate();
     if (state.activeTab === 'war') {
       void loadWar();
       void refreshProfile();
@@ -1644,6 +1646,14 @@
 
   function renderDiplomacy() {
     el.diplomacy.innerHTML = '';
+    const mySyndicate = war.data && war.data.syndicate;
+
+    // В синдикате дипломатия ведется на уровне альянсов, а не отдельных командиров.
+    if (mySyndicate) {
+      renderSyndicateDiplomacy(mySyndicate);
+      return;
+    }
+
     const players = (war.data && war.data.players) || [];
 
     if (!players.length) {
@@ -1680,6 +1690,57 @@
 
       item.append(info, button);
       el.diplomacy.appendChild(item);
+    }
+  }
+
+  /** Войны синдикатов: объявлять и мириться могут лидер и офицеры. */
+  function renderSyndicateDiplomacy(mine) {
+    const canDeclare = mine.role === 'LEADER' || mine.role === 'OFFICER';
+
+    const header = document.createElement('div');
+    header.className = 'queue-item';
+    header.innerHTML =
+      `<b>Синдикат [${mine.tag}] ${mine.name}</b>` +
+      `<span>${canDeclare
+        ? 'ты можешь объявлять войну и заключать мир от лица синдиката'
+        : 'войну объявляют лидер и офицеры — личные войны недоступны'}</span>`;
+    el.diplomacy.appendChild(header);
+
+    const others = (war.data.otherSyndicates || []);
+    if (!others.length) {
+      const empty = document.createElement('div');
+      empty.className = 'queue-item';
+      empty.textContent = 'Других синдикатов в галактике пока нет';
+      el.diplomacy.appendChild(empty);
+      return;
+    }
+
+    for (const other of others) {
+      const row = document.createElement('div');
+      row.className = 'queue-item war-item';
+
+      const info = document.createElement('div');
+      const title = document.createElement('b');
+      title.textContent = `[${other.tag}] ${other.name}`;
+      const status = document.createElement('div');
+      status.className = other.atWar ? 'status-war' : 'status-peace';
+      status.textContent = other.atWar ? 'война синдикатов' : 'мир';
+      info.append(title, status);
+
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = other.atWar ? 'ghost' : 'primary';
+      button.textContent = other.atWar ? 'Заключить мир' : 'Объявить войну';
+      button.disabled = !canDeclare;
+      button.addEventListener('click', async () => {
+        await send(`/api/war/syndicate/${other.atWar ? 'peace' : 'declare'}`, {
+          targetSyndicateId: other.syndicateId || other.id,
+        });
+        await loadWar();
+      });
+
+      row.append(info, button);
+      el.diplomacy.appendChild(row);
     }
   }
 
@@ -2024,6 +2085,275 @@
 
       el.expeditions.appendChild(card);
     }
+  }
+
+
+  /* ---------- Этап 9: синдикаты ---------- */
+
+  const syndicate = { data: null };
+  const ROLE_LABELS = { LEADER: 'лидер', OFFICER: 'офицер', MEMBER: 'участник' };
+  const TX_LABELS = { DONATION: 'пожертвование', FOUNDING: 'основание', PAYOUT: 'выплата' };
+
+  async function loadSyndicate() {
+    const result = await api('/api/syndicates');
+    if (!result.ok) return;
+    syndicate.data = result.data;
+    renderSyndicate();
+  }
+
+  /** Отправка действия синдиката с последующим обновлением панели. */
+  async function syndicateAction(path, body) {
+    const result = await api(path, { method: 'POST', body: JSON.stringify(body || {}) });
+    showBuildMessage(result.data.message || result.data.error || 'Готово', result.ok);
+    await loadSyndicate();
+    await loadWar();
+    return result.ok;
+  }
+
+  function renderSyndicate() {
+    const data = syndicate.data;
+    if (!data) return;
+    el.syndicatePanel.innerHTML = '';
+    if (data.mine) renderMySyndicate(data);
+    else renderSyndicateList(data);
+  }
+
+  /* --- без синдиката: список и создание --- */
+  function renderSyndicateList(data) {
+    const grid = document.createElement('div');
+    grid.className = 'syndicate-grid';
+
+    const create = document.createElement('div');
+    create.className = 'hub-card';
+    create.innerHTML =
+      '<h3 class="section-title">Создать синдикат</h3>' +
+      `<div class="hub-storage">Основание стоит <b>${fmt(data.foundingCost)} ₴</b> ` +
+      `(на счету ${fmt(data.credits)} ₴). Основатель становится лидером.</div>`;
+
+    const nameField = document.createElement('label');
+    nameField.className = 'field';
+    nameField.innerHTML = '<span>Название</span>';
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.maxLength = 32;
+    nameField.appendChild(nameInput);
+
+    const tagField = document.createElement('label');
+    tagField.className = 'field';
+    tagField.innerHTML = '<span>Тег (2-5 символов)</span>';
+    const tagInput = document.createElement('input');
+    tagInput.type = 'text';
+    tagInput.maxLength = 5;
+    tagField.appendChild(tagInput);
+
+    const createButton = document.createElement('button');
+    createButton.type = 'button';
+    createButton.className = 'primary';
+    createButton.textContent = 'Основать синдикат';
+    createButton.disabled = data.credits < data.foundingCost;
+    createButton.addEventListener('click', () =>
+      syndicateAction('/api/syndicates', { name: nameInput.value, tag: tagInput.value }));
+
+    create.append(nameField, tagField, createButton);
+
+    const list = document.createElement('div');
+    list.className = 'hub-card';
+    list.innerHTML = '<h3 class="section-title">Действующие синдикаты</h3>';
+
+    if (!data.list.length) {
+      const empty = document.createElement('div');
+      empty.className = 'hub-storage';
+      empty.textContent = 'Синдикатов пока нет — станешь первым.';
+      list.appendChild(empty);
+    }
+
+    for (const item of data.list) {
+      const row = document.createElement('div');
+      row.className = 'queue-item member-row';
+
+      const info = document.createElement('div');
+      info.innerHTML =
+        `<b>[${item.tag}] ${item.name}</b>` +
+        `<div class="role">лидер: ${item.leader} · участников: ${item.members}</div>`;
+
+      const action = document.createElement('button');
+      action.type = 'button';
+      action.className = 'ghost';
+      if (item.applicationStatus === 'PENDING') {
+        action.textContent = 'Заявка отправлена';
+        action.disabled = true;
+      } else {
+        action.textContent = 'Подать заявку';
+        action.addEventListener('click', () => syndicateAction(`/api/syndicates/${item.id}/apply`));
+      }
+
+      row.append(info, action);
+      list.appendChild(row);
+    }
+
+    grid.append(create, list);
+    el.syndicatePanel.appendChild(grid);
+  }
+
+  /* --- свой синдикат --- */
+  function renderMySyndicate(data) {
+    const mine = data.mine;
+    const canReview = mine.role === 'LEADER' || mine.role === 'OFFICER';
+    const isLeader = mine.role === 'LEADER';
+
+    const header = document.createElement('div');
+    header.className = 'syndicate-header';
+    header.innerHTML =
+      `<div><h3><span class="tag">[${mine.tag}]</span> ${mine.name}</h3>` +
+      `<div class="role">твоя роль: <b>${ROLE_LABELS[mine.role]}</b> · участников: ${mine.members.length} · ` +
+      `основан ${new Date(mine.createdAt).toLocaleDateString('ru-RU')}</div></div>` +
+      `<div class="bank">банк синдиката<b>${fmt(mine.bank)} ₴</b>личный счет: ${fmt(data.credits)} ₴</div>`;
+    el.syndicatePanel.appendChild(header);
+
+    const grid = document.createElement('div');
+    grid.className = 'syndicate-grid';
+
+    // Пожертвования
+    const bank = document.createElement('div');
+    bank.className = 'hub-card';
+    bank.innerHTML = '<h3 class="section-title">Пожертвование в банк</h3>';
+    const donateForm = document.createElement('div');
+    donateForm.className = 'donate-form';
+    const amount = document.createElement('input');
+    amount.type = 'number';
+    amount.min = '1';
+    amount.value = '100';
+    const donateButton = document.createElement('button');
+    donateButton.type = 'button';
+    donateButton.className = 'primary';
+    donateButton.textContent = 'Внести';
+    donateButton.addEventListener('click', () =>
+      syndicateAction('/api/syndicates/donate', { amount: Number(amount.value) }));
+    donateForm.append(amount, donateButton);
+    bank.appendChild(donateForm);
+
+    const log = document.createElement('div');
+    log.className = 'queue';
+    for (const tx of mine.transactions) {
+      const row = document.createElement('div');
+      row.className = 'queue-item';
+      const title = document.createElement('b');
+      title.textContent = `${tx.nickname || 'система'} — ${fmt(tx.amount)} ₴`;
+      const meta = document.createElement('span');
+      meta.textContent = `${TX_LABELS[tx.kind] || tx.kind} · ${new Date(tx.createdAt).toLocaleString('ru-RU')}`;
+      row.append(title, meta);
+      log.appendChild(row);
+    }
+    if (!mine.transactions.length) {
+      const empty = document.createElement('div');
+      empty.className = 'queue-item';
+      empty.textContent = 'Операций пока не было';
+      log.appendChild(empty);
+    }
+    bank.appendChild(log);
+
+    // Состав
+    const roster = document.createElement('div');
+    roster.className = 'hub-card';
+    roster.innerHTML = '<h3 class="section-title">Состав синдиката</h3>';
+
+    for (const member of mine.members) {
+      const row = document.createElement('div');
+      row.className = 'queue-item member-row';
+      const info = document.createElement('div');
+      info.innerHTML =
+        `<b>${member.nickname}</b><div class="role ${member.role}">${ROLE_LABELS[member.role]} · ` +
+        `боев ${member.battlesWon}/${member.battlesLost}</div>`;
+
+      const actions = document.createElement('div');
+      actions.className = 'member-actions';
+      // Управление составом — только у лидера.
+      if (isLeader && member.role !== 'LEADER') {
+        const promote = document.createElement('button');
+        promote.type = 'button';
+        promote.className = 'ghost';
+        promote.textContent = member.role === 'OFFICER' ? 'Снять офицера' : 'В офицеры';
+        promote.addEventListener('click', () =>
+          syndicateAction(`/api/syndicates/members/${member.commanderId}/role`, {
+            role: member.role === 'OFFICER' ? 'MEMBER' : 'OFFICER',
+          }));
+
+        const kick = document.createElement('button');
+        kick.type = 'button';
+        kick.className = 'ghost';
+        kick.textContent = 'Исключить';
+        kick.addEventListener('click', () =>
+          syndicateAction(`/api/syndicates/members/${member.commanderId}/kick`));
+
+        actions.append(promote, kick);
+      }
+
+      row.append(info, actions);
+      roster.appendChild(row);
+    }
+
+    grid.append(bank, roster);
+    el.syndicatePanel.appendChild(grid);
+
+    // Заявки видны только тем, кто их разбирает
+    if (canReview) {
+      const applications = document.createElement('div');
+      applications.className = 'hub-card';
+      applications.innerHTML = '<h3 class="section-title">Заявки на вступление</h3>';
+
+      if (!mine.applications.length) {
+        const empty = document.createElement('div');
+        empty.className = 'hub-storage';
+        empty.textContent = 'Новых заявок нет';
+        applications.appendChild(empty);
+      }
+
+      for (const application of mine.applications) {
+        const row = document.createElement('div');
+        row.className = 'queue-item member-row';
+        const info = document.createElement('div');
+        info.innerHTML =
+          `<b>${application.nickname}</b><div class="role">подана ` +
+          `${new Date(application.createdAt).toLocaleString('ru-RU')}</div>`;
+
+        const actions = document.createElement('div');
+        actions.className = 'member-actions';
+        const accept = document.createElement('button');
+        accept.type = 'button';
+        accept.className = 'primary';
+        accept.textContent = 'Принять';
+        accept.addEventListener('click', () =>
+          syndicateAction(`/api/syndicates/applications/${application.id}/approve`));
+        const reject = document.createElement('button');
+        reject.type = 'button';
+        reject.className = 'ghost';
+        reject.textContent = 'Отклонить';
+        reject.addEventListener('click', () =>
+          syndicateAction(`/api/syndicates/applications/${application.id}/reject`));
+
+        actions.append(accept, reject);
+        row.append(info, actions);
+        applications.appendChild(row);
+      }
+      el.syndicatePanel.appendChild(applications);
+    }
+
+    // Выход и роспуск
+    const footer = document.createElement('div');
+    footer.className = 'hub-card';
+    const exit = document.createElement('button');
+    exit.type = 'button';
+    exit.className = 'ghost';
+    if (isLeader) {
+      exit.textContent = 'Распустить синдикат';
+      exit.addEventListener('click', () => syndicateAction('/api/syndicates/disband'));
+      footer.innerHTML = '<div class="hub-storage">Роспуск вернет остаток банка лидеру.</div>';
+    } else {
+      exit.textContent = 'Покинуть синдикат';
+      exit.addEventListener('click', () => syndicateAction('/api/syndicates/leave'));
+    }
+    footer.appendChild(exit);
+    el.syndicatePanel.appendChild(footer);
   }
 
   /* ---------- Старт ---------- */
