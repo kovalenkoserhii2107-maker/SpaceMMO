@@ -1,4 +1,4 @@
-import type { BuildingType, ResourceAmounts } from '../game/rules.js';
+import type { BaseStock, BuildingType, ResourceAmounts } from '../game/rules.js';
 import type { Requirement, TechLevels, TechnologyType } from '../game/techTree.js';
 import type { ShipCounts, ShipType } from '../game/ships.js';
 import type { FleetMission } from '../game/fleets.js';
@@ -61,6 +61,9 @@ export interface BaseSnapshot {
   planetId: string;
   planetName: string;
   systemName: string;
+  systemId: string;
+  /** Аномалия системы: 'NONE' или 'BLACK_HOLE'. */
+  anomaly: string;
   position: number;
   planetType: string;
   size: number;
@@ -69,9 +72,10 @@ export interface BaseSnapshot {
     crystal: number;
     deuterium: number;
     energy: number;
+    antimatter: number;
   };
-  resources: ResourceAmounts;
-  productionPerSecond: ResourceAmounts;
+  resources: BaseStock;
+  productionPerSecond: BaseStock;
   energy: {
     output: number;
     usage: number;
@@ -163,8 +167,36 @@ export interface SystemMap {
   systemId: string;
   systemName: string;
   starClass: string;
+  /** 'NONE' или 'BLACK_HOLE'. */
+  anomaly: string;
+  galaxyX: number;
+  galaxyY: number;
+  /** Родная система игрока. */
+  isHome: boolean;
   planets: PlanetView[];
   hub: HubView | null;
+}
+
+/** Система на макро-карте галактики. */
+export interface GalaxySystemView {
+  systemId: string;
+  name: string;
+  galaxyX: number;
+  galaxyY: number;
+  starClass: string;
+  anomaly: string;
+  planetCount: number;
+  isHome: boolean;
+  hasOwnColony: boolean;
+  /** В системе есть хоть одна колония (видно по излучению баз). */
+  colonized: boolean;
+  /** Сколько планет системы игрок успел разведать. */
+  scannedPlanets: number;
+}
+
+export interface GalaxyMap {
+  homeSystemId: string;
+  systems: GalaxySystemView[];
 }
 
 export interface StateUpdatePayload {

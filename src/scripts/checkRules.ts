@@ -2,6 +2,7 @@
 import {
   buildSeconds,
   emptyLevels,
+  systemModifiers,
   energyEfficiency,
   energyOutput,
   energyUsage,
@@ -14,7 +15,7 @@ import { fleetCapacity, planFlight } from '../game/fleets.js';
 import { plunderAmount, resolveBattle } from '../game/combat.js';
 import { emptyDefenseCounts, type DefenseCounts } from '../game/defenses.js';
 
-const richness = { metal: 1.0, crystal: 1.0, deuterium: 1.0, energy: 1.0 };
+const richness = { metal: 1.0, crystal: 1.0, deuterium: 1.0, energy: 1.0, antimatter: 1.0 };
 const techs = emptyTechLevels();
 const bonuses = economyBonuses(techs);
 
@@ -66,7 +67,8 @@ console.log('\n--- Логистика (реактивный двигатель �
   ];
   for (const [label, ships] of cases) {
     for (const distance of [1, 3]) {
-      const plan = planFlight(ships, drive, 1, 1 + distance);
+      const home = { position: 1, system: { galaxyX: 5, galaxyY: 5 } };
+      const plan = planFlight(ships, drive, home, { position: 1 + distance, system: home.system });
       console.log(
         `${label}, ${distance} орбит: ${plan.flightSeconds} с в одну сторону, ` +
           `трюмы ${plan.capacity}, топливо туда-обратно ${plan.fuel} De`,
@@ -113,5 +115,36 @@ console.log('\n--- Бой (Этап 5) ---');
         `защитника ${(outcome.defenderLossRatio * 100).toFixed(0)}%, ` +
         `вывезти можно ${loot.metal + loot.crystal}`,
     );
+  }
+}
+
+console.log('\n--- Этап 6: антиматерия и аномалии ---');
+{
+  const levels = { ...emptyLevels(), SOLAR_PLANT: 12, ANTIMATTER_SYNTH: 3 };
+  const rich = { ...richness, antimatter: 1.2 };
+  for (const [label, anomaly] of [['обычная система', 'NONE'], ['черная дыра', 'BLACK_HOLE']] as const) {
+    const mods = systemModifiers(anomaly);
+    const production = productionPerSecond(levels, rich, economyBonuses(techs), 0, mods);
+    console.log(
+      `${label}: антиматерия ${production.antimatter.toFixed(4)}/с, ` +
+        `стройка синтезатора ур.4 ${buildSeconds('ANTIMATTER_SYNTH', 4, mods)} с, ` +
+        `гиперфизика ур.1 ${researchSeconds('HYPERSPACE_PHYSICS', 1, 3, techs, mods)} с`,
+    );
+  }
+}
+
+console.log('\n--- Этап 6: гиперпрыжки ---');
+{
+  const home = { position: 2, system: { galaxyX: 4, galaxyY: 4 } };
+  const fleet: ShipCounts = { PROBE: 0, TRANSPORTER: 3, LIGHT_FIGHTER: 2 };
+  for (const [label, drive] of [['гипердвигатель ур.1', 1], ['гипердвигатель ур.4', 4]] as const) {
+    const withDrive = { ...emptyTechLevels(), COMBUSTION_DRIVE: 1, HYPERDRIVE: drive };
+    for (const target of [{ galaxyX: 7, galaxyY: 8 }, { galaxyX: 15, galaxyY: 16 }]) {
+      const plan = planFlight(fleet, withDrive, home, { position: 1, system: target });
+      console.log(
+        `${label}, дистанция ${plan.distance}: ${plan.flightSeconds} с в одну сторону, ` +
+          `антиматерии туда-обратно ${plan.antimatter}`,
+      );
+    }
   }
 }

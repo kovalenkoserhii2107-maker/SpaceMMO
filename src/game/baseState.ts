@@ -12,6 +12,8 @@ import {
   BUILDING_LABELS,
   BUILDING_TYPES,
   buildSeconds,
+  systemModifiers,
+  type BaseStock,
   energyEfficiency,
   energyOutput,
   energyUsage,
@@ -22,7 +24,6 @@ import {
   type BuildingLevels,
   type BuildingType,
   type PlanetRichness,
-  type ResourceAmounts,
 } from './rules.js';
 import {
   economyBonuses,
@@ -129,8 +130,13 @@ export interface BaseRuntimeState {
   position: number;
   size: number;
   systemName: string;
+  systemId: string;
+  /** Координаты системы на макро-карте — нужны для расчета прыжков. */
+  galaxy: { galaxyX: number; galaxyY: number };
+  /** Аномалия системы: у черной дыры искажается время. */
+  anomaly: string;
   richness: PlanetRichness;
-  resources: ResourceAmounts;
+  resources: BaseStock;
   levels: BuildingLevels;
   buildJob: BuildJobState | null;
   shipJobs: ShipJobState[];
@@ -171,14 +177,16 @@ export function accrue(state: BaseRuntimeState, techs: TechLevels, seconds: numb
     state.richness,
     economyBonuses(techs),
     defenseEnergyUsage(state.defenses),
+    systemModifiers(state.anomaly),
   );
-  const next = {
+  const next: BaseStock = {
     metal: state.resources.metal + perSecond.metal * seconds,
     crystal: state.resources.crystal + perSecond.crystal * seconds,
     deuterium: state.resources.deuterium + perSecond.deuterium * seconds,
+    antimatter: state.resources.antimatter + perSecond.antimatter * seconds,
   };
 
-  if (!Number.isFinite(next.metal) || !Number.isFinite(next.crystal) || !Number.isFinite(next.deuterium)) {
+  if (Object.values(next).some((value) => !Number.isFinite(value))) {
     console.error(`[game-loop] некорректное начисление на базе ${state.id}, склад не изменен`, {
       perSecond,
       seconds,
@@ -193,6 +201,7 @@ export function accrue(state: BaseRuntimeState, techs: TechLevels, seconds: numb
 
 export function toSnapshot(state: BaseRuntimeState, user: UserRuntimeState, now: number): BaseSnapshot {
   const bonuses = economyBonuses(user.techs);
+  const modifiers = systemModifiers(state.anomaly);
   const defenseDrain = defenseEnergyUsage(state.defenses);
   const output = energyOutput(state.levels, state.richness, bonuses);
   const usage = energyUsage(state.levels, defenseDrain);
@@ -204,6 +213,8 @@ export function toSnapshot(state: BaseRuntimeState, user: UserRuntimeState, now:
     planetId: state.planetId,
     planetName: state.planetName,
     systemName: state.systemName,
+    systemId: state.systemId,
+    anomaly: state.anomaly,
     position: state.position,
     planetType: state.planetType,
     size: state.size,
@@ -212,9 +223,10 @@ export function toSnapshot(state: BaseRuntimeState, user: UserRuntimeState, now:
       metal: round(state.resources.metal),
       crystal: round(state.resources.crystal),
       deuterium: round(state.resources.deuterium),
+      antimatter: Math.round(state.resources.antimatter * 1000) / 1000,
     },
     productionPerSecond: roundAll(
-      productionPerSecond(state.levels, state.richness, bonuses, defenseDrain),
+      productionPerSecond(state.levels, state.richness, bonuses, defenseDrain, modifiers),
     ),
     energy: {
       output: round(output),
@@ -293,7 +305,7 @@ function buildingCard(type: BuildingType, state: BaseRuntimeState): BuildingCard
     level: state.levels[type],
     nextLevel,
     cost,
-    seconds: buildSeconds(type, nextLevel),
+    seconds: buildSeconds(type, nextLevel, systemModifiers(state.anomaly)),
     canAfford: hasEnoughResources(state.resources, cost),
     requirements: missing,
     busy: state.buildJob !== null,
@@ -315,7 +327,13 @@ function technologyCard(
     level: user.techs[tech],
     nextLevel,
     cost,
-    seconds: researchSeconds(tech, nextLevel, state.levels.RESEARCH_LAB, user.techs),
+    seconds: researchSeconds(
+      tech,
+      nextLevel,
+      state.levels.RESEARCH_LAB,
+      user.techs,
+      systemModifiers(state.anomaly),
+    ),
     canAfford: hasEnoughResources(state.resources, cost),
     requirements: missingTechRequirements(tech, state.levels, user.techs),
     busy: user.research !== null,
@@ -392,10 +410,11 @@ function round(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
-function roundAll(amounts: ResourceAmounts): ResourceAmounts {
+function roundAll(amounts: BaseStock): BaseStock {
   return {
     metal: Math.round(amounts.metal * 1000) / 1000,
     crystal: Math.round(amounts.crystal * 1000) / 1000,
     deuterium: Math.round(amounts.deuterium * 1000) / 1000,
+    antimatter: Math.round(amounts.antimatter * 100000) / 100000,
   };
 }

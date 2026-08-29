@@ -12,9 +12,9 @@ export type PlanetVisibility = 'OWN' | 'SCANNED' | 'UNKNOWN';
 export interface ScanPayload {
   owner: string | null;
   colonized: boolean;
-  richness: { metal: number; crystal: number; deuterium: number; energy: number };
+  richness: { metal: number; crystal: number; deuterium: number; energy: number; antimatter: number };
   buildings: BuildingLevels | null;
-  resources: { metal: number; crystal: number; deuterium: number } | null;
+  resources: { metal: number; crystal: number; deuterium: number; antimatter: number } | null;
   fleet: ShipCounts | null;
 }
 

@@ -6,7 +6,7 @@
 import type { FlightPlan } from '../game/fleets.js';
 import type { MarketView } from '../services/marketService.js';
 import type { DiplomacyView } from '../services/warService.js';
-import type { StateUpdatePayload, SystemMap } from './socket.js';
+import type { GalaxyMap, StateUpdatePayload, SystemMap } from './socket.js';
 
 /** Единый формат ошибки: клиент показывает `error` пользователю. */
 export interface ErrorResponse {
@@ -34,6 +34,7 @@ export type StateResponse = StateUpdatePayload & {
 };
 
 export type MapResponse = SystemMap;
+export type GalaxyResponse = GalaxyMap;
 export type FlightPreviewResponse = FlightPlan;
 export type MarketResponse = MarketView;
 export type DiplomacyResponse = DiplomacyView;

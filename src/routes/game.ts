@@ -5,13 +5,14 @@ import { isTechnologyType } from '../game/techTree.js';
 import { emptyShipCounts, isShipType, SHIP_TYPES } from '../game/ships.js';
 import { isDefenseType } from '../game/defenses.js';
 import { isFleetMission, planFlight } from '../game/fleets.js';
-import { buildSystemMap } from '../services/mapService.js';
+import { buildGalaxyMap, buildSystemMap } from '../services/mapService.js';
 import { currentUser, requireAuth } from './middleware.js';
 import { amountsOrNull, nonNegativeInt, positiveInt } from './validation.js';
 import type {
   ActionResponse,
   ErrorResponse,
   FlightPreviewResponse,
+  GalaxyResponse,
   MapResponse,
   StateResponse,
 } from '../types/api.js';
@@ -58,8 +59,20 @@ gameRouter.post('/bases/:baseId/research', async (req, res: Response<ActionRespo
 });
 
 /** Карта системы с учетом тумана войны. */
+/** Макро-карта галактики: все системы с координатами. */
+gameRouter.get('/galaxy', async (req, res: Response<GalaxyResponse | ErrorResponse>) => {
+  const galaxy = await buildGalaxyMap(currentUser(req).id);
+  if (!galaxy) {
+    res.status(404).json({ error: 'Галактика не найдена' });
+    return;
+  }
+  res.json(galaxy);
+});
+
+/** Карта системы. Без параметра — родная система игрока. */
 gameRouter.get('/map', async (req, res: Response<MapResponse | ErrorResponse>) => {
-  const map = await buildSystemMap(currentUser(req).id);
+  const systemId = typeof req.query.systemId === 'string' ? req.query.systemId : undefined;
+  const map = await buildSystemMap(currentUser(req).id, systemId);
   if (!map) {
     res.status(404).json({ error: 'Система не найдена' });
     return;
@@ -140,8 +153,8 @@ gameRouter.post('/bases/:baseId/fleets/preview', async (req, res: Response<Fligh
     return;
   }
 
-  const target = await gameLoop.getTargetPosition(readTarget(body));
-  if (target === null) {
+  const target = await gameLoop.getTargetLocation(readTarget(body));
+  if (!target) {
     res.status(404).json({ error: 'Цель полета не найдена' });
     return;
   }
@@ -152,7 +165,7 @@ gameRouter.post('/bases/:baseId/fleets/preview', async (req, res: Response<Fligh
     return;
   }
 
-  res.json(planFlight(ships, user.techs, base.position, target));
+  res.json(planFlight(ships, user.techs, { position: base.position, system: base.galaxy }, target));
 });
 
 /** Отправить флот с базы на другую планету. */

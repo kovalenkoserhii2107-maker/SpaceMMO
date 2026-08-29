@@ -80,6 +80,11 @@
     defenseQueue: $('defense-queue'),
     diplomacy: $('diplomacy'),
     battles: $('battles'),
+    resAntimatter: $('res-antimatter'),
+    rateAntimatter: $('rate-antimatter'),
+    galaxyMap: $('galaxy-map'),
+    mapModes: document.querySelector('.map-modes'),
+    mapCaption: $('map-caption'),
   };
 
   const PLANET_TYPES = {
@@ -96,6 +101,8 @@
 
   const fmt = (value) => Math.floor(value).toLocaleString('ru-RU');
   const fmtRate = (value) => `+${value.toFixed(2)}/с`;
+  /** Антиматерия копится долями, поэтому мелкие значения показываем точнее. */
+  const fmtAmount = (value) => (value > 0 && value < 10 ? value.toFixed(2) : fmt(value));
 
   function fmtTime(seconds) {
     const total = Math.max(0, Math.round(seconds));
@@ -169,6 +176,7 @@
     applyState(data);
     connectSocket();
     await loadMap();
+    await loadGalaxy();
     await loadMarket();
     await loadWar();
   }
@@ -209,7 +217,10 @@
     for (const panel of document.querySelectorAll('[data-panel]')) {
       panel.hidden = panel.dataset.panel !== state.activeTab;
     }
-    if (state.activeTab === 'map') void loadMap();
+    if (state.activeTab === 'map') {
+      void loadMap();
+      void loadGalaxy();
+    }
     if (state.activeTab === 'market') void loadMarket();
     if (state.activeTab === 'war') void loadWar();
   });
@@ -272,6 +283,8 @@
     el.rateMetal.textContent = fmtRate(base.productionPerSecond.metal);
     el.rateCrystal.textContent = fmtRate(base.productionPerSecond.crystal);
     el.rateDeuterium.textContent = fmtRate(base.productionPerSecond.deuterium);
+    el.resAntimatter.textContent = fmt(base.resources.antimatter);
+    el.rateAntimatter.textContent = `+${base.productionPerSecond.antimatter.toFixed(3)}/с`;
     el.rateEnergy.textContent = `из ${fmt(base.energy.output)}`;
 
     const efficiency = Math.round(base.energy.efficiency * 100);
@@ -282,13 +295,15 @@
     el.baseName.textContent = base.baseName;
     el.planetMeta.textContent =
       `${base.planetName} · ${PLANET_TYPES[base.planetType] || base.planetType} · ` +
-      `система ${base.systemName} · орбита ${base.position} · слотов ${base.size}`;
+      `система ${base.systemName} · орбита ${base.position} · слотов ${base.size}` +
+      (base.anomaly === 'BLACK_HOLE' ? ' · черная дыра: искажение времени' : '');
 
     el.richness.innerHTML = `
       <div>Металл<b>×${base.richness.metal}</b></div>
       <div>Кристаллы<b>×${base.richness.crystal}</b></div>
       <div>Дейтерий<b>×${base.richness.deuterium}</b></div>
-      <div>Инсоляция<b>×${base.richness.energy}</b></div>`;
+      <div>Инсоляция<b>×${base.richness.energy}</b></div>
+      <div>Антиматерия<b>×${base.richness.antimatter}</b></div>`;
 
     renderJobBanner(el.buildJob, base.buildJob && {
       title: `${base.buildJob.label} → ур. ${base.buildJob.targetLevel}`,
@@ -621,6 +636,7 @@
     map.data = await response.json();
     renderMap();
     renderPlanetInfo();
+    updateMapCaption();
   }
 
   function svgEl(name, attrs) {
@@ -814,7 +830,8 @@
     }
 
     const rich = planet.richness
-      ? `<br>богатство: Me ×${planet.richness.metal} · Cr ×${planet.richness.crystal} · De ×${planet.richness.deuterium}`
+      ? `<br>богатство: Me ×${planet.richness.metal} · Cr ×${planet.richness.crystal} · ` +
+        `De ×${planet.richness.deuterium} · антиматерия ×${planet.richness.antimatter}`
       : '';
     const owner = planet.colonized ? `<br>владелец: <b>${planet.owner || 'неизвестен'}</b>` : '<br>колонии нет';
     const buildings = planet.buildings
@@ -984,13 +1001,21 @@
 
       const cargo = Number(el.cargoMetal.value || 0) + Number(el.cargoCrystal.value || 0);
       const overload = cargo > map.plan.capacity;
-      const noFuel = map.plan.fuel > base.resources.deuterium;
+      const jump = map.plan.kind === 'INTERSTELLAR';
+
+      // Внутри системы жжем дейтерий, между системами — антиматерию.
+      const fuelAmount = jump ? map.plan.antimatter : map.plan.fuel;
+      const fuelStock = jump ? base.resources.antimatter : base.resources.deuterium;
+      const fuelName = jump ? 'антиматерии' : 'дейтерия';
+      const noFuel = fuelAmount > fuelStock;
 
       el.flightPlan.innerHTML =
-        `дистанция: <b>${map.plan.distance}</b> орбит · скорость <b>${map.plan.speed}</b><br>` +
+        (jump
+          ? `<b>Гиперпрыжок</b> · дистанция <b>${map.plan.distance}</b> ед. по галактике<br>`
+          : `дистанция: <b>${map.plan.distance}</b> орбит · скорость <b>${map.plan.speed}</b><br>`) +
         `время в пути: <b>${fmtTime(map.plan.flightSeconds)}</b> в одну сторону<br>` +
-        `топливо (туда-обратно): <b class="${noFuel ? 'bad' : ''}">${map.plan.fuel}</b> дейтерия ` +
-        `(на складе ${fmt(base.resources.deuterium)})<br>` +
+        `топливо (туда-обратно): <b class="${noFuel ? 'bad' : ''}">${fmtAmount(fuelAmount)}</b> ${fuelName} ` +
+        `(на складе ${fmtAmount(fuelStock)})<br>` +
         `трюмы: <b class="${overload ? 'bad' : ''}">${fmt(cargo)}</b> из ${fmt(map.plan.capacity)}`;
     } catch (error) {
       el.flightPlan.textContent = 'Не удалось рассчитать маршрут';
@@ -1025,6 +1050,7 @@
       el.flightPlan.textContent = 'Выбери корабли, чтобы увидеть расчет.';
     }
     await loadMap();
+    await loadGalaxy();
     await loadMarket();
     await loadWar();
   }
@@ -1460,6 +1486,177 @@
       });
     }
   }
+
+
+  /* ---------- Этап 6: макро-карта галактики ---------- */
+
+  const GALAXY = { width: 900, height: 560, margin: 60 };
+  const galaxy = { data: null, mode: 'system' };
+
+  async function loadGalaxy() {
+    try {
+      const response = await fetch('/api/galaxy', { headers: authHeaders() });
+      if (!response.ok) return;
+      galaxy.data = await response.json();
+      if (galaxy.mode === 'galaxy') renderGalaxy();
+      updateMapCaption();
+    } catch (error) {
+      /* подтянется при следующем открытии карты */
+    }
+  }
+
+  /** Координаты сетки галактики переводим в координаты SVG. */
+  function galaxyPoint(system, bounds) {
+    const spanX = Math.max(1, bounds.maxX - bounds.minX);
+    const spanY = Math.max(1, bounds.maxY - bounds.minY);
+    const usableW = GALAXY.width - GALAXY.margin * 2;
+    const usableH = GALAXY.height - GALAXY.margin * 2;
+    return {
+      x: GALAXY.margin + ((system.galaxyX - bounds.minX) / spanX) * usableW,
+      y: GALAXY.margin + ((system.galaxyY - bounds.minY) / spanY) * usableH,
+    };
+  }
+
+  const STAR_COLORS = {
+    BLUE: '#8ab4ff', WHITE: '#e8eeff', YELLOW: '#ffd66b', ORANGE: '#ff9f5a', RED: '#ff6b6b',
+  };
+
+  function renderGalaxy() {
+    if (!galaxy.data) return;
+    const svg = el.galaxyMap;
+    svg.innerHTML = '';
+
+    const systems = galaxy.data.systems;
+    const bounds = {
+      minX: Math.min(...systems.map((s) => s.galaxyX)),
+      maxX: Math.max(...systems.map((s) => s.galaxyX)),
+      minY: Math.min(...systems.map((s) => s.galaxyY)),
+      maxY: Math.max(...systems.map((s) => s.galaxyY)),
+    };
+
+    // Сетка, чтобы карта читалась как координатное пространство.
+    for (let i = 0; i <= 4; i += 1) {
+      const x = GALAXY.margin + ((GALAXY.width - GALAXY.margin * 2) / 4) * i;
+      const y = GALAXY.margin + ((GALAXY.height - GALAXY.margin * 2) / 4) * i;
+      svg.appendChild(svgEl('line', { class: 'galaxy-grid', x1: x, y1: GALAXY.margin, x2: x, y2: GALAXY.height - GALAXY.margin }));
+      svg.appendChild(svgEl('line', { class: 'galaxy-grid', x1: GALAXY.margin, y1: y, x2: GALAXY.width - GALAXY.margin, y2: y }));
+    }
+
+    for (const system of systems) {
+      const point = galaxyPoint(system, bounds);
+      const blackHole = system.anomaly === 'BLACK_HOLE';
+
+      const group = svgEl('g', {
+        class: `system-node${system.isHome ? ' home' : ''}` +
+          (map.data && map.data.systemId === system.systemId ? ' selected' : ''),
+      });
+
+      group.appendChild(svgEl('circle', {
+        class: 'halo', cx: point.x, cy: point.y, r: 16,
+        fill: 'none', stroke: system.hasOwnColony ? 'var(--accent)' : 'rgba(120,160,255,0.25)',
+        'stroke-width': system.hasOwnColony ? 2 : 1,
+      }));
+
+      if (blackHole) {
+        group.appendChild(svgEl('circle', { class: 'blackhole-ring', cx: point.x, cy: point.y, r: 11 }));
+        group.appendChild(svgEl('circle', { class: 'star', cx: point.x, cy: point.y, r: 6, fill: '#120a1c', stroke: '#ff8fd8' }));
+      } else {
+        group.appendChild(svgEl('circle', {
+          class: 'star', cx: point.x, cy: point.y, r: 7,
+          fill: STAR_COLORS[system.starClass] || '#cfd8ff',
+        }));
+      }
+
+      const label = svgEl('text', { x: point.x, y: point.y + 30, class: `system-label${system.isHome ? ' home' : ''}` });
+      label.textContent = system.name;
+      group.appendChild(label);
+
+      const coords = svgEl('text', { x: point.x, y: point.y + 44, class: 'system-label' });
+      coords.textContent = `${system.galaxyX}:${system.galaxyY}`;
+      group.appendChild(coords);
+
+      group.addEventListener('mouseenter', (event) => showSystemTooltip(system, event));
+      group.addEventListener('mousemove', (event) => positionTooltip(event));
+      group.addEventListener('mouseleave', hideTooltip);
+      group.addEventListener('click', () => void openSystem(system.systemId));
+      svg.appendChild(group);
+    }
+  }
+
+  function showSystemTooltip(system, event) {
+    const blackHole = system.anomaly === 'BLACK_HOLE';
+    el.mapTooltip.innerHTML =
+      `<b>${system.name}</b><br>координаты ${system.galaxyX}:${system.galaxyY} · планет ${system.planetCount}<br>` +
+      (blackHole
+        ? '<span class="unknown">Черная дыра: искажение времени</span><br>' +
+          'синтез антиматерии +50%, стройка и наука на 30% дольше<br>'
+        : `звезда класса ${system.starClass}<br>`) +
+      (system.hasOwnColony ? 'здесь ваша колония<br>' : system.colonized ? 'система заселена<br>' : 'колоний нет<br>') +
+      (system.scannedPlanets > 0 ? `разведано планет: ${system.scannedPlanets}` : 'разведданных нет');
+    el.mapTooltip.hidden = false;
+    positionTooltip(event);
+  }
+
+  /** Открывает систему на микро-карте: своя или чужая, с тем же туманом войны. */
+  async function openSystem(systemId) {
+    const response = await fetch(`/api/map?systemId=${encodeURIComponent(systemId)}`, {
+      headers: authHeaders(),
+    });
+    if (!response.ok) return;
+    map.data = await response.json();
+    map.selectedId = null;
+    map.selectedKind = 'PLANET';
+    setMapMode('system');
+    renderMap();
+    renderPlanetInfo();
+    updateMapCaption();
+  }
+
+  /**
+   * У SVG нет HTML-свойства hidden: присваивание node.hidden не отражается
+   * в атрибуте, и CSS-правило [hidden] его не видит. Поэтому переключаем атрибутом.
+   */
+  function toggleNode(node, visible) {
+    if (visible) node.removeAttribute('hidden');
+    else node.setAttribute('hidden', '');
+  }
+
+  function setMapMode(mode) {
+    galaxy.mode = mode;
+    toggleNode(el.systemMap, mode === 'system');
+    toggleNode(el.galaxyMap, mode === 'galaxy');
+    hideTooltip();
+
+    for (const button of el.mapModes.querySelectorAll('.mode')) {
+      button.classList.toggle('active', button.dataset.mode === mode);
+    }
+    if (mode === 'galaxy') renderGalaxy();
+    updateMapCaption();
+  }
+
+  function updateMapCaption() {
+    if (galaxy.mode === 'galaxy') {
+      const total = galaxy.data ? galaxy.data.systems.length : 0;
+      const holes = galaxy.data ? galaxy.data.systems.filter((s) => s.anomaly === 'BLACK_HOLE').length : 0;
+      el.mapCaption.innerHTML = `систем в галактике: <b>${total}</b> · черных дыр: <b>${holes}</b>`;
+      return;
+    }
+
+    if (!map.data) {
+      el.mapCaption.textContent = '';
+      return;
+    }
+    const blackHole = map.data.anomaly === 'BLACK_HOLE';
+    el.mapCaption.innerHTML =
+      `система <b>${map.data.systemName}</b> · координаты ${map.data.galaxyX}:${map.data.galaxyY}` +
+      (map.data.isHome ? ' · родная' : ' · чужая система') +
+      (blackHole ? ' · <span class="anomaly">черная дыра: искажение времени</span>' : '');
+  }
+
+  el.mapModes.addEventListener('click', (event) => {
+    const button = event.target.closest('.mode');
+    if (button) setMapMode(button.dataset.mode);
+  });
 
   /* ---------- Старт ---------- */
   if (state.token) {

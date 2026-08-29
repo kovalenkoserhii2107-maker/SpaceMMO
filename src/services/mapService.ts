@@ -7,9 +7,16 @@ import { gameLoop } from '../game/gameLoop.js';
 import { foreignPlanetView, ownPlanetView, type PlanetView, type ScanPayload } from '../game/fogOfWar.js';
 import { emptyShipCounts } from '../game/ships.js';
 import { storageCapacity, storageUsed } from '../game/market.js';
-import type { HubView, SystemMap } from '../types/socket.js';
+import type { GalaxyMap, HubView, SystemMap } from '../types/socket.js';
 
-export async function buildSystemMap(userId: string): Promise<SystemMap | null> {
+/**
+ * Карта одной системы для игрока.
+ *
+ * @param systemId система для просмотра; по умолчанию — родная система игрока.
+ *   Чужие системы показываются с тем же туманом войны: планеты видно как объекты,
+ *   а их содержимое — только после разведки зондом.
+ */
+export async function buildSystemMap(userId: string, systemId?: string): Promise<SystemMap | null> {
   const user = await gameLoop.getUser(userId);
   const homeBase = user ? [...user.bases.values()][0] : null;
   if (!user || !homeBase) return null;
@@ -20,15 +27,20 @@ export async function buildSystemMap(userId: string): Promise<SystemMap | null> 
   });
   if (!home) return null;
 
+  const targetSystem = systemId
+    ? await prisma.solarSystem.findUnique({ where: { id: systemId } })
+    : home.system;
+  if (!targetSystem) return null;
+
   const [planets, scans, hub] = await Promise.all([
     prisma.planet.findMany({
-      where: { systemId: home.systemId },
+      where: { systemId: targetSystem.id },
       orderBy: { position: 'asc' },
       include: { base: { include: { user: true, ships: true } } },
     }),
     prisma.planetScan.findMany({ where: { userId } }),
     prisma.tradeHub.findUnique({
-      where: { systemId: home.systemId },
+      where: { systemId: targetSystem.id },
       include: { storages: { where: { userId } } },
     }),
   ]);
@@ -56,6 +68,7 @@ export async function buildSystemMap(userId: string): Promise<SystemMap | null> 
           crystal: planet.crystalRichness,
           deuterium: planet.deuteriumRichness,
           energy: planet.energyRichness,
+          antimatter: planet.antimatterRichness,
         },
         buildings: live
           ? { ...live.levels }
@@ -66,17 +79,20 @@ export async function buildSystemMap(userId: string): Promise<SystemMap | null> 
               SOLAR_PLANT: ownBase.solarPlantLevel,
               RESEARCH_LAB: ownBase.researchLabLevel,
               SHIPYARD: ownBase.shipyardLevel,
+              ANTIMATTER_SYNTH: ownBase.antimatterSynthLevel,
             },
         resources: live
           ? {
               metal: Math.round(live.resources.metal),
               crystal: Math.round(live.resources.crystal),
               deuterium: Math.round(live.resources.deuterium),
+              antimatter: Math.round(live.resources.antimatter),
             }
           : {
               metal: Math.round(ownBase.metal),
               crystal: Math.round(ownBase.crystal),
               deuterium: Math.round(ownBase.deuterium),
+              antimatter: Math.round(ownBase.antimatter),
             },
         fleet: live ? { ...live.ships } : shipsFromRows(ownBase.ships),
       };
@@ -111,11 +127,63 @@ export async function buildSystemMap(userId: string): Promise<SystemMap | null> 
     : null;
 
   return {
-    systemId: home.system.id,
-    systemName: home.system.name,
-    starClass: home.system.starClass,
+    systemId: targetSystem.id,
+    systemName: targetSystem.name,
+    starClass: targetSystem.starClass,
+    anomaly: targetSystem.anomaly,
+    galaxyX: targetSystem.galaxyX,
+    galaxyY: targetSystem.galaxyY,
+    isHome: targetSystem.id === home.systemId,
     planets: views,
     hub: hubView,
+  };
+}
+
+/**
+ * Макро-карта галактики: все известные системы с координатами.
+ *
+ * Сами звезды видно всегда — это астрономия, а не разведка. Скрыто другое:
+ * кто живет в системе и что там на планетах. Поэтому в списке отмечаются
+ * только свои колонии и системы, где у игрока есть данные разведки.
+ */
+export async function buildGalaxyMap(userId: string): Promise<GalaxyMap | null> {
+  const user = await gameLoop.getUser(userId);
+  const homeBase = user ? [...user.bases.values()][0] : null;
+  if (!user || !homeBase) return null;
+
+  const home = await prisma.planet.findUnique({
+    where: { id: homeBase.planetId },
+    select: { systemId: true },
+  });
+  if (!home) return null;
+
+  const [systems, scans] = await Promise.all([
+    prisma.solarSystem.findMany({
+      orderBy: [{ galaxyX: 'asc' }, { galaxyY: 'asc' }],
+      include: {
+        planets: { select: { id: true, base: { select: { userId: true } } } },
+      },
+    }),
+    prisma.planetScan.findMany({ where: { userId }, select: { planetId: true } }),
+  ]);
+
+  const scanned = new Set(scans.map((scan) => scan.planetId));
+
+  return {
+    homeSystemId: home.systemId,
+    systems: systems.map((system) => ({
+      systemId: system.id,
+      name: system.name,
+      galaxyX: system.galaxyX,
+      galaxyY: system.galaxyY,
+      starClass: system.starClass,
+      anomaly: system.anomaly,
+      planetCount: system.planets.length,
+      isHome: system.id === home.systemId,
+      hasOwnColony: system.planets.some((planet) => planet.base?.userId === userId),
+      colonized: system.planets.some((planet) => planet.base !== null),
+      scannedPlanets: system.planets.filter((planet) => scanned.has(planet.id)).length,
+    })),
   };
 }
 

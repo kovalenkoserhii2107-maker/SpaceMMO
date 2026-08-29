@@ -4,6 +4,7 @@
 // ЭТАП 3: Fleet (полеты флота), PlanetScan (туман войны).
 // ЭТАП 4: TradeHub, HubStorage, MarketOrder, Trade + баланс криптогривны.
 // ЭТАП 5: Defense, DefenseJob, BattleReport, WarDeclaration.
+// ЭТАП 6: макро-координаты систем, аномалии, антиматерия и межзвездные прыжки.
 
 generator client {
   provider = "prisma-client"
@@ -43,14 +44,16 @@ model User {
 
 /// Звездная система — макро-объект галактической карты.
 model SolarSystem {
-  id        String    @id @default(cuid())
-  name      String    @unique
+  id        String        @id @default(cuid())
+  name      String        @unique
   /// Координаты в галактике (макро-карта).
   galaxyX   Int
   galaxyY   Int
   /// Класс звезды влияет на выработку энергии планет системы.
   starClass StarClass
-  createdAt DateTime  @default(now())
+  /// Аномалия в центре системы. Черная дыра искажает время во всей системе.
+  anomaly   SystemAnomaly @default(NONE)
+  createdAt DateTime      @default(now())
 
   planets Planet[]
   hub     TradeHub?
@@ -71,11 +74,13 @@ model Planet {
   size     Int
 
   /// Коэффициенты богатства (множители базовой добычи).
-  metalRichness     Float
-  crystalRichness   Float
-  deuteriumRichness Float
+  metalRichness      Float
+  crystalRichness    Float
+  deuteriumRichness  Float
   /// Коэффициент инсоляции — множитель выработки солнечных электростанций.
-  energyRichness    Float
+  energyRichness     Float
+  /// Насыщенность экзотическими частицами — множитель синтеза антиматерии.
+  antimatterRichness Float @default(1)
 
   system        SolarSystem    @relation(fields: [systemId], references: [id], onDelete: Cascade)
   base          Base?
@@ -97,9 +102,11 @@ model Base {
   planetId String @unique
 
   /// Склад ресурсов (дробные значения — начисление идет каждую секунду).
-  metal     Float @default(500)
-  crystal   Float @default(300)
-  deuterium Float @default(100)
+  metal      Float @default(500)
+  crystal    Float @default(300)
+  deuterium  Float @default(100)
+  /// Антиматерия — топливо межзвездных прыжков (Этап 6).
+  antimatter Float @default(0)
 
   /// Уровни инфраструктуры добычи и энергетики (Этап 1).
   metalMineLevel     Int @default(0)
@@ -110,6 +117,9 @@ model Base {
   /// Инфраструктура Этапа 2.
   researchLabLevel Int @default(0)
   shipyardLevel    Int @default(0)
+
+  /// Инфраструктура Этапа 6.
+  antimatterSynthLevel Int @default(0)
 
   /// Время последнего начисления ресурсов тиком (для догона офлайн-периода).
   lastTickAt DateTime @default(now())
@@ -312,10 +322,14 @@ model Fleet {
   pickupCrystal Float @default(0)
 
   /// Сожженный дейтерий за весь маршрут (списан при отправке).
-  fuelSpent Float
+  fuelSpent       Float
+  /// Сожженная антиматерия — только для межзвездных прыжков.
+  antimatterSpent Float   @default(0)
+  /// Прыжок между системами, а не полет внутри одной.
+  interstellar    Boolean @default(false)
   /// Расстояние в орбитах и скорость флота — для отображения.
-  distance  Int
-  speed     Float
+  distance        Int
+  speed           Float
 
   departedAt DateTime
   arrivesAt  DateTime
@@ -460,6 +474,7 @@ enum BuildingType {
   SOLAR_PLANT
   RESEARCH_LAB
   SHIPYARD
+  ANTIMATTER_SYNTH
 }
 
 enum TechnologyType {
@@ -467,12 +482,19 @@ enum TechnologyType {
   COMPUTING_TECH
   MINING_TECH
   COMBUSTION_DRIVE
+  HYPERSPACE_PHYSICS
+  HYPERDRIVE
 }
 
 enum ShipType {
   PROBE
   TRANSPORTER
   LIGHT_FIGHTER
+}
+
+enum SystemAnomaly {
+  NONE
+  BLACK_HOLE
 }
 
 enum StarClass {

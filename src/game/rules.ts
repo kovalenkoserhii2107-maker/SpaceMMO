@@ -10,12 +10,13 @@ export const BUILDING_TYPES = [
   'SOLAR_PLANT',
   'RESEARCH_LAB',
   'SHIPYARD',
+  'ANTIMATTER_SYNTH',
 ] as const;
 
 export type BuildingType = (typeof BUILDING_TYPES)[number];
 
-/** Шахты — единственные постройки, которые дают ресурсы. */
-type MineType = 'METAL_MINE' | 'CRYSTAL_MINE' | 'DEUTERIUM_MINE';
+/** Постройки, которые дают ресурсы. */
+type MineType = 'METAL_MINE' | 'CRYSTAL_MINE' | 'DEUTERIUM_MINE' | 'ANTIMATTER_SYNTH';
 
 export function isBuildingType(value: unknown): value is BuildingType {
   return typeof value === 'string' && (BUILDING_TYPES as readonly string[]).includes(value);
@@ -27,6 +28,14 @@ export interface ResourceAmounts {
   deuterium: number;
 }
 
+/**
+ * Склад базы. Антиматерия хранится отдельно от базовой тройки: она не возится
+ * в трюмах, не торгуется на бирже и нужна только как топливо гиперпрыжков.
+ */
+export interface BaseStock extends ResourceAmounts {
+  antimatter: number;
+}
+
 export type BuildingLevels = Record<BuildingType, number>;
 
 /** Коэффициенты богатства планеты — множители добычи. */
@@ -35,6 +44,34 @@ export interface PlanetRichness {
   crystal: number;
   deuterium: number;
   energy: number;
+  antimatter: number;
+}
+
+/**
+ * Модификаторы системы (Этап 6). У черной дыры «Искажение времени»:
+ * синтез антиматерии идет быстрее, а стройка и исследования — медленнее.
+ */
+export interface SystemModifiers {
+  antimatterMultiplier: number;
+  buildTimeMultiplier: number;
+  researchTimeMultiplier: number;
+}
+
+export const NEUTRAL_MODIFIERS: SystemModifiers = {
+  antimatterMultiplier: 1,
+  buildTimeMultiplier: 1,
+  researchTimeMultiplier: 1,
+};
+
+/** Эффект «Искажение времени» в системе с черной дырой. */
+export const BLACK_HOLE_MODIFIERS: SystemModifiers = {
+  antimatterMultiplier: 1.5,
+  buildTimeMultiplier: 1.3,
+  researchTimeMultiplier: 1.3,
+};
+
+export function systemModifiers(anomaly: string | null | undefined): SystemModifiers {
+  return anomaly === 'BLACK_HOLE' ? BLACK_HOLE_MODIFIERS : NEUTRAL_MODIFIERS;
 }
 
 /** Бонусы от изученных технологий, влияющие на экономику базы. */
@@ -55,6 +92,9 @@ const BASE_YIELD_PER_SECOND: Record<MineType, number> = {
   METAL_MINE: 0.8,
   CRYSTAL_MINE: 0.5,
   DEUTERIUM_MINE: 0.25,
+  // Антиматерия синтезируется на порядки медленнее: это топливо для прыжков,
+  // а не сырье для стройки.
+  ANTIMATTER_SYNTH: 0.02,
 };
 
 /** Базовые стоимости постройки 1 уровня и множитель роста цены. */
@@ -65,6 +105,7 @@ const COSTS: Record<BuildingType, ResourceAmounts & { factor: number }> = {
   SOLAR_PLANT: { metal: 75, crystal: 30, deuterium: 0, factor: 1.5 },
   RESEARCH_LAB: { metal: 200, crystal: 400, deuterium: 100, factor: 2.0 },
   SHIPYARD: { metal: 400, crystal: 200, deuterium: 100, factor: 2.0 },
+  ANTIMATTER_SYNTH: { metal: 2000, crystal: 1500, deuterium: 800, factor: 2.2 },
 };
 
 /** Потребление энергии постройками. Солнечная станция энергию не тратит. */
@@ -75,12 +116,15 @@ const ENERGY_DRAIN: Record<BuildingType, number> = {
   SOLAR_PLANT: 0,
   RESEARCH_LAB: 1.2,
   SHIPYARD: 1.5,
+  // Синтезатор — самый прожорливый объект базы.
+  ANTIMATTER_SYNTH: 8,
 };
 
 /** Требования к уровню других построек (Этап 2). */
 const BUILDING_REQUIREMENTS: Partial<Record<BuildingType, Partial<Record<BuildingType, number>>>> = {
   SHIPYARD: { METAL_MINE: 2 },
   RESEARCH_LAB: { METAL_MINE: 2 },
+  ANTIMATTER_SYNTH: { RESEARCH_LAB: 3, SOLAR_PLANT: 5 },
 };
 
 export const BUILDING_LABELS: Record<BuildingType, string> = {
@@ -90,6 +134,7 @@ export const BUILDING_LABELS: Record<BuildingType, string> = {
   SOLAR_PLANT: 'Солнечная электростанция',
   RESEARCH_LAB: 'Исследовательская лаборатория',
   SHIPYARD: 'Верфь',
+  ANTIMATTER_SYNTH: 'Синтезатор антиматерии',
 };
 
 export function emptyLevels(): BuildingLevels {
@@ -100,6 +145,7 @@ export function emptyLevels(): BuildingLevels {
     SOLAR_PLANT: 0,
     RESEARCH_LAB: 0,
     SHIPYARD: 0,
+    ANTIMATTER_SYNTH: 0,
   };
 }
 
@@ -114,11 +160,18 @@ export function upgradeCost(type: BuildingType, targetLevel: number): ResourceAm
   };
 }
 
-/** Длительность стройки в секундах: зависит от суммарной стоимости уровня. */
-export function buildSeconds(type: BuildingType, targetLevel: number): number {
+/**
+ * Длительность стройки в секундах: зависит от суммарной стоимости уровня
+ * и от модификаторов системы (в черной дыре время течет медленнее).
+ */
+export function buildSeconds(
+  type: BuildingType,
+  targetLevel: number,
+  modifiers: SystemModifiers = NEUTRAL_MODIFIERS,
+): number {
   const cost = upgradeCost(type, targetLevel);
   const total = cost.metal + cost.crystal + cost.deuterium;
-  return Math.max(5, Math.round(total / 10));
+  return Math.max(5, Math.round((total / 10) * modifiers.buildTimeMultiplier));
 }
 
 /** Невыполненные требования по другим постройкам. */
@@ -188,12 +241,17 @@ export function productionPerSecond(
   richness: PlanetRichness,
   bonuses: EconomyBonuses = NEUTRAL_BONUSES,
   defenseDrain = 0,
-): ResourceAmounts {
+  modifiers: SystemModifiers = NEUTRAL_MODIFIERS,
+): BaseStock {
   const efficiency = energyEfficiency(levels, richness, bonuses, defenseDrain);
   return {
     metal: mineOutput('METAL_MINE', levels, richness.metal, bonuses) * efficiency,
     crystal: mineOutput('CRYSTAL_MINE', levels, richness.crystal, bonuses) * efficiency,
     deuterium: mineOutput('DEUTERIUM_MINE', levels, richness.deuterium, bonuses) * efficiency,
+    antimatter:
+      mineOutput('ANTIMATTER_SYNTH', levels, richness.antimatter, bonuses) *
+      efficiency *
+      modifiers.antimatterMultiplier,
   };
 }
 
@@ -205,7 +263,9 @@ function mineOutput(
 ): number {
   const level = levels[type];
   if (level <= 0) return 0;
-  return BASE_YIELD_PER_SECOND[type] * level * Math.pow(1.1, level) * richness * bonuses.mining;
+  // «Горное дело» ускоряет обычные шахты, но не синтез антиматерии.
+  const techBonus = type === 'ANTIMATTER_SYNTH' ? 1 : bonuses.mining;
+  return BASE_YIELD_PER_SECOND[type] * level * Math.pow(1.1, level) * richness * techBonus;
 }
 
 export function hasEnoughResources(stock: ResourceAmounts, cost: ResourceAmounts): boolean {

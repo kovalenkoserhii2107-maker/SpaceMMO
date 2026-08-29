@@ -30,6 +30,7 @@ import {
   type UserRuntimeState,
 } from './baseState.js';
 import {
+  canJump,
   fleetCapacity,
   fleetSize,
   isHubMission,
@@ -53,6 +54,7 @@ import { plunderAmount, resolveBattle, type SideForces } from './combat.js';
 import {
   buildSeconds,
   emptyLevels,
+  systemModifiers,
   hasEnoughResources,
   missingBuildingRequirements,
   multiplyResources,
@@ -214,6 +216,7 @@ class GameLoop {
       levels.SOLAR_PLANT = base.solarPlantLevel;
       levels.RESEARCH_LAB = base.researchLabLevel;
       levels.SHIPYARD = base.shipyardLevel;
+      levels.ANTIMATTER_SYNTH = base.antimatterSynthLevel;
 
       user.bases.set(base.id, {
         id: base.id,
@@ -225,16 +228,21 @@ class GameLoop {
         position: base.planet.position,
         size: base.planet.size,
         systemName: base.planet.system.name,
+        systemId: base.planet.systemId,
+        galaxy: { galaxyX: base.planet.system.galaxyX, galaxyY: base.planet.system.galaxyY },
+        anomaly: base.planet.system.anomaly,
         richness: {
           metal: base.planet.metalRichness,
           crystal: base.planet.crystalRichness,
           deuterium: base.planet.deuteriumRichness,
           energy: base.planet.energyRichness,
+          antimatter: base.planet.antimatterRichness,
         },
         resources: {
           metal: safeAmount(base.metal),
           crystal: safeAmount(base.crystal),
           deuterium: safeAmount(base.deuterium),
+          antimatter: safeAmount(base.antimatter),
         },
         levels,
         buildJob: base.buildJob
@@ -314,7 +322,7 @@ class GameLoop {
     }
 
     const now = Date.now();
-    const seconds = buildSeconds(type, targetLevel);
+    const seconds = buildSeconds(type, targetLevel, systemModifiers(base.anomaly));
     subtractResources(base.resources, cost);
     base.buildJob = { building: type, targetLevel, startedAt: now, finishesAt: now + seconds * 1000 };
     base.dirty = true;
@@ -343,7 +351,13 @@ class GameLoop {
     }
 
     const now = Date.now();
-    const seconds = researchSeconds(tech, targetLevel, base.levels.RESEARCH_LAB, user.techs);
+    const seconds = researchSeconds(
+      tech,
+      targetLevel,
+      base.levels.RESEARCH_LAB,
+      user.techs,
+      systemModifiers(base.anomaly),
+    );
     subtractResources(base.resources, cost);
     user.research = { tech, targetLevel, baseId, startedAt: now, finishesAt: now + seconds * 1000 };
     user.researchDirty = true;
@@ -423,18 +437,21 @@ class GameLoop {
       if (count > base.ships[type]) return { ok: false, error: 'На базе нет столько кораблей' };
     }
 
-    // Куда летим: к планете или к торговому хабу.
-    let targetPosition: number;
+    // Куда летим: к планете или к торговому хабу, в своей системе или в чужой.
+    let target_: { position: number; system: { galaxyX: number; galaxyY: number } };
     let targetPlanetId: string | null = null;
     let targetHubId: string | null = null;
 
     if (isHubMission(mission)) {
       const hub = target.hubId
-        ? await prisma.tradeHub.findUnique({ where: { id: target.hubId } })
-        : await prisma.tradeHub.findFirst({ where: { system: { planets: { some: { id: base.planetId } } } } });
+        ? await prisma.tradeHub.findUnique({ where: { id: target.hubId }, include: { system: true } })
+        : await prisma.tradeHub.findFirst({
+            where: { system: { planets: { some: { id: base.planetId } } } },
+            include: { system: true },
+          });
       if (!hub) return { ok: false, error: 'Торговый хаб не найден' };
       targetHubId = hub.id;
-      targetPosition = hub.position;
+      target_ = { position: hub.position, system: hub.system };
     } else {
       if (!target.planetId) return { ok: false, error: 'Не указана планета назначения' };
       if (base.planetId === target.planetId) {
@@ -442,7 +459,7 @@ class GameLoop {
       }
       const planet = await prisma.planet.findUnique({
         where: { id: target.planetId },
-        include: { base: true },
+        include: { base: true, system: true },
       });
       if (!planet) return { ok: false, error: 'Планета не найдена' };
       if (mission === 'TRANSPORT' && !planet.base) {
@@ -466,8 +483,9 @@ class GameLoop {
           return { ok: false, error: 'Сначала объяви войну этому игроку' };
         }
       }
+
       targetPlanetId = planet.id;
-      targetPosition = planet.position;
+      target_ = { position: planet.position, system: planet.system };
     }
 
     // Груз берем только для рейсов, которые что-то везут туда.
@@ -487,8 +505,25 @@ class GameLoop {
       }
     }
 
-    const plan = planFlight(ships, user.techs, base.position, targetPosition);
-    if (base.resources.deuterium - plan.fuel < 0) {
+    const plan = planFlight(
+      ships,
+      user.techs,
+      { position: base.position, system: base.galaxy },
+      target_,
+    );
+
+    // Межзвездный прыжок возможен только с гипердвигателем и идет на антиматерии.
+    if (plan.kind === 'INTERSTELLAR') {
+      if (!canJump(user.techs)) {
+        return { ok: false, error: 'Для межзвездного прыжка нужен «Гипердвигатель»' };
+      }
+      if (base.resources.antimatter < plan.antimatter) {
+        return {
+          ok: false,
+          error: `Не хватает антиматерии: нужно ${plan.antimatter}, на базе ${Math.floor(base.resources.antimatter)}`,
+        };
+      }
+    } else if (base.resources.deuterium < plan.fuel) {
       return { ok: false, error: `Не хватает дейтерия: нужно ${plan.fuel}` };
     }
 
@@ -499,6 +534,7 @@ class GameLoop {
     base.resources.metal -= outboundCargo.metal;
     base.resources.crystal -= outboundCargo.crystal;
     base.resources.deuterium -= plan.fuel;
+    base.resources.antimatter -= plan.antimatter;
     for (const type of SHIP_TYPES) base.ships[type] -= ships[type];
     base.dirty = true;
     base.jobsDirty = true;
@@ -520,6 +556,8 @@ class GameLoop {
         pickupMetal: request.metal,
         pickupCrystal: request.crystal,
         fuelSpent: plan.fuel,
+        antimatterSpent: plan.antimatter,
+        interstellar: plan.kind === 'INTERSTELLAR',
         distance: plan.distance,
         speed: plan.speed,
         departedAt: new Date(now),
@@ -535,8 +573,11 @@ class GameLoop {
     return {
       ok: true,
       message:
-        `Флот вылетел: ${fleetSize(ships)} кораблей, в пути ${plan.flightSeconds} с, ` +
-        `сожжено ${plan.fuel} дейтерия`,
+        plan.kind === 'INTERSTELLAR'
+          ? `Гиперпрыжок: ${fleetSize(ships)} кораблей, в пути ${plan.flightSeconds} с, ` +
+            `сожжено ${plan.antimatter} антиматерии`
+          : `Флот вылетел: ${fleetSize(ships)} кораблей, в пути ${plan.flightSeconds} с, ` +
+            `сожжено ${plan.fuel} дейтерия`,
     };
   }
 
@@ -551,21 +592,23 @@ class GameLoop {
     this.emitUser(userId);
   }
 
-  /** Позиция цели на орбитах — нужна для предрасчета маршрута. */
-  async getTargetPosition(target: { planetId?: string; hubId?: string }): Promise<number | null> {
+  /** Орбита и координаты системы цели — нужны для предрасчета маршрута. */
+  async getTargetLocation(
+    target: { planetId?: string; hubId?: string },
+  ): Promise<{ position: number; system: { galaxyX: number; galaxyY: number } } | null> {
     if (target.hubId) {
       const hub = await prisma.tradeHub.findUnique({
         where: { id: target.hubId },
-        select: { position: true },
+        include: { system: true },
       });
-      return hub?.position ?? null;
+      return hub ? { position: hub.position, system: hub.system } : null;
     }
     if (!target.planetId) return null;
     const planet = await prisma.planet.findUnique({
       where: { id: target.planetId },
-      select: { position: true },
+      include: { system: true },
     });
-    return planet?.position ?? null;
+    return planet ? { position: planet.position, system: planet.system } : null;
   }
 
   /** Заказ стационарной обороны. Очередь своя, но правила те же, что у кораблей. */
@@ -1254,6 +1297,7 @@ class GameLoop {
       crystal: planet.crystalRichness,
       deuterium: planet.deuteriumRichness,
       energy: planet.energyRichness,
+      antimatter: planet.antimatterRichness,
     };
 
     let payload: ScanPayload = {
@@ -1276,10 +1320,16 @@ class GameLoop {
             SOLAR_PLANT: planet.base.solarPlantLevel,
             RESEARCH_LAB: planet.base.researchLabLevel,
             SHIPYARD: planet.base.shipyardLevel,
+            ANTIMATTER_SYNTH: planet.base.antimatterSynthLevel,
           };
       const resources = live
         ? { ...live.resources }
-        : { metal: planet.base.metal, crystal: planet.base.crystal, deuterium: planet.base.deuterium };
+        : {
+            metal: planet.base.metal,
+            crystal: planet.base.crystal,
+            deuterium: planet.base.deuterium,
+            antimatter: planet.base.antimatter,
+          };
       const fleet = live ? { ...live.ships } : emptyShipCounts();
       if (!live) {
         for (const ship of planet.base.ships) fleet[ship.type] = ship.count;
@@ -1294,6 +1344,7 @@ class GameLoop {
           metal: Math.round(resources.metal),
           crystal: Math.round(resources.crystal),
           deuterium: Math.round(resources.deuterium),
+          antimatter: Math.round(resources.antimatter),
         },
         fleet,
       };
@@ -1339,12 +1390,14 @@ class GameLoop {
             metal: base.resources.metal,
             crystal: base.resources.crystal,
             deuterium: base.resources.deuterium,
+            antimatter: base.resources.antimatter,
             metalMineLevel: base.levels.METAL_MINE,
             crystalMineLevel: base.levels.CRYSTAL_MINE,
             deuteriumMineLevel: base.levels.DEUTERIUM_MINE,
             solarPlantLevel: base.levels.SOLAR_PLANT,
             researchLabLevel: base.levels.RESEARCH_LAB,
             shipyardLevel: base.levels.SHIPYARD,
+            antimatterSynthLevel: base.levels.ANTIMATTER_SYNTH,
             lastTickAt: new Date(base.lastTickAt),
           },
         }),

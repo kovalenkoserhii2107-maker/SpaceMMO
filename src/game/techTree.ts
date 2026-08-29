@@ -2,13 +2,21 @@
  * Дерево технологий (Этап 2). Технологии общие для игрока, изучаются в лаборатории.
  * Модуль чистый: только определения и формулы.
  */
-import type { BuildingLevels, EconomyBonuses, ResourceAmounts } from './rules.js';
+import {
+  NEUTRAL_MODIFIERS,
+  type BuildingLevels,
+  type EconomyBonuses,
+  type ResourceAmounts,
+  type SystemModifiers,
+} from './rules.js';
 
 export const TECHNOLOGY_TYPES = [
   'ENERGY_TECH',
   'COMPUTING_TECH',
   'MINING_TECH',
   'COMBUSTION_DRIVE',
+  'HYPERSPACE_PHYSICS',
+  'HYPERDRIVE',
 ] as const;
 
 export type TechnologyType = (typeof TECHNOLOGY_TYPES)[number];
@@ -20,7 +28,14 @@ export function isTechnologyType(value: unknown): value is TechnologyType {
 }
 
 export function emptyTechLevels(): TechLevels {
-  return { ENERGY_TECH: 0, COMPUTING_TECH: 0, MINING_TECH: 0, COMBUSTION_DRIVE: 0 };
+  return {
+    ENERGY_TECH: 0,
+    COMPUTING_TECH: 0,
+    MINING_TECH: 0,
+    COMBUSTION_DRIVE: 0,
+    HYPERSPACE_PHYSICS: 0,
+    HYPERDRIVE: 0,
+  };
 }
 
 interface TechDefinition {
@@ -74,6 +89,26 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
     labLevel: 2,
     requires: { ENERGY_TECH: 1 },
   },
+  HYPERSPACE_PHYSICS: {
+    label: 'Гиперпространственная физика',
+    description: 'Открывает постройку синтезатора антиматерии.',
+    cost: { metal: 800, crystal: 1200, deuterium: 600, factor: 2.1 },
+    baseSeconds: 240,
+    timeFactor: 1.8,
+    labLevel: 3,
+    requires: { ENERGY_TECH: 2, COMPUTING_TECH: 1 },
+  },
+  HYPERDRIVE: {
+    label: 'Гипердвигатель',
+    description:
+      'Открывает межзвездные прыжки на антиматерии. Каждый уровень ускоряет прыжок ' +
+      'и снижает расход топлива.',
+    cost: { metal: 1500, crystal: 1000, deuterium: 900, factor: 2.0 },
+    baseSeconds: 300,
+    timeFactor: 1.8,
+    labLevel: 3,
+    requires: { HYPERSPACE_PHYSICS: 1 },
+  },
 };
 
 export function techLabel(tech: TechnologyType): string {
@@ -94,18 +129,25 @@ export function researchCost(tech: TechnologyType, targetLevel: number): Resourc
   };
 }
 
-/** Длительность изучения: ускоряется уровнем лаборатории и «Вычислительной техникой». */
+/**
+ * Длительность изучения: ускоряется уровнем лаборатории и «Вычислительной техникой»,
+ * замедляется модификаторами системы (искажение времени у черной дыры).
+ */
 export function researchSeconds(
   tech: TechnologyType,
   targetLevel: number,
   labLevel: number,
   techs: TechLevels,
+  modifiers: SystemModifiers = NEUTRAL_MODIFIERS,
 ): number {
   const definition = TECHNOLOGIES[tech];
   const raw = definition.baseSeconds * Math.pow(definition.timeFactor, targetLevel - 1);
   const labSpeedup = 1 + Math.max(0, labLevel) * 0.5;
   const computingSpeedup = Math.max(0.5, 1 - techs.COMPUTING_TECH * 0.03);
-  return Math.max(5, Math.round((raw / labSpeedup) * computingSpeedup));
+  return Math.max(
+    5,
+    Math.round((raw / labSpeedup) * computingSpeedup * modifiers.researchTimeMultiplier),
+  );
 }
 
 export interface Requirement {

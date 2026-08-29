@@ -33,12 +33,14 @@ interface FlightProfile {
   cargo: number;
   /** Расход дейтерия в секунду полета на один корабль. */
   fuelPerSecond: number;
+  /** Расход антиматерии на одну единицу межзвездного расстояния. */
+  antimatterPerDistance: number;
 }
 
 const FLIGHT_PROFILES: Record<ShipType, FlightProfile> = {
-  PROBE: { speed: 200, cargo: 0, fuelPerSecond: 0.05 },
-  TRANSPORTER: { speed: 100, cargo: 2000, fuelPerSecond: 0.4 },
-  LIGHT_FIGHTER: { speed: 150, cargo: 50, fuelPerSecond: 0.2 },
+  PROBE: { speed: 200, cargo: 0, fuelPerSecond: 0.05, antimatterPerDistance: 0.2 },
+  TRANSPORTER: { speed: 100, cargo: 2000, fuelPerSecond: 0.4, antimatterPerDistance: 1.5 },
+  LIGHT_FIGHTER: { speed: 150, cargo: 50, fuelPerSecond: 0.2, antimatterPerDistance: 0.8 },
 };
 
 /** Базовое время перелета между соседними орбитами, секунды. */
@@ -46,6 +48,31 @@ const BASE_FLIGHT_SECONDS = 20;
 const SECONDS_PER_ORBIT = 25;
 /** Прирост скорости флота за уровень реактивного двигателя. */
 const DRIVE_SPEED_BONUS = 0.1;
+
+/** Постоянные затраты на разгон и выход из гиперпространства, секунды. */
+const JUMP_BASE_SECONDS = 120;
+/** Секунд полета на единицу расстояния между системами. */
+const JUMP_SECONDS_PER_DISTANCE = 30;
+/** Ускорение прыжка и экономия топлива за уровень гипердвигателя. */
+const HYPERDRIVE_BONUS = 0.15;
+
+/** Координаты системы на макро-карте. */
+export interface GalaxyPoint {
+  galaxyX: number;
+  galaxyY: number;
+}
+
+/** Расстояние между системами на макро-карте (евклидово, в единицах сетки). */
+export function galaxyDistance(from: GalaxyPoint, to: GalaxyPoint): number {
+  const dx = from.galaxyX - to.galaxyX;
+  const dy = from.galaxyY - to.galaxyY;
+  return Math.round(Math.sqrt(dx * dx + dy * dy) * 100) / 100;
+}
+
+/** Множитель гипердвигателя: чем выше уровень, тем быстрее и дешевле прыжок. */
+function hyperdriveFactor(techs: TechLevels): number {
+  return 1 + Math.max(0, techs.HYPERDRIVE) * HYPERDRIVE_BONUS;
+}
 
 /** Расстояние в орбитах внутри системы. */
 function orbitDistance(fromPosition: number, toPosition: number): number {
@@ -93,29 +120,85 @@ function fuelCost(ships: ShipCounts, seconds: number): number {
 }
 
 export interface FlightPlan {
+  /** Внутрисистемный полет или межзвездный прыжок. */
+  kind: 'INTRA' | 'INTERSTELLAR';
+  /** Орбиты для внутрисистемного полета, единицы сетки — для прыжка. */
   distance: number;
   speed: number;
   flightSeconds: number;
   capacity: number;
+  /** Расход дейтерия (внутри системы). */
   fuel: number;
+  /** Расход антиматерии (межзвездный прыжок). */
+  antimatter: number;
 }
 
-/** Полный расчет маршрута — используется и при проверке, и для предпросмотра в UI. */
+/**
+ * Полный расчет маршрута — используется и при проверке вылета, и для предпросмотра в UI.
+ *
+ * Логика раздвоена (Этап 6):
+ * - внутри системы флот идет на обычной тяге и жжет дейтерий, время зависит от орбит;
+ * - между системами выполняется гиперпрыжок на антиматерии, а время и расход
+ *   зависят от расстояния между системами на макро-карте и уровня гипердвигателя.
+ */
 export function planFlight(
   ships: ShipCounts,
   techs: TechLevels,
-  fromPosition: number,
-  toPosition: number,
+  from: { position: number; system: GalaxyPoint },
+  to: { position: number; system: GalaxyPoint },
 ): FlightPlan {
-  const distance = orbitDistance(fromPosition, toPosition);
-  const seconds = flightSeconds(ships, techs, distance);
+  const interstellar =
+    from.system.galaxyX !== to.system.galaxyX || from.system.galaxyY !== to.system.galaxyY;
+
+  if (!interstellar) {
+    const distance = orbitDistance(from.position, to.position);
+    const seconds = flightSeconds(ships, techs, distance);
+    return {
+      kind: 'INTRA',
+      distance,
+      speed: Math.round(fleetSpeed(ships, techs)),
+      flightSeconds: seconds,
+      capacity: fleetCapacity(ships),
+      fuel: fuelCost(ships, seconds),
+      antimatter: 0,
+    };
+  }
+
+  const distance = galaxyDistance(from.system, to.system);
+  const seconds = jumpSeconds(ships, techs, distance);
   return {
+    kind: 'INTERSTELLAR',
     distance,
     speed: Math.round(fleetSpeed(ships, techs)),
     flightSeconds: seconds,
     capacity: fleetCapacity(ships),
-    fuel: fuelCost(ships, seconds),
+    fuel: 0,
+    antimatter: jumpAntimatterCost(ships, techs, distance),
   };
+}
+
+/** Время гиперпрыжка в одну сторону: расстояние по макро-карте и гипердвигатель. */
+function jumpSeconds(ships: ShipCounts, techs: TechLevels, distance: number): number {
+  const speed = fleetSpeed(ships, techs);
+  if (speed <= 0) return 0;
+  const raw =
+    ((JUMP_BASE_SECONDS + JUMP_SECONDS_PER_DISTANCE * distance) * 100) / speed / hyperdriveFactor(techs);
+  return Math.max(30, Math.round(raw));
+}
+
+/** Расход антиматерии за весь маршрут (туда и обратно). */
+function jumpAntimatterCost(ships: ShipCounts, techs: TechLevels, distance: number): number {
+  const perDistance = SHIP_TYPES.reduce(
+    (total, type) => total + ships[type] * FLIGHT_PROFILES[type].antimatterPerDistance,
+    0,
+  );
+  const total = (perDistance * distance * 2) / hyperdriveFactor(techs);
+  return total <= 0 ? 0 : Math.max(1, Math.ceil(total));
+}
+
+/** Гиперпрыжок возможен только с изученным гипердвигателем. */
+export function canJump(techs: TechLevels): boolean {
+  return techs.HYPERDRIVE >= 1;
 }
 
 /** Проверка состава флота под задачу. Возвращает текст ошибки или null. */

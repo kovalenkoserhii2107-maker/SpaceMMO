@@ -31,6 +31,7 @@
         <div class="res" title="Металл"><span class="ico metal">◼</span><b id="res-metal">0</b><small id="rate-metal">+0/с</small></div>
         <div class="res" title="Кристаллы"><span class="ico crystal">◆</span><b id="res-crystal">0</b><small id="rate-crystal">+0/с</small></div>
         <div class="res" title="Дейтерий"><span class="ico deuterium">⬢</span><b id="res-deuterium">0</b><small id="rate-deuterium">+0/с</small></div>
+        <div class="res" title="Антиматерия"><span class="ico antimatter">✷</span><b id="res-antimatter">0</b><small id="rate-antimatter">+0/с</small></div>
         <div class="res" title="Энергия"><span class="ico energy">⚡</span><b id="res-energy">0</b><small id="rate-energy">свободно</small></div>
         <div class="res" title="Эффективность шахт"><span class="ico eff">◐</span><b id="res-efficiency">100%</b><small id="rate-efficiency">мощность шахт</small></div>
         <div class="res" title="Криптогривна"><span class="ico credits">₴</span><b id="res-credits">0</b><small>криптогривна</small></div>
@@ -88,9 +89,16 @@
         </section>
 
         <section data-panel="map" hidden>
+          <div class="map-modes">
+            <button type="button" class="mode" data-mode="system">Система</button>
+            <button type="button" class="mode" data-mode="galaxy">Галактика</button>
+            <span id="map-caption" class="map-caption"></span>
+          </div>
+
           <div class="map-wrap">
             <div class="map-canvas">
               <svg id="system-map" viewBox="0 0 900 340" role="img" aria-label="Карта солнечной системы"></svg>
+              <svg id="galaxy-map" viewBox="0 0 900 560" role="img" aria-label="Карта галактики" hidden></svg>
               <div id="map-tooltip" class="tooltip" hidden></div>
             </div>
 
