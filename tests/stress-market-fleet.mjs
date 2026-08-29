@@ -312,7 +312,7 @@ async function testExpeditionGuards() {
   );
 }
 
-/* ---------- 9. Классы кораблей и типы урона (Этап 10) ---------- */
+/* ---------- 9. Классы кораблей и типы урона ---------- */
 async function testCombatClasses() {
   const mine = await state(ids.admiralToken);
   const base = mine.bases[0];

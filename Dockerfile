@@ -1,4 +1,4 @@
-# Space Strategy MMO — production образ (Этап 1)
+# Space Strategy MMO — production образ
 FROM node:24-alpine AS build
 WORKDIR /app
 COPY package*.json ./

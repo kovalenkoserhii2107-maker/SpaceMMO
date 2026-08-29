@@ -1,5 +1,5 @@
 /**
- * Синдикаты: права ролей, общий банк и дипломатия альянсов (Этап 9).
+ * Синдикаты: права ролей, общий банк и дипломатия альянсов.
  *
  * Основание синдиката стоит криптогривну, поэтому лидерами выступают
  * «богатые» аккаунты из конфигурации, а рядовых участников скрипт создает сам.
@@ -187,7 +187,7 @@ check(
 const peace = await api('POST', '/api/war/syndicate/peace', { targetSyndicateId: rivalId }, leader.token);
 check('лидер заключил мир', peace.status === 200, JSON.stringify(peace.data));
 
-/* ---------- Права офицера на исключение (Этап 10) ---------- */
+/* ---------- Права офицера на исключение ---------- */
 const officerKicksMember = await api('POST', `/api/syndicates/members/${outsider.id}/kick`, undefined, officer.token);
 check(
   'офицер МОЖЕТ исключить рядового участника',
@@ -215,7 +215,7 @@ check(
   JSON.stringify(officerKicksLeaderTry.data),
 );
 
-/* ---------- Передача лидерства (Этап 10) ---------- */
+/* ---------- Передача лидерства ---------- */
 const memberTransfer = await api('POST', `/api/syndicates/members/${member.id}/role`, { role: 'LEADER' }, member.token);
 check('рядовой участник не может передать лидерство', memberTransfer.status === 403, `HTTP ${memberTransfer.status}`);
 

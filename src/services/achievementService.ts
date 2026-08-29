@@ -1,5 +1,5 @@
 /**
- * Движок достижений (Этап 8).
+ * Движок достижений.
  *
  * Каталог хранится в БД, но источником правды остается код: при старте сервера
  * список синхронизируется, поэтому добавить награду — значит дописать сюда строку.
@@ -62,7 +62,6 @@ export async function grant(commanderId: string, code: AchievementCode): Promise
   await prisma.commanderAchievement.create({
     data: { commanderId, achievementId: achievement.id },
   });
-  console.log(`[achievements] ${commanderId} получил «${achievement.title}»`);
   return true;
 }
 

@@ -1,10 +1,10 @@
 /**
- * Авторизация (Этап 8): локальные аккаунты с паролем и заготовка под OAuth.
+ * Авторизация: локальные аккаунты с паролем и заготовка под OAuth.
  *
  * Пароли хешируются scrypt из стандартной библиотеки: соль на каждый пароль,
  * сравнение постоянным по времени. Сессия — JWT, подписанный секретом сервера.
  */
-import { randomBytes, randomUUID, scrypt, timingSafeEqual } from 'node:crypto';
+import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../db/prisma.js';
@@ -207,9 +207,4 @@ async function verifyProviderToken(
   _idToken: string,
 ): Promise<ProviderProfile | null> {
   return null;
-}
-
-/** Служебный идентификатор для будущих провайдеров. */
-export function newProviderStateId(): string {
-  return randomUUID();
 }

@@ -1,4 +1,4 @@
-/** Быстрая проверка формул Этапов 1-2 (sanity-check в консоли, не тест-раннер). */
+/** Быстрая проверка игровых формул (sanity-check в консоли, не тест-раннер). */
 import {
   buildSeconds,
   emptyLevels,
@@ -78,7 +78,7 @@ console.log('\n--- Логистика (реактивный двигатель �
   }
 }
 
-console.log('\n--- Бой: типы урона и слои защиты (Этап 10) ---');
+console.log('\n--- Бой: типы урона и слои защиты ---');
 {
   const fleet = (partial: Partial<ShipCounts>): ShipCounts => ({ ...emptyShipCounts(), ...partial });
   const noDefense = emptyDefenseCounts();
@@ -147,7 +147,7 @@ console.log('\n--- Детерминированность боя ---');
   console.log(`50 прогонов одного боя дали ${unique.size} уникальных результатов: ${[...unique][0]}`);
 }
 
-console.log('\n--- Этап 6: антиматерия и аномалии ---');
+console.log('\n--- Антиматерия и аномалии ---');
 {
   const levels = { ...emptyLevels(), SOLAR_PLANT: 12, ANTIMATTER_SYNTH: 3 };
   const rich = { ...richness, antimatter: 1.2 };
@@ -162,7 +162,7 @@ console.log('\n--- Этап 6: антиматерия и аномалии ---');
   }
 }
 
-console.log('\n--- Этап 6: гиперпрыжки ---');
+console.log('\n--- Гиперпрыжки ---');
 {
   const home = { position: 2, system: { galaxyX: 4, galaxyY: 4 } };
   const fleet: ShipCounts = { ...emptyShipCounts(), PROBE: 0, TRANSPORTER: 3, LIGHT_FIGHTER: 2 };
@@ -178,7 +178,7 @@ console.log('\n--- Этап 6: гиперпрыжки ---');
   }
 }
 
-console.log('\n--- Этап 7: искажение времени на верфи ---');
+console.log('\n--- Искажение времени на верфи ---');
 {
   for (const [label, anomaly] of [['обычная система', 'NONE'], ['черная дыра', 'BLACK_HOLE']] as const) {
     const mods = systemModifiers(anomaly);
@@ -190,7 +190,7 @@ console.log('\n--- Этап 7: искажение времени на верфи
   }
 }
 
-console.log('\n--- Этап 7: экспедиции ---');
+console.log('\n--- Экспедиции ---');
 {
   const fleet: ShipCounts = { ...emptyShipCounts(), PROBE: 0, TRANSPORTER: 4, LIGHT_FIGHTER: 6 };
   const capacity = fleetCapacity(fleet);
@@ -224,7 +224,7 @@ console.log('\n--- Этап 7: экспедиции ---');
   }
 }
 
-console.log('\n--- Этап 7: все ветви событийного движка ---');
+console.log('\n--- Все ветви событийного движка экспедиций ---');
 {
   const strong: ShipCounts = { ...emptyShipCounts(), PROBE: 0, TRANSPORTER: 3, LIGHT_FIGHTER: 12 };
   const weak: ShipCounts = { ...emptyShipCounts(), PROBE: 0, TRANSPORTER: 1, LIGHT_FIGHTER: 0 };

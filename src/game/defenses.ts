@@ -1,5 +1,5 @@
 /**
- * Стационарная оборона (Этап 5). Строится на верфи, летать не может,
+ * Стационарная оборона. Строится на верфи, летать не может,
  * потребляет энергию и гибнет в бою безвозвратно.
  */
 import { NEUTRAL_MODIFIERS, type BuildingLevels, type ResourceAmounts, type SystemModifiers } from './rules.js';

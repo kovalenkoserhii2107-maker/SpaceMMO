@@ -184,7 +184,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .build-message.ok { color: var(--ok); border-color: rgba(74, 222, 128, 0.35); }
 .build-message.bad { color: var(--err); border-color: rgba(248, 113, 113, 0.35); }
 
-/* ---------- Этап 2: вкладки, таймеры, верфь ---------- */
+/* ---------- Вкладки, таймеры, верфь ---------- */
 .ico.eff { color: var(--accent); }
 
 .tabs { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -260,7 +260,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 }
 .order button { flex: 1; padding: 10px 12px; }
 
-/* ---------- Этап 3: карта системы и логистика ---------- */
+/* ---------- Карта системы и логистика ---------- */
 .map-wrap { display: grid; grid-template-columns: 1fr 300px; gap: 16px; align-items: start; }
 @media (max-width: 900px) { .map-wrap { grid-template-columns: 1fr; } }
 
@@ -337,7 +337,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .flight-plan b { color: var(--text); }
 .flight-plan .bad { color: var(--err); }
 
-/* ---------- Этап 4: хаб и биржа ---------- */
+/* ---------- Хаб и биржа ---------- */
 .ico.credits { color: #7ee787; }
 
 .hub-node { cursor: pointer; }
@@ -405,7 +405,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   font-size: 11px;
 }
 
-/* ---------- Этап 5: оборона, бои, дипломатия ---------- */
+/* ---------- Оборона, бои, дипломатия ---------- */
 .battles { display: grid; gap: 12px; }
 
 .battle {
@@ -431,7 +431,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .war-item .status-war { color: var(--err); font-size: 12px; }
 .war-item .status-peace { color: var(--muted); font-size: 12px; }
 
-/* ---------- Этап 6: макро-карта, антиматерия, аномалии ---------- */
+/* ---------- Макро-карта, антиматерия, аномалии ---------- */
 .ico.antimatter { color: #ff8fd8; }
 
 .map-modes { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
@@ -457,7 +457,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .galaxy-grid { stroke: rgba(120, 160, 255, 0.08); stroke-width: 1; }
 .blackhole-ring { fill: none; stroke: #ff8fd8; stroke-width: 1.5; stroke-dasharray: 2 3; }
 
-/* ---------- Этап 8: вход, командир, достижения ---------- */
+/* ---------- Вход, командир, достижения ---------- */
 .auth-tabs { display: flex; gap: 8px; }
 .auth-tab {
   flex: 1;
@@ -536,7 +536,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .achievement .icon { font-size: 22px; }
 .achievement .when { font-size: 11px; color: var(--ok); }
 
-/* ---------- Этап 9: синдикаты ---------- */
+/* ---------- Синдикаты ---------- */
 .syndicate-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
 @media (max-width: 900px) { .syndicate-grid { grid-template-columns: 1fr; } }
 
@@ -574,7 +574,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   font: inherit;
 }
 
-/* ---------- Этап 10: боевые профили юнитов ---------- */
+/* ---------- Боевые профили юнитов ---------- */
 .combat-line {
   font-size: 11px;
   color: var(--accent-2);

@@ -4,7 +4,7 @@
 Запускать при работающем dev-сервере. Перед прогоном стенд готовится скриптом:
 
 ```bash
-npm run test:stand > stand.json
+npm run --silent test:stand > stand.json
 ```
 
 Он приводит тестовых командиров в известное состояние (криптогривна, склад на хабе,
@@ -12,9 +12,9 @@ npm run test:stand > stand.json
 
 ```bash
 node tests/auth.mjs
-node tests/stress-market-fleet.mjs <файл-с-ид.json>
-node tests/stress-races.mjs <файл-с-ид.json>
-node tests/syndicates.mjs <файл-с-ид.json>
+node tests/stress-market-fleet.mjs stand.json
+node tests/stress-races.mjs stand.json
+node tests/syndicates.mjs stand.json
 ```
 
 `auth.mjs` работает без конфигурации: он сам регистрирует временные аккаунты.

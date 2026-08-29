@@ -1,5 +1,5 @@
 /**
- * Экспедиции в глубокий космос (Этап 7).
+ * Экспедиции в глубокий космос.
  *
  * Модуль чистый: событие определяется броском кубика, но генератор случайных
  * чисел передается снаружи. Благодаря этому исход можно зафиксировать в тестах,
@@ -221,8 +221,4 @@ function describePirates(pirates: ShipCounts): string {
   return SHIP_TYPES.filter((type) => pirates[type] > 0)
     .map((type) => `${shipLabel(type)}: ${pirates[type]}`)
     .join(', ');
-}
-
-export function fleetIsEmpty(ships: ShipCounts): boolean {
-  return SHIP_TYPES.every((type) => ships[type] <= 0);
 }

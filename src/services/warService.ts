@@ -1,5 +1,5 @@
 /**
- * Базовая дипломатия и отчеты о боях (Этап 5).
+ * Базовая дипломатия и отчеты о боях.
  * Война нужна, чтобы вылет с миссией «Атака» вообще разрешался.
  */
 import { prisma } from '../db/prisma.js';
@@ -230,7 +230,7 @@ export async function getDiplomacy(commanderId: string): Promise<DiplomacyView> 
 }
 
 /**
- * Индивидуальное объявление войны — только для одиночек (Этап 9).
+ * Индивидуальное объявление войны — только для одиночек.
  * Командир в синдикате воюет составом альянса, а не от своего имени.
  */
 export async function declareWar(commanderId: string, targetId: string): Promise<WarResult> {

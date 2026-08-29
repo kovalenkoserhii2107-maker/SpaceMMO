@@ -48,7 +48,7 @@ export interface PlanetRichness {
 }
 
 /**
- * Модификаторы системы (Этап 6). У черной дыры «Искажение времени»:
+ * Модификаторы системы. У черной дыры «Искажение времени»:
  * синтез антиматерии идет быстрее, а стройка и исследования — медленнее.
  */
 export interface SystemModifiers {
@@ -120,7 +120,7 @@ const ENERGY_DRAIN: Record<BuildingType, number> = {
   ANTIMATTER_SYNTH: 8,
 };
 
-/** Требования к уровню других построек (Этап 2). */
+/** Требования к уровню других построек. */
 const BUILDING_REQUIREMENTS: Partial<Record<BuildingType, Partial<Record<BuildingType, number>>>> = {
   SHIPYARD: { METAL_MINE: 2 },
   RESEARCH_LAB: { METAL_MINE: 2 },
@@ -220,7 +220,7 @@ function drain(base: number, level: number): number {
 }
 
 /**
- * Коэффициент эффективности базы (Этап 2): если энергии не хватает,
+ * Коэффициент эффективности базы: если энергии не хватает,
  * добыча всех шахт падает пропорционально дефициту.
  */
 export function energyEfficiency(
