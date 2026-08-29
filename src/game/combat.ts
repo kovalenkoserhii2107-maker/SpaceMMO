@@ -19,6 +19,7 @@
  * его урон режется вдвое щитами, а щиты у фрегатов — основной слой защиты.
  */
 import { DEFENSE_TYPES, defenseLabel, emptyDefenseCounts, type DefenseCounts, type DefenseType } from './defenses.js';
+import { PROTECTED_STORAGE_SHARE } from './rules.js';
 import { emptyShipCounts, SHIP_TYPES, shipLabel, type ShipCounts, type ShipType } from './ships.js';
 
 export const DAMAGE_TYPES = ['KINETIC', 'LASER', 'ION'] as const;
@@ -66,8 +67,8 @@ const DEFENSE_COMBAT: Record<DefenseType, CombatProfile> = {
   LASER_TURRET: { damage: 25, damageType: 'LASER', shield: 80, armor: 0, hull: 70 },
 };
 
-/** Доля ресурсов со склада побежденного, которую можно вывезти. */
-const PLUNDER_SHARE = 0.5;
+/** Доля уязвимого излишка, которую победитель успевает вывезти. */
+const RAID_SHARE = 0.9;
 
 export interface SideForces {
   ships: ShipCounts;
@@ -330,22 +331,72 @@ export function resolveBattle(attacker: SideForces, defender: SideForces): Battl
   };
 }
 
+/** Что удалось вывезти и почему именно столько — основа отчета для агрессора. */
+export interface PlunderResult {
+  metal: number;
+  crystal: number;
+  /** Вместимость хранилища защитника. */
+  storageCapacity: number;
+  /** Сколько всего лежало на складе (металл + кристаллы + дейтерий). */
+  stored: number;
+  /** Несгораемый объем: 90% вместимости, но не больше того, что реально лежит. */
+  protectedAmount: number;
+  /** Излишек сверх несгораемого объема — только он и уязвим. */
+  surplus: number;
+  /** Сколько вывозимого добра дал бы излишек при бесконечных трюмах. */
+  takeable: number;
+  /** Трюмы уцелевших не вместили всё, что можно было взять. */
+  cargoLimited: boolean;
+}
+
 /**
- * Сколько ресурсов увезет победитель.
- * Ограничений два: доля склада побежденного и вместимость трюмов уцелевших.
+ * Сколько ресурсов увезет победитель — механика «сейфа».
+ *
+ * Хранилище прячет ресурсы в объеме до 90% своей вместимости. Всё сверх этого
+ * порога — уязвимый излишек: и последние 10% вместимости, и то, что занесли
+ * сверх лимита возвратные рейсы, экспедиции или отмена биржевых ордеров.
+ * Агрессор забирает 90% излишка, пропорционально каждому типу ресурса,
+ * а итог все так же режется трюмами уцелевших кораблей.
+ *
+ * Половина склада больше не выносится: полупустая база не теряет ничего,
+ * и заполненность склада становится осмысленным риском.
+ *
+ * Дейтерий занимает место в хранилище и потому выталкивает металл с кристаллами
+ * в излишек, но сам не вывозится: транспортных танкеров в игре пока нет.
  */
 export function plunderAmount(
-  stock: { metal: number; crystal: number },
-  capacity: number,
-): { metal: number; crystal: number } {
-  if (capacity <= 0) return { metal: 0, crystal: 0 };
+  stock: { metal: number; crystal: number; deuterium: number },
+  storageCapacity: number,
+  cargoCapacity: number,
+): PlunderResult {
+  const metal = Math.max(0, stock.metal);
+  const crystal = Math.max(0, stock.crystal);
+  const stored = metal + crystal + Math.max(0, stock.deuterium);
 
-  const availableMetal = Math.max(0, Math.floor(stock.metal * PLUNDER_SHARE));
-  const availableCrystal = Math.max(0, Math.floor(stock.crystal * PLUNDER_SHARE));
+  const protectedAmount = Math.min(stored, Math.max(0, storageCapacity) * PROTECTED_STORAGE_SHARE);
+  const surplus = Math.max(0, stored - protectedAmount);
 
-  const metal = Math.min(availableMetal, capacity);
-  const crystal = Math.min(availableCrystal, Math.max(0, capacity - metal));
-  return { metal, crystal };
+  // Доля каждого ресурса, которая уходит агрессору: излишек «размазан» по складу
+  // пропорционально, поэтому пропорцию считаем один раз и применяем ко всем типам.
+  const share = stored > 0 ? (RAID_SHARE * surplus) / stored : 0;
+  const availableMetal = Math.floor(metal * share);
+  const availableCrystal = Math.floor(crystal * share);
+  const takeable = availableMetal + availableCrystal;
+
+  const room = Math.max(0, cargoCapacity);
+  const takenMetal = Math.min(availableMetal, room);
+  const takenCrystal = Math.min(availableCrystal, room - takenMetal);
+
+  return {
+    metal: takenMetal,
+    crystal: takenCrystal,
+    storageCapacity,
+    stored,
+    protectedAmount,
+    surplus,
+    takeable,
+    cargoLimited: takenMetal + takenCrystal < takeable,
+  };
 }
 
 function safeRatio(part: number, whole: number): number {

@@ -7,12 +7,14 @@ import {
   energyOutput,
   energyUsage,
   productionPerSecond,
+  storageCapacityForLevel,
+  storageState,
   upgradeCost,
 } from '../game/rules.js';
 import { economyBonuses, emptyTechLevels, researchCost, researchSeconds } from '../game/techTree.js';
 import { emptyShipCounts, shipUnitSeconds, SHIP_TYPES, type ShipCounts } from '../game/ships.js';
 import { fleetCapacity, planFlight } from '../game/fleets.js';
-import { resolveBattle } from '../game/combat.js';
+import { plunderAmount, resolveBattle } from '../game/combat.js';
 import { expeditionSlots, resolveExpedition } from '../game/expeditions.js';
 import { defenseUnitSeconds, emptyDefenseCounts, type DefenseCounts } from '../game/defenses.js';
 
@@ -249,5 +251,51 @@ console.log('\n--- Все ветви событийного движка экс�
     const survivors = SHIP_TYPES.reduce((total, type) => total + result.survivors[type], 0);
     console.log(`${label} → ${result.outcome}, уцелело кораблей ${survivors}`);
     console.log(`    «${result.summary}»`);
+  }
+}
+
+console.log('\n--- Хранилище: вместимость и остановка добычи ---');
+{
+  for (const level of [0, 1, 2, 3, 5, 8]) {
+    console.log(`ур.${level}: вместимость ${storageCapacityForLevel(level)}`);
+  }
+
+  // Догон офлайна: шахты качают неделю, но склад держит потолок.
+  const levels = { ...emptyLevels(), METAL_MINE: 10, CRYSTAL_MINE: 10, DEUTERIUM_MINE: 8, SOLAR_PLANT: 14, STORAGE: 1 };
+  const perSecond = productionPerSecond(levels, richness, bonuses);
+  const capacity = storageCapacityForLevel(levels.STORAGE);
+  const week = 7 * 24 * 3600;
+
+  const stock = { metal: 500, crystal: 300, deuterium: 100, antimatter: 0 };
+  const mined = (perSecond.metal + perSecond.crystal + perSecond.deuterium) * week;
+  const used = stock.metal + stock.crystal + stock.deuterium;
+  const free = Math.max(0, capacity - used);
+  const fit = mined > free ? free / mined : 1;
+
+  console.log(
+    `неделя офлайна: добыто было бы ${Math.round(mined)}, ` +
+      `свободно ${Math.round(free)}, начислено ${Math.round(mined * fit)} (вместимость ${capacity})`,
+  );
+}
+
+console.log('\n--- Грабеж: механика сейфа ---');
+{
+  const capacity = storageCapacityForLevel(1);
+  const cases: Array<[string, { metal: number; crystal: number; deuterium: number }, number]> = [
+    ['склад наполовину пуст — защищено всё', { metal: 3000, crystal: 2000, deuterium: 0 }, 100000],
+    ['склад ровно полон — уязвимы последние 10%', { metal: 6000, crystal: 4000, deuterium: 0 }, 100000],
+    ['склад переполнен вдвое', { metal: 12000, crystal: 8000, deuterium: 0 }, 100000],
+    ['дейтерий выталкивает металл в излишек', { metal: 5000, crystal: 0, deuterium: 5000 }, 100000],
+    ['трюмов не хватает', { metal: 12000, crystal: 8000, deuterium: 0 }, 1000],
+  ];
+
+  for (const [label, stock, cargo] of cases) {
+    const loot = plunderAmount(stock, capacity, cargo);
+    const state = storageState(stock, capacity);
+    console.log(
+      `${label}: лежало ${Math.round(loot.stored)}, защищено ${Math.round(loot.protectedAmount)}, ` +
+        `излишек ${Math.round(loot.surplus)} → увезли ${loot.metal} Me + ${loot.crystal} Cr` +
+        `${loot.cargoLimited ? ' (обрезали трюмы)' : ''}, уязвимо по снимку ${Math.round(state.vulnerable)}`,
+    );
   }
 }

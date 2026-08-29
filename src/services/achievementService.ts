@@ -81,6 +81,7 @@ export async function checkArchitect(commanderId: string, baseId: string): Promi
     RESEARCH_LAB: base.researchLabLevel,
     SHIPYARD: base.shipyardLevel,
     ANTIMATTER_SYNTH: base.antimatterSynthLevel,
+    STORAGE: base.storageLevel,
   };
 
   const built = BUILDING_TYPES.filter((type) => (levels[type] ?? 0) > 0).length;

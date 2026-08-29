@@ -11,6 +11,7 @@ export const BUILDING_TYPES = [
   'RESEARCH_LAB',
   'SHIPYARD',
   'ANTIMATTER_SYNTH',
+  'STORAGE',
 ] as const;
 
 export type BuildingType = (typeof BUILDING_TYPES)[number];
@@ -106,6 +107,7 @@ const COSTS: Record<BuildingType, ResourceAmounts & { factor: number }> = {
   RESEARCH_LAB: { metal: 200, crystal: 400, deuterium: 100, factor: 2.0 },
   SHIPYARD: { metal: 400, crystal: 200, deuterium: 100, factor: 2.0 },
   ANTIMATTER_SYNTH: { metal: 2000, crystal: 1500, deuterium: 800, factor: 2.2 },
+  STORAGE: { metal: 500, crystal: 250, deuterium: 0, factor: 1.6 },
 };
 
 /** Потребление энергии постройками. Солнечная станция энергию не тратит. */
@@ -118,6 +120,8 @@ const ENERGY_DRAIN: Record<BuildingType, number> = {
   SHIPYARD: 1.5,
   // Синтезатор — самый прожорливый объект базы.
   ANTIMATTER_SYNTH: 8,
+  // Климат-контроль ангаров: хранилище почти не ест энергию.
+  STORAGE: 0.3,
 };
 
 /** Требования к уровню других построек. */
@@ -135,6 +139,7 @@ export const BUILDING_LABELS: Record<BuildingType, string> = {
   RESEARCH_LAB: 'Исследовательская лаборатория',
   SHIPYARD: 'Верфь',
   ANTIMATTER_SYNTH: 'Синтезатор антиматерии',
+  STORAGE: 'Комплексное хранилище',
 };
 
 export function emptyLevels(): BuildingLevels {
@@ -146,6 +151,7 @@ export function emptyLevels(): BuildingLevels {
     RESEARCH_LAB: 0,
     SHIPYARD: 0,
     ANTIMATTER_SYNTH: 0,
+    STORAGE: 0,
   };
 }
 
@@ -266,6 +272,76 @@ function mineOutput(
   // «Горное дело» ускоряет обычные шахты, но не синтез антиматерии.
   const techBonus = type === 'ANTIMATTER_SYNTH' ? 1 : bonuses.mining;
   return BASE_YIELD_PER_SECOND[type] * level * Math.pow(1.1, level) * richness * techBonus;
+}
+
+/* ------------------------- Хранилище ------------------------- */
+
+/**
+ * Вместимость склада базы.
+ *
+ * Лимит общий на металл, кристаллы и дейтерий: базы копят «тоннаж», а не три
+ * независимых кучи. Антиматерия под лимит не попадает — она хранится в отдельных
+ * магнитных ловушках и в трюмах не возится.
+ *
+ * Уровень 0 — колониальный резерв без постройки: небольшой запас, чтобы новая
+ * колония успела отстроить первое хранилище. Дальше вместимость растет по
+ * экспоненте: 10 000 → 15 000 → 22 500 → …
+ */
+export const BASE_STORAGE_CAPACITY = 5_000;
+const STORAGE_LEVEL_ONE_CAPACITY = 10_000;
+const STORAGE_GROWTH = 1.5;
+
+/** Доля вместимости, которую хранилище прячет от грабежа. */
+export const PROTECTED_STORAGE_SHARE = 0.9;
+
+export function storageCapacityForLevel(level: number): number {
+  if (!Number.isFinite(level) || level <= 0) return BASE_STORAGE_CAPACITY;
+  return Math.floor(STORAGE_LEVEL_ONE_CAPACITY * Math.pow(STORAGE_GROWTH, level - 1));
+}
+
+export function storageCapacity(levels: BuildingLevels): number {
+  return storageCapacityForLevel(levels.STORAGE);
+}
+
+/** Сколько «тоннажа» занято: антиматерия в лимит не входит. */
+export function storedTotal(stock: ResourceAmounts): number {
+  return Math.max(0, stock.metal) + Math.max(0, stock.crystal) + Math.max(0, stock.deuterium);
+}
+
+export interface StorageState {
+  capacity: number;
+  used: number;
+  free: number;
+  /** Заполненность 0..1; больше 1, если склад успели переполнить извне. */
+  fill: number;
+  /** Добыча остановлена: свободного места не осталось. */
+  full: boolean;
+  /** Несгораемый объем — его грабеж не достает. */
+  protectedAmount: number;
+  /** Излишек сверх несгораемого объема: именно он уязвим при поражении. */
+  vulnerable: number;
+}
+
+/**
+ * Состояние склада для интерфейса и для расчета грабежа.
+ *
+ * Переполнение — штатная ситуация: добыча в потолок упирается, но флот с добычей,
+ * возврат залога с биржи или трофеи экспедиции могут занести ресурсы сверх лимита.
+ * Такой излишек не исчезает, но и не защищен.
+ */
+export function storageState(stock: ResourceAmounts, capacity: number): StorageState {
+  const used = storedTotal(stock);
+  const protectedAmount = Math.min(used, capacity * PROTECTED_STORAGE_SHARE);
+
+  return {
+    capacity,
+    used,
+    free: Math.max(0, capacity - used),
+    fill: capacity > 0 ? used / capacity : 1,
+    full: used >= capacity,
+    protectedAmount,
+    vulnerable: Math.max(0, used - protectedAmount),
+  };
 }
 
 export function hasEnoughResources(stock: ResourceAmounts, cost: ResourceAmounts): boolean {

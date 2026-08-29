@@ -80,6 +80,7 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
               RESEARCH_LAB: ownBase.researchLabLevel,
               SHIPYARD: ownBase.shipyardLevel,
               ANTIMATTER_SYNTH: ownBase.antimatterSynthLevel,
+              STORAGE: ownBase.storageLevel,
             },
         resources: live
           ? {

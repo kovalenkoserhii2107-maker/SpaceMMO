@@ -20,6 +20,10 @@ import {
   hasEnoughResources,
   missingBuildingRequirements,
   productionPerSecond,
+  storageCapacity,
+  storageCapacityForLevel,
+  storageState,
+  storedTotal,
   upgradeCost,
   type BuildingLevels,
   type BuildingType,
@@ -169,6 +173,15 @@ export interface CommanderRuntimeState {
 /**
  * Начисление ресурсов за прошедшие секунды (тик и догон офлайна).
  * Нечисловой результат отбрасывается: одно NaN иначе навсегда испортило бы склад базы.
+ *
+ * Добыча упирается в вместимость хранилища. Догон офлайна проходит здесь же,
+ * поэтому недельное отсутствие не приносит больше, чем влезает на склад:
+ * период уже разбит на отрезки по завершенным стройкам, а на каждом отрезке
+ * начисление обрезается по остатку свободного места.
+ *
+ * Обрезается ровно та доля, которая не влезла, и одинаково для всех трех
+ * ресурсов — иначе на полном складе металл вытеснял бы дейтерий просто потому,
+ * что его добывают быстрее. Антиматерия под лимит не попадает.
  */
 export function accrue(state: BaseRuntimeState, techs: TechLevels, seconds: number): void {
   if (!Number.isFinite(seconds) || seconds <= 0) return;
@@ -180,10 +193,15 @@ export function accrue(state: BaseRuntimeState, techs: TechLevels, seconds: numb
     defenseEnergyUsage(state.defenses),
     systemModifiers(state.anomaly),
   );
+
+  const mined = (perSecond.metal + perSecond.crystal + perSecond.deuterium) * seconds;
+  const free = Math.max(0, storageCapacity(state.levels) - storedTotal(state.resources));
+  const fit = mined > free ? free / mined : 1;
+
   const next: BaseStock = {
-    metal: state.resources.metal + perSecond.metal * seconds,
-    crystal: state.resources.crystal + perSecond.crystal * seconds,
-    deuterium: state.resources.deuterium + perSecond.deuterium * seconds,
+    metal: state.resources.metal + perSecond.metal * seconds * fit,
+    crystal: state.resources.crystal + perSecond.crystal * seconds * fit,
+    deuterium: state.resources.deuterium + perSecond.deuterium * seconds * fit,
     antimatter: state.resources.antimatter + perSecond.antimatter * seconds,
   };
 
@@ -207,6 +225,7 @@ export function toSnapshot(state: BaseRuntimeState, commander: CommanderRuntimeS
   const output = energyOutput(state.levels, state.richness, bonuses);
   const usage = energyUsage(state.levels, defenseDrain);
   const efficiency = energyEfficiency(state.levels, state.richness, bonuses, defenseDrain);
+  const storage = storageState(state.resources, storageCapacity(state.levels));
 
   return {
     baseId: state.id,
@@ -229,6 +248,15 @@ export function toSnapshot(state: BaseRuntimeState, commander: CommanderRuntimeS
     productionPerSecond: roundAll(
       productionPerSecond(state.levels, state.richness, bonuses, defenseDrain, modifiers),
     ),
+    storage: {
+      capacity: storage.capacity,
+      used: round(storage.used),
+      free: round(storage.free),
+      fill: Math.round(storage.fill * 1000) / 1000,
+      full: storage.full,
+      protectedAmount: round(storage.protectedAmount),
+      vulnerable: round(storage.vulnerable),
+    },
     energy: {
       output: round(output),
       usage: round(usage),
@@ -310,8 +338,21 @@ function buildingCard(type: BuildingType, state: BaseRuntimeState): BuildingCard
     seconds: buildSeconds(type, nextLevel, systemModifiers(state.anomaly)),
     canAfford: hasEnoughResources(state.resources, cost),
     requirements: missing,
+    effect: buildingEffect(type, state.levels[type], nextLevel),
     busy: state.buildJob !== null,
   };
+}
+
+/**
+ * Короткая подсказка «что даст следующий уровень».
+ * Заполняется только там, где эффект не читается из названия: у шахт прирост
+ * виден в добыче, а вместимость хранилища иначе узнать неоткуда.
+ */
+function buildingEffect(type: BuildingType, level: number, nextLevel: number): string | null {
+  if (type !== 'STORAGE') return null;
+  const now = storageCapacityForLevel(level);
+  const next = storageCapacityForLevel(nextLevel);
+  return `вместимость ${Math.round(now)} → ${Math.round(next)}`;
 }
 
 function technologyCard(

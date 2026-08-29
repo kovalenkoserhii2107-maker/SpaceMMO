@@ -66,6 +66,7 @@ import {
   hasEnoughResources,
   missingBuildingRequirements,
   multiplyResources,
+  storageCapacityForLevel,
   subtractResources,
   upgradeCost,
   type BuildingType,
@@ -228,6 +229,7 @@ class GameLoop {
       levels.RESEARCH_LAB = base.researchLabLevel;
       levels.SHIPYARD = base.shipyardLevel;
       levels.ANTIMATTER_SYNTH = base.antimatterSynthLevel;
+      levels.STORAGE = base.storageLevel;
 
       commander.bases.set(base.id, {
         id: base.id,
@@ -1169,14 +1171,13 @@ class GameLoop {
       const defender: SideForces = { ships: defenderShips, defenses: defenderDefenses };
       const outcome = resolveBattle(attacker, defender);
 
-      // Грабеж: только победивший атакующий и только в пределах уцелевших трюмов.
-      const plunder =
-        outcome.winner === 'ATTACKER'
-          ? plunderAmount(
-              { metal: base.metal, crystal: base.crystal },
-              fleetCapacity(outcome.attackerSurvivors),
-            )
-          : { metal: 0, crystal: 0 };
+      // Грабеж: только победивший атакующий, только уязвимый излишек склада
+      // и только в пределах трюмов уцелевших кораблей.
+      const plunder = plunderAmount(
+        { metal: base.metal, crystal: base.crystal, deuterium: base.deuterium },
+        storageCapacityForLevel(base.storageLevel),
+        outcome.winner === 'ATTACKER' ? fleetCapacity(outcome.attackerSurvivors) : 0,
+      );
 
       // Потери защитника: корабли и оборона списываются безвозвратно.
       for (const type of SHIP_TYPES) {
@@ -1268,6 +1269,14 @@ class GameLoop {
             defenderLosses: outcome.defenderLosses,
             attackerSurvivors: outcome.attackerSurvivors,
             plunder,
+            storageDefense: {
+              capacity: Math.round(plunder.storageCapacity),
+              stored: Math.round(plunder.stored),
+              protectedAmount: Math.round(plunder.protectedAmount),
+              surplus: Math.round(plunder.surplus),
+              takeable: plunder.takeable,
+              cargoLimited: plunder.cargoLimited,
+            },
             foughtAt: now,
           }),
         },
@@ -1489,6 +1498,7 @@ class GameLoop {
             RESEARCH_LAB: planet.base.researchLabLevel,
             SHIPYARD: planet.base.shipyardLevel,
             ANTIMATTER_SYNTH: planet.base.antimatterSynthLevel,
+            STORAGE: planet.base.storageLevel,
           };
       const resources = live
         ? { ...live.resources }
@@ -1566,6 +1576,7 @@ class GameLoop {
             researchLabLevel: base.levels.RESEARCH_LAB,
             shipyardLevel: base.levels.SHIPYARD,
             antimatterSynthLevel: base.levels.ANTIMATTER_SYNTH,
+            storageLevel: base.levels.STORAGE,
             lastTickAt: new Date(base.lastTickAt),
           },
         }),

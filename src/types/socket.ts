@@ -14,6 +14,8 @@ export interface BuildingCard {
   seconds: number;
   canAfford: boolean;
   requirements: Requirement[];
+  /** Что даст следующий уровень: заполнено там, где эффект неочевиден. */
+  effect: string | null;
   /** На базе уже идет стройка. */
   busy: boolean;
 }
@@ -88,6 +90,20 @@ export interface BaseSnapshot {
   };
   resources: BaseStock;
   productionPerSecond: BaseStock;
+  /** Комплексное хранилище: общий лимит на металл, кристаллы и дейтерий. */
+  storage: {
+    capacity: number;
+    used: number;
+    free: number;
+    /** Заполненность 0..1; больше 1, если склад переполнили извне. */
+    fill: number;
+    /** Добыча остановлена: свободного места нет. */
+    full: boolean;
+    /** Несгораемый объем — его грабеж не достает. */
+    protectedAmount: number;
+    /** Излишек сверх несгораемого объема: он уязвим при поражении. */
+    vulnerable: number;
+  };
   energy: {
     output: number;
     usage: number;

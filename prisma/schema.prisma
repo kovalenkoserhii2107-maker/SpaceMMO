@@ -308,6 +308,9 @@ model Base {
   /// Инфраструктура Этапа 6.
   antimatterSynthLevel Int @default(0)
 
+  /// Комплексное хранилище: общий лимит склада на металл, кристаллы и дейтерий.
+  storageLevel Int @default(0)
+
   /// Время последнего начисления ресурсов тиком (для догона офлайн-периода).
   lastTickAt DateTime @default(now())
   createdAt  DateTime @default(now())
@@ -702,6 +705,7 @@ enum BuildingType {
   RESEARCH_LAB
   SHIPYARD
   ANTIMATTER_SYNTH
+  STORAGE
 }
 
 enum TechnologyType {

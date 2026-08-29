@@ -56,6 +56,8 @@ export interface DiplomacyView {
     attackerName: string;
     defenderName: string;
     plunder: { metal: number; crystal: number };
+    /** Почему увезли именно столько: что спрятало хранилище защитника. */
+    storageDefense: StorageDefenseReport | null;
     myLosses: Array<{ label: string; lost: number; before: number }>;
     enemyLosses: Array<{ label: string; lost: number; before: number }>;
     attackerPower: number;
@@ -65,6 +67,25 @@ export interface DiplomacyView {
     enemyDamage: DamageReport | null;
     createdAt: number;
   }>;
+}
+
+/**
+ * Что хранилище защитника спрятало от грабежа.
+ * Без этих цифр агрессор видит только итог и не понимает, почему трюмы пустые.
+ */
+export interface StorageDefenseReport {
+  /** Вместимость хранилища защитника. */
+  capacity: number;
+  /** Сколько всего лежало на складе в момент боя. */
+  stored: number;
+  /** Несгораемый объем — до него грабеж не достал. */
+  protectedAmount: number;
+  /** Уязвимый излишек сверх несгораемого объема. */
+  surplus: number;
+  /** Сколько можно было вывезти при бесконечных трюмах. */
+  takeable: number;
+  /** Вывоз обрезали трюмы, а не хранилище. */
+  cargoLimited: boolean;
 }
 
 /** Сводка о том, куда ушел урон стороны — основа понятного отчета. */
@@ -86,6 +107,7 @@ interface BattleData {
   attackerDamageReport?: DamageReport;
   defenderDamageReport?: DamageReport;
   plunder: { metal: number; crystal: number };
+  storageDefense?: StorageDefenseReport;
 }
 
 export async function getDiplomacy(commanderId: string): Promise<DiplomacyView> {
@@ -217,6 +239,7 @@ export async function getDiplomacy(commanderId: string): Promise<DiplomacyView> 
         attackerName: data.attackerName,
         defenderName: data.defenderName,
         plunder: { metal: report.plunderMetal, crystal: report.plunderCrystal },
+        storageDefense: data.storageDefense ?? null,
         myLosses: role === 'ATTACKER' ? data.attackerLosses : data.defenderLosses,
         enemyLosses: role === 'ATTACKER' ? data.defenderLosses : data.attackerLosses,
         attackerPower: Math.round(data.attackerPower?.firepower ?? 0),

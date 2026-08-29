@@ -48,6 +48,10 @@
     baseName: $('base-name'),
     planetMeta: $('planet-meta'),
     richness: $('richness'),
+    storage: $('storage'),
+    storageText: $('storage-text'),
+    storageFill: $('storage-fill'),
+    storageNote: $('storage-note'),
     tabs: $('tabs'),
     buildJob: $('build-job'),
     buildings: $('buildings'),
@@ -508,9 +512,18 @@
     el.resCrystal.textContent = fmt(base.resources.crystal);
     el.resDeuterium.textContent = fmt(base.resources.deuterium);
     el.resEnergy.textContent = fmt(base.energy.available);
-    el.rateMetal.textContent = fmtRate(base.productionPerSecond.metal);
-    el.rateCrystal.textContent = fmtRate(base.productionPerSecond.crystal);
-    el.rateDeuterium.textContent = fmtRate(base.productionPerSecond.deuterium);
+
+    // На полном складе шахты стоят: показывать их проектную скорость —
+    // значит спорить с надписью «добыча остановлена» прямо над ней.
+    const mining = base.storage && base.storage.full ? 0 : null;
+    for (const [node, rate] of [
+      [el.rateMetal, base.productionPerSecond.metal],
+      [el.rateCrystal, base.productionPerSecond.crystal],
+      [el.rateDeuterium, base.productionPerSecond.deuterium],
+    ]) {
+      node.textContent = mining === null ? fmtRate(rate) : 'склад полон';
+      node.style.color = mining === null ? '' : 'var(--err)';
+    }
     el.resAntimatter.textContent = fmt(base.resources.antimatter);
     el.rateAntimatter.textContent = `+${base.productionPerSecond.antimatter.toFixed(3)}/с`;
     el.rateEnergy.textContent = `из ${fmt(base.energy.output)}`;
@@ -533,6 +546,8 @@
       <div>Инсоляция<b>×${base.richness.energy}</b></div>
       <div>Антиматерия<b>×${base.richness.antimatter}</b></div>`;
 
+    renderStorage(base.storage);
+
     renderJobBanner(el.buildJob, base.buildJob && {
       title: `${base.buildJob.label} → ур. ${base.buildJob.targetLevel}`,
       remainingSeconds: base.buildJob.remainingSeconds,
@@ -551,6 +566,35 @@
     renderFleetList();
     renderFleetMarkers();
     if (map.data) renderPlanetInfo();
+  }
+
+  /**
+   * Заполненность склада. Полный склад — не косметика: добыча встает,
+   * поэтому предупреждение выводим тем же местом, где показан сам лимит.
+   */
+  function renderStorage(storage) {
+    if (!storage) return;
+
+    const fill = Math.max(0, Math.min(1, storage.fill));
+    el.storageFill.style.width = `${(fill * 100).toFixed(1)}%`;
+    el.storageText.textContent = `Занято: ${fmt(storage.used)} / ${fmt(storage.capacity)}`;
+
+    const overflow = storage.used > storage.capacity;
+    el.storage.classList.toggle('full', storage.full);
+    el.storage.classList.toggle('near', !storage.full && storage.fill >= 0.85);
+
+    // Уязвимый излишек появляется только за порогом 90% вместимости,
+    // поэтому на полупустом складе про грабеж молчим — там терять нечего.
+    const risk = storage.vulnerable > 0 ? ` Под грабеж попадает ${fmt(storage.vulnerable)}.` : '';
+
+    if (storage.full) {
+      el.storageNote.textContent =
+        'Склады переполнены. Добыча остановлена.' +
+        (overflow ? ` Сверх лимита лежит ${fmt(storage.used - storage.capacity)}.` : '') +
+        risk;
+    } else {
+      el.storageNote.textContent = `Свободно ${fmt(storage.free)}.` + risk;
+    }
   }
 
   function renderJobBanner(node, job) {
@@ -732,6 +776,8 @@
   function updateBuildingCard(card, base, building) {
     if (!card) return;
     card.level.textContent = `Ур. ${building.level}`;
+    // Тем же местом, что и боевой профиль у кораблей: короткая строка эффекта.
+    card.combat.textContent = building.effect || '';
     fillCost(card, building.cost, base.resources);
     card.time.textContent = `Время постройки: ${fmtTime(building.seconds)}`;
     fillRequirements(card, building.requirements);
@@ -1812,6 +1858,9 @@
           `${battle.role === 'DEFENDER' ? ' (вывезено с нашего склада)' : ''}`
         : 'ресурсы не вывозились';
 
+      // Почему увезли именно столько: сколько спрятало хранилище защитника.
+      const safe = battle.victory && battle.role === 'ATTACKER' ? battle.storageDefense : null;
+
       const when = document.createElement('div');
       when.className = 'line';
       when.textContent = new Date(battle.createdAt).toLocaleString('ru-RU');
@@ -1833,7 +1882,22 @@
         card.appendChild(line);
       }
 
-      card.append(plunder, when);
+      card.append(plunder);
+
+      if (safe) {
+        const line = document.createElement('div');
+        line.className = 'line';
+        const reason = safe.cargoLimited
+          ? 'остальное не влезло в трюмы уцелевших'
+          : 'больше из хранилища не достать';
+        line.innerHTML =
+          `хранилище врага (ур. вместимости <b>${fmt(safe.capacity)}</b>): на складе лежало ` +
+          `<b>${fmt(safe.stored)}</b>, из них защищено <b>${fmt(safe.protectedAmount)}</b>, ` +
+          `уязвимый излишек <b>${fmt(safe.surplus)}</b> — ${reason}`;
+        card.appendChild(line);
+      }
+
+      card.append(when);
       el.battles.appendChild(card);
     }
   }

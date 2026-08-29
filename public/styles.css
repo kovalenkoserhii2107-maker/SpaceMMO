@@ -175,6 +175,39 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .richness div { text-align: center; font-size: 12px; color: var(--muted); }
 .richness b { display: block; font-size: 15px; color: var(--text); }
 
+/* ---------- Хранилище: заполненность и остановка добычи ---------- */
+.storage { flex-basis: 100%; display: grid; gap: 6px; }
+.storage-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12px;
+  color: var(--muted);
+}
+.storage-head b { font-size: 13px; color: var(--text); font-variant-numeric: tabular-nums; }
+
+.storage-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.storage-bar i {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transition: width 0.4s ease;
+}
+.storage.near .storage-bar i { background: linear-gradient(90deg, var(--warn), #fb923c); }
+.storage.full .storage-bar i { background: linear-gradient(90deg, var(--err), #fb7185); }
+
+.storage-note { margin: 0; font-size: 12px; color: var(--muted); }
+.storage.near .storage-note { color: var(--warn); }
+.storage.full .storage-note { color: var(--err); }
+
 .level { font-size: 12px; color: var(--accent); border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; }
 
 .cost { display: flex; gap: 14px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
