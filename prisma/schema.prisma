@@ -5,6 +5,7 @@
 // ЭТАП 4: TradeHub, HubStorage, MarketOrder, Trade + баланс криптогривны.
 // ЭТАП 5: Defense, DefenseJob, BattleReport, WarDeclaration.
 // ЭТАП 6: макро-координаты систем, аномалии, антиматерия и межзвездные прыжки.
+// ЭТАП 7: экспедиции в глубокий космос и PvE-события.
 
 generator client {
   provider = "prisma-client"
@@ -32,12 +33,13 @@ model User {
   scans        PlanetScan[]
   hubStorages  HubStorage[]
   orders       MarketOrder[]
-  purchases    Trade[]          @relation("TradeBuyer")
-  sales        Trade[]          @relation("TradeSeller")
-  attacksMade  BattleReport[]   @relation("BattleAttacker")
-  attacksTaken BattleReport[]   @relation("BattleDefender")
-  warsStarted  WarDeclaration[] @relation("WarAggressor")
-  warsAgainst  WarDeclaration[] @relation("WarTarget")
+  purchases    Trade[]            @relation("TradeBuyer")
+  sales        Trade[]            @relation("TradeSeller")
+  expeditions  ExpeditionReport[]
+  attacksMade  BattleReport[]     @relation("BattleAttacker")
+  attacksTaken BattleReport[]     @relation("BattleDefender")
+  warsStarted  WarDeclaration[]   @relation("WarAggressor")
+  warsAgainst  WarDeclaration[]   @relation("WarTarget")
 
   @@map("users")
 }
@@ -55,8 +57,10 @@ model SolarSystem {
   anomaly   SystemAnomaly @default(NONE)
   createdAt DateTime      @default(now())
 
-  planets Planet[]
-  hub     TradeHub?
+  planets     Planet[]
+  hub         TradeHub?
+  fleets      Fleet[]
+  expeditions ExpeditionReport[]
 
   @@unique([galaxyX, galaxyY])
   @@map("solar_systems")
@@ -249,6 +253,30 @@ model BattleReport {
   @@map("battle_reports")
 }
 
+/// Отчет об экспедиции в глубокий космос: что нашли или кого встретили.
+model ExpeditionReport {
+  id       String            @id @default(cuid())
+  userId   String
+  systemId String
+  outcome  ExpeditionOutcome
+
+  /// Найденное за вылет.
+  lootMetal      Float @default(0)
+  lootCrystal    Float @default(0)
+  lootAntimatter Float @default(0)
+
+  /// Человекочитаемый итог и подробности события.
+  summary   String
+  data      Json
+  createdAt DateTime @default(now())
+
+  user   User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  system SolarSystem @relation(fields: [systemId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("expedition_reports")
+}
+
 /// Объявление войны. Атака возможна только при активной войне между игроками.
 model WarDeclaration {
   id          String   @id @default(cuid())
@@ -304,6 +332,8 @@ model Fleet {
   /// Цель полета: планета или торговый хаб (заполнено ровно одно поле).
   targetPlanetId String?
   targetHubId    String?
+  /// Цель экспедиции: глубокий космос указанной системы.
+  targetSystemId String?
 
   mission FleetMission
   status  FleetStatus  @default(OUTBOUND)
@@ -314,8 +344,10 @@ model Fleet {
   lightFighters Int @default(0)
 
   /// Груз на борту (дейтерий возится только как топливо).
-  cargoMetal   Float @default(0)
-  cargoCrystal Float @default(0)
+  cargoMetal      Float @default(0)
+  cargoCrystal    Float @default(0)
+  /// Антиматерия, найденная в экспедиции, едет домой в баках.
+  cargoAntimatter Float @default(0)
 
   /// Сколько запрошено к вывозу с хаба (для миссии HUB_PICKUP).
   pickupMetal   Float @default(0)
@@ -336,11 +368,12 @@ model Fleet {
   returnsAt  DateTime
   createdAt  DateTime @default(now())
 
-  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  originBase   Base      @relation(fields: [originBaseId], references: [id], onDelete: Cascade)
-  originPlanet Planet    @relation("FleetOrigin", fields: [originPlanetId], references: [id], onDelete: Cascade)
-  targetPlanet Planet?   @relation("FleetTarget", fields: [targetPlanetId], references: [id], onDelete: Cascade)
-  targetHub    TradeHub? @relation(fields: [targetHubId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  originBase   Base         @relation(fields: [originBaseId], references: [id], onDelete: Cascade)
+  originPlanet Planet       @relation("FleetOrigin", fields: [originPlanetId], references: [id], onDelete: Cascade)
+  targetPlanet Planet?      @relation("FleetTarget", fields: [targetPlanetId], references: [id], onDelete: Cascade)
+  targetHub    TradeHub?    @relation(fields: [targetHubId], references: [id], onDelete: Cascade)
+  targetSystem SolarSystem? @relation(fields: [targetSystemId], references: [id], onDelete: Cascade)
 
   @@index([status, arrivesAt])
   @@index([status, returnsAt])
@@ -460,6 +493,15 @@ enum FleetMission {
   HUB_DELIVERY
   HUB_PICKUP
   ATTACK
+  EXPEDITION
+}
+
+enum ExpeditionOutcome {
+  SILENCE
+  RESOURCES
+  PIRATES_WON
+  PIRATES_LOST
+  EVADED
 }
 
 enum FleetStatus {
@@ -484,6 +526,7 @@ enum TechnologyType {
   COMBUSTION_DRIVE
   HYPERSPACE_PHYSICS
   HYPERDRIVE
+  ASTROPHYSICS
 }
 
 enum ShipType {

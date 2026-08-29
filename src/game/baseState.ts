@@ -96,12 +96,12 @@ export interface FleetRuntimeState {
   originPlanetId: string;
   originPlanetName: string;
   /// Цель — планета или торговый хаб.
-  targetKind: 'PLANET' | 'HUB';
+  targetKind: 'PLANET' | 'HUB' | 'DEEP_SPACE';
   targetPlanetId: string | null;
   targetHubId: string | null;
   targetName: string;
   ships: ShipCounts;
-  cargo: { metal: number; crystal: number };
+  cargo: { metal: number; crystal: number; antimatter: number };
   pickup: { metal: number; crystal: number };
   fuelSpent: number;
   distance: number;
@@ -282,7 +282,7 @@ function defenseCard(
     label: defenseLabel(type),
     description: defenseDescription(type),
     cost,
-    unitSeconds: defenseUnitSeconds(type, state.levels.SHIPYARD),
+    unitSeconds: defenseUnitSeconds(type, state.levels.SHIPYARD, systemModifiers(state.anomaly)),
     owned: state.defenses[type],
     canAfford: hasEnoughResources(state.resources, cost),
     requirements: missingDefenseRequirements(type, state.levels, user.techs),
@@ -348,7 +348,7 @@ function shipCard(type: ShipType, state: BaseRuntimeState, user: UserRuntimeStat
     label: shipLabel(type),
     description: shipDescription(type),
     cost,
-    unitSeconds: shipUnitSeconds(type, state.levels.SHIPYARD),
+    unitSeconds: shipUnitSeconds(type, state.levels.SHIPYARD, systemModifiers(state.anomaly)),
     owned: state.ships[type],
     canAfford: hasEnoughResources(state.resources, cost),
     requirements: missingShipRequirements(type, state.levels, user.techs),

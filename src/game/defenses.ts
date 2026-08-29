@@ -2,7 +2,7 @@
  * Стационарная оборона (Этап 5). Строится на верфи, летать не может,
  * потребляет энергию и гибнет в бою безвозвратно.
  */
-import type { BuildingLevels, ResourceAmounts } from './rules.js';
+import { NEUTRAL_MODIFIERS, type BuildingLevels, type ResourceAmounts, type SystemModifiers } from './rules.js';
 import type { Requirement, TechLevels, TechnologyType } from './techTree.js';
 import { techLabel } from './techTree.js';
 
@@ -64,10 +64,14 @@ export function defenseCost(type: DefenseType): ResourceAmounts {
   return { ...DEFENSES[type].cost };
 }
 
-/** Постройка ускоряется уровнем верфи — как и у кораблей. */
-export function defenseUnitSeconds(type: DefenseType, shipyardLevel: number): number {
+/** Постройка ускоряется уровнем верфи и замедляется искажением времени. */
+export function defenseUnitSeconds(
+  type: DefenseType,
+  shipyardLevel: number,
+  modifiers: SystemModifiers = NEUTRAL_MODIFIERS,
+): number {
   const speedup = 1 + Math.max(0, shipyardLevel) * 0.4;
-  return Math.max(3, Math.round(DEFENSES[type].baseSeconds / speedup));
+  return Math.max(3, Math.round((DEFENSES[type].baseSeconds / speedup) * modifiers.buildTimeMultiplier));
 }
 
 /** Суммарное потребление энергии всей обороной базы. */

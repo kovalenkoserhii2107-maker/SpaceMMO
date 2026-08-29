@@ -2,7 +2,7 @@
  * Верфь и базовые классы кораблей (Этап 2).
  * Перемещение флота, грузоподъемность и бой — следующие этапы, здесь только постройка.
  */
-import type { BuildingLevels, ResourceAmounts } from './rules.js';
+import { NEUTRAL_MODIFIERS, type BuildingLevels, type ResourceAmounts, type SystemModifiers } from './rules.js';
 import type { Requirement, TechLevels, TechnologyType } from './techTree.js';
 import { techLabel } from './techTree.js';
 
@@ -71,10 +71,17 @@ export function shipCost(type: ShipType): ResourceAmounts {
   return { ...SHIPS[type].cost };
 }
 
-/** Длительность постройки одного корабля: ускоряется уровнем верфи. */
-export function shipUnitSeconds(type: ShipType, shipyardLevel: number): number {
+/**
+ * Длительность постройки одного корабля: ускоряется уровнем верфи
+ * и замедляется искажением времени в системе с черной дырой.
+ */
+export function shipUnitSeconds(
+  type: ShipType,
+  shipyardLevel: number,
+  modifiers: SystemModifiers = NEUTRAL_MODIFIERS,
+): number {
   const speedup = 1 + Math.max(0, shipyardLevel) * 0.4;
-  return Math.max(3, Math.round(SHIPS[type].baseSeconds / speedup));
+  return Math.max(3, Math.round((SHIPS[type].baseSeconds / speedup) * modifiers.buildTimeMultiplier));
 }
 
 /** Невыполненные требования для постройки корабля. */

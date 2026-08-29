@@ -39,6 +39,12 @@ import {
   validateComposition,
   type FleetMission,
 } from './fleets.js';
+import {
+  canExplore,
+  DEEP_SPACE_POSITION,
+  expeditionSlots,
+  resolveExpedition,
+} from './expeditions.js';
 import { storageCapacity, storageUsed } from './market.js';
 import type { ScanPayload } from './fogOfWar.js';
 import {
@@ -160,7 +166,7 @@ class GameLoop {
         researchJob: true,
         fleets: {
           orderBy: { arrivesAt: 'asc' },
-          include: { originPlanet: true, targetPlanet: true, targetHub: true },
+          include: { originPlanet: true, targetPlanet: true, targetHub: true, targetSystem: true },
         },
         bases: {
           orderBy: { createdAt: 'asc' },
@@ -393,7 +399,7 @@ class GameLoop {
     }
 
     const now = Date.now();
-    const unitSeconds = shipUnitSeconds(type, base.levels.SHIPYARD);
+    const unitSeconds = shipUnitSeconds(type, base.levels.SHIPYARD, systemModifiers(base.anomaly));
     subtractResources(base.resources, cost);
     base.shipJobs.push({
       id: randomUUID(),
@@ -418,7 +424,7 @@ class GameLoop {
   async sendFleet(
     userId: string,
     baseId: string,
-    target: { planetId?: string; hubId?: string },
+    target: { planetId?: string; hubId?: string; systemId?: string },
     mission: FleetMission,
     ships: ShipCounts,
     cargo: { metal: number; crystal: number },
@@ -431,18 +437,43 @@ class GameLoop {
     const compositionError = validateComposition(mission, ships);
     if (compositionError) return { ok: false, error: compositionError };
 
+    // Доступность самой миссии проверяем раньше наличия кораблей:
+    // «экспедиции недоступны» — более фундаментальный отказ, чем «не хватает кораблей».
+    if (mission === 'EXPEDITION') {
+      if (!canExplore(user.techs)) {
+        return { ok: false, error: 'Для экспедиций нужна технология «Астрофизика»' };
+      }
+      const slots = expeditionSlots(user.techs);
+      const active = user.fleets.filter((fleet) => fleet.mission === 'EXPEDITION').length;
+      if (active >= slots) {
+        return {
+          ok: false,
+          error: `Астрофизика позволяет держать в полете ${slots} экспедиц${slots === 1 ? 'ию' : 'ии'}`,
+        };
+      }
+    }
+
     for (const type of SHIP_TYPES) {
       const count = ships[type];
       if (!Number.isInteger(count) || count < 0) return { ok: false, error: 'Некорректный состав флота' };
       if (count > base.ships[type]) return { ok: false, error: 'На базе нет столько кораблей' };
     }
 
-    // Куда летим: к планете или к торговому хабу, в своей системе или в чужой.
+    // Куда летим: к планете, к хабу или в глубокий космос — в своей системе или чужой.
     let target_: { position: number; system: { galaxyX: number; galaxyY: number } };
     let targetPlanetId: string | null = null;
     let targetHubId: string | null = null;
+    let targetSystemId: string | null = null;
 
-    if (isHubMission(mission)) {
+    if (mission === 'EXPEDITION') {
+      const system = target.systemId
+        ? await prisma.solarSystem.findUnique({ where: { id: target.systemId } })
+        : await prisma.solarSystem.findFirst({ where: { planets: { some: { id: base.planetId } } } });
+      if (!system) return { ok: false, error: 'Система не найдена' };
+
+      targetSystemId = system.id;
+      target_ = { position: DEEP_SPACE_POSITION, system };
+    } else if (isHubMission(mission)) {
       const hub = target.hubId
         ? await prisma.tradeHub.findUnique({ where: { id: target.hubId }, include: { system: true } })
         : await prisma.tradeHub.findFirst({
@@ -546,6 +577,7 @@ class GameLoop {
         originPlanetId: base.planetId,
         targetPlanetId,
         targetHubId,
+        targetSystemId,
         mission,
         status: 'OUTBOUND',
         probes: ships.PROBE,
@@ -564,7 +596,7 @@ class GameLoop {
         arrivesAt: new Date(arrivesAt),
         returnsAt: new Date(returnsAt),
       },
-      include: { originPlanet: true, targetPlanet: true, targetHub: true },
+      include: { originPlanet: true, targetPlanet: true, targetHub: true, targetSystem: true },
     });
 
     user.fleets.push(toFleetRuntime(created));
@@ -573,7 +605,9 @@ class GameLoop {
     return {
       ok: true,
       message:
-        plan.kind === 'INTERSTELLAR'
+        mission === 'EXPEDITION'
+          ? `Экспедиция стартовала: ${fleetSize(ships)} кораблей, до точки ${plan.flightSeconds} с`
+          : plan.kind === 'INTERSTELLAR'
           ? `Гиперпрыжок: ${fleetSize(ships)} кораблей, в пути ${plan.flightSeconds} с, ` +
             `сожжено ${plan.antimatter} антиматерии`
           : `Флот вылетел: ${fleetSize(ships)} кораблей, в пути ${plan.flightSeconds} с, ` +
@@ -594,8 +628,12 @@ class GameLoop {
 
   /** Орбита и координаты системы цели — нужны для предрасчета маршрута. */
   async getTargetLocation(
-    target: { planetId?: string; hubId?: string },
+    target: { planetId?: string; hubId?: string; systemId?: string },
   ): Promise<{ position: number; system: { galaxyX: number; galaxyY: number } } | null> {
+    if (target.systemId) {
+      const system = await prisma.solarSystem.findUnique({ where: { id: target.systemId } });
+      return system ? { position: DEEP_SPACE_POSITION, system } : null;
+    }
     if (target.hubId) {
       const hub = await prisma.tradeHub.findUnique({
         where: { id: target.hubId },
@@ -637,7 +675,7 @@ class GameLoop {
     }
 
     const now = Date.now();
-    const unitSeconds = defenseUnitSeconds(type, base.levels.SHIPYARD);
+    const unitSeconds = defenseUnitSeconds(type, base.levels.SHIPYARD, systemModifiers(base.anomaly));
     subtractResources(base.resources, cost);
     base.defenseJobs.push({
       id: randomUUID(),
@@ -873,7 +911,7 @@ class GameLoop {
           { status: 'RETURNING', returnsAt: { lte: timestamp } },
         ],
       },
-      include: { originPlanet: true, targetPlanet: true, targetHub: true },
+      include: { originPlanet: true, targetPlanet: true, targetHub: true, targetSystem: true },
       orderBy: { arrivesAt: 'asc' },
       take: 200,
     });
@@ -900,7 +938,7 @@ class GameLoop {
       if (!user) continue;
       const rows = await prisma.fleet.findMany({
         where: { userId },
-        include: { originPlanet: true, targetPlanet: true, targetHub: true },
+        include: { originPlanet: true, targetPlanet: true, targetHub: true, targetSystem: true },
         orderBy: { arrivesAt: 'asc' },
       });
       user.fleets = rows.map(toFleetRuntime);
@@ -956,6 +994,11 @@ class GameLoop {
       return;
     }
 
+    if (fleet.mission === 'EXPEDITION' && fleet.targetSystemId) {
+      await this.resolveExpeditionArrival(fleet, fleet.targetSystemId);
+      return;
+    }
+
     if (fleet.mission === 'ATTACK' && fleet.targetPlanetId) {
       await this.resolveAttack(fleet, fleet.targetPlanetId, now);
       return;
@@ -972,6 +1015,74 @@ class GameLoop {
     }
 
     await prisma.fleet.update({ where: { id: fleet.id }, data: { status: 'RETURNING' } });
+  }
+
+  /**
+   * Прибытие экспедиции в глубокий космос.
+   *
+   * Бросок кубика, возможный бой с пиратами, добыча и отчет пишутся одной
+   * транзакцией вместе с судьбой флота. Если процесс упадет между событием
+   * и записью флота, при следующем запуске экспедиция сыграла бы заново —
+   * с другим случайным исходом и повторной добычей.
+   *
+   * Найденное едет домой в трюмах: на базу оно попадет обычным возвратным
+   * рейсом, через ту же логику, что и торговый груз.
+   */
+  private async resolveExpeditionArrival(fleet: FleetRow, systemId: string): Promise<void> {
+    const ships: ShipCounts = {
+      PROBE: fleet.probes,
+      TRANSPORTER: fleet.transporters,
+      LIGHT_FIGHTER: fleet.lightFighters,
+    };
+
+    const user = await this.getUser(fleet.userId);
+    const techs = user ? user.techs : emptyTechLevels();
+    const result = resolveExpedition(ships, fleetCapacity(ships), techs);
+
+    const survivorCount = SHIP_TYPES.reduce((total, type) => total + result.survivors[type], 0);
+    // Металл и кристаллы занимают трюмы, антиматерия едет в баках.
+    const holdLimit = fleetCapacity(result.survivors);
+    const metal = Math.min(result.loot.metal, holdLimit);
+    const crystal = Math.min(result.loot.crystal, Math.max(0, holdLimit - metal));
+
+    await prisma.$transaction(async (tx) => {
+      if (survivorCount > 0) {
+        await tx.fleet.update({
+          where: { id: fleet.id },
+          data: {
+            status: 'RETURNING',
+            probes: result.survivors.PROBE,
+            transporters: result.survivors.TRANSPORTER,
+            lightFighters: result.survivors.LIGHT_FIGHTER,
+            cargoMetal: metal,
+            cargoCrystal: crystal,
+            cargoAntimatter: result.loot.antimatter,
+          },
+        });
+      } else {
+        await tx.fleet.delete({ where: { id: fleet.id } });
+      }
+
+      await tx.expeditionReport.create({
+        data: {
+          userId: fleet.userId,
+          systemId,
+          outcome: result.outcome,
+          lootMetal: metal,
+          lootCrystal: crystal,
+          lootAntimatter: result.loot.antimatter,
+          summary: result.summary,
+          data: toJson({
+            sent: ships,
+            survivors: result.survivors,
+            pirates: result.pirates,
+            losses: result.battle ? result.battle.attackerLosses : [],
+            attackerPower: result.battle ? result.battle.attackerPower.strength : 0,
+            piratePower: result.battle ? result.battle.defenderPower.strength : 0,
+          }),
+        },
+      });
+    });
   }
 
   /**
@@ -1233,11 +1344,15 @@ class GameLoop {
         }),
       );
     }
-    if (fleet.cargoMetal > 0 || fleet.cargoCrystal > 0) {
+    if (fleet.cargoMetal > 0 || fleet.cargoCrystal > 0 || fleet.cargoAntimatter > 0) {
       operations.push(
         prisma.base.update({
           where: { id: fleet.originBaseId },
-          data: { metal: { increment: fleet.cargoMetal }, crystal: { increment: fleet.cargoCrystal } },
+          data: {
+            metal: { increment: fleet.cargoMetal },
+            crystal: { increment: fleet.cargoCrystal },
+            antimatter: { increment: fleet.cargoAntimatter },
+          },
         }),
       );
     }
@@ -1245,7 +1360,12 @@ class GameLoop {
 
     await prisma.$transaction(operations);
 
-    this.applyMemoryResources(fleet.originBaseId, fleet.cargoMetal, fleet.cargoCrystal);
+    this.applyMemoryResources(
+      fleet.originBaseId,
+      fleet.cargoMetal,
+      fleet.cargoCrystal,
+      fleet.cargoAntimatter,
+    );
     this.applyMemoryShips(fleet.originBaseId, ships);
   }
 
@@ -1260,12 +1380,18 @@ class GameLoop {
   }
 
   /** Отражает уже зачисленный в БД приход в состоянии базы, если она в памяти. */
-  private applyMemoryResources(baseId: string, metal: number, crystal: number): void {
-    if (metal <= 0 && crystal <= 0) return;
+  private applyMemoryResources(
+    baseId: string,
+    metal: number,
+    crystal: number,
+    antimatter = 0,
+  ): void {
+    if (metal <= 0 && crystal <= 0 && antimatter <= 0) return;
     const base = this.findLoadedBase(baseId);
     if (!base) return;
     base.resources.metal += metal;
     base.resources.crystal += crystal;
+    base.resources.antimatter += antimatter;
     base.dirty = true;
   }
 
@@ -1555,6 +1681,7 @@ type FleetRow = Prisma.FleetModel & {
   originPlanet: Prisma.PlanetModel;
   targetPlanet: Prisma.PlanetModel | null;
   targetHub: Prisma.TradeHubModel | null;
+  targetSystem: Prisma.SolarSystemModel | null;
 };
 
 function toFleetRuntime(row: FleetRow): FleetRuntimeState {
@@ -1565,16 +1692,23 @@ function toFleetRuntime(row: FleetRow): FleetRuntimeState {
     originBaseId: row.originBaseId,
     originPlanetId: row.originPlanetId,
     originPlanetName: row.originPlanet.name,
-    targetKind: row.targetHubId ? 'HUB' : 'PLANET',
+    targetKind: row.targetSystemId ? 'DEEP_SPACE' : row.targetHubId ? 'HUB' : 'PLANET',
     targetPlanetId: row.targetPlanetId,
     targetHubId: row.targetHubId,
-    targetName: row.targetHub?.name ?? row.targetPlanet?.name ?? 'неизвестно',
+    targetName:
+      row.targetHub?.name ??
+      row.targetPlanet?.name ??
+      (row.targetSystem ? `глубокий космос · ${row.targetSystem.name}` : 'неизвестно'),
     ships: {
       PROBE: row.probes,
       TRANSPORTER: row.transporters,
       LIGHT_FIGHTER: row.lightFighters,
     },
-    cargo: { metal: row.cargoMetal, crystal: row.cargoCrystal },
+    cargo: {
+      metal: row.cargoMetal,
+      crystal: row.cargoCrystal,
+      antimatter: row.cargoAntimatter,
+    },
     pickup: { metal: row.pickupMetal, crystal: row.pickupCrystal },
     fuelSpent: row.fuelSpent,
     distance: row.distance,

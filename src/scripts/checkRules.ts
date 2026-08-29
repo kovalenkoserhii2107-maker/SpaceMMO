@@ -13,7 +13,8 @@ import { economyBonuses, emptyTechLevels, researchCost, researchSeconds } from '
 import { shipUnitSeconds, SHIP_TYPES, type ShipCounts } from '../game/ships.js';
 import { fleetCapacity, planFlight } from '../game/fleets.js';
 import { plunderAmount, resolveBattle } from '../game/combat.js';
-import { emptyDefenseCounts, type DefenseCounts } from '../game/defenses.js';
+import { expeditionSlots, resolveExpedition } from '../game/expeditions.js';
+import { defenseUnitSeconds, emptyDefenseCounts, type DefenseCounts } from '../game/defenses.js';
 
 const richness = { metal: 1.0, crystal: 1.0, deuterium: 1.0, energy: 1.0, antimatter: 1.0 };
 const techs = emptyTechLevels();
@@ -146,5 +147,79 @@ console.log('\n--- Этап 6: гиперпрыжки ---');
           `антиматерии туда-обратно ${plan.antimatter}`,
       );
     }
+  }
+}
+
+console.log('\n--- Этап 7: искажение времени на верфи ---');
+{
+  for (const [label, anomaly] of [['обычная система', 'NONE'], ['черная дыра', 'BLACK_HOLE']] as const) {
+    const mods = systemModifiers(anomaly);
+    console.log(
+      `${label}: истребитель ${shipUnitSeconds('LIGHT_FIGHTER', 2, mods)} с, ` +
+        `транспорт ${shipUnitSeconds('TRANSPORTER', 2, mods)} с, ` +
+        `лазерное орудие ${defenseUnitSeconds('LASER_TURRET', 2, mods)} с`,
+    );
+  }
+}
+
+console.log('\n--- Этап 7: экспедиции ---');
+{
+  const fleet: ShipCounts = { PROBE: 0, TRANSPORTER: 4, LIGHT_FIGHTER: 6 };
+  const capacity = fleetCapacity(fleet);
+
+  for (const level of [1, 4, 9]) {
+    const withAstro = { ...emptyTechLevels(), ASTROPHYSICS: level };
+    const tally: Record<string, number> = {};
+    let loot = 0;
+    const runs = 2000;
+
+    // Детерминированный генератор: одинаковая статистика при каждом прогоне.
+    let seed = 12345 + level;
+    const rng = () => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+
+    for (let i = 0; i < runs; i += 1) {
+      const result = resolveExpedition(fleet, capacity, withAstro, rng);
+      tally[result.outcome] = (tally[result.outcome] ?? 0) + 1;
+      loot += result.loot.metal + result.loot.crystal;
+    }
+
+    const percent = (key: string) => (((tally[key] ?? 0) / runs) * 100).toFixed(1) + '%';
+    console.log(
+      `астрофизика ур.${level} (слотов ${expeditionSlots(withAstro)}): ` +
+        `тишина ${percent('SILENCE')}, находка ${percent('RESOURCES')}, ` +
+        `бой выигран ${percent('PIRATES_WON')}, флот потерян ${percent('PIRATES_LOST')}, ` +
+        `уклонение ${percent('EVADED')}, средняя добыча ${Math.round(loot / runs)}`,
+    );
+  }
+}
+
+console.log('\n--- Этап 7: все ветви событийного движка ---');
+{
+  const strong: ShipCounts = { PROBE: 0, TRANSPORTER: 3, LIGHT_FIGHTER: 12 };
+  const weak: ShipCounts = { PROBE: 0, TRANSPORTER: 1, LIGHT_FIGHTER: 0 };
+  const techs1 = { ...emptyTechLevels(), ASTROPHYSICS: 1 };
+
+  /** Подсовываем заранее заданную последовательность бросков. */
+  const scripted = (values: number[]): (() => number) => {
+    let index = 0;
+    return () => values[Math.min(index++, values.length - 1)]!;
+  };
+
+  const cases: Array<[string, ShipCounts, number[]]> = [
+    ['мертвая тишина', strong, [0.01]],
+    ['находка ресурсов', strong, [0.6, 0.1, 0.5]],
+    ['находка антиматерии', strong, [0.6, 0.99, 0.5]],
+    ['пираты отбиты', strong, [0.99, 0.99, 0.1, 0.1]],
+    ['флот потерян', weak, [0.99, 0.99, 0.99, 0.9]],
+  ];
+
+  for (const [label, fleet, rolls] of cases) {
+    const result = resolveExpedition(fleet, fleetCapacity(fleet), techs1, scripted(rolls));
+    const survivors = SHIP_TYPES.reduce((total, type) => total + result.survivors[type], 0);
+    console.log(`${label} → ${result.outcome}, уцелело кораблей ${survivors}`);
+    console.log(`    «${result.summary}»`);
   }
 }

@@ -17,6 +17,7 @@ export const TECHNOLOGY_TYPES = [
   'COMBUSTION_DRIVE',
   'HYPERSPACE_PHYSICS',
   'HYPERDRIVE',
+  'ASTROPHYSICS',
 ] as const;
 
 export type TechnologyType = (typeof TECHNOLOGY_TYPES)[number];
@@ -35,6 +36,7 @@ export function emptyTechLevels(): TechLevels {
     COMBUSTION_DRIVE: 0,
     HYPERSPACE_PHYSICS: 0,
     HYPERDRIVE: 0,
+    ASTROPHYSICS: 0,
   };
 }
 
@@ -97,6 +99,17 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
     timeFactor: 1.8,
     labLevel: 3,
     requires: { ENERGY_TECH: 2, COMPUTING_TECH: 1 },
+  },
+  ASTROPHYSICS: {
+    label: 'Астрофизика',
+    description:
+      'Открывает экспедиции в глубокий космос. Уровень задает число одновременных ' +
+      'экспедиций (1 → 1, 4 → 2, 9 → 3), увеличивает находки и помогает уходить от засад.',
+    cost: { metal: 400, crystal: 800, deuterium: 400, factor: 1.9 },
+    baseSeconds: 180,
+    timeFactor: 1.75,
+    labLevel: 2,
+    requires: { COMPUTING_TECH: 1 },
   },
   HYPERDRIVE: {
     label: 'Гипердвигатель',

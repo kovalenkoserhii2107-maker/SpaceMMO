@@ -3,8 +3,21 @@
  * Война нужна, чтобы вылет с миссией «Атака» вообще разрешался.
  */
 import { prisma } from '../db/prisma.js';
+import { expeditionSlots } from '../game/expeditions.js';
+import { emptyTechLevels } from '../game/techTree.js';
 
 export type WarResult = { ok: true; message: string } | { ok: false; error: string };
+
+export interface ExpeditionReportView {
+  id: string;
+  outcome: string;
+  systemName: string;
+  summary: string;
+  loot: { metal: number; crystal: number; antimatter: number };
+  losses: Array<{ label: string; lost: number; before: number }>;
+  pirates: { LIGHT_FIGHTER: number; TRANSPORTER: number } | null;
+  createdAt: number;
+}
 
 export interface DiplomacyView {
   /** Игроки, чьи колонии есть в системе игрока. */
@@ -17,6 +30,9 @@ export interface DiplomacyView {
     declaredByMe: boolean;
     declaredAt: number | null;
   }>;
+  /** Сколько экспедиций игрок может держать в полете и сколько уже летит. */
+  expeditionSlots: { total: number; used: number };
+  expeditions: ExpeditionReportView[];
   battles: Array<{
     id: string;
     role: 'ATTACKER' | 'DEFENDER';
@@ -51,7 +67,7 @@ export async function getDiplomacy(userId: string): Promise<DiplomacyView> {
     include: { planet: true },
   });
 
-  const [planets, wars, battles] = await Promise.all([
+  const [planets, wars, battles, expeditions, activeExpeditions, techs] = await Promise.all([
     home
       ? prisma.planet.findMany({
           where: { systemId: home.planet.systemId, base: { isNot: null } },
@@ -67,9 +83,41 @@ export async function getDiplomacy(userId: string): Promise<DiplomacyView> {
       orderBy: { createdAt: 'desc' },
       take: 20,
     }),
+    prisma.expeditionReport.findMany({
+      where: { userId },
+      include: { system: { select: { name: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    }),
+    prisma.fleet.count({ where: { userId, mission: 'EXPEDITION' } }),
+    prisma.research.findMany({ where: { userId } }),
   ]);
 
+  const techLevels = emptyTechLevels();
+  for (const research of techs) techLevels[research.tech] = research.level;
+
   return {
+    expeditionSlots: { total: expeditionSlots(techLevels), used: activeExpeditions },
+    expeditions: expeditions.map((report) => {
+      const data = report.data as unknown as {
+        pirates: { LIGHT_FIGHTER: number; TRANSPORTER: number } | null;
+        losses: Array<{ label: string; lost: number; before: number }>;
+      };
+      return {
+        id: report.id,
+        outcome: report.outcome,
+        systemName: report.system.name,
+        summary: report.summary,
+        loot: {
+          metal: report.lootMetal,
+          crystal: report.lootCrystal,
+          antimatter: report.lootAntimatter,
+        },
+        losses: (data.losses ?? []).filter((item) => item.lost > 0),
+        pirates: data.pirates ?? null,
+        createdAt: report.createdAt.getTime(),
+      };
+    }),
     players: planets
       .filter((planet) => planet.base && planet.base.userId !== userId)
       .map((planet) => {

@@ -261,6 +261,37 @@ async function testCombatGuards() {
   check('отрицательный заказ обороны отклонен', negDefense.status >= 400, JSON.stringify(negDefense.data));
 }
 
+/* ---------- 8. Экспедиции ---------- */
+async function testExpeditionGuards() {
+  // У пилота астрофизики нет — экспедиция должна отклоняться.
+  const noTech = await api('POST', `/api/bases/${ids.pilotBase}/fleets`, ids.pilotToken, {
+    mission: 'EXPEDITION', ships: { TRANSPORTER: 1 }, cargo: {},
+  });
+  check('экспедиция без «Астрофизики» отклонена', noTech.status >= 400, JSON.stringify(noTech.data));
+
+  const probesOnly = await api('POST', `/api/bases/${ids.admiralBase}/fleets`, ids.admiralToken, {
+    mission: 'EXPEDITION', ships: { PROBE: 2 }, cargo: {},
+  });
+  check('экспедиция одними зондами отклонена', probesOnly.status >= 400, JSON.stringify(probesOnly.data));
+
+  const empty = await api('POST', `/api/bases/${ids.admiralBase}/fleets`, ids.admiralToken, {
+    mission: 'EXPEDITION', ships: {}, cargo: {},
+  });
+  check('экспедиция без кораблей отклонена', empty.status >= 400, JSON.stringify(empty.data));
+
+  const negative = await api('POST', `/api/bases/${ids.admiralBase}/fleets`, ids.admiralToken, {
+    mission: 'EXPEDITION', ships: { TRANSPORTER: -2 }, cargo: {},
+  });
+  check('экспедиция с отрицательным флотом отклонена', negative.status >= 400, JSON.stringify(negative.data));
+
+  const diplomacy = (await api('GET', '/api/war', ids.admiralToken)).data;
+  check(
+    'API отдает лимит экспедиционных слотов',
+    typeof diplomacy.expeditionSlots?.total === 'number' && Array.isArray(diplomacy.expeditions),
+    `слоты ${JSON.stringify(diplomacy.expeditionSlots)}`,
+  );
+}
+
 async function main() {
   console.log('=== 1. Валидация ордеров ===');
   await testOrderValidation();
@@ -276,6 +307,8 @@ async function main() {
   await testFleetValidation();
   console.log('\n=== 7. Бой и дипломатия ===');
   await testCombatGuards();
+  console.log('\n=== 8. Экспедиции ===');
+  await testExpeditionGuards();
 
   const failed = results.filter((r) => !r.passed);
   console.log(`\n=== ИТОГ: ${results.length - failed.length}/${results.length} пройдено ===`);

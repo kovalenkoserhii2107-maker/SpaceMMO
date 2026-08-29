@@ -135,13 +135,13 @@ export interface FleetSnapshot {
   status: 'OUTBOUND' | 'RETURNING';
   originPlanetId: string;
   originPlanetName: string;
-  targetKind: 'PLANET' | 'HUB';
+  targetKind: 'PLANET' | 'HUB' | 'DEEP_SPACE';
   targetPlanetId: string | null;
   targetHubId: string | null;
   targetName: string;
   ships: ShipCounts;
   composition: string;
-  cargo: { metal: number; crystal: number };
+  cargo: { metal: number; crystal: number; antimatter: number };
   pickup: { metal: number; crystal: number };
   fuelSpent: number;
   distance: number;

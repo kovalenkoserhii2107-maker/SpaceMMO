@@ -80,6 +80,8 @@
     defenseQueue: $('defense-queue'),
     diplomacy: $('diplomacy'),
     battles: $('battles'),
+    expeditionSlots: $('expedition-slots'),
+    expeditions: $('expeditions'),
     resAntimatter: $('res-antimatter'),
     rateAntimatter: $('rate-antimatter'),
     galaxyMap: $('galaxy-map'),
@@ -620,6 +622,7 @@
   const MISSION_OPTIONS = {
     PLANET: [['TRANSPORT', 'Транспортировка'], ['SCAN', 'Разведка зондом'], ['ATTACK', 'Атака']],
     HUB: [['HUB_DELIVERY', 'Доставка на хаб'], ['HUB_PICKUP', 'Вывоз с хаба']],
+    DEEP_SPACE: [['EXPEDITION', 'Экспедиция']],
   };
 
   function hubX() {
@@ -707,7 +710,51 @@
     }
 
     if (map.data.hub) renderHub(map.data.hub);
+    renderDeepSpace();
     renderFleetMarkers();
+  }
+
+  /** Глубокий космос — абстрактная 16-я позиция системы, точка экспедиций. */
+  function renderDeepSpace() {
+    const svg = el.systemMap;
+    const x = MAP.width - 46;
+    const y = MAP.height / 2;
+
+    const group = svgEl('g', {
+      class: `planet-dot${map.selectedKind === 'DEEP_SPACE' ? ' selected' : ''}`,
+    });
+    group.appendChild(svgEl('circle', {
+      class: 'body', cx: x, cy: y, r: 24,
+      fill: 'rgba(157, 123, 255, 0.10)', stroke: 'rgba(157, 123, 255, 0.55)',
+      'stroke-width': 1.5, 'stroke-dasharray': '4 4',
+    }));
+
+    const label = svgEl('text', { x, y: y + 46, class: 'planet-label' });
+    label.textContent = 'Глубокий космос';
+    group.appendChild(label);
+
+    const position = svgEl('text', { x, y: y + 60, class: 'planet-label' });
+    position.textContent = 'позиция 16';
+    group.appendChild(position);
+
+    group.addEventListener('mouseenter', (event) => {
+      el.mapTooltip.innerHTML =
+        '<b>Глубокий космос</b><br>16-я позиция системы · точка экспедиций<br>' +
+        '<span class="unknown">Что там — неизвестно до прилета.</span>';
+      el.mapTooltip.hidden = false;
+      positionTooltip(event);
+    });
+    group.addEventListener('mousemove', (event) => positionTooltip(event));
+    group.addEventListener('mouseleave', hideTooltip);
+    group.addEventListener('click', () => selectDeepSpace());
+    svg.appendChild(group);
+  }
+
+  function selectDeepSpace() {
+    map.selectedKind = 'DEEP_SPACE';
+    map.selectedId = map.data ? map.data.systemId : null;
+    renderMap();
+    renderPlanetInfo();
   }
 
   /** Нейтральная станция у звезды — точка входа на биржу. */
@@ -775,7 +822,9 @@
       const origin = byId.get(fleet.originPlanetId);
       const target = fleet.targetKind === 'HUB'
         ? { position: null, hub: true }
-        : byId.get(fleet.targetPlanetId);
+        : fleet.targetKind === 'DEEP_SPACE'
+          ? { position: null, deep: true }
+          : byId.get(fleet.targetPlanetId);
       if (!origin || !target) continue;
 
       const outbound = fleet.status === 'OUTBOUND';
@@ -785,8 +834,8 @@
       const legEnd = outbound ? fleet.arrivesAt : fleet.returnsAt;
       const progress = Math.min(1, Math.max(0, (now - legStart) / Math.max(1, legEnd - legStart)));
 
-      const x1 = from.hub ? hubX() : planetX(from.position);
-      const x2 = to.hub ? hubX() : planetX(to.position);
+      const x1 = from.hub ? hubX() : from.deep ? MAP.width - 46 : planetX(from.position);
+      const x2 = to.hub ? hubX() : to.deep ? MAP.width - 46 : planetX(to.position);
       const y = MAP.height / 2 - 62;
       layer.appendChild(svgEl('line', { class: 'fleet-line', x1, y1: y, x2, y2: y }));
       layer.appendChild(svgEl('circle', {
@@ -869,6 +918,10 @@
     return map.data.hub && map.data.hub.hubId === map.selectedId ? map.data.hub : null;
   }
 
+  function deepSpaceSelected() {
+    return Boolean(map.data && map.selectedKind === 'DEEP_SPACE');
+  }
+
   /** Список миссий зависит от того, что выбрано: планета или хаб. */
   function syncMissionOptions() {
     const options = MISSION_OPTIONS[map.selectedKind] || MISSION_OPTIONS.PLANET;
@@ -892,6 +945,22 @@
 
   function renderPlanetInfo() {
     const base = activeBase();
+
+    if (deepSpaceSelected()) {
+      const slots = war.data && war.data.expeditionSlots;
+      el.planetInfo.innerHTML =
+        `<b>Глубокий космос</b><br>система ${map.data.systemName} · 16-я позиция<br>` +
+        'Экспедиция уходит за пределы орбит: там можно найти брошенный груз, ' +
+        'наткнуться на пиратов или не найти ничего.<br>' +
+        (slots ? `слотов экспедиций: <b>${slots.used}</b> из <b>${slots.total}</b>` : '');
+      el.dispatch.hidden = !base;
+      if (base) {
+        syncMissionOptions();
+        renderFleetInputs();
+      }
+      return;
+    }
+
     const hub = selectedHub();
 
     if (hub) {
@@ -968,6 +1037,7 @@
 
   /** Расчет маршрута считает сервер — клиент только показывает результат. */
   function currentTarget() {
+    if (deepSpaceSelected()) return { targetSystemId: map.data.systemId };
     const hub = selectedHub();
     if (hub) return { targetHubId: hub.hubId };
     const planet = selectedPlanet();
@@ -1348,6 +1418,7 @@
       war.data = await response.json();
       renderDiplomacy();
       renderBattles();
+      renderExpeditions();
     } catch (error) {
       /* подтянется на следующем обновлении */
     }
@@ -1657,6 +1728,85 @@
     const button = event.target.closest('.mode');
     if (button) setMapMode(button.dataset.mode);
   });
+
+
+  /* ---------- Этап 7: экспедиции ---------- */
+
+  const EXPEDITION_TONE = {
+    SILENCE: 'neutral', EVADED: 'neutral', RESOURCES: 'win', PIRATES_WON: 'win', PIRATES_LOST: 'loss',
+  };
+  const EXPEDITION_TITLE = {
+    SILENCE: 'Мертвая тишина',
+    EVADED: 'Засада обойдена',
+    RESOURCES: 'Заброшенный груз',
+    PIRATES_WON: 'Пираты отбиты',
+    PIRATES_LOST: 'Флот потерян',
+  };
+
+  function renderExpeditions() {
+    const data = war.data;
+    if (!data) return;
+
+    const slots = data.expeditionSlots || { total: 0, used: 0 };
+    el.expeditionSlots.innerHTML = slots.total > 0
+      ? `<div class="hub-storage">Экспедиционных слотов: <b>${slots.used}</b> из <b>${slots.total}</b><br>` +
+        'Лимит задает уровень «Астрофизики»: 1 → 1, 4 → 2, 9 → 3.<br>' +
+        'Точка выхода — глубокий космос (16-я позиция) любой системы на карте.</div>'
+      : '<div class="hub-storage">Экспедиции недоступны: изучи технологию <b>«Астрофизика»</b>.</div>';
+
+    el.expeditions.innerHTML = '';
+    const reports = data.expeditions || [];
+
+    if (!reports.length) {
+      const empty = document.createElement('div');
+      empty.className = 'queue-item';
+      empty.textContent = 'Отчетов об экспедициях еще нет';
+      el.expeditions.appendChild(empty);
+      return;
+    }
+
+    for (const report of reports) {
+      const tone = EXPEDITION_TONE[report.outcome] || 'neutral';
+      const card = document.createElement('article');
+      card.className = `battle ${tone === 'win' ? 'win' : tone === 'loss' ? 'loss' : ''}`;
+
+      const header = document.createElement('header');
+      const title = document.createElement('h4');
+      title.textContent = `${EXPEDITION_TITLE[report.outcome] || report.outcome} · ${report.systemName}`;
+      const when = document.createElement('span');
+      when.className = 'verdict';
+      when.textContent = new Date(report.createdAt).toLocaleString('ru-RU');
+      header.append(title, when);
+
+      const summary = document.createElement('div');
+      summary.className = 'line';
+      summary.textContent = report.summary;
+
+      card.append(header, summary);
+
+      const loot = report.loot.metal + report.loot.crystal + report.loot.antimatter;
+      if (loot > 0) {
+        const line = document.createElement('div');
+        line.className = 'line';
+        const parts = [];
+        if (report.loot.metal) parts.push(`${fmt(report.loot.metal)} металла`);
+        if (report.loot.crystal) parts.push(`${fmt(report.loot.crystal)} кристаллов`);
+        if (report.loot.antimatter) parts.push(`${fmtAmount(report.loot.antimatter)} антиматерии`);
+        line.innerHTML = `добыча: <b>${parts.join(', ')}</b>`;
+        card.appendChild(line);
+      }
+
+      if (report.losses.length) {
+        const line = document.createElement('div');
+        line.className = 'line';
+        line.innerHTML =
+          'потери: <b>' + report.losses.map((l) => `${l.label} −${l.lost} из ${l.before}`).join(', ') + '</b>';
+        card.appendChild(line);
+      }
+
+      el.expeditions.appendChild(card);
+    }
+  }
 
   /* ---------- Старт ---------- */
   if (state.token) {

@@ -119,16 +119,18 @@ gameRouter.post('/bases/:baseId/defenses', async (req, res: Response<ActionRespo
 interface FleetRequestBody {
   targetPlanetId?: unknown;
   targetHubId?: unknown;
+  targetSystemId?: unknown;
   mission?: unknown;
   ships?: Record<string, unknown>;
   cargo?: { metal?: unknown; crystal?: unknown };
   pickup?: { metal?: unknown; crystal?: unknown };
 }
 
-function readTarget(body: FleetRequestBody): { planetId?: string; hubId?: string } {
-  const target: { planetId?: string; hubId?: string } = {};
+function readTarget(body: FleetRequestBody): { planetId?: string; hubId?: string; systemId?: string } {
+  const target: { planetId?: string; hubId?: string; systemId?: string } = {};
   if (typeof body.targetPlanetId === 'string') target.planetId = body.targetPlanetId;
   if (typeof body.targetHubId === 'string') target.hubId = body.targetHubId;
+  if (typeof body.targetSystemId === 'string') target.systemId = body.targetSystemId;
   return target;
 }
 
@@ -177,8 +179,10 @@ gameRouter.post('/bases/:baseId/fleets', async (req, res: Response<ActionRespons
     return;
   }
 
+  // Экспедиция без явной цели уходит в глубокий космос родной системы.
   const target = readTarget(body);
-  if (!target.planetId && !target.hubId) {
+  const targetless = !target.planetId && !target.hubId && !target.systemId;
+  if (targetless && body.mission !== 'EXPEDITION') {
     res.status(400).json({ error: 'Не указана цель полета' });
     return;
   }
