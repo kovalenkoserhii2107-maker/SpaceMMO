@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Space Strategy MMO — Командный центр</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="starfield"></div>
+
+  <!-- Экран входа -->
+  <section id="login-screen" class="screen login">
+    <form id="login-form" class="login-card" autocomplete="off">
+      <h1>Командный центр</h1>
+      <p class="muted">Введи позывной адмирала, чтобы получить стартовую колонию.</p>
+      <input id="username" name="username" type="text" placeholder="Позывной" maxlength="24" required />
+      <button type="submit" class="primary">Войти в галактику</button>
+      <p id="login-error" class="error" hidden></p>
+    </form>
+  </section>
+
+  <!-- Дашборд -->
+  <section id="dashboard" class="screen" hidden>
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo">◈</span>
+        <span>Командный центр</span>
+      </div>
+      <div class="resources" id="resource-bar">
+        <div class="res" title="Металл"><span class="ico metal">◼</span><b id="res-metal">0</b><small id="rate-metal">+0/с</small></div>
+        <div class="res" title="Кристаллы"><span class="ico crystal">◆</span><b id="res-crystal">0</b><small id="rate-crystal">+0/с</small></div>
+        <div class="res" title="Дейтерий"><span class="ico deuterium">⬢</span><b id="res-deuterium">0</b><small id="rate-deuterium">+0/с</small></div>
+        <div class="res" title="Энергия"><span class="ico energy">⚡</span><b id="res-energy">0</b><small id="rate-energy">свободно</small></div>
+      </div>
+      <div class="user">
+        <span id="user-name">—</span>
+        <span id="conn-status" class="status offline">офлайн</span>
+        <button id="logout" class="ghost" type="button">Выйти</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside class="sidebar">
+        <h2>Мои базы</h2>
+        <ul id="base-list" class="base-list"></ul>
+      </aside>
+
+      <div class="content">
+        <section class="planet-card">
+          <div>
+            <h2 id="base-name">—</h2>
+            <p class="muted" id="planet-meta">—</p>
+          </div>
+          <div class="richness" id="richness"></div>
+        </section>
+
+        <section>
+          <h3 class="section-title">Инфраструктура</h3>
+          <div id="buildings" class="buildings"></div>
+        </section>
+
+        <p id="build-message" class="build-message" hidden></p>
+      </div>
+    </main>
+  </section>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

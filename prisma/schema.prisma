@@ -1,0 +1,115 @@
+// Space Strategy MMO — Prisma schema
+// ЭТАП 1: User, SolarSystem, Planet, Base.
+// Модели будущих этапов (технологии, флот, биржа, оборона) НЕ создаются.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// Игрок. Авторизация на Этапе 1 — упрощенная (логин без пароля, opaque-токен сессии).
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  sessionToken String   @unique
+  createdAt    DateTime @default(now())
+  lastSeenAt   DateTime @default(now())
+
+  bases Base[]
+
+  @@map("users")
+}
+
+/// Звездная система — макро-объект галактической карты.
+model SolarSystem {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  /// Координаты в галактике (макро-карта).
+  galaxyX   Int
+  galaxyY   Int
+  /// Класс звезды влияет на выработку энергии планет системы.
+  starClass StarClass
+  createdAt DateTime @default(now())
+
+  planets Planet[]
+
+  @@unique([galaxyX, galaxyY])
+  @@map("solar_systems")
+}
+
+/// Планета/спутник внутри системы. Коэффициенты богатства задают скорость добычи.
+model Planet {
+  id       String @id @default(cuid())
+  name     String
+  systemId String
+  /// Позиция (орбита) внутри системы: 1..N.
+  position Int
+  type     PlanetType
+  /// Количество слотов под здания.
+  size     Int
+
+  /// Коэффициенты богатства (множители базовой добычи).
+  metalRichness     Float
+  crystalRichness   Float
+  deuteriumRichness Float
+  /// Коэффициент инсоляции — множитель выработки солнечных электростанций.
+  energyRichness    Float
+
+  system SolarSystem @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  base   Base?
+
+  @@unique([systemId, position])
+  @@index([systemId])
+  @@map("planets")
+}
+
+/// База игрока на планете: склад ресурсов и уровни инфраструктуры.
+model Base {
+  id       String @id @default(cuid())
+  name     String
+  userId   String
+  planetId String @unique
+
+  /// Склад ресурсов (дробные значения — начисление идет каждую секунду).
+  metal     Float @default(500)
+  crystal   Float @default(300)
+  deuterium Float @default(100)
+
+  /// Уровни инфраструктуры добычи и энергетики (Этап 1).
+  metalMineLevel     Int @default(0)
+  crystalMineLevel   Int @default(0)
+  deuteriumMineLevel Int @default(0)
+  solarPlantLevel    Int @default(0)
+
+  /// Время последнего начисления ресурсов тиком (для догона офлайн-периода).
+  lastTickAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planet Planet @relation(fields: [planetId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("bases")
+}
+
+enum StarClass {
+  BLUE
+  WHITE
+  YELLOW
+  ORANGE
+  RED
+}
+
+enum PlanetType {
+  ROCKY
+  OCEANIC
+  DESERT
+  ICE
+  GAS_GIANT
+  VOLCANIC
+  TOXIC
+}
