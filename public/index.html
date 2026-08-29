@@ -32,6 +32,7 @@
         <div class="res" title="Кристаллы"><span class="ico crystal">◆</span><b id="res-crystal">0</b><small id="rate-crystal">+0/с</small></div>
         <div class="res" title="Дейтерий"><span class="ico deuterium">⬢</span><b id="res-deuterium">0</b><small id="rate-deuterium">+0/с</small></div>
         <div class="res" title="Энергия"><span class="ico energy">⚡</span><b id="res-energy">0</b><small id="rate-energy">свободно</small></div>
+        <div class="res" title="Эффективность шахт"><span class="ico eff">◐</span><b id="res-efficiency">100%</b><small id="rate-efficiency">мощность шахт</small></div>
       </div>
       <div class="user">
         <span id="user-name">—</span>
@@ -55,9 +56,26 @@
           <div class="richness" id="richness"></div>
         </section>
 
-        <section>
-          <h3 class="section-title">Инфраструктура</h3>
-          <div id="buildings" class="buildings"></div>
+        <nav class="tabs" id="tabs">
+          <button type="button" class="tab active" data-tab="buildings">Инфраструктура</button>
+          <button type="button" class="tab" data-tab="research">Исследования</button>
+          <button type="button" class="tab" data-tab="shipyard">Верфь</button>
+        </nav>
+
+        <section data-panel="buildings">
+          <div id="build-job" class="job-banner" hidden></div>
+          <div id="buildings" class="cards"></div>
+        </section>
+
+        <section data-panel="research" hidden>
+          <div id="research-job" class="job-banner" hidden></div>
+          <div id="technologies" class="cards"></div>
+        </section>
+
+        <section data-panel="shipyard" hidden>
+          <div id="fleet" class="fleet"></div>
+          <div id="ship-queue" class="queue"></div>
+          <div id="ships" class="cards"></div>
         </section>
 
         <p id="build-message" class="build-message" hidden></p>

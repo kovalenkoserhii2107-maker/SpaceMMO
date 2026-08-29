@@ -190,3 +190,79 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .build-message { padding: 10px 14px; border-radius: 10px; font-size: 13px; border: 1px solid var(--line); background: var(--panel-2); }
 .build-message.ok { color: var(--ok); border-color: rgba(74, 222, 128, 0.35); }
 .build-message.bad { color: var(--err); border-color: rgba(248, 113, 113, 0.35); }
+
+/* ---------- Этап 2: вкладки, таймеры, верфь ---------- */
+.ico.eff { color: var(--accent); }
+
+.tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+.tab {
+  padding: 8px 16px;
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  font-size: 13px;
+}
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--accent); border-color: var(--accent); }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 14px; }
+
+.card {
+  padding: 16px;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+}
+.card header { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.card h4 { margin: 0; font-size: 15px; }
+.card .desc { font-size: 12px; color: var(--muted); }
+.card.locked { opacity: 0.65; }
+
+.time { font-size: 12px; color: var(--muted); }
+.reqs { font-size: 11px; color: var(--warn); }
+
+.job-banner {
+  padding: 14px 16px;
+  border: 1px solid rgba(77, 210, 255, 0.35);
+  border-radius: 14px;
+  background: var(--panel-2);
+  display: grid;
+  gap: 8px;
+}
+.job-banner .job-title { display: flex; justify-content: space-between; font-size: 13px; gap: 12px; }
+.job-banner .job-title b { color: var(--accent); font-variant-numeric: tabular-nums; }
+
+.bar { height: 6px; border-radius: 999px; background: rgba(120, 160, 255, 0.15); overflow: hidden; }
+.bar > i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+
+.fleet { display: flex; gap: 18px; flex-wrap: wrap; padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+.fleet div { font-size: 12px; color: var(--muted); }
+.fleet b { display: block; font-size: 17px; color: var(--text); }
+
+.queue { display: grid; gap: 8px; }
+.queue .queue-item {
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel-2);
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+}
+.queue .queue-item span { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.order { display: flex; gap: 8px; align-items: center; }
+.order input[type="number"] {
+  width: 80px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(8, 12, 24, 0.8);
+  color: var(--text);
+  font: inherit;
+}
+.order button { flex: 1; padding: 10px 12px; }

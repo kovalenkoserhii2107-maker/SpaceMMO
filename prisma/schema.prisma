@@ -1,6 +1,7 @@
 // Space Strategy MMO — Prisma schema
 // ЭТАП 1: User, SolarSystem, Planet, Base.
-// Модели будущих этапов (технологии, флот, биржа, оборона) НЕ создаются.
+// ЭТАП 2: Research, ResearchJob, BuildJob, Ship, ShipJob.
+// Модели будущих этапов (логистика, биржа, оборона) НЕ создаются.
 
 generator client {
   provider = "prisma-client"
@@ -19,21 +20,23 @@ model User {
   createdAt    DateTime @default(now())
   lastSeenAt   DateTime @default(now())
 
-  bases Base[]
+  bases       Base[]
+  researches  Research[]
+  researchJob ResearchJob?
 
   @@map("users")
 }
 
 /// Звездная система — макро-объект галактической карты.
 model SolarSystem {
-  id        String   @id @default(cuid())
-  name      String   @unique
+  id        String    @id @default(cuid())
+  name      String    @unique
   /// Координаты в галактике (макро-карта).
   galaxyX   Int
   galaxyY   Int
   /// Класс звезды влияет на выработку энергии планет системы.
   starClass StarClass
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
 
   planets Planet[]
 
@@ -43,7 +46,7 @@ model SolarSystem {
 
 /// Планета/спутник внутри системы. Коэффициенты богатства задают скорость добычи.
 model Planet {
-  id       String @id @default(cuid())
+  id       String     @id @default(cuid())
   name     String
   systemId String
   /// Позиция (орбита) внутри системы: 1..N.
@@ -85,15 +88,123 @@ model Base {
   deuteriumMineLevel Int @default(0)
   solarPlantLevel    Int @default(0)
 
+  /// Инфраструктура Этапа 2.
+  researchLabLevel Int @default(0)
+  shipyardLevel    Int @default(0)
+
   /// Время последнего начисления ресурсов тиком (для догона офлайн-периода).
   lastTickAt DateTime @default(now())
   createdAt  DateTime @default(now())
 
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  planet Planet @relation(fields: [planetId], references: [id], onDelete: Cascade)
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planet      Planet       @relation(fields: [planetId], references: [id], onDelete: Cascade)
+  buildJob    BuildJob?
+  shipJobs    ShipJob[]
+  ships       Ship[]
+  researchJob ResearchJob?
 
   @@index([userId])
   @@map("bases")
+}
+
+/// Стройка здания на базе. Одновременно активна не больше одной на базу.
+model BuildJob {
+  id          String       @id @default(cuid())
+  baseId      String       @unique
+  building    BuildingType
+  targetLevel Int
+  startedAt   DateTime     @default(now())
+  finishesAt  DateTime
+
+  base Base @relation(fields: [baseId], references: [id], onDelete: Cascade)
+
+  @@map("build_jobs")
+}
+
+/// Изученные технологии игрока (общие для всех его баз).
+model Research {
+  id     String         @id @default(cuid())
+  userId String
+  tech   TechnologyType
+  level  Int            @default(0)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, tech])
+  @@map("researches")
+}
+
+/// Активное исследование игрока. Одновременно активно не больше одного.
+model ResearchJob {
+  id          String         @id @default(cuid())
+  userId      String         @unique
+  /// Лаборатория, с которой запущено исследование (с нее списаны ресурсы).
+  baseId      String         @unique
+  tech        TechnologyType
+  targetLevel Int
+  startedAt   DateTime       @default(now())
+  finishesAt  DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  base Base @relation(fields: [baseId], references: [id], onDelete: Cascade)
+
+  @@map("research_jobs")
+}
+
+/// Корабли, стоящие на базе. Перемещение флота — Этап 3.
+model Ship {
+  id     String   @id @default(cuid())
+  baseId String
+  type   ShipType
+  count  Int      @default(0)
+
+  base Base @relation(fields: [baseId], references: [id], onDelete: Cascade)
+
+  @@unique([baseId, type])
+  @@map("ships")
+}
+
+/// Заказ на верфи. Очередь обрабатывается по порядку создания, корабли выходят поштучно.
+model ShipJob {
+  id          String   @id @default(cuid())
+  baseId      String
+  type        ShipType
+  /// Сколько кораблей осталось построить по этому заказу.
+  remaining   Int
+  /// Изначальный объем заказа (для отображения прогресса).
+  quantity    Int
+  /// Длительность постройки одного корабля в секундах на момент заказа.
+  unitSeconds Float
+  /// Время выхода следующего корабля. Тикает только у первого заказа в очереди.
+  nextUnitAt  DateTime
+  createdAt   DateTime @default(now())
+
+  base Base @relation(fields: [baseId], references: [id], onDelete: Cascade)
+
+  @@index([baseId, createdAt])
+  @@map("ship_jobs")
+}
+
+enum BuildingType {
+  METAL_MINE
+  CRYSTAL_MINE
+  DEUTERIUM_MINE
+  SOLAR_PLANT
+  RESEARCH_LAB
+  SHIPYARD
+}
+
+enum TechnologyType {
+  ENERGY_TECH
+  COMPUTING_TECH
+  MINING_TECH
+  COMBUSTION_DRIVE
+}
+
+enum ShipType {
+  PROBE
+  TRANSPORTER
+  LIGHT_FIGHTER
 }
 
 enum StarClass {

@@ -6,7 +6,6 @@ import { Server } from 'socket.io';
 import { env } from './config/env.js';
 import { disconnectPrisma } from './db/prisma.js';
 import { gameLoop, roomForUser } from './game/gameLoop.js';
-import { toSnapshot } from './game/baseState.js';
 import { authRouter } from './routes/auth.js';
 import { gameRouter } from './routes/game.js';
 import { findUserByToken } from './services/userService.js';
@@ -55,18 +54,15 @@ io.on('connection', (socket) => {
 
   void gameLoop.attachUser(userId).then(() => {
     socket.emit('session:ready', { userId, username });
-    socket.emit('state:update', {
-      bases: gameLoop.getUserBases(userId).map(toSnapshot),
-      serverTime: Date.now(),
-    });
+    sendState();
   });
 
-  socket.on('state:request', () => {
-    socket.emit('state:update', {
-      bases: gameLoop.getUserBases(userId).map(toSnapshot),
-      serverTime: Date.now(),
-    });
-  });
+  socket.on('state:request', sendState);
+
+  function sendState(): void {
+    const payload = gameLoop.getSnapshot(userId);
+    if (payload) socket.emit('state:update', payload);
+  }
 
   socket.on('disconnect', () => {
     void gameLoop.detachUser(userId);

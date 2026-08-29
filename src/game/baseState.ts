@@ -1,19 +1,77 @@
-import type { BaseSnapshot } from '../types/socket.js';
+/** Состояние игрока и его баз в памяти Game Loop + снимки для клиента. */
+import type {
+  BaseSnapshot,
+  BuildingCard,
+  ResearchSnapshot,
+  ShipCard,
+  TechnologyCard,
+} from '../types/socket.js';
 import {
   BUILDING_LABELS,
   BUILDING_TYPES,
+  buildSeconds,
+  energyEfficiency,
   energyOutput,
   energyUsage,
   hasEnoughResources,
-  levelsAfterUpgrade,
+  missingBuildingRequirements,
   productionPerSecond,
   upgradeCost,
   type BuildingLevels,
+  type BuildingType,
   type PlanetRichness,
   type ResourceAmounts,
 } from './rules.js';
+import {
+  economyBonuses,
+  missingTechRequirements,
+  researchCost,
+  researchSeconds,
+  techDescription,
+  techLabel,
+  TECHNOLOGY_TYPES,
+  type Requirement,
+  type TechLevels,
+  type TechnologyType,
+} from './techTree.js';
+import {
+  missingShipRequirements,
+  shipCost,
+  shipDescription,
+  shipLabel,
+  SHIP_TYPES,
+  shipUnitSeconds,
+  type ShipCounts,
+  type ShipType,
+} from './ships.js';
 
-/** Состояние базы в памяти Game Loop. */
+export interface BuildJobState {
+  building: BuildingType;
+  targetLevel: number;
+  startedAt: number;
+  finishesAt: number;
+}
+
+export interface ShipJobState {
+  id: string;
+  type: ShipType;
+  quantity: number;
+  remaining: number;
+  unitSeconds: number;
+  /** Время выхода следующего корабля; тикает только у первого заказа очереди. */
+  nextUnitAt: number;
+  createdAt: number;
+}
+
+export interface ResearchJobState {
+  tech: TechnologyType;
+  targetLevel: number;
+  /** База, с которой запущено исследование. */
+  baseId: string;
+  startedAt: number;
+  finishesAt: number;
+}
+
 export interface BaseRuntimeState {
   id: string;
   name: string;
@@ -27,23 +85,59 @@ export interface BaseRuntimeState {
   richness: PlanetRichness;
   resources: ResourceAmounts;
   levels: BuildingLevels;
+  buildJob: BuildJobState | null;
+  shipJobs: ShipJobState[];
+  ships: ShipCounts;
   lastTickAt: number;
+  /** Изменились ресурсы/уровни — нужна периодическая запись. */
   dirty: boolean;
+  /** Изменились очереди или флот — нужна немедленная запись. */
+  jobsDirty: boolean;
 }
 
-/** Начисление ресурсов за прошедшие секунды (используется тиком и догоном офлайна). */
-export function accrue(state: BaseRuntimeState, seconds: number): void {
-  if (seconds <= 0) return;
-  const perSecond = productionPerSecond(state.levels, state.richness);
-  state.resources.metal += perSecond.metal * seconds;
-  state.resources.crystal += perSecond.crystal * seconds;
-  state.resources.deuterium += perSecond.deuterium * seconds;
+export interface UserRuntimeState {
+  userId: string;
+  /** Последнее обращение — по нему выгружаются игроки без активных сокетов. */
+  lastAccessAt: number;
+  techs: TechLevels;
+  research: ResearchJobState | null;
+  /** Уровни технологий или активное исследование изменились. */
+  researchDirty: boolean;
+  bases: Map<string, BaseRuntimeState>;
+}
+
+/**
+ * Начисление ресурсов за прошедшие секунды (тик и догон офлайна).
+ * Нечисловой результат отбрасывается: одно NaN иначе навсегда испортило бы склад базы.
+ */
+export function accrue(state: BaseRuntimeState, techs: TechLevels, seconds: number): void {
+  if (!Number.isFinite(seconds) || seconds <= 0) return;
+
+  const perSecond = productionPerSecond(state.levels, state.richness, economyBonuses(techs));
+  const next = {
+    metal: state.resources.metal + perSecond.metal * seconds,
+    crystal: state.resources.crystal + perSecond.crystal * seconds,
+    deuterium: state.resources.deuterium + perSecond.deuterium * seconds,
+  };
+
+  if (!Number.isFinite(next.metal) || !Number.isFinite(next.crystal) || !Number.isFinite(next.deuterium)) {
+    console.error(`[game-loop] некорректное начисление на базе ${state.id}, склад не изменен`, {
+      perSecond,
+      seconds,
+      levels: state.levels,
+    });
+    return;
+  }
+
+  state.resources = next;
   state.dirty = true;
 }
 
-export function toSnapshot(state: BaseRuntimeState): BaseSnapshot {
-  const output = energyOutput(state.levels, state.richness);
+export function toSnapshot(state: BaseRuntimeState, user: UserRuntimeState, now: number): BaseSnapshot {
+  const bonuses = economyBonuses(user.techs);
+  const output = energyOutput(state.levels, state.richness, bonuses);
   const usage = energyUsage(state.levels);
+  const efficiency = energyEfficiency(state.levels, state.richness, bonuses);
 
   return {
     baseId: state.id,
@@ -60,32 +154,111 @@ export function toSnapshot(state: BaseRuntimeState): BaseSnapshot {
       crystal: round(state.resources.crystal),
       deuterium: round(state.resources.deuterium),
     },
-    productionPerSecond: roundAll(productionPerSecond(state.levels, state.richness)),
+    productionPerSecond: roundAll(productionPerSecond(state.levels, state.richness, bonuses)),
     energy: {
       output: round(output),
       usage: round(usage),
       available: round(output - usage),
+      efficiency: Math.round(efficiency * 1000) / 1000,
     },
-    buildings: BUILDING_TYPES.map((type) => {
-      const nextLevel = state.levels[type] + 1;
-      const cost = upgradeCost(type, nextLevel);
-      const nextLevels = levelsAfterUpgrade(state.levels, type);
-      const energyDelta =
-        energyOutput(nextLevels, state.richness) -
-        energyUsage(nextLevels) -
-        (output - usage);
+    buildJob: state.buildJob
+      ? {
+          building: state.buildJob.building,
+          label: BUILDING_LABELS[state.buildJob.building],
+          targetLevel: state.buildJob.targetLevel,
+          totalSeconds: Math.round((state.buildJob.finishesAt - state.buildJob.startedAt) / 1000),
+          remainingSeconds: Math.max(0, Math.ceil((state.buildJob.finishesAt - now) / 1000)),
+        }
+      : null,
+    buildings: BUILDING_TYPES.map((type) => buildingCard(type, state)),
+    technologies: TECHNOLOGY_TYPES.map((tech) => technologyCard(tech, state, user)),
+    ships: SHIP_TYPES.map((type) => shipCard(type, state, user)),
+    fleet: { ...state.ships },
+    shipQueue: state.shipJobs.map((job) => ({
+      id: job.id,
+      type: job.type,
+      label: shipLabel(job.type),
+      quantity: job.quantity,
+      remaining: job.remaining,
+      unitSeconds: job.unitSeconds,
+      nextUnitInSeconds: Math.max(0, Math.ceil((job.nextUnitAt - now) / 1000)),
+    })),
+  };
+}
 
-      return {
-        type,
-        label: BUILDING_LABELS[type],
-        level: state.levels[type],
-        nextLevel,
-        cost,
-        energyDelta: round(energyDelta),
-        canAfford: hasEnoughResources(state.resources, cost),
-        hasEnergy: energyOutput(nextLevels, state.richness) >= energyUsage(nextLevels),
-      };
-    }),
+function buildingCard(type: BuildingType, state: BaseRuntimeState): BuildingCard {
+  const nextLevel = state.levels[type] + 1;
+  const cost = upgradeCost(type, nextLevel);
+  const missing = missingBuildingRequirements(type, state.levels).map<Requirement>((item) => ({
+    kind: 'building',
+    key: item.building,
+    label: BUILDING_LABELS[item.building],
+    level: item.level,
+  }));
+
+  return {
+    type,
+    label: BUILDING_LABELS[type],
+    level: state.levels[type],
+    nextLevel,
+    cost,
+    seconds: buildSeconds(type, nextLevel),
+    canAfford: hasEnoughResources(state.resources, cost),
+    requirements: missing,
+    busy: state.buildJob !== null,
+  };
+}
+
+function technologyCard(
+  tech: TechnologyType,
+  state: BaseRuntimeState,
+  user: UserRuntimeState,
+): TechnologyCard {
+  const nextLevel = user.techs[tech] + 1;
+  const cost = researchCost(tech, nextLevel);
+
+  return {
+    tech,
+    label: techLabel(tech),
+    description: techDescription(tech),
+    level: user.techs[tech],
+    nextLevel,
+    cost,
+    seconds: researchSeconds(tech, nextLevel, state.levels.RESEARCH_LAB, user.techs),
+    canAfford: hasEnoughResources(state.resources, cost),
+    requirements: missingTechRequirements(tech, state.levels, user.techs),
+    busy: user.research !== null,
+  };
+}
+
+function shipCard(type: ShipType, state: BaseRuntimeState, user: UserRuntimeState): ShipCard {
+  const cost = shipCost(type);
+
+  return {
+    type,
+    label: shipLabel(type),
+    description: shipDescription(type),
+    cost,
+    unitSeconds: shipUnitSeconds(type, state.levels.SHIPYARD),
+    owned: state.ships[type],
+    canAfford: hasEnoughResources(state.resources, cost),
+    requirements: missingShipRequirements(type, state.levels, user.techs),
+  };
+}
+
+export function researchSnapshot(user: UserRuntimeState, now: number): ResearchSnapshot {
+  return {
+    techs: { ...user.techs },
+    active: user.research
+      ? {
+          tech: user.research.tech,
+          label: techLabel(user.research.tech),
+          targetLevel: user.research.targetLevel,
+          baseId: user.research.baseId,
+          totalSeconds: Math.round((user.research.finishesAt - user.research.startedAt) / 1000),
+          remainingSeconds: Math.max(0, Math.ceil((user.research.finishesAt - now) / 1000)),
+        }
+      : null,
   };
 }
 
