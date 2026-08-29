@@ -10,6 +10,7 @@
     bases: [],
     research: { techs: {}, active: null },
     fleets: [],
+    credits: 0,
     activeBaseId: null,
     activeTab: 'buildings',
     socket: null,
@@ -60,6 +61,20 @@
     flightPlan: $('flight-plan'),
     sendFleetButton: $('send-fleet'),
     fleetList: $('fleet-list'),
+    resCredits: $('res-credits'),
+    hubStorage: $('hub-storage'),
+    upgradeStorage: $('upgrade-storage'),
+    orderSide: $('order-side'),
+    orderResource: $('order-resource'),
+    orderQuantity: $('order-quantity'),
+    orderPrice: $('order-price'),
+    orderHint: $('order-hint'),
+    placeOrderButton: $('place-order'),
+    orderBook: $('order-book'),
+    myOrders: $('my-orders'),
+    tradeLog: $('trade-log'),
+    cargoMetalLabel: $('cargo-metal-label'),
+    cargoCrystalLabel: $('cargo-crystal-label'),
   };
 
   const PLANET_TYPES = {
@@ -149,6 +164,7 @@
     applyState(data);
     connectSocket();
     await loadMap();
+    await loadMarket();
   }
 
   function authHeaders() {
@@ -188,6 +204,7 @@
       panel.hidden = panel.dataset.panel !== state.activeTab;
     }
     if (state.activeTab === 'map') void loadMap();
+    if (state.activeTab === 'market') void loadMarket();
   });
 
   /* ---------- Рендер ---------- */
@@ -196,6 +213,8 @@
     state.bases = payload.bases || [];
     state.research = payload.research || { techs: {}, active: null };
     state.fleets = payload.fleets || [];
+    state.credits = payload.credits || 0;
+    el.resCredits.textContent = fmt(state.credits);
     if (!state.bases.length) return;
     if (!state.bases.some((base) => base.baseId === state.activeBaseId)) {
       state.activeBaseId = state.bases[0].baseId;
@@ -544,7 +563,16 @@
   const SVG_NS = 'http://www.w3.org/2000/svg';
   const MAP = { width: 900, height: 340, starX: 60, firstOrbit: 250, orbitStep: 215 };
 
-  const map = { data: null, selectedId: null, hoverId: null, plan: null, planTimer: null };
+  const map = { data: null, selectedId: null, selectedKind: 'PLANET', hoverId: null, plan: null, planTimer: null };
+
+  const MISSION_OPTIONS = {
+    PLANET: [['TRANSPORT', 'Транспортировка'], ['SCAN', 'Разведка зондом']],
+    HUB: [['HUB_DELIVERY', 'Доставка на хаб'], ['HUB_PICKUP', 'Вывоз с хаба']],
+  };
+
+  function hubX() {
+    return MAP.starX + 118;
+  }
 
   function planetX(position) {
     return MAP.starX + MAP.firstOrbit + (position - 1) * MAP.orbitStep;
@@ -625,7 +653,59 @@
       svg.appendChild(group);
     }
 
+    if (map.data.hub) renderHub(map.data.hub);
     renderFleetMarkers();
+  }
+
+  /** Нейтральная станция у звезды — точка входа на биржу. */
+  function renderHub(hub) {
+    const svg = el.systemMap;
+    const x = hubX();
+    const y = MAP.height / 2 - 96;
+
+    const group = svgEl('g', {
+      class: `hub-node${map.selectedKind === 'HUB' && map.selectedId === hub.hubId ? ' selected' : ''}`,
+    });
+    group.appendChild(svgEl('rect', {
+      x: x - 20, y: y - 14, width: 40, height: 28, rx: 7,
+      fill: '#2a3350', stroke: 'rgba(126, 231, 135, 0.65)', 'stroke-width': 1.5,
+    }));
+    group.appendChild(svgEl('line', {
+      x1: x - 30, y1: y, x2: x + 30, y2: y, stroke: 'rgba(126, 231, 135, 0.5)', 'stroke-width': 2,
+    }));
+
+    const label = svgEl('text', { x, y: y - 24, class: 'planet-label' });
+    label.textContent = hub.name;
+    group.appendChild(label);
+
+    const storage = svgEl('text', { x, y: y + 30, class: 'planet-label' });
+    storage.textContent = hub.storage
+      ? `склад: ${fmt(hub.storage.metal)} Me · ${fmt(hub.storage.crystal)} Cr`
+      : 'склад пуст';
+    group.appendChild(storage);
+
+    group.addEventListener('mouseenter', (event) => showHubTooltip(hub, event));
+    group.addEventListener('mousemove', (event) => positionTooltip(event));
+    group.addEventListener('mouseleave', hideTooltip);
+    group.addEventListener('click', () => selectHub(hub));
+    svg.appendChild(group);
+  }
+
+  function showHubTooltip(hub, event) {
+    el.mapTooltip.innerHTML = hub.storage
+      ? `<b>${hub.name}</b><br>нейтральная торговая станция · орбита ${hub.position}<br>` +
+        `твой склад: ${fmt(hub.storage.metal)} Me · ${fmt(hub.storage.crystal)} Cr<br>` +
+        `занято ${fmt(hub.storage.metal + hub.storage.crystal)} из ${fmt(hub.storage.capacity)}`
+      : `<b>${hub.name}</b><br>нейтральная торговая станция`;
+    el.mapTooltip.hidden = false;
+    positionTooltip(event);
+  }
+
+  function selectHub(hub) {
+    map.selectedKind = 'HUB';
+    map.selectedId = hub.hubId;
+    renderMap();
+    renderPlanetInfo();
   }
 
   /** Маркеры флотов двигаются между тиками по меткам времени. */
@@ -640,7 +720,9 @@
 
     for (const fleet of state.fleets) {
       const origin = byId.get(fleet.originPlanetId);
-      const target = byId.get(fleet.targetPlanetId);
+      const target = fleet.targetKind === 'HUB'
+        ? { position: null, hub: true }
+        : byId.get(fleet.targetPlanetId);
       if (!origin || !target) continue;
 
       const outbound = fleet.status === 'OUTBOUND';
@@ -650,8 +732,8 @@
       const legEnd = outbound ? fleet.arrivesAt : fleet.returnsAt;
       const progress = Math.min(1, Math.max(0, (now - legStart) / Math.max(1, legEnd - legStart)));
 
-      const x1 = planetX(from.position);
-      const x2 = planetX(to.position);
+      const x1 = from.hub ? hubX() : planetX(from.position);
+      const x2 = to.hub ? hubX() : planetX(to.position);
       const y = MAP.height / 2 - 62;
       layer.appendChild(svgEl('line', { class: 'fleet-line', x1, y1: y, x2, y2: y }));
       layer.appendChild(svgEl('circle', {
@@ -717,16 +799,62 @@
   }
 
   function selectPlanet(planetId) {
+    map.selectedKind = 'PLANET';
     map.selectedId = planetId;
     renderMap();
     renderPlanetInfo();
   }
 
   function selectedPlanet() {
-    return map.data ? map.data.planets.find((p) => p.planetId === map.selectedId) || null : null;
+    if (!map.data || map.selectedKind !== 'PLANET') return null;
+    return map.data.planets.find((p) => p.planetId === map.selectedId) || null;
+  }
+
+  function selectedHub() {
+    if (!map.data || map.selectedKind !== 'HUB') return null;
+    return map.data.hub && map.data.hub.hubId === map.selectedId ? map.data.hub : null;
+  }
+
+  /** Список миссий зависит от того, что выбрано: планета или хаб. */
+  function syncMissionOptions() {
+    const options = MISSION_OPTIONS[map.selectedKind] || MISSION_OPTIONS.PLANET;
+    const current = el.mission.value;
+    const same = [...el.mission.options].map((o) => o.value).join() === options.map((o) => o[0]).join();
+    if (!same) {
+      el.mission.innerHTML = '';
+      for (const [value, label] of options) {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label;
+        el.mission.appendChild(option);
+      }
+    }
+    if (options.some((o) => o[0] === current)) el.mission.value = current;
+
+    const pickup = el.mission.value === 'HUB_PICKUP';
+    el.cargoMetalLabel.textContent = pickup ? 'Забрать металла' : 'Металл';
+    el.cargoCrystalLabel.textContent = pickup ? 'Забрать кристаллов' : 'Кристаллы';
   }
 
   function renderPlanetInfo() {
+    const base = activeBase();
+    const hub = selectedHub();
+
+    if (hub) {
+      el.planetInfo.innerHTML = hub.storage
+        ? `<b>${hub.name}</b><br>нейтральная торговая станция · орбита ${hub.position}<br>` +
+          `твой склад: <b>${fmt(hub.storage.metal)}</b> Me · <b>${fmt(hub.storage.crystal)}</b> Cr<br>` +
+          `занято ${fmt(hub.storage.metal + hub.storage.crystal)} из ${fmt(hub.storage.capacity)} ` +
+          `(свободно ${fmt(hub.storage.free)})`
+        : `<b>${hub.name}</b><br>нейтральная торговая станция`;
+      el.dispatch.hidden = !base;
+      if (base) {
+        syncMissionOptions();
+        renderFleetInputs();
+      }
+      return;
+    }
+
     const planet = selectedPlanet();
     if (!planet) {
       el.planetInfo.innerHTML = 'Наведи курсор или выбери планету на карте.';
@@ -735,9 +863,11 @@
     }
 
     el.planetInfo.innerHTML = planetDetailsHtml(planet, false);
-    const base = activeBase();
     el.dispatch.hidden = !base || planet.planetId === base.planetId;
-    if (!el.dispatch.hidden) renderFleetInputs();
+    if (!el.dispatch.hidden) {
+      syncMissionOptions();
+      renderFleetInputs();
+    }
   }
 
   function renderFleetInputs() {
@@ -783,10 +913,17 @@
   }
 
   /** Расчет маршрута считает сервер — клиент только показывает результат. */
+  function currentTarget() {
+    const hub = selectedHub();
+    if (hub) return { targetHubId: hub.hubId };
+    const planet = selectedPlanet();
+    return planet ? { targetPlanetId: planet.planetId } : null;
+  }
+
   async function refreshPlan() {
     const base = activeBase();
-    const planet = selectedPlanet();
-    if (!base || !planet) return;
+    const target = currentTarget();
+    if (!base || !target) return;
 
     const ships = readComposition();
     if (!ships.PROBE && !ships.TRANSPORTER && !ships.LIGHT_FIGHTER) {
@@ -799,7 +936,7 @@
       const response = await fetch(`/api/bases/${base.baseId}/fleets/preview`, {
         method: 'POST',
         headers: authHeaders(),
-        body: JSON.stringify({ targetPlanetId: planet.planetId, ships }),
+        body: JSON.stringify({ ...target, ships }),
       });
       if (!response.ok) {
         map.plan = null;
@@ -825,17 +962,21 @@
 
   async function sendFleet() {
     const base = activeBase();
-    const planet = selectedPlanet();
-    if (!base || !planet) return;
+    const target = currentTarget();
+    if (!base || !target) return;
+
+    const amounts = {
+      metal: Number(el.cargoMetal.value) || 0,
+      crystal: Number(el.cargoCrystal.value) || 0,
+    };
+    const pickup = el.mission.value === 'HUB_PICKUP';
 
     const ok = await send(`/api/bases/${base.baseId}/fleets`, {
-      targetPlanetId: planet.planetId,
+      ...target,
       mission: el.mission.value,
       ships: readComposition(),
-      cargo: {
-        metal: Number(el.cargoMetal.value) || 0,
-        crystal: Number(el.cargoCrystal.value) || 0,
-      },
+      cargo: pickup ? { metal: 0, crystal: 0 } : amounts,
+      pickup: pickup ? amounts : { metal: 0, crystal: 0 },
     });
 
     // Сбрасываем форму, чтобы повторный клик не отправил тот же флот дважды.
@@ -847,6 +988,7 @@
       el.flightPlan.textContent = 'Выбери корабли, чтобы увидеть расчет.';
     }
     await loadMap();
+    await loadMarket();
   }
 
   function renderFleetList() {
@@ -864,8 +1006,8 @@
       item.className = 'queue-item';
       const title = document.createElement('b');
       const direction = fleet.status === 'OUTBOUND'
-        ? `${fleet.originPlanetName} → ${fleet.targetPlanetName}`
-        : `${fleet.targetPlanetName} → ${fleet.originPlanetName} (возврат)`;
+        ? `${fleet.originPlanetName} → ${fleet.targetName}`
+        : `${fleet.targetName} → ${fleet.originPlanetName} (возврат)`;
       const cargo = fleet.cargo.metal + fleet.cargo.crystal > 0
         ? `, груз ${fmt(fleet.cargo.metal)} Me / ${fmt(fleet.cargo.crystal)} Cr`
         : '';
@@ -878,9 +1020,256 @@
   }
 
   el.sendFleetButton.addEventListener('click', () => void sendFleet());
-  el.mission.addEventListener('change', schedulePlan);
+  el.mission.addEventListener('change', () => {
+    syncMissionOptions();
+    schedulePlan();
+  });
   el.cargoMetal.addEventListener('input', schedulePlan);
   el.cargoCrystal.addEventListener('input', schedulePlan);
+
+
+  /* ---------- Этап 4: хаб и биржа ---------- */
+
+  const market = { data: null, timer: null };
+  const RESOURCE_LABELS = { METAL: 'Металл', CRYSTAL: 'Кристаллы' };
+
+  async function loadMarket() {
+    try {
+      const response = await fetch('/api/market', { headers: authHeaders() });
+      if (!response.ok) return;
+      market.data = await response.json();
+      renderMarket();
+    } catch (error) {
+      /* биржа подтянется на следующем обновлении */
+    }
+  }
+
+  function renderMarket() {
+    if (!market.data) return;
+    renderHubStorage();
+    renderOrderBook();
+    renderMyOrders();
+    renderTradeLog();
+  }
+
+  function renderHubStorage() {
+    const storage = market.data.storage;
+    if (!market.data.hub || !storage) {
+      el.hubStorage.textContent = 'Торговый хаб недоступен';
+      el.upgradeStorage.disabled = true;
+      return;
+    }
+
+    el.hubStorage.innerHTML =
+      `<b>${market.data.hub.name}</b><br>` +
+      `металл: <b>${fmt(storage.metal)}</b> · кристаллы: <b>${fmt(storage.crystal)}</b><br>` +
+      `занято ${fmt(storage.metal + storage.crystal)} из <b>${fmt(storage.capacity)}</b> ` +
+      `(свободно ${fmt(storage.free)})<br>` +
+      `уровень склада: <b>${storage.level}</b><br>` +
+      `расширение до ур. ${storage.nextLevel}: ${fmt(storage.upgradeCost.metal)} Me + ` +
+      `${fmt(storage.upgradeCost.crystal)} Cr со склада хаба → ${fmt(storage.nextCapacity)}`;
+
+    el.upgradeStorage.disabled =
+      storage.metal < storage.upgradeCost.metal || storage.crystal < storage.upgradeCost.crystal;
+  }
+
+  function renderOrderBook() {
+    el.orderBook.innerHTML = '';
+
+    for (const resource of ['METAL', 'CRYSTAL']) {
+      const side = document.createElement('div');
+      side.className = 'book-side';
+
+      const title = document.createElement('h4');
+      title.textContent = RESOURCE_LABELS[resource];
+      side.appendChild(title);
+
+      const book = market.data.book[resource] || { buy: [], sell: [] };
+      side.appendChild(buildOrderTable('Продажа', book.sell, resource));
+      side.appendChild(buildOrderTable('Покупка', book.buy, resource));
+      el.orderBook.appendChild(side);
+    }
+  }
+
+  function buildOrderTable(caption, orders, resource) {
+    const wrap = document.createElement('div');
+    const table = document.createElement('table');
+    const isSell = caption === 'Продажа';
+
+    const head = document.createElement('tr');
+    head.innerHTML = `<th>${caption}</th><th>цена ₴</th><th>объем</th><th>сделка</th>`;
+    table.appendChild(head);
+
+    if (!orders.length) {
+      const empty = document.createElement('div');
+      empty.className = 'book-empty';
+      empty.textContent = `${caption}: ордеров нет`;
+      wrap.appendChild(empty);
+      return wrap;
+    }
+
+    for (const order of orders) {
+      const row = document.createElement('tr');
+      if (order.mine) row.className = 'mine';
+
+      const trader = document.createElement('td');
+      trader.textContent = order.mine ? 'мой ордер' : order.trader;
+
+      const price = document.createElement('td');
+      price.className = isSell ? 'price-sell' : 'price-buy';
+      price.textContent = order.pricePerUnit.toFixed(2);
+
+      const volume = document.createElement('td');
+      volume.textContent = fmt(order.remaining);
+
+      const action = document.createElement('td');
+      if (!order.mine) {
+        const amount = document.createElement('input');
+        amount.type = 'number';
+        amount.className = 'fill-amount';
+        amount.min = '1';
+        amount.max = String(Math.floor(order.remaining));
+        amount.value = String(Math.floor(order.remaining));
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = isSell ? 'Купить' : 'Продать';
+        button.addEventListener('click', () => void fillOrder(order, Number(amount.value)));
+
+        action.append(amount, button);
+      }
+
+      row.append(trader, price, volume, action);
+      table.appendChild(row);
+    }
+
+    wrap.appendChild(table);
+    return wrap;
+  }
+
+  /** Исполнение чужого ордера на указанный объем. */
+  async function fillOrder(order, quantity) {
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      showBuildMessage('Некорректный объем сделки', false);
+      return;
+    }
+
+    await send(`/api/market/orders/${order.id}/fill`, { quantity: Math.floor(quantity) });
+    await loadMarket();
+  }
+
+  function renderMyOrders() {
+    el.myOrders.innerHTML = '';
+    const orders = market.data.myOrders || [];
+
+    if (!orders.length) {
+      const empty = document.createElement('div');
+      empty.className = 'queue-item';
+      empty.textContent = 'Своих ордеров нет';
+      el.myOrders.appendChild(empty);
+      return;
+    }
+
+    for (const order of orders) {
+      const item = document.createElement('div');
+      item.className = 'queue-item';
+
+      const title = document.createElement('b');
+      title.textContent =
+        `${order.side === 'SELL' ? 'Продажа' : 'Покупка'}: ${RESOURCE_LABELS[order.resource]} ` +
+        `${fmt(order.remaining)} из ${fmt(order.quantity)} по ${order.pricePerUnit.toFixed(2)} ₴`;
+
+      const cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.className = 'ghost';
+      cancel.textContent = 'Снять';
+      cancel.addEventListener('click', async () => {
+        await sendDelete(`/api/market/orders/${order.id}`);
+        await loadMarket();
+      });
+
+      item.append(title, cancel);
+      el.myOrders.appendChild(item);
+    }
+  }
+
+  function renderTradeLog() {
+    el.tradeLog.innerHTML = '';
+    const trades = market.data.trades || [];
+
+    if (!trades.length) {
+      const empty = document.createElement('div');
+      empty.className = 'queue-item';
+      empty.textContent = 'Сделок пока не было';
+      el.tradeLog.appendChild(empty);
+      return;
+    }
+
+    for (const trade of trades) {
+      const item = document.createElement('div');
+      item.className = 'queue-item';
+      const title = document.createElement('b');
+      title.textContent =
+        `${RESOURCE_LABELS[trade.resource]} ×${fmt(trade.quantity)} по ${trade.pricePerUnit.toFixed(2)} ₴ ` +
+        `= ${fmt(trade.total)} ₴`;
+      const meta = document.createElement('span');
+      meta.textContent = `${trade.seller} → ${trade.buyer}${trade.mine ? ' · моя сделка' : ''}`;
+      item.append(title, meta);
+      el.tradeLog.appendChild(item);
+    }
+  }
+
+  async function placeOrder() {
+    await send('/api/market/orders', {
+      side: el.orderSide.value,
+      resource: el.orderResource.value,
+      quantity: Number(el.orderQuantity.value),
+      pricePerUnit: Number(el.orderPrice.value),
+    });
+    await loadMarket();
+  }
+
+  async function sendDelete(url) {
+    try {
+      const response = await fetch(url, { method: 'DELETE', headers: authHeaders() });
+      const data = await response.json();
+      showBuildMessage(response.ok ? data.message || 'Готово' : data.error || 'Не вышло', response.ok);
+      return response.ok;
+    } catch (error) {
+      showBuildMessage('Сервер недоступен', false);
+      return false;
+    }
+  }
+
+  function updateOrderHint() {
+    const storage = market.data && market.data.storage;
+    const quantity = Number(el.orderQuantity.value) || 0;
+    const price = Number(el.orderPrice.value) || 0;
+    const total = Math.round(quantity * price * 100) / 100;
+
+    if (el.orderSide.value === 'SELL') {
+      const available = storage
+        ? (el.orderResource.value === 'METAL' ? storage.metal : storage.crystal)
+        : 0;
+      el.orderHint.innerHTML =
+        `Продажа заблокирует <b>${fmt(quantity)}</b> со склада хаба (там ${fmt(available)}).<br>` +
+        `Выручка при полном исполнении: <b>${fmt(total)} ₴</b>`;
+    } else {
+      el.orderHint.innerHTML =
+        `Покупка заблокирует <b>${fmt(total)} ₴</b> (баланс ${fmt(state.credits)} ₴).<br>` +
+        `Товар придет на склад хаба — нужно место.`;
+    }
+  }
+
+  el.placeOrderButton.addEventListener('click', () => void placeOrder());
+  el.upgradeStorage.addEventListener('click', async () => {
+    await send('/api/market/storage/upgrade', {});
+    await loadMarket();
+  });
+  for (const node of [el.orderSide, el.orderResource, el.orderQuantity, el.orderPrice]) {
+    node.addEventListener('input', updateOrderHint);
+    node.addEventListener('change', updateOrderHint);
+  }
 
   /* ---------- Старт ---------- */
   if (state.token) {

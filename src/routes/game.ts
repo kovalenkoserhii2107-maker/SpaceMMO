@@ -73,9 +73,25 @@ gameRouter.post('/bases/:baseId/ships', async (req, res) => {
 
 interface FleetRequestBody {
   targetPlanetId?: unknown;
+  targetHubId?: unknown;
   mission?: unknown;
   ships?: Record<string, unknown>;
   cargo?: { metal?: unknown; crystal?: unknown };
+  pickup?: { metal?: unknown; crystal?: unknown };
+}
+
+function readTarget(body: FleetRequestBody): { planetId?: string; hubId?: string } {
+  const target: { planetId?: string; hubId?: string } = {};
+  if (typeof body.targetPlanetId === 'string') target.planetId = body.targetPlanetId;
+  if (typeof body.targetHubId === 'string') target.hubId = body.targetHubId;
+  return target;
+}
+
+function readAmounts(input: { metal?: unknown; crystal?: unknown } | undefined) {
+  return {
+    metal: Math.max(0, Math.floor(Number(input?.metal ?? 0)) || 0),
+    crystal: Math.max(0, Math.floor(Number(input?.crystal ?? 0)) || 0),
+  };
 }
 
 /** Предрасчет маршрута: время, топливо, трюмы. Формулы остаются на сервере. */
@@ -88,9 +104,9 @@ gameRouter.post('/bases/:baseId/fleets/preview', async (req, res) => {
     return;
   }
 
-  const target = await gameLoop.getPlanetPosition(String(body.targetPlanetId ?? ''));
+  const target = await gameLoop.getTargetPosition(readTarget(body));
   if (target === null) {
-    res.status(404).json({ error: 'Планета не найдена' });
+    res.status(404).json({ error: 'Цель полета не найдена' });
     return;
   }
 
@@ -106,12 +122,14 @@ gameRouter.post('/bases/:baseId/fleets/preview', async (req, res) => {
 gameRouter.post('/bases/:baseId/fleets', async (req, res) => {
   const body = (req.body ?? {}) as FleetRequestBody;
 
-  if (typeof body.targetPlanetId !== 'string') {
-    res.status(400).json({ error: 'Не указана планета назначения' });
-    return;
-  }
   if (!isFleetMission(body.mission)) {
     res.status(400).json({ error: 'Неизвестный тип миссии' });
+    return;
+  }
+
+  const target = readTarget(body);
+  if (!target.planetId && !target.hubId) {
+    res.status(400).json({ error: 'Не указана цель полета' });
     return;
   }
 
@@ -125,22 +143,17 @@ gameRouter.post('/bases/:baseId/fleets', async (req, res) => {
     ships[type] = Math.floor(raw);
   }
 
-  const cargo = {
-    metal: Math.max(0, Math.floor(Number(body.cargo?.metal ?? 0))),
-    crystal: Math.max(0, Math.floor(Number(body.cargo?.crystal ?? 0))),
-  };
-  if (!Number.isFinite(cargo.metal) || !Number.isFinite(cargo.crystal)) {
-    res.status(400).json({ error: 'Некорректный груз' });
-    return;
-  }
+  const cargo = readAmounts(body.cargo);
+  const pickup = readAmounts(body.pickup);
 
   const result = await gameLoop.sendFleet(
     req.userId as string,
     req.params.baseId,
-    body.targetPlanetId,
+    target,
     body.mission,
     ships,
     cargo,
+    pickup,
   );
   res.status(result.ok ? 200 : 409).json(result);
 });

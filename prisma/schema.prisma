@@ -2,7 +2,8 @@
 // ЭТАП 1: User, SolarSystem, Planet, Base.
 // ЭТАП 2: Research, ResearchJob, BuildJob, Ship, ShipJob.
 // ЭТАП 3: Fleet (полеты флота), PlanetScan (туман войны).
-// Модели будущих этапов (биржа, оборона) НЕ создаются.
+// ЭТАП 4: TradeHub, HubStorage, MarketOrder, Trade + баланс криптогривны.
+// Модели будущего этапа (оборона и бой) НЕ создаются.
 
 generator client {
   provider = "prisma-client"
@@ -18,6 +19,8 @@ model User {
   id           String   @id @default(cuid())
   username     String   @unique
   sessionToken String   @unique
+  /// Криптогривна — глобальная валюта аккаунта (Этап 4).
+  credits      Float    @default(1000)
   createdAt    DateTime @default(now())
   lastSeenAt   DateTime @default(now())
 
@@ -26,6 +29,10 @@ model User {
   researchJob ResearchJob?
   fleets      Fleet[]
   scans       PlanetScan[]
+  hubStorages HubStorage[]
+  orders      MarketOrder[]
+  purchases   Trade[]       @relation("TradeBuyer")
+  sales       Trade[]       @relation("TradeSeller")
 
   @@map("users")
 }
@@ -42,6 +49,7 @@ model SolarSystem {
   createdAt DateTime  @default(now())
 
   planets Planet[]
+  hub     TradeHub?
 
   @@unique([galaxyX, galaxyY])
   @@map("solar_systems")
@@ -194,12 +202,14 @@ model ShipJob {
 
 /// Полет флота между планетами. Время в пути и возврат считает Game Loop.
 model Fleet {
-  id             String @id @default(cuid())
+  id             String  @id @default(cuid())
   userId         String
   /// База отправления — туда вернется флот и оттуда списано топливо.
   originBaseId   String
   originPlanetId String
-  targetPlanetId String
+  /// Цель полета: планета или торговый хаб (заполнено ровно одно поле).
+  targetPlanetId String?
+  targetHubId    String?
 
   mission FleetMission
   status  FleetStatus  @default(OUTBOUND)
@@ -213,6 +223,10 @@ model Fleet {
   cargoMetal   Float @default(0)
   cargoCrystal Float @default(0)
 
+  /// Сколько запрошено к вывозу с хаба (для миссии HUB_PICKUP).
+  pickupMetal   Float @default(0)
+  pickupCrystal Float @default(0)
+
   /// Сожженный дейтерий за весь маршрут (списан при отправке).
   fuelSpent Float
   /// Расстояние в орбитах и скорость флота — для отображения.
@@ -224,10 +238,11 @@ model Fleet {
   returnsAt  DateTime
   createdAt  DateTime @default(now())
 
-  user         User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  originBase   Base   @relation(fields: [originBaseId], references: [id], onDelete: Cascade)
-  originPlanet Planet @relation("FleetOrigin", fields: [originPlanetId], references: [id], onDelete: Cascade)
-  targetPlanet Planet @relation("FleetTarget", fields: [targetPlanetId], references: [id], onDelete: Cascade)
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  originBase   Base      @relation(fields: [originBaseId], references: [id], onDelete: Cascade)
+  originPlanet Planet    @relation("FleetOrigin", fields: [originPlanetId], references: [id], onDelete: Cascade)
+  targetPlanet Planet?   @relation("FleetTarget", fields: [targetPlanetId], references: [id], onDelete: Cascade)
+  targetHub    TradeHub? @relation(fields: [targetHubId], references: [id], onDelete: Cascade)
 
   @@index([status, arrivesAt])
   @@index([status, returnsAt])
@@ -251,9 +266,101 @@ model PlanetScan {
   @@map("planet_scans")
 }
 
+/// Нейтральная орбитальная станция у звезды — центр торговли системы.
+model TradeHub {
+  id       String @id @default(cuid())
+  systemId String @unique
+  name     String
+  /// Позиция станции: 0 — орбита у самой звезды.
+  position Int    @default(0)
+
+  system   SolarSystem   @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  storages HubStorage[]
+  orders   MarketOrder[]
+  trades   Trade[]
+  fleets   Fleet[]
+
+  @@map("trade_hubs")
+}
+
+/// Личный торговый склад игрока на хабе. Товар сюда привозят транспортом.
+model HubStorage {
+  id     String @id @default(cuid())
+  userId String
+  hubId  String
+
+  metal   Float @default(0)
+  crystal Float @default(0)
+  /// Уровень склада определяет вместимость.
+  level   Int   @default(1)
+
+  user User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  hub  TradeHub @relation(fields: [hubId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, hubId])
+  @@map("hub_storages")
+}
+
+/// Ордер в биржевом стакане. Товар (продажа) или криптогривна (покупка) блокируются при выставлении.
+model MarketOrder {
+  id     String @id @default(cuid())
+  hubId  String
+  userId String
+
+  side         OrderSide
+  resource     TradeResource
+  /// Цена за единицу в криптогривне.
+  pricePerUnit Float
+  /// Изначальный объем и остаток (ордер исполняется частями).
+  quantity     Float
+  remaining    Float
+
+  createdAt DateTime @default(now())
+
+  hub  TradeHub @relation(fields: [hubId], references: [id], onDelete: Cascade)
+  user User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([hubId, resource, side, pricePerUnit])
+  @@map("market_orders")
+}
+
+/// Журнал сделок — история биржи.
+model Trade {
+  id       String @id @default(cuid())
+  hubId    String
+  buyerId  String
+  sellerId String
+
+  resource     TradeResource
+  quantity     Float
+  pricePerUnit Float
+  total        Float
+
+  createdAt DateTime @default(now())
+
+  hub    TradeHub @relation(fields: [hubId], references: [id], onDelete: Cascade)
+  buyer  User     @relation("TradeBuyer", fields: [buyerId], references: [id], onDelete: Cascade)
+  seller User     @relation("TradeSeller", fields: [sellerId], references: [id], onDelete: Cascade)
+
+  @@index([hubId, createdAt])
+  @@map("trades")
+}
+
+enum OrderSide {
+  BUY
+  SELL
+}
+
+enum TradeResource {
+  METAL
+  CRYSTAL
+}
+
 enum FleetMission {
   TRANSPORT
   SCAN
+  HUB_DELIVERY
+  HUB_PICKUP
 }
 
 enum FleetStatus {

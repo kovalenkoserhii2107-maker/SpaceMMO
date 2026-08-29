@@ -72,10 +72,14 @@ export interface FleetRuntimeState {
   originBaseId: string;
   originPlanetId: string;
   originPlanetName: string;
-  targetPlanetId: string;
-  targetPlanetName: string;
+  /// Цель — планета или торговый хаб.
+  targetKind: 'PLANET' | 'HUB';
+  targetPlanetId: string | null;
+  targetHubId: string | null;
+  targetName: string;
   ships: ShipCounts;
   cargo: { metal: number; crystal: number };
+  pickup: { metal: number; crystal: number };
   fuelSpent: number;
   distance: number;
   speed: number;
@@ -118,6 +122,8 @@ export interface BaseRuntimeState {
 
 export interface UserRuntimeState {
   userId: string;
+  /** Баланс криптогривны. Меняется только через биржу, тик его не трогает. */
+  credits: number;
   /** Последнее обращение — по нему выгружаются игроки без активных сокетов. */
   lastAccessAt: number;
   techs: TechLevels;
@@ -300,11 +306,14 @@ export function fleetSnapshots(user: UserRuntimeState, now: number): FleetSnapsh
       status: fleet.status,
       originPlanetId: fleet.originPlanetId,
       originPlanetName: fleet.originPlanetName,
+      targetKind: fleet.targetKind,
       targetPlanetId: fleet.targetPlanetId,
-      targetPlanetName: fleet.targetPlanetName,
+      targetHubId: fleet.targetHubId,
+      targetName: fleet.targetName,
       ships: { ...fleet.ships },
       composition: describeComposition(fleet.ships),
       cargo: { ...fleet.cargo },
+      pickup: { ...fleet.pickup },
       fuelSpent: fleet.fuelSpent,
       distance: fleet.distance,
       speed: fleet.speed,

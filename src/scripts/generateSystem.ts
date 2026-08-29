@@ -55,10 +55,25 @@ function round2(value: number): number {
 
 const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
 
+const HUB_NAMES = ['Орбитальный хаб «Базар»', 'Станция «Перекресток»', 'Торговый узел «Ярмарка»'];
+
+/** Хаб создается для каждой системы, где его еще нет — вызов идемпотентен. */
+async function ensureHubs(): Promise<void> {
+  const systems = await prisma.solarSystem.findMany({ include: { hub: true } });
+  for (const system of systems) {
+    if (system.hub) continue;
+    const hub = await prisma.tradeHub.create({
+      data: { systemId: system.id, name: pick(HUB_NAMES), position: 0 },
+    });
+    console.log(`[generate] в системе «${system.name}» открыт ${hub.name} (орбита ${hub.position})`);
+  }
+}
+
 async function main(): Promise<void> {
   const existing = await prisma.solarSystem.count();
   if (existing > 0) {
-    console.log(`[generate] в галактике уже есть систем: ${existing}. Генерация пропущена.`);
+    console.log(`[generate] в галактике уже есть систем: ${existing}. Генерация системы пропущена.`);
+    await ensureHubs();
     return;
   }
 
@@ -100,6 +115,8 @@ async function main(): Promise<void> {
     },
     include: { planets: { orderBy: { position: 'asc' } } },
   });
+
+  await ensureHubs();
 
   console.log(`[generate] система «${system.name}» (${system.starClass}), координаты ${system.galaxyX}:${system.galaxyY}`);
   for (const planet of system.planets) {

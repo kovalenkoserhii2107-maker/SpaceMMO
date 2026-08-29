@@ -6,7 +6,8 @@ import { prisma } from '../db/prisma.js';
 import { gameLoop } from '../game/gameLoop.js';
 import { foreignPlanetView, ownPlanetView, type PlanetView, type ScanPayload } from '../game/fogOfWar.js';
 import { emptyShipCounts } from '../game/ships.js';
-import type { SystemMap } from '../types/socket.js';
+import { storageCapacity, storageUsed } from '../game/market.js';
+import type { HubView, SystemMap } from '../types/socket.js';
 
 export async function buildSystemMap(userId: string): Promise<SystemMap | null> {
   const user = await gameLoop.getUser(userId);
@@ -19,13 +20,17 @@ export async function buildSystemMap(userId: string): Promise<SystemMap | null> 
   });
   if (!home) return null;
 
-  const [planets, scans] = await Promise.all([
+  const [planets, scans, hub] = await Promise.all([
     prisma.planet.findMany({
       where: { systemId: home.systemId },
       orderBy: { position: 'asc' },
       include: { base: { include: { user: true, ships: true } } },
     }),
     prisma.planetScan.findMany({ where: { userId } }),
+    prisma.tradeHub.findUnique({
+      where: { systemId: home.systemId },
+      include: { storages: { where: { userId } } },
+    }),
   ]);
 
   const scanByPlanet = new Map(scans.map((scan) => [scan.planetId, scan]));
@@ -86,11 +91,30 @@ export async function buildSystemMap(userId: string): Promise<SystemMap | null> 
     );
   });
 
+  const storage = hub?.storages[0] ?? null;
+  const hubView: HubView | null = hub
+    ? {
+        hubId: hub.id,
+        name: hub.name,
+        position: hub.position,
+        storage: storage
+          ? {
+              metal: Math.round(storage.metal),
+              crystal: Math.round(storage.crystal),
+              level: storage.level,
+              capacity: storageCapacity(storage.level),
+              free: Math.max(0, storageCapacity(storage.level) - storageUsed(storage)),
+            }
+          : null,
+      }
+    : null;
+
   return {
     systemId: home.system.id,
     systemName: home.system.name,
     starClass: home.system.starClass,
     planets: views,
+    hub: hubView,
   };
 }
 

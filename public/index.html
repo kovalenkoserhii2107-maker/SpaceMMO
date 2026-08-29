@@ -33,6 +33,7 @@
         <div class="res" title="Дейтерий"><span class="ico deuterium">⬢</span><b id="res-deuterium">0</b><small id="rate-deuterium">+0/с</small></div>
         <div class="res" title="Энергия"><span class="ico energy">⚡</span><b id="res-energy">0</b><small id="rate-energy">свободно</small></div>
         <div class="res" title="Эффективность шахт"><span class="ico eff">◐</span><b id="res-efficiency">100%</b><small id="rate-efficiency">мощность шахт</small></div>
+        <div class="res" title="Криптогривна"><span class="ico credits">₴</span><b id="res-credits">0</b><small>криптогривна</small></div>
       </div>
       <div class="user">
         <span id="user-name">—</span>
@@ -61,6 +62,7 @@
           <button type="button" class="tab" data-tab="research">Исследования</button>
           <button type="button" class="tab" data-tab="shipyard">Верфь</button>
           <button type="button" class="tab" data-tab="map">Карта системы</button>
+          <button type="button" class="tab" data-tab="market">Хаб и биржа</button>
         </nav>
 
         <section data-panel="buildings">
@@ -94,15 +96,12 @@
                 <h3 class="section-title">Отправка флота</h3>
                 <label class="field">
                   <span>Миссия</span>
-                  <select id="mission">
-                    <option value="TRANSPORT">Транспортировка</option>
-                    <option value="SCAN">Разведка зондом</option>
-                  </select>
+                  <select id="mission"></select>
                 </label>
                 <div id="fleet-inputs" class="fleet-inputs"></div>
                 <div id="cargo-inputs" class="fleet-inputs">
-                  <label class="field"><span>Металл</span><input id="cargo-metal" type="number" min="0" value="0"></label>
-                  <label class="field"><span>Кристаллы</span><input id="cargo-crystal" type="number" min="0" value="0"></label>
+                  <label class="field"><span id="cargo-metal-label">Металл</span><input id="cargo-metal" type="number" min="0" value="0"></label>
+                  <label class="field"><span id="cargo-crystal-label">Кристаллы</span><input id="cargo-crystal" type="number" min="0" value="0"></label>
                 </div>
                 <div id="flight-plan" class="flight-plan">Выбери корабли, чтобы увидеть расчет.</div>
                 <button id="send-fleet" type="button" class="primary">Отправить флот</button>
@@ -112,6 +111,47 @@
 
           <h3 class="section-title">Флоты в полете</h3>
           <div id="fleet-list" class="queue"></div>
+        </section>
+
+        <section data-panel="market" hidden>
+          <div class="market-top">
+            <div class="hub-card">
+              <h3 class="section-title">Торговый склад на хабе</h3>
+              <div id="hub-storage" class="hub-storage">Хаб не найден</div>
+              <button id="upgrade-storage" type="button" class="ghost">Расширить склад</button>
+            </div>
+
+            <div class="hub-card">
+              <h3 class="section-title">Новый ордер</h3>
+              <div class="order-form">
+                <label class="field"><span>Сторона</span>
+                  <select id="order-side">
+                    <option value="SELL">Продажа</option>
+                    <option value="BUY">Покупка</option>
+                  </select>
+                </label>
+                <label class="field"><span>Ресурс</span>
+                  <select id="order-resource">
+                    <option value="METAL">Металл</option>
+                    <option value="CRYSTAL">Кристаллы</option>
+                  </select>
+                </label>
+                <label class="field"><span>Объем</span><input id="order-quantity" type="number" min="1" value="100"></label>
+                <label class="field"><span>Цена за ед., ₴</span><input id="order-price" type="number" min="0.01" step="0.01" value="1"></label>
+              </div>
+              <div id="order-hint" class="flight-plan">Продажа блокирует товар на складе, покупка — криптогривну.</div>
+              <button id="place-order" type="button" class="primary">Выставить ордер</button>
+            </div>
+          </div>
+
+          <h3 class="section-title">Биржевой стакан</h3>
+          <div id="order-book" class="book"></div>
+
+          <h3 class="section-title">Мои ордера</h3>
+          <div id="my-orders" class="queue"></div>
+
+          <h3 class="section-title">Последние сделки</h3>
+          <div id="trade-log" class="queue"></div>
         </section>
 
         <p id="build-message" class="build-message" hidden></p>

@@ -6,7 +6,7 @@ import type { ResourceAmounts } from './rules.js';
 import type { TechLevels } from './techTree.js';
 import { SHIP_TYPES, shipLabel, type ShipCounts, type ShipType } from './ships.js';
 
-export const FLEET_MISSIONS = ['TRANSPORT', 'SCAN'] as const;
+export const FLEET_MISSIONS = ['TRANSPORT', 'SCAN', 'HUB_DELIVERY', 'HUB_PICKUP'] as const;
 export type FleetMission = (typeof FLEET_MISSIONS)[number];
 
 export function isFleetMission(value: unknown): value is FleetMission {
@@ -16,7 +16,14 @@ export function isFleetMission(value: unknown): value is FleetMission {
 export const MISSION_LABELS: Record<FleetMission, string> = {
   TRANSPORT: 'Транспортировка',
   SCAN: 'Разведка',
+  HUB_DELIVERY: 'Доставка на хаб',
+  HUB_PICKUP: 'Вывоз с хаба',
 };
+
+/** Миссии, летящие к торговому хабу, а не к планете. */
+export function isHubMission(mission: FleetMission): boolean {
+  return mission === 'HUB_DELIVERY' || mission === 'HUB_PICKUP';
+}
 
 interface FlightProfile {
   /** Базовая скорость: чем выше, тем короче перелет. */
@@ -126,6 +133,9 @@ export function planFlight(
 export function validateComposition(mission: FleetMission, ships: ShipCounts): string | null {
   if (fleetSize(ships) <= 0) return 'Не выбран ни один корабль';
   if (mission === 'SCAN' && ships.PROBE <= 0) return 'Для разведки нужен хотя бы один зонд';
+  if (isHubMission(mission) && fleetCapacity(ships) <= 0) {
+    return 'Для рейса на хаб нужен корабль с трюмом';
+  }
   return null;
 }
 

@@ -108,11 +108,14 @@ export interface FleetSnapshot {
   status: 'OUTBOUND' | 'RETURNING';
   originPlanetId: string;
   originPlanetName: string;
-  targetPlanetId: string;
-  targetPlanetName: string;
+  targetKind: 'PLANET' | 'HUB';
+  targetPlanetId: string | null;
+  targetHubId: string | null;
+  targetName: string;
   ships: ShipCounts;
   composition: string;
   cargo: { metal: number; crystal: number };
+  pickup: { metal: number; crystal: number };
   fuelSpent: number;
   distance: number;
   speed: number;
@@ -124,18 +127,29 @@ export interface FleetSnapshot {
   progress: number;
 }
 
+/** Торговый хаб на карте системы. */
+export interface HubView {
+  hubId: string;
+  name: string;
+  position: number;
+  storage: { metal: number; crystal: number; level: number; capacity: number; free: number } | null;
+}
+
 /** Карта системы с учетом тумана войны. */
 export interface SystemMap {
   systemId: string;
   systemName: string;
   starClass: string;
   planets: PlanetView[];
+  hub: HubView | null;
 }
 
 export interface StateUpdatePayload {
   bases: BaseSnapshot[];
   research: ResearchSnapshot;
   fleets: FleetSnapshot[];
+  /** Баланс криптогривны игрока. */
+  credits: number;
   serverTime: number;
 }
 

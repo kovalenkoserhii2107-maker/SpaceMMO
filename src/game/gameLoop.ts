@@ -29,12 +29,15 @@ import {
   type UserRuntimeState,
 } from './baseState.js';
 import {
+  fleetCapacity,
   fleetSize,
+  isHubMission,
   planFlight,
   validateCargo,
   validateComposition,
   type FleetMission,
 } from './fleets.js';
+import { storageCapacity, storageUsed } from './market.js';
 import type { ScanPayload } from './fogOfWar.js';
 import {
   buildSeconds,
@@ -144,7 +147,7 @@ class GameLoop {
         researchJob: true,
         fleets: {
           orderBy: { arrivesAt: 'asc' },
-          include: { originPlanet: true, targetPlanet: true },
+          include: { originPlanet: true, targetPlanet: true, targetHub: true },
         },
         bases: {
           orderBy: { createdAt: 'asc' },
@@ -162,6 +165,7 @@ class GameLoop {
     const now = Date.now();
     const user: UserRuntimeState = {
       userId: row.id,
+      credits: row.credits,
       lastAccessAt: now,
       techs: emptyTechLevels(),
       research: null,
@@ -259,6 +263,7 @@ class GameLoop {
       bases: [...user.bases.values()].map((base) => toSnapshot(base, user, now)),
       research: researchSnapshot(user, now),
       fleets: fleetSnapshots(user, now),
+      credits: user.credits,
       serverTime: now,
     };
   }
@@ -373,15 +378,15 @@ class GameLoop {
   async sendFleet(
     userId: string,
     baseId: string,
-    targetPlanetId: string,
+    target: { planetId?: string; hubId?: string },
     mission: FleetMission,
     ships: ShipCounts,
     cargo: { metal: number; crystal: number },
+    pickup: { metal: number; crystal: number } = { metal: 0, crystal: 0 },
   ): Promise<ActionResult> {
     const user = await this.getUser(userId);
     const base = user?.bases.get(baseId);
     if (!user || !base) return { ok: false, error: 'База не найдена' };
-    if (base.planetId === targetPlanetId) return { ok: false, error: 'Флот уже находится на этой планете' };
 
     const compositionError = validateComposition(mission, ships);
     if (compositionError) return { ok: false, error: compositionError };
@@ -392,22 +397,53 @@ class GameLoop {
       if (count > base.ships[type]) return { ok: false, error: 'На базе нет столько кораблей' };
     }
 
-    const target = await prisma.planet.findUnique({
-      where: { id: targetPlanetId },
-      include: { base: true, system: true },
-    });
-    if (!target) return { ok: false, error: 'Планета не найдена' };
-    if (mission === 'TRANSPORT' && !target.base) {
-      return { ok: false, error: 'На планете нет колонии — груз выгружать некуда' };
+    // Куда летим: к планете или к торговому хабу.
+    let targetPosition: number;
+    let targetPlanetId: string | null = null;
+    let targetHubId: string | null = null;
+
+    if (isHubMission(mission)) {
+      const hub = target.hubId
+        ? await prisma.tradeHub.findUnique({ where: { id: target.hubId } })
+        : await prisma.tradeHub.findFirst({ where: { system: { planets: { some: { id: base.planetId } } } } });
+      if (!hub) return { ok: false, error: 'Торговый хаб не найден' };
+      targetHubId = hub.id;
+      targetPosition = hub.position;
+    } else {
+      if (!target.planetId) return { ok: false, error: 'Не указана планета назначения' };
+      if (base.planetId === target.planetId) {
+        return { ok: false, error: 'Флот уже находится на этой планете' };
+      }
+      const planet = await prisma.planet.findUnique({
+        where: { id: target.planetId },
+        include: { base: true },
+      });
+      if (!planet) return { ok: false, error: 'Планета не найдена' };
+      if (mission === 'TRANSPORT' && !planet.base) {
+        return { ok: false, error: 'На планете нет колонии — груз выгружать некуда' };
+      }
+      targetPlanetId = planet.id;
+      targetPosition = planet.position;
     }
 
-    const cargoError = validateCargo(ships, cargo);
+    // Груз берем только для рейсов, которые что-то везут туда.
+    const outboundCargo = mission === 'HUB_PICKUP' ? { metal: 0, crystal: 0 } : cargo;
+    const cargoError = validateCargo(ships, outboundCargo);
     if (cargoError) return { ok: false, error: cargoError };
-    if (cargo.metal > base.resources.metal || cargo.crystal > base.resources.crystal) {
+    if (outboundCargo.metal > base.resources.metal || outboundCargo.crystal > base.resources.crystal) {
       return { ok: false, error: 'Недостаточно ресурсов для загрузки' };
     }
 
-    const plan = planFlight(ships, user.techs, base.position, target.position);
+    const request = mission === 'HUB_PICKUP' ? pickup : { metal: 0, crystal: 0 };
+    if (mission === 'HUB_PICKUP') {
+      const requested = request.metal + request.crystal;
+      if (requested <= 0) return { ok: false, error: 'Укажи, сколько товара вывезти с хаба' };
+      if (requested > fleetCapacity(ships)) {
+        return { ok: false, error: `Трюмы вмещают ${fleetCapacity(ships)}, а запрошено ${requested}` };
+      }
+    }
+
+    const plan = planFlight(ships, user.techs, base.position, targetPosition);
     if (base.resources.deuterium - plan.fuel < 0) {
       return { ok: false, error: `Не хватает дейтерия: нужно ${plan.fuel}` };
     }
@@ -416,8 +452,8 @@ class GameLoop {
     const arrivesAt = now + plan.flightSeconds * 1000;
     const returnsAt = arrivesAt + plan.flightSeconds * 1000;
 
-    base.resources.metal -= cargo.metal;
-    base.resources.crystal -= cargo.crystal;
+    base.resources.metal -= outboundCargo.metal;
+    base.resources.crystal -= outboundCargo.crystal;
     base.resources.deuterium -= plan.fuel;
     for (const type of SHIP_TYPES) base.ships[type] -= ships[type];
     base.dirty = true;
@@ -429,13 +465,16 @@ class GameLoop {
         originBaseId: base.id,
         originPlanetId: base.planetId,
         targetPlanetId,
+        targetHubId,
         mission,
         status: 'OUTBOUND',
         probes: ships.PROBE,
         transporters: ships.TRANSPORTER,
         lightFighters: ships.LIGHT_FIGHTER,
-        cargoMetal: cargo.metal,
-        cargoCrystal: cargo.crystal,
+        cargoMetal: outboundCargo.metal,
+        cargoCrystal: outboundCargo.crystal,
+        pickupMetal: request.metal,
+        pickupCrystal: request.crystal,
         fuelSpent: plan.fuel,
         distance: plan.distance,
         speed: plan.speed,
@@ -443,7 +482,7 @@ class GameLoop {
         arrivesAt: new Date(arrivesAt),
         returnsAt: new Date(returnsAt),
       },
-      include: { originPlanet: true, targetPlanet: true },
+      include: { originPlanet: true, targetPlanet: true, targetHub: true },
     });
 
     user.fleets.push(toFleetRuntime(created));
@@ -457,11 +496,29 @@ class GameLoop {
     };
   }
 
-  /** Позиция планеты на орбите — нужна для предрасчета маршрута. */
-  async getPlanetPosition(planetId: string): Promise<number | null> {
-    if (!planetId) return null;
+  /**
+   * Обновление баланса криптогривны в памяти после биржевой операции.
+   * Источник правды по балансу — БД: тик его не пишет, поэтому конфликта нет.
+   */
+  syncCredits(userId: string, credits: number): void {
+    const user = this.users.get(userId);
+    if (!user) return;
+    user.credits = credits;
+    this.emitUser(userId);
+  }
+
+  /** Позиция цели на орбитах — нужна для предрасчета маршрута. */
+  async getTargetPosition(target: { planetId?: string; hubId?: string }): Promise<number | null> {
+    if (target.hubId) {
+      const hub = await prisma.tradeHub.findUnique({
+        where: { id: target.hubId },
+        select: { position: true },
+      });
+      return hub?.position ?? null;
+    }
+    if (!target.planetId) return null;
     const planet = await prisma.planet.findUnique({
-      where: { id: planetId },
+      where: { id: target.planetId },
       select: { position: true },
     });
     return planet?.position ?? null;
@@ -633,7 +690,7 @@ class GameLoop {
           { status: 'RETURNING', returnsAt: { lte: timestamp } },
         ],
       },
-      include: { originPlanet: true, targetPlanet: true },
+      include: { originPlanet: true, targetPlanet: true, targetHub: true },
       orderBy: { arrivesAt: 'asc' },
       take: 200,
     });
@@ -660,33 +717,99 @@ class GameLoop {
       if (!user) continue;
       const rows = await prisma.fleet.findMany({
         where: { userId },
-        include: { originPlanet: true, targetPlanet: true },
+        include: { originPlanet: true, targetPlanet: true, targetHub: true },
         orderBy: { arrivesAt: 'asc' },
       });
       user.fleets = rows.map(toFleetRuntime);
     }
   }
 
-  /** Прилет: выгрузка груза или сканирование планеты, затем разворот домой. */
+  /** Прилет: выгрузка груза, сканирование или операция на торговом хабе. */
   private async handleArrival(fleet: FleetRow, now: number): Promise<void> {
-    let delivered = false;
+    let cargo: { metal: number; crystal: number } | null = null;
 
-    if (fleet.mission === 'TRANSPORT') {
+    if (fleet.mission === 'TRANSPORT' && fleet.targetPlanetId) {
       const targetBase = await prisma.base.findUnique({ where: { planetId: fleet.targetPlanetId } });
       if (targetBase) {
         this.depositResources(targetBase.id, fleet.cargoMetal, fleet.cargoCrystal);
-        delivered = true;
+        cargo = { metal: 0, crystal: 0 };
       }
-    } else if (fleet.mission === 'SCAN') {
+    } else if (fleet.mission === 'SCAN' && fleet.targetPlanetId) {
       await this.recordScan(fleet.userId, fleet.targetPlanetId, now);
+    } else if (fleet.mission === 'HUB_DELIVERY' && fleet.targetHubId) {
+      cargo = await this.unloadToHub(fleet);
+    } else if (fleet.mission === 'HUB_PICKUP' && fleet.targetHubId) {
+      cargo = await this.loadFromHub(fleet);
     }
 
     await prisma.fleet.update({
       where: { id: fleet.id },
       data: {
         status: 'RETURNING',
-        ...(delivered ? { cargoMetal: 0, cargoCrystal: 0 } : {}),
+        ...(cargo ? { cargoMetal: cargo.metal, cargoCrystal: cargo.crystal } : {}),
       },
+    });
+  }
+
+  /**
+   * Разгрузка на торговый склад хаба. Что не влезло — остается в трюме
+   * и возвращается домой, поэтому расширение склада имеет смысл.
+   */
+  private async unloadToHub(fleet: FleetRow): Promise<{ metal: number; crystal: number }> {
+    const hubId = fleet.targetHubId as string;
+
+    return prisma.$transaction(async (tx) => {
+      const storage = await tx.hubStorage.upsert({
+        where: { userId_hubId: { userId: fleet.userId, hubId } },
+        create: { userId: fleet.userId, hubId },
+        update: {},
+      });
+
+      const free = Math.max(0, storageCapacity(storage.level) - storageUsed(storage));
+      const metal = Math.min(fleet.cargoMetal, free);
+      const crystal = Math.min(fleet.cargoCrystal, Math.max(0, free - metal));
+
+      if (metal > 0 || crystal > 0) {
+        await tx.hubStorage.update({
+          where: { id: storage.id },
+          data: { metal: { increment: metal }, crystal: { increment: crystal } },
+        });
+      }
+
+      // В трюме остается непринятый излишек.
+      return {
+        metal: fleet.cargoMetal - metal,
+        crystal: fleet.cargoCrystal - crystal,
+      };
+    });
+  }
+
+  /** Погрузка товара со склада хаба в трюмы — обратно повезем домой. */
+  private async loadFromHub(fleet: FleetRow): Promise<{ metal: number; crystal: number }> {
+    const hubId = fleet.targetHubId as string;
+    const capacity = fleetCapacity({
+      PROBE: fleet.probes,
+      TRANSPORTER: fleet.transporters,
+      LIGHT_FIGHTER: fleet.lightFighters,
+    });
+
+    return prisma.$transaction(async (tx) => {
+      const storage = await tx.hubStorage.findUnique({
+        where: { userId_hubId: { userId: fleet.userId, hubId } },
+      });
+      if (!storage) return { metal: 0, crystal: 0 };
+
+      const metal = Math.min(fleet.pickupMetal, storage.metal, capacity);
+      const crystal = Math.min(fleet.pickupCrystal, storage.crystal, Math.max(0, capacity - metal));
+
+      if (metal > 0 || crystal > 0) {
+        await tx.hubStorage.update({
+          where: { id: storage.id },
+          data: { metal: { decrement: metal }, crystal: { decrement: crystal } },
+        });
+      }
+
+      return { metal, crystal };
     });
   }
 
@@ -969,7 +1092,8 @@ function toJson(payload: ScanPayload): Prisma.InputJsonObject {
 
 type FleetRow = Prisma.FleetModel & {
   originPlanet: Prisma.PlanetModel;
-  targetPlanet: Prisma.PlanetModel;
+  targetPlanet: Prisma.PlanetModel | null;
+  targetHub: Prisma.TradeHubModel | null;
 };
 
 function toFleetRuntime(row: FleetRow): FleetRuntimeState {
@@ -980,14 +1104,17 @@ function toFleetRuntime(row: FleetRow): FleetRuntimeState {
     originBaseId: row.originBaseId,
     originPlanetId: row.originPlanetId,
     originPlanetName: row.originPlanet.name,
+    targetKind: row.targetHubId ? 'HUB' : 'PLANET',
     targetPlanetId: row.targetPlanetId,
-    targetPlanetName: row.targetPlanet.name,
+    targetHubId: row.targetHubId,
+    targetName: row.targetHub?.name ?? row.targetPlanet?.name ?? 'неизвестно',
     ships: {
       PROBE: row.probes,
       TRANSPORTER: row.transporters,
       LIGHT_FIGHTER: row.lightFighters,
     },
     cargo: { metal: row.cargoMetal, crystal: row.cargoCrystal },
+    pickup: { metal: row.pickupMetal, crystal: row.pickupCrystal },
     fuelSpent: row.fuelSpent,
     distance: row.distance,
     speed: row.speed,

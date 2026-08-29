@@ -8,6 +8,7 @@ import { disconnectPrisma } from './db/prisma.js';
 import { gameLoop, roomForUser } from './game/gameLoop.js';
 import { authRouter } from './routes/auth.js';
 import { gameRouter } from './routes/game.js';
+import { marketRouter } from './routes/market.js';
 import { findUserByToken } from './services/userService.js';
 import type {
   ClientToServerEvents,
@@ -26,6 +27,7 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true, serverTime: Date.now() });
 });
 app.use('/api/auth', authRouter);
+app.use('/api/market', marketRouter);
 app.use('/api', gameRouter);
 
 const httpServer = createServer(app);
