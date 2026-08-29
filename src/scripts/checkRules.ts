@@ -9,7 +9,8 @@ import {
   upgradeCost,
 } from '../game/rules.js';
 import { economyBonuses, emptyTechLevels, researchCost, researchSeconds } from '../game/techTree.js';
-import { shipUnitSeconds, SHIP_TYPES } from '../game/ships.js';
+import { shipUnitSeconds, SHIP_TYPES, type ShipCounts } from '../game/ships.js';
+import { planFlight } from '../game/fleets.js';
 
 const richness = { metal: 1.0, crystal: 1.0, deuterium: 1.0, energy: 1.0 };
 const techs = emptyTechLevels();
@@ -51,4 +52,23 @@ for (const tech of ['ENERGY_TECH', 'COMPUTING_TECH', 'MINING_TECH', 'COMBUSTION_
 console.log('\n--- Верфь ---');
 for (const ship of SHIP_TYPES) {
   console.log(`${ship}: верфь ур.1 — ${shipUnitSeconds(ship, 1)} с, ур.3 — ${shipUnitSeconds(ship, 3)} с`);
+}
+
+console.log('\n--- Логистика (реактивный двигатель ур.1) ---');
+{
+  const drive = { ...emptyTechLevels(), COMBUSTION_DRIVE: 1 };
+  const cases: Array<[string, ShipCounts]> = [
+    ['1 зонд', { PROBE: 1, TRANSPORTER: 0, LIGHT_FIGHTER: 0 }],
+    ['2 транспорта', { PROBE: 0, TRANSPORTER: 2, LIGHT_FIGHTER: 0 }],
+    ['транспорт + 5 истребителей', { PROBE: 0, TRANSPORTER: 1, LIGHT_FIGHTER: 5 }],
+  ];
+  for (const [label, ships] of cases) {
+    for (const distance of [1, 3]) {
+      const plan = planFlight(ships, drive, 1, 1 + distance);
+      console.log(
+        `${label}, ${distance} орбит: ${plan.flightSeconds} с в одну сторону, ` +
+          `трюмы ${plan.capacity}, топливо туда-обратно ${plan.fuel} De`,
+      );
+    }
+  }
 }

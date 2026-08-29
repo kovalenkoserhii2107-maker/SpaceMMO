@@ -60,6 +60,7 @@
           <button type="button" class="tab active" data-tab="buildings">Инфраструктура</button>
           <button type="button" class="tab" data-tab="research">Исследования</button>
           <button type="button" class="tab" data-tab="shipyard">Верфь</button>
+          <button type="button" class="tab" data-tab="map">Карта системы</button>
         </nav>
 
         <section data-panel="buildings">
@@ -76,6 +77,41 @@
           <div id="fleet" class="fleet"></div>
           <div id="ship-queue" class="queue"></div>
           <div id="ships" class="cards"></div>
+        </section>
+
+        <section data-panel="map" hidden>
+          <div class="map-wrap">
+            <div class="map-canvas">
+              <svg id="system-map" viewBox="0 0 900 340" role="img" aria-label="Карта солнечной системы"></svg>
+              <div id="map-tooltip" class="tooltip" hidden></div>
+            </div>
+
+            <aside class="map-side">
+              <h3 class="section-title">Планета</h3>
+              <div id="planet-info" class="planet-info">Наведи курсор или выбери планету на карте.</div>
+
+              <div id="dispatch" class="dispatch" hidden>
+                <h3 class="section-title">Отправка флота</h3>
+                <label class="field">
+                  <span>Миссия</span>
+                  <select id="mission">
+                    <option value="TRANSPORT">Транспортировка</option>
+                    <option value="SCAN">Разведка зондом</option>
+                  </select>
+                </label>
+                <div id="fleet-inputs" class="fleet-inputs"></div>
+                <div id="cargo-inputs" class="fleet-inputs">
+                  <label class="field"><span>Металл</span><input id="cargo-metal" type="number" min="0" value="0"></label>
+                  <label class="field"><span>Кристаллы</span><input id="cargo-crystal" type="number" min="0" value="0"></label>
+                </div>
+                <div id="flight-plan" class="flight-plan">Выбери корабли, чтобы увидеть расчет.</div>
+                <button id="send-fleet" type="button" class="primary">Отправить флот</button>
+              </div>
+            </aside>
+          </div>
+
+          <h3 class="section-title">Флоты в полете</h3>
+          <div id="fleet-list" class="queue"></div>
         </section>
 
         <p id="build-message" class="build-message" hidden></p>

@@ -266,3 +266,80 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   font: inherit;
 }
 .order button { flex: 1; padding: 10px 12px; }
+
+/* ---------- Этап 3: карта системы и логистика ---------- */
+.map-wrap { display: grid; grid-template-columns: 1fr 300px; gap: 16px; align-items: start; }
+@media (max-width: 900px) { .map-wrap { grid-template-columns: 1fr; } }
+
+.map-canvas {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background:
+    radial-gradient(600px 240px at 8% 50%, rgba(255, 196, 84, 0.16), transparent 60%),
+    var(--panel);
+  overflow: hidden;
+}
+.map-canvas svg { display: block; width: 100%; height: auto; }
+
+.orbit { fill: none; stroke: rgba(120, 160, 255, 0.16); stroke-dasharray: 3 6; }
+.planet-dot { cursor: pointer; transition: filter 0.15s ease; }
+.planet-dot:hover { filter: brightness(1.35); }
+.planet-dot.selected circle.body { stroke: var(--accent); stroke-width: 2.5; }
+.planet-label { font-size: 12px; fill: var(--muted); text-anchor: middle; }
+.planet-label.own { fill: var(--accent); }
+.fleet-line { stroke: rgba(157, 123, 255, 0.5); stroke-width: 1.5; stroke-dasharray: 4 4; }
+.fleet-marker { fill: var(--accent-2); }
+.star-core { fill: url(#starGlow); }
+
+.tooltip {
+  position: absolute;
+  min-width: 190px;
+  max-width: 260px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(6, 10, 22, 0.96);
+  font-size: 12px;
+  line-height: 1.5;
+  pointer-events: none;
+  z-index: 5;
+}
+.tooltip b { color: var(--accent); }
+.tooltip .unknown { color: var(--warn); }
+
+.map-side, .planet-info { font-size: 13px; }
+.map-side {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  display: grid;
+  gap: 12px;
+}
+.planet-info { color: var(--muted); line-height: 1.6; }
+.planet-info b { color: var(--text); }
+
+.dispatch { display: grid; gap: 10px; }
+.field { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+.field select, .field input {
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(8, 12, 24, 0.8);
+  color: var(--text);
+  font: inherit;
+}
+.fleet-inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+.flight-plan {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.flight-plan b { color: var(--text); }
+.flight-plan .bad { color: var(--err); }

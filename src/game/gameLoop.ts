@@ -20,12 +20,22 @@ import type {
 } from '../types/socket.js';
 import {
   accrue,
+  fleetSnapshots,
   researchSnapshot,
   toSnapshot,
   type BaseRuntimeState,
+  type FleetRuntimeState,
   type ShipJobState,
   type UserRuntimeState,
 } from './baseState.js';
+import {
+  fleetSize,
+  planFlight,
+  validateCargo,
+  validateComposition,
+  type FleetMission,
+} from './fleets.js';
+import type { ScanPayload } from './fogOfWar.js';
 import {
   buildSeconds,
   emptyLevels,
@@ -50,6 +60,7 @@ import {
   shipCost,
   shipUnitSeconds,
   SHIP_TYPES,
+  type ShipCounts,
   type ShipType,
 } from './ships.js';
 
@@ -61,6 +72,8 @@ const MAX_OFFLINE_SECONDS = 24 * 60 * 60;
 const MAX_QUEUE_STEPS = 10_000;
 /** Через сколько простоя выгружать из памяти игрока без активных сокетов. */
 const IDLE_EVICT_MS = 60_000;
+/** Как часто проверять прилеты флотов (в тиках). */
+const FLEET_SWEEP_EVERY_TICKS = 2;
 
 type GameServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
 
@@ -129,6 +142,10 @@ class GameLoop {
       include: {
         researches: true,
         researchJob: true,
+        fleets: {
+          orderBy: { arrivesAt: 'asc' },
+          include: { originPlanet: true, targetPlanet: true },
+        },
         bases: {
           orderBy: { createdAt: 'asc' },
           include: {
@@ -150,6 +167,7 @@ class GameLoop {
       research: null,
       researchDirty: false,
       bases: new Map(),
+      fleets: row.fleets.map(toFleetRuntime),
     };
 
     for (const research of row.researches) {
@@ -240,6 +258,7 @@ class GameLoop {
     return {
       bases: [...user.bases.values()].map((base) => toSnapshot(base, user, now)),
       research: researchSnapshot(user, now),
+      fleets: fleetSnapshots(user, now),
       serverTime: now,
     };
   }
@@ -347,6 +366,107 @@ class GameLoop {
     return { ok: true, message: `Заказ принят: ${quantity} шт., по ${unitSeconds} с за корабль` };
   }
 
+  /**
+   * Отправка флота. Проверки состава, груза и топлива — только здесь;
+   * корабли, груз и дейтерий списываются с базы отправления сразу.
+   */
+  async sendFleet(
+    userId: string,
+    baseId: string,
+    targetPlanetId: string,
+    mission: FleetMission,
+    ships: ShipCounts,
+    cargo: { metal: number; crystal: number },
+  ): Promise<ActionResult> {
+    const user = await this.getUser(userId);
+    const base = user?.bases.get(baseId);
+    if (!user || !base) return { ok: false, error: 'База не найдена' };
+    if (base.planetId === targetPlanetId) return { ok: false, error: 'Флот уже находится на этой планете' };
+
+    const compositionError = validateComposition(mission, ships);
+    if (compositionError) return { ok: false, error: compositionError };
+
+    for (const type of SHIP_TYPES) {
+      const count = ships[type];
+      if (!Number.isInteger(count) || count < 0) return { ok: false, error: 'Некорректный состав флота' };
+      if (count > base.ships[type]) return { ok: false, error: 'На базе нет столько кораблей' };
+    }
+
+    const target = await prisma.planet.findUnique({
+      where: { id: targetPlanetId },
+      include: { base: true, system: true },
+    });
+    if (!target) return { ok: false, error: 'Планета не найдена' };
+    if (mission === 'TRANSPORT' && !target.base) {
+      return { ok: false, error: 'На планете нет колонии — груз выгружать некуда' };
+    }
+
+    const cargoError = validateCargo(ships, cargo);
+    if (cargoError) return { ok: false, error: cargoError };
+    if (cargo.metal > base.resources.metal || cargo.crystal > base.resources.crystal) {
+      return { ok: false, error: 'Недостаточно ресурсов для загрузки' };
+    }
+
+    const plan = planFlight(ships, user.techs, base.position, target.position);
+    if (base.resources.deuterium - plan.fuel < 0) {
+      return { ok: false, error: `Не хватает дейтерия: нужно ${plan.fuel}` };
+    }
+
+    const now = Date.now();
+    const arrivesAt = now + plan.flightSeconds * 1000;
+    const returnsAt = arrivesAt + plan.flightSeconds * 1000;
+
+    base.resources.metal -= cargo.metal;
+    base.resources.crystal -= cargo.crystal;
+    base.resources.deuterium -= plan.fuel;
+    for (const type of SHIP_TYPES) base.ships[type] -= ships[type];
+    base.dirty = true;
+    base.jobsDirty = true;
+
+    const created = await prisma.fleet.create({
+      data: {
+        userId,
+        originBaseId: base.id,
+        originPlanetId: base.planetId,
+        targetPlanetId,
+        mission,
+        status: 'OUTBOUND',
+        probes: ships.PROBE,
+        transporters: ships.TRANSPORTER,
+        lightFighters: ships.LIGHT_FIGHTER,
+        cargoMetal: cargo.metal,
+        cargoCrystal: cargo.crystal,
+        fuelSpent: plan.fuel,
+        distance: plan.distance,
+        speed: plan.speed,
+        departedAt: new Date(now),
+        arrivesAt: new Date(arrivesAt),
+        returnsAt: new Date(returnsAt),
+      },
+      include: { originPlanet: true, targetPlanet: true },
+    });
+
+    user.fleets.push(toFleetRuntime(created));
+    await this.persistAndEmit(userId);
+
+    return {
+      ok: true,
+      message:
+        `Флот вылетел: ${fleetSize(ships)} кораблей, в пути ${plan.flightSeconds} с, ` +
+        `сожжено ${plan.fuel} дейтерия`,
+    };
+  }
+
+  /** Позиция планеты на орбите — нужна для предрасчета маршрута. */
+  async getPlanetPosition(planetId: string): Promise<number | null> {
+    if (!planetId) return null;
+    const planet = await prisma.planet.findUnique({
+      where: { id: planetId },
+      select: { position: true },
+    });
+    return planet?.position ?? null;
+  }
+
   /** Момент, когда верфь освободится от уже стоящих в очереди заказов. */
   private queueEndsAt(base: BaseRuntimeState, now: number): number {
     const head = base.shipJobs[0];
@@ -392,6 +512,9 @@ class GameLoop {
       }
 
       this.tickCount += 1;
+      if (this.tickCount % FLEET_SWEEP_EVERY_TICKS === 0) {
+        await this.sweepFleets(now);
+      }
       if (this.tickCount % PERSIST_EVERY_TICKS === 0) {
         for (const user of this.users.values()) {
           await this.persistUser(user);
@@ -493,6 +616,208 @@ class GameLoop {
 
     if (changed) base.jobsDirty = true;
     return changed;
+  }
+
+  /* ------------------------- Флоты в полете ------------------------- */
+
+  /**
+   * Прилеты и возвраты обрабатываются глобально, а не в состоянии игрока:
+   * груз должен долетать до получателя, даже если отправитель офлайн.
+   */
+  private async sweepFleets(now: number): Promise<void> {
+    const timestamp = new Date(now);
+    const due = await prisma.fleet.findMany({
+      where: {
+        OR: [
+          { status: 'OUTBOUND', arrivesAt: { lte: timestamp } },
+          { status: 'RETURNING', returnsAt: { lte: timestamp } },
+        ],
+      },
+      include: { originPlanet: true, targetPlanet: true },
+      orderBy: { arrivesAt: 'asc' },
+      take: 200,
+    });
+    if (due.length === 0) return;
+
+    const affectedUsers = new Set<string>();
+
+    for (const fleet of due) {
+      try {
+        if (fleet.status === 'OUTBOUND') {
+          await this.handleArrival(fleet, now);
+        } else {
+          await this.handleReturn(fleet);
+        }
+        affectedUsers.add(fleet.userId);
+      } catch (error) {
+        console.error(`[game-loop] ошибка обработки флота ${fleet.id}:`, error);
+      }
+    }
+
+    // Обновляем кэш флотов у тех, кто сейчас в сети.
+    for (const userId of affectedUsers) {
+      const user = this.users.get(userId);
+      if (!user) continue;
+      const rows = await prisma.fleet.findMany({
+        where: { userId },
+        include: { originPlanet: true, targetPlanet: true },
+        orderBy: { arrivesAt: 'asc' },
+      });
+      user.fleets = rows.map(toFleetRuntime);
+    }
+  }
+
+  /** Прилет: выгрузка груза или сканирование планеты, затем разворот домой. */
+  private async handleArrival(fleet: FleetRow, now: number): Promise<void> {
+    let delivered = false;
+
+    if (fleet.mission === 'TRANSPORT') {
+      const targetBase = await prisma.base.findUnique({ where: { planetId: fleet.targetPlanetId } });
+      if (targetBase) {
+        this.depositResources(targetBase.id, fleet.cargoMetal, fleet.cargoCrystal);
+        delivered = true;
+      }
+    } else if (fleet.mission === 'SCAN') {
+      await this.recordScan(fleet.userId, fleet.targetPlanetId, now);
+    }
+
+    await prisma.fleet.update({
+      where: { id: fleet.id },
+      data: {
+        status: 'RETURNING',
+        ...(delivered ? { cargoMetal: 0, cargoCrystal: 0 } : {}),
+      },
+    });
+  }
+
+  /** Возврат: корабли и невыгруженный груз возвращаются на базу отправления. */
+  private async handleReturn(fleet: FleetRow): Promise<void> {
+    this.returnShips(fleet.originBaseId, {
+      PROBE: fleet.probes,
+      TRANSPORTER: fleet.transporters,
+      LIGHT_FIGHTER: fleet.lightFighters,
+    });
+    if (fleet.cargoMetal > 0 || fleet.cargoCrystal > 0) {
+      this.depositResources(fleet.originBaseId, fleet.cargoMetal, fleet.cargoCrystal);
+    }
+    await prisma.fleet.delete({ where: { id: fleet.id } });
+  }
+
+  /**
+   * Зачисление ресурсов на базу: если владелец сейчас в памяти — правим состояние,
+   * иначе инкрементим прямо в БД (иначе следующий сброс состояния затер бы прилет).
+   */
+  private depositResources(baseId: string, metal: number, crystal: number): void {
+    if (metal <= 0 && crystal <= 0) return;
+
+    const base = this.findLoadedBase(baseId);
+    if (base) {
+      base.resources.metal += metal;
+      base.resources.crystal += crystal;
+      base.dirty = true;
+      return;
+    }
+
+    void prisma.base
+      .update({
+        where: { id: baseId },
+        data: { metal: { increment: metal }, crystal: { increment: crystal } },
+      })
+      .catch((error: unknown) => console.error('[game-loop] ошибка зачисления груза:', error));
+  }
+
+  /** Возврат кораблей в ангар базы — так же через память или напрямую в БД. */
+  private returnShips(baseId: string, ships: ShipCounts): void {
+    const base = this.findLoadedBase(baseId);
+    if (base) {
+      for (const type of SHIP_TYPES) base.ships[type] += ships[type];
+      base.jobsDirty = true;
+      return;
+    }
+
+    for (const type of SHIP_TYPES) {
+      if (ships[type] <= 0) continue;
+      void prisma.ship
+        .upsert({
+          where: { baseId_type: { baseId, type } },
+          create: { baseId, type, count: ships[type] },
+          update: { count: { increment: ships[type] } },
+        })
+        .catch((error: unknown) => console.error('[game-loop] ошибка возврата кораблей:', error));
+    }
+  }
+
+  private findLoadedBase(baseId: string): BaseRuntimeState | null {
+    for (const user of this.users.values()) {
+      const base = user.bases.get(baseId);
+      if (base) return base;
+    }
+    return null;
+  }
+
+  /** Снимок планеты для тумана войны: свежие данные берем из памяти, если владелец онлайн. */
+  private async recordScan(userId: string, planetId: string, now: number): Promise<void> {
+    const planet = await prisma.planet.findUnique({
+      where: { id: planetId },
+      include: { base: { include: { user: true, ships: true } } },
+    });
+    if (!planet) return;
+
+    const richness = {
+      metal: planet.metalRichness,
+      crystal: planet.crystalRichness,
+      deuterium: planet.deuteriumRichness,
+      energy: planet.energyRichness,
+    };
+
+    let payload: ScanPayload = {
+      owner: null,
+      colonized: false,
+      richness,
+      buildings: null,
+      resources: null,
+      fleet: null,
+    };
+
+    if (planet.base) {
+      const live = this.findLoadedBase(planet.base.id);
+      const levels = live
+        ? { ...live.levels }
+        : {
+            METAL_MINE: planet.base.metalMineLevel,
+            CRYSTAL_MINE: planet.base.crystalMineLevel,
+            DEUTERIUM_MINE: planet.base.deuteriumMineLevel,
+            SOLAR_PLANT: planet.base.solarPlantLevel,
+            RESEARCH_LAB: planet.base.researchLabLevel,
+            SHIPYARD: planet.base.shipyardLevel,
+          };
+      const resources = live
+        ? { ...live.resources }
+        : { metal: planet.base.metal, crystal: planet.base.crystal, deuterium: planet.base.deuterium };
+      const fleet = live ? { ...live.ships } : emptyShipCounts();
+      if (!live) {
+        for (const ship of planet.base.ships) fleet[ship.type] = ship.count;
+      }
+
+      payload = {
+        owner: planet.base.user.username,
+        colonized: true,
+        richness,
+        buildings: levels,
+        resources: {
+          metal: Math.round(resources.metal),
+          crystal: Math.round(resources.crystal),
+          deuterium: Math.round(resources.deuterium),
+        },
+        fleet,
+      };
+    }
+
+    await prisma.planetScan.upsert({
+      where: { userId_planetId: { userId, planetId } },
+      create: { userId, planetId, scannedAt: new Date(now), data: toJson(payload) },
+      update: { scannedAt: new Date(now), data: toJson(payload) },
+    });
   }
 
   /* ------------------------- Сохранение и рассылка ------------------------- */
@@ -635,6 +960,41 @@ class GameLoop {
       user.researchDirty = researchWasDirty;
     }
   }
+}
+
+/** ScanPayload — обычный объект; Prisma требует индексируемый тип для Json. */
+function toJson(payload: ScanPayload): Prisma.InputJsonObject {
+  return payload as unknown as Prisma.InputJsonObject;
+}
+
+type FleetRow = Prisma.FleetModel & {
+  originPlanet: Prisma.PlanetModel;
+  targetPlanet: Prisma.PlanetModel;
+};
+
+function toFleetRuntime(row: FleetRow): FleetRuntimeState {
+  return {
+    id: row.id,
+    mission: row.mission,
+    status: row.status,
+    originBaseId: row.originBaseId,
+    originPlanetId: row.originPlanetId,
+    originPlanetName: row.originPlanet.name,
+    targetPlanetId: row.targetPlanetId,
+    targetPlanetName: row.targetPlanet.name,
+    ships: {
+      PROBE: row.probes,
+      TRANSPORTER: row.transporters,
+      LIGHT_FIGHTER: row.lightFighters,
+    },
+    cargo: { metal: row.cargoMetal, crystal: row.cargoCrystal },
+    fuelSpent: row.fuelSpent,
+    distance: row.distance,
+    speed: row.speed,
+    departedAt: row.departedAt.getTime(),
+    arrivesAt: row.arrivesAt.getTime(),
+    returnsAt: row.returnsAt.getTime(),
+  };
 }
 
 /** Защита от испорченных значений в БД: нечисловой остаток считаем нулевым. */

@@ -1,6 +1,8 @@
 import type { BuildingType, ResourceAmounts } from '../game/rules.js';
 import type { Requirement, TechLevels, TechnologyType } from '../game/techTree.js';
 import type { ShipCounts, ShipType } from '../game/ships.js';
+import type { FleetMission } from '../game/fleets.js';
+import type { PlanetView } from '../game/fogOfWar.js';
 
 export interface BuildingCard {
   type: BuildingType;
@@ -99,9 +101,41 @@ export interface ResearchSnapshot {
   } | null;
 }
 
+export interface FleetSnapshot {
+  id: string;
+  mission: FleetMission;
+  missionLabel: string;
+  status: 'OUTBOUND' | 'RETURNING';
+  originPlanetId: string;
+  originPlanetName: string;
+  targetPlanetId: string;
+  targetPlanetName: string;
+  ships: ShipCounts;
+  composition: string;
+  cargo: { metal: number; crystal: number };
+  fuelSpent: number;
+  distance: number;
+  speed: number;
+  /** Метки времени в мс — клиент двигает маркер сам, между тиками. */
+  departedAt: number;
+  arrivesAt: number;
+  returnsAt: number;
+  etaSeconds: number;
+  progress: number;
+}
+
+/** Карта системы с учетом тумана войны. */
+export interface SystemMap {
+  systemId: string;
+  systemName: string;
+  starClass: string;
+  planets: PlanetView[];
+}
+
 export interface StateUpdatePayload {
   bases: BaseSnapshot[];
   research: ResearchSnapshot;
+  fleets: FleetSnapshot[];
   serverTime: number;
 }
 

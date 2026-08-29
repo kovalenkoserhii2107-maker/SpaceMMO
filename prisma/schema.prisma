@@ -1,7 +1,8 @@
 // Space Strategy MMO — Prisma schema
 // ЭТАП 1: User, SolarSystem, Planet, Base.
 // ЭТАП 2: Research, ResearchJob, BuildJob, Ship, ShipJob.
-// Модели будущих этапов (логистика, биржа, оборона) НЕ создаются.
+// ЭТАП 3: Fleet (полеты флота), PlanetScan (туман войны).
+// Модели будущих этапов (биржа, оборона) НЕ создаются.
 
 generator client {
   provider = "prisma-client"
@@ -23,6 +24,8 @@ model User {
   bases       Base[]
   researches  Research[]
   researchJob ResearchJob?
+  fleets      Fleet[]
+  scans       PlanetScan[]
 
   @@map("users")
 }
@@ -62,8 +65,11 @@ model Planet {
   /// Коэффициент инсоляции — множитель выработки солнечных электростанций.
   energyRichness    Float
 
-  system SolarSystem @relation(fields: [systemId], references: [id], onDelete: Cascade)
-  base   Base?
+  system     SolarSystem  @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  base       Base?
+  scans      PlanetScan[]
+  fleetsFrom Fleet[]      @relation("FleetOrigin")
+  fleetsTo   Fleet[]      @relation("FleetTarget")
 
   @@unique([systemId, position])
   @@index([systemId])
@@ -98,6 +104,7 @@ model Base {
 
   user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   planet      Planet       @relation(fields: [planetId], references: [id], onDelete: Cascade)
+  fleets      Fleet[]
   buildJob    BuildJob?
   shipJobs    ShipJob[]
   ships       Ship[]
@@ -183,6 +190,75 @@ model ShipJob {
 
   @@index([baseId, createdAt])
   @@map("ship_jobs")
+}
+
+/// Полет флота между планетами. Время в пути и возврат считает Game Loop.
+model Fleet {
+  id             String @id @default(cuid())
+  userId         String
+  /// База отправления — туда вернется флот и оттуда списано топливо.
+  originBaseId   String
+  originPlanetId String
+  targetPlanetId String
+
+  mission FleetMission
+  status  FleetStatus  @default(OUTBOUND)
+
+  /// Состав флота.
+  probes        Int @default(0)
+  transporters  Int @default(0)
+  lightFighters Int @default(0)
+
+  /// Груз на борту (дейтерий возится только как топливо).
+  cargoMetal   Float @default(0)
+  cargoCrystal Float @default(0)
+
+  /// Сожженный дейтерий за весь маршрут (списан при отправке).
+  fuelSpent Float
+  /// Расстояние в орбитах и скорость флота — для отображения.
+  distance  Int
+  speed     Float
+
+  departedAt DateTime
+  arrivesAt  DateTime
+  returnsAt  DateTime
+  createdAt  DateTime @default(now())
+
+  user         User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  originBase   Base   @relation(fields: [originBaseId], references: [id], onDelete: Cascade)
+  originPlanet Planet @relation("FleetOrigin", fields: [originPlanetId], references: [id], onDelete: Cascade)
+  targetPlanet Planet @relation("FleetTarget", fields: [targetPlanetId], references: [id], onDelete: Cascade)
+
+  @@index([status, arrivesAt])
+  @@index([status, returnsAt])
+  @@index([userId])
+  @@map("fleets")
+}
+
+/// Результат сканирования планеты зондом — основа «тумана войны».
+model PlanetScan {
+  id        String   @id @default(cuid())
+  userId    String
+  planetId  String
+  scannedAt DateTime @default(now())
+  /// Снимок данных планеты на момент сканирования.
+  data      Json
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planet Planet @relation(fields: [planetId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, planetId])
+  @@map("planet_scans")
+}
+
+enum FleetMission {
+  TRANSPORT
+  SCAN
+}
+
+enum FleetStatus {
+  OUTBOUND
+  RETURNING
 }
 
 enum BuildingType {

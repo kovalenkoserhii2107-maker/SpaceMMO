@@ -2,6 +2,7 @@
 import type {
   BaseSnapshot,
   BuildingCard,
+  FleetSnapshot,
   ResearchSnapshot,
   ShipCard,
   TechnologyCard,
@@ -34,6 +35,7 @@ import {
   type TechLevels,
   type TechnologyType,
 } from './techTree.js';
+import { describeComposition, MISSION_LABELS, type FleetMission } from './fleets.js';
 import {
   missingShipRequirements,
   shipCost,
@@ -61,6 +63,25 @@ export interface ShipJobState {
   /** Время выхода следующего корабля; тикает только у первого заказа очереди. */
   nextUnitAt: number;
   createdAt: number;
+}
+
+export interface FleetRuntimeState {
+  id: string;
+  mission: FleetMission;
+  status: 'OUTBOUND' | 'RETURNING';
+  originBaseId: string;
+  originPlanetId: string;
+  originPlanetName: string;
+  targetPlanetId: string;
+  targetPlanetName: string;
+  ships: ShipCounts;
+  cargo: { metal: number; crystal: number };
+  fuelSpent: number;
+  distance: number;
+  speed: number;
+  departedAt: number;
+  arrivesAt: number;
+  returnsAt: number;
 }
 
 export interface ResearchJobState {
@@ -104,6 +125,8 @@ export interface UserRuntimeState {
   /** Уровни технологий или активное исследование изменились. */
   researchDirty: boolean;
   bases: Map<string, BaseRuntimeState>;
+  /** Флоты игрока в полете. Источник правды — БД, здесь кэш для отрисовки. */
+  fleets: FleetRuntimeState[];
 }
 
 /**
@@ -260,6 +283,38 @@ export function researchSnapshot(user: UserRuntimeState, now: number): ResearchS
         }
       : null,
   };
+}
+
+/** Снимки флотов в полете: клиент сам плавно двигает маркеры по меткам времени. */
+export function fleetSnapshots(user: UserRuntimeState, now: number): FleetSnapshot[] {
+  return user.fleets.map((fleet) => {
+    const outbound = fleet.status === 'OUTBOUND';
+    const legStart = outbound ? fleet.departedAt : fleet.arrivesAt;
+    const legEnd = outbound ? fleet.arrivesAt : fleet.returnsAt;
+    const legTotal = Math.max(1, legEnd - legStart);
+
+    return {
+      id: fleet.id,
+      mission: fleet.mission,
+      missionLabel: MISSION_LABELS[fleet.mission],
+      status: fleet.status,
+      originPlanetId: fleet.originPlanetId,
+      originPlanetName: fleet.originPlanetName,
+      targetPlanetId: fleet.targetPlanetId,
+      targetPlanetName: fleet.targetPlanetName,
+      ships: { ...fleet.ships },
+      composition: describeComposition(fleet.ships),
+      cargo: { ...fleet.cargo },
+      fuelSpent: fleet.fuelSpent,
+      distance: fleet.distance,
+      speed: fleet.speed,
+      departedAt: fleet.departedAt,
+      arrivesAt: fleet.arrivesAt,
+      returnsAt: fleet.returnsAt,
+      etaSeconds: Math.max(0, Math.ceil((legEnd - now) / 1000)),
+      progress: Math.min(1, Math.max(0, (now - legStart) / legTotal)),
+    };
+  });
 }
 
 function round(value: number): number {

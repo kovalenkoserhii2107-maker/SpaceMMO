@@ -9,6 +9,7 @@
     username: '',
     bases: [],
     research: { techs: {}, active: null },
+    fleets: [],
     activeBaseId: null,
     activeTab: 'buildings',
     socket: null,
@@ -47,6 +48,18 @@
     rateDeuterium: $('rate-deuterium'),
     rateEnergy: $('rate-energy'),
     rateEfficiency: $('rate-efficiency'),
+    systemMap: $('system-map'),
+    mapCanvas: document.querySelector('.map-canvas'),
+    mapTooltip: $('map-tooltip'),
+    planetInfo: $('planet-info'),
+    dispatch: $('dispatch'),
+    mission: $('mission'),
+    fleetInputs: $('fleet-inputs'),
+    cargoMetal: $('cargo-metal'),
+    cargoCrystal: $('cargo-crystal'),
+    flightPlan: $('flight-plan'),
+    sendFleetButton: $('send-fleet'),
+    fleetList: $('fleet-list'),
   };
 
   const PLANET_TYPES = {
@@ -135,6 +148,7 @@
     el.dashboard.hidden = false;
     applyState(data);
     connectSocket();
+    await loadMap();
   }
 
   function authHeaders() {
@@ -173,6 +187,7 @@
     for (const panel of document.querySelectorAll('[data-panel]')) {
       panel.hidden = panel.dataset.panel !== state.activeTab;
     }
+    if (state.activeTab === 'map') void loadMap();
   });
 
   /* ---------- Рендер ---------- */
@@ -180,6 +195,7 @@
   function applyState(payload) {
     state.bases = payload.bases || [];
     state.research = payload.research || { techs: {}, active: null };
+    state.fleets = payload.fleets || [];
     if (!state.bases.length) return;
     if (!state.bases.some((base) => base.baseId === state.activeBaseId)) {
       state.activeBaseId = state.bases[0].baseId;
@@ -262,6 +278,9 @@
     renderCards(base);
     renderFleet(base);
     renderQueue(base);
+    renderFleetList();
+    renderFleetMarkers();
+    if (map.data) renderPlanetInfo();
   }
 
   function renderJobBanner(node, job) {
@@ -495,12 +514,14 @@
 
       if (!response.ok) {
         showBuildMessage(data.error || 'Действие отклонено', false);
-        return;
+        return false;
       }
       showBuildMessage(data.message || 'Готово', true);
       if (state.socket) state.socket.emit('state:request');
+      return true;
     } catch (error) {
       showBuildMessage('Сервер недоступен', false);
+      return false;
     }
   }
 
@@ -512,6 +533,354 @@
     clearTimeout(messageTimer);
     messageTimer = setTimeout(() => { el.buildMessage.hidden = true; }, 4000);
   }
+
+
+  /* ---------- Этап 3: карта системы ---------- */
+
+  const PLANET_COLORS = {
+    ROCKY: '#b08968', OCEANIC: '#4a90d9', DESERT: '#d9a441', ICE: '#8fd0e8',
+    GAS_GIANT: '#c08bd9', VOLCANIC: '#d9614a', TOXIC: '#8fbf5a',
+  };
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  const MAP = { width: 900, height: 340, starX: 60, firstOrbit: 250, orbitStep: 215 };
+
+  const map = { data: null, selectedId: null, hoverId: null, plan: null, planTimer: null };
+
+  function planetX(position) {
+    return MAP.starX + MAP.firstOrbit + (position - 1) * MAP.orbitStep;
+  }
+
+  async function loadMap() {
+    const response = await fetch('/api/map', { headers: authHeaders() });
+    if (!response.ok) return;
+    map.data = await response.json();
+    renderMap();
+    renderPlanetInfo();
+  }
+
+  function svgEl(name, attrs) {
+    const node = document.createElementNS(SVG_NS, name);
+    for (const [key, value] of Object.entries(attrs || {})) node.setAttribute(key, value);
+    return node;
+  }
+
+  function renderMap() {
+    if (!map.data) return;
+    const svg = el.systemMap;
+    svg.innerHTML = '';
+
+    const defs = svgEl('defs');
+    defs.innerHTML =
+      '<radialGradient id="starGlow"><stop offset="0%" stop-color="#fff3c4"/>' +
+      '<stop offset="60%" stop-color="#ffb347"/><stop offset="100%" stop-color="rgba(255,140,60,0)"/></radialGradient>';
+    svg.appendChild(defs);
+
+    svg.appendChild(svgEl('circle', { class: 'star-core', cx: MAP.starX, cy: MAP.height / 2, r: 72 }));
+    const starLabel = svgEl('text', { x: MAP.starX, y: MAP.height - 14, class: 'planet-label' });
+    starLabel.textContent = `${map.data.systemName} · ${map.data.starClass}`;
+    svg.appendChild(starLabel);
+
+    for (const planet of map.data.planets) {
+      const x = planetX(planet.position);
+      const y = MAP.height / 2;
+      svg.appendChild(svgEl('circle', {
+        class: 'orbit', cx: MAP.starX, cy: y, r: x - MAP.starX,
+      }));
+
+      const group = svgEl('g', {
+        class: `planet-dot${planet.planetId === map.selectedId ? ' selected' : ''}`,
+      });
+
+      const radius = planet.visibility === 'UNKNOWN' ? 22 : 28;
+      group.appendChild(svgEl('circle', {
+        class: 'body', cx: x, cy: y, r: radius,
+        fill: planet.visibility === 'UNKNOWN' ? '#3a4360' : (PLANET_COLORS[planet.type] || '#7f8db5'),
+        opacity: planet.visibility === 'UNKNOWN' ? 0.55 : 1,
+      }));
+
+      if (planet.isOwn) {
+        group.appendChild(svgEl('circle', {
+          cx: x, cy: y, r: radius + 7, fill: 'none', stroke: 'var(--accent)', 'stroke-width': 1.5,
+        }));
+      } else if (planet.colonized) {
+        group.appendChild(svgEl('circle', {
+          cx: x, cy: y, r: radius + 7, fill: 'none', stroke: 'var(--err)',
+          'stroke-width': 1.2, 'stroke-dasharray': '3 4',
+        }));
+      }
+
+      const label = svgEl('text', { x, y: y + radius + 26, class: `planet-label${planet.isOwn ? ' own' : ''}` });
+      label.textContent = planet.name;
+      group.appendChild(label);
+
+      const status = svgEl('text', { x, y: y + radius + 44, class: 'planet-label' });
+      status.textContent = planet.visibility === 'UNKNOWN' ? 'нет данных' :
+        planet.colonized ? (planet.isOwn ? 'ваша колония' : `колония: ${planet.owner}`) : 'необитаема';
+      group.appendChild(status);
+
+      group.addEventListener('mouseenter', (event) => showTooltip(planet, event));
+      group.addEventListener('mousemove', (event) => positionTooltip(event));
+      group.addEventListener('mouseleave', hideTooltip);
+      group.addEventListener('click', () => selectPlanet(planet.planetId));
+      svg.appendChild(group);
+    }
+
+    renderFleetMarkers();
+  }
+
+  /** Маркеры флотов двигаются между тиками по меткам времени. */
+  function renderFleetMarkers() {
+    if (!map.data) return;
+    const svg = el.systemMap;
+    for (const node of [...svg.querySelectorAll('.fleet-layer')]) node.remove();
+
+    const layer = svgEl('g', { class: 'fleet-layer' });
+    const now = Date.now();
+    const byId = new Map(map.data.planets.map((p) => [p.planetId, p]));
+
+    for (const fleet of state.fleets) {
+      const origin = byId.get(fleet.originPlanetId);
+      const target = byId.get(fleet.targetPlanetId);
+      if (!origin || !target) continue;
+
+      const outbound = fleet.status === 'OUTBOUND';
+      const from = outbound ? origin : target;
+      const to = outbound ? target : origin;
+      const legStart = outbound ? fleet.departedAt : fleet.arrivesAt;
+      const legEnd = outbound ? fleet.arrivesAt : fleet.returnsAt;
+      const progress = Math.min(1, Math.max(0, (now - legStart) / Math.max(1, legEnd - legStart)));
+
+      const x1 = planetX(from.position);
+      const x2 = planetX(to.position);
+      const y = MAP.height / 2 - 62;
+      layer.appendChild(svgEl('line', { class: 'fleet-line', x1, y1: y, x2, y2: y }));
+      layer.appendChild(svgEl('circle', {
+        class: 'fleet-marker', cx: x1 + (x2 - x1) * progress, cy: y, r: 5,
+      }));
+
+      const label = svgEl('text', { x: x1 + (x2 - x1) * progress, y: y - 12, class: 'planet-label' });
+      label.textContent = `${fleet.missionLabel} · ${fleet.etaSeconds} с`;
+      layer.appendChild(label);
+    }
+
+    svg.appendChild(layer);
+  }
+
+  function showTooltip(planet, event) {
+    map.hoverId = planet.planetId;
+    el.mapTooltip.innerHTML = planetDetailsHtml(planet, true);
+    el.mapTooltip.hidden = false;
+    positionTooltip(event);
+  }
+
+  function positionTooltip(event) {
+    const rect = el.mapCanvas.getBoundingClientRect();
+    const left = Math.min(Math.max(8, event.clientX - rect.left + 14), Math.max(8, rect.width - 268));
+    const top = Math.min(Math.max(8, event.clientY - rect.top - 20), Math.max(8, rect.height - 150));
+    el.mapTooltip.style.left = `${left}px`;
+    el.mapTooltip.style.top = `${top}px`;
+  }
+
+  function hideTooltip() {
+    map.hoverId = null;
+    el.mapTooltip.hidden = true;
+  }
+
+  /** Туман войны: чужая неразведанная планета показывает только астрономию. */
+  function planetDetailsHtml(planet, short) {
+    const head = `<b>${planet.name}</b><br>орбита ${planet.position} · ${PLANET_TYPES[planet.type] || planet.type} · слотов ${planet.size}`;
+
+    if (planet.visibility === 'UNKNOWN') {
+      return `${head}<br><span class="unknown">Данных нет. Отправь зонд для сканирования.</span>`;
+    }
+
+    const rich = planet.richness
+      ? `<br>богатство: Me ×${planet.richness.metal} · Cr ×${planet.richness.crystal} · De ×${planet.richness.deuterium}`
+      : '';
+    const owner = planet.colonized ? `<br>владелец: <b>${planet.owner || 'неизвестен'}</b>` : '<br>колонии нет';
+    const buildings = planet.buildings
+      ? `<br>шахты: ${planet.buildings.METAL_MINE}/${planet.buildings.CRYSTAL_MINE}/${planet.buildings.DEUTERIUM_MINE}` +
+        ` · лаб ${planet.buildings.RESEARCH_LAB} · верфь ${planet.buildings.SHIPYARD}`
+      : '';
+    const resources = planet.resources
+      ? `<br>склад: ${fmt(planet.resources.metal)} Me · ${fmt(planet.resources.crystal)} Cr · ${fmt(planet.resources.deuterium)} De`
+      : '';
+    const fleet = planet.fleet
+      ? `<br>флот: зонды ${planet.fleet.PROBE} · транспорты ${planet.fleet.TRANSPORTER} · истребители ${planet.fleet.LIGHT_FIGHTER}`
+      : '';
+    const age = planet.visibility === 'SCANNED'
+      ? `<br><span class="unknown">данные разведки: ${fmtTime(planet.scanAgeSeconds)} назад</span>`
+      : '';
+    const hint = short ? '' : '<br>';
+
+    return head + owner + rich + buildings + resources + fleet + age + hint;
+  }
+
+  function selectPlanet(planetId) {
+    map.selectedId = planetId;
+    renderMap();
+    renderPlanetInfo();
+  }
+
+  function selectedPlanet() {
+    return map.data ? map.data.planets.find((p) => p.planetId === map.selectedId) || null : null;
+  }
+
+  function renderPlanetInfo() {
+    const planet = selectedPlanet();
+    if (!planet) {
+      el.planetInfo.innerHTML = 'Наведи курсор или выбери планету на карте.';
+      el.dispatch.hidden = true;
+      return;
+    }
+
+    el.planetInfo.innerHTML = planetDetailsHtml(planet, false);
+    const base = activeBase();
+    el.dispatch.hidden = !base || planet.planetId === base.planetId;
+    if (!el.dispatch.hidden) renderFleetInputs();
+  }
+
+  function renderFleetInputs() {
+    const base = activeBase();
+    if (!base) return;
+
+    if (el.fleetInputs.childElementCount === 0) {
+      for (const [type, label] of Object.entries(SHIP_LABELS)) {
+        const field = document.createElement('label');
+        field.className = 'field';
+        const caption = document.createElement('span');
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.min = '0';
+        input.value = '0';
+        input.dataset.ship = type;
+        input.addEventListener('input', schedulePlan);
+        field.append(caption, input);
+        el.fleetInputs.appendChild(field);
+        fleetInputs[type] = { caption, input };
+      }
+    }
+
+    for (const [type, label] of Object.entries(SHIP_LABELS)) {
+      fleetInputs[type].caption.textContent = `${label} (${base.fleet[type]})`;
+      fleetInputs[type].input.max = String(base.fleet[type]);
+    }
+  }
+
+  const fleetInputs = {};
+
+  function readComposition() {
+    const ships = { PROBE: 0, TRANSPORTER: 0, LIGHT_FIGHTER: 0 };
+    for (const [type, refs] of Object.entries(fleetInputs)) {
+      ships[type] = Math.max(0, Number(refs.input.value) || 0);
+    }
+    return ships;
+  }
+
+  function schedulePlan() {
+    clearTimeout(map.planTimer);
+    map.planTimer = setTimeout(refreshPlan, 250);
+  }
+
+  /** Расчет маршрута считает сервер — клиент только показывает результат. */
+  async function refreshPlan() {
+    const base = activeBase();
+    const planet = selectedPlanet();
+    if (!base || !planet) return;
+
+    const ships = readComposition();
+    if (!ships.PROBE && !ships.TRANSPORTER && !ships.LIGHT_FIGHTER) {
+      map.plan = null;
+      el.flightPlan.textContent = 'Выбери корабли, чтобы увидеть расчет.';
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/bases/${base.baseId}/fleets/preview`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ targetPlanetId: planet.planetId, ships }),
+      });
+      if (!response.ok) {
+        map.plan = null;
+        el.flightPlan.textContent = 'Не удалось рассчитать маршрут';
+        return;
+      }
+      map.plan = await response.json();
+
+      const cargo = Number(el.cargoMetal.value || 0) + Number(el.cargoCrystal.value || 0);
+      const overload = cargo > map.plan.capacity;
+      const noFuel = map.plan.fuel > base.resources.deuterium;
+
+      el.flightPlan.innerHTML =
+        `дистанция: <b>${map.plan.distance}</b> орбит · скорость <b>${map.plan.speed}</b><br>` +
+        `время в пути: <b>${fmtTime(map.plan.flightSeconds)}</b> в одну сторону<br>` +
+        `топливо (туда-обратно): <b class="${noFuel ? 'bad' : ''}">${map.plan.fuel}</b> дейтерия ` +
+        `(на складе ${fmt(base.resources.deuterium)})<br>` +
+        `трюмы: <b class="${overload ? 'bad' : ''}">${fmt(cargo)}</b> из ${fmt(map.plan.capacity)}`;
+    } catch (error) {
+      el.flightPlan.textContent = 'Не удалось рассчитать маршрут';
+    }
+  }
+
+  async function sendFleet() {
+    const base = activeBase();
+    const planet = selectedPlanet();
+    if (!base || !planet) return;
+
+    const ok = await send(`/api/bases/${base.baseId}/fleets`, {
+      targetPlanetId: planet.planetId,
+      mission: el.mission.value,
+      ships: readComposition(),
+      cargo: {
+        metal: Number(el.cargoMetal.value) || 0,
+        crystal: Number(el.cargoCrystal.value) || 0,
+      },
+    });
+
+    // Сбрасываем форму, чтобы повторный клик не отправил тот же флот дважды.
+    if (ok) {
+      for (const refs of Object.values(fleetInputs)) refs.input.value = '0';
+      el.cargoMetal.value = '0';
+      el.cargoCrystal.value = '0';
+      map.plan = null;
+      el.flightPlan.textContent = 'Выбери корабли, чтобы увидеть расчет.';
+    }
+    await loadMap();
+  }
+
+  function renderFleetList() {
+    el.fleetList.innerHTML = '';
+    if (!state.fleets.length) {
+      const empty = document.createElement('div');
+      empty.className = 'queue-item';
+      empty.textContent = 'Флотов в полете нет';
+      el.fleetList.appendChild(empty);
+      return;
+    }
+
+    for (const fleet of state.fleets) {
+      const item = document.createElement('div');
+      item.className = 'queue-item';
+      const title = document.createElement('b');
+      const direction = fleet.status === 'OUTBOUND'
+        ? `${fleet.originPlanetName} → ${fleet.targetPlanetName}`
+        : `${fleet.targetPlanetName} → ${fleet.originPlanetName} (возврат)`;
+      const cargo = fleet.cargo.metal + fleet.cargo.crystal > 0
+        ? `, груз ${fmt(fleet.cargo.metal)} Me / ${fmt(fleet.cargo.crystal)} Cr`
+        : '';
+      title.textContent = `${fleet.missionLabel}: ${direction}`;
+      const meta = document.createElement('span');
+      meta.textContent = `${fleet.composition}${cargo} · прибытие через ${fmtTime(fleet.etaSeconds)}`;
+      item.append(title, meta);
+      el.fleetList.appendChild(item);
+    }
+  }
+
+  el.sendFleetButton.addEventListener('click', () => void sendFleet());
+  el.mission.addEventListener('change', schedulePlan);
+  el.cargoMetal.addEventListener('input', schedulePlan);
+  el.cargoCrystal.addEventListener('input', schedulePlan);
 
   /* ---------- Старт ---------- */
   if (state.token) {
