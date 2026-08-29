@@ -6,6 +6,7 @@ import { emptyShipCounts, isShipType, SHIP_TYPES } from '../game/ships.js';
 import { isFleetMission, planFlight } from '../game/fleets.js';
 import { buildSystemMap } from '../services/mapService.js';
 import { requireAuth } from './middleware.js';
+import { amountsOrNull, nonNegativeInt, positiveInt } from './validation.js';
 
 export const gameRouter: Router = Router();
 
@@ -66,7 +67,12 @@ gameRouter.post('/bases/:baseId/ships', async (req, res) => {
     return;
   }
 
-  const quantity = Number(body?.quantity ?? 1);
+  const quantity = positiveInt(body?.quantity ?? 1);
+  if (quantity === null) {
+    res.status(400).json({ error: 'Количество должно быть целым положительным числом' });
+    return;
+  }
+
   const result = await gameLoop.orderShips(req.userId as string, req.params.baseId, body.type, quantity);
   res.status(result.ok ? 200 : 409).json(result);
 });
@@ -87,11 +93,15 @@ function readTarget(body: FleetRequestBody): { planetId?: string; hubId?: string
   return target;
 }
 
-function readAmounts(input: { metal?: unknown; crystal?: unknown } | undefined) {
-  return {
-    metal: Math.max(0, Math.floor(Number(input?.metal ?? 0)) || 0),
-    crystal: Math.max(0, Math.floor(Number(input?.crystal ?? 0)) || 0),
-  };
+/** Состав флота: только целые неотрицательные значения, иначе запрос отклоняется. */
+function readShips(input: Record<string, unknown> | undefined) {
+  const ships = emptyShipCounts();
+  for (const type of SHIP_TYPES) {
+    const count = nonNegativeInt(input?.[type]);
+    if (count === null) return null;
+    ships[type] = count;
+  }
+  return ships;
 }
 
 /** Предрасчет маршрута: время, топливо, трюмы. Формулы остаются на сервере. */
@@ -110,9 +120,10 @@ gameRouter.post('/bases/:baseId/fleets/preview', async (req, res) => {
     return;
   }
 
-  const ships = emptyShipCounts();
-  for (const type of SHIP_TYPES) {
-    ships[type] = Math.max(0, Math.floor(Number(body.ships?.[type] ?? 0)));
+  const ships = readShips(body.ships);
+  if (!ships) {
+    res.status(400).json({ error: 'Некорректный состав флота' });
+    return;
   }
 
   res.json(planFlight(ships, user.techs, base.position, target));
@@ -133,18 +144,18 @@ gameRouter.post('/bases/:baseId/fleets', async (req, res) => {
     return;
   }
 
-  const ships = emptyShipCounts();
-  for (const type of SHIP_TYPES) {
-    const raw = Number(body.ships?.[type] ?? 0);
-    if (!Number.isFinite(raw) || raw < 0) {
-      res.status(400).json({ error: 'Некорректный состав флота' });
-      return;
-    }
-    ships[type] = Math.floor(raw);
+  const ships = readShips(body.ships);
+  if (!ships) {
+    res.status(400).json({ error: 'Некорректный состав флота: нужны целые неотрицательные значения' });
+    return;
   }
 
-  const cargo = readAmounts(body.cargo);
-  const pickup = readAmounts(body.pickup);
+  const cargo = amountsOrNull(body.cargo);
+  const pickup = amountsOrNull(body.pickup);
+  if (!cargo || !pickup) {
+    res.status(400).json({ error: 'Объем груза должен быть целым неотрицательным числом' });
+    return;
+  }
 
   const result = await gameLoop.sendFleet(
     req.userId as string,

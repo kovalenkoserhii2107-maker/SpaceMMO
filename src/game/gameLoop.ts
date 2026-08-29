@@ -724,48 +724,84 @@ class GameLoop {
     }
   }
 
-  /** Прилет: выгрузка груза, сканирование или операция на торговом хабе. */
+  /**
+   * Прилет: выгрузка груза, сканирование или операция на торговом хабе.
+   *
+   * Эффект и смена статуса флота идут одной транзакцией: если процесс умрет
+   * между ними, при следующем запуске флот снова считался бы прилетевшим
+   * и груз зачислился бы дважды.
+   */
   private async handleArrival(fleet: FleetRow, now: number): Promise<void> {
-    let cargo: { metal: number; crystal: number } | null = null;
-
     if (fleet.mission === 'TRANSPORT' && fleet.targetPlanetId) {
       const targetBase = await prisma.base.findUnique({ where: { planetId: fleet.targetPlanetId } });
-      if (targetBase) {
-        this.depositResources(targetBase.id, fleet.cargoMetal, fleet.cargoCrystal);
-        cargo = { metal: 0, crystal: 0 };
+      if (!targetBase) {
+        // Колонии больше нет — груз остается в трюмах и вернется домой.
+        await prisma.fleet.update({ where: { id: fleet.id }, data: { status: 'RETURNING' } });
+        return;
       }
-    } else if (fleet.mission === 'SCAN' && fleet.targetPlanetId) {
-      await this.recordScan(fleet.userId, fleet.targetPlanetId, now);
-    } else if (fleet.mission === 'HUB_DELIVERY' && fleet.targetHubId) {
-      cargo = await this.unloadToHub(fleet);
-    } else if (fleet.mission === 'HUB_PICKUP' && fleet.targetHubId) {
-      cargo = await this.loadFromHub(fleet);
+
+      await this.flushBaseOwner(targetBase.id);
+      await prisma.$transaction([
+        prisma.base.update({
+          where: { id: targetBase.id },
+          data: { metal: { increment: fleet.cargoMetal }, crystal: { increment: fleet.cargoCrystal } },
+        }),
+        prisma.fleet.update({
+          where: { id: fleet.id },
+          data: { status: 'RETURNING', cargoMetal: 0, cargoCrystal: 0 },
+        }),
+      ]);
+      this.applyMemoryResources(targetBase.id, fleet.cargoMetal, fleet.cargoCrystal);
+      return;
     }
 
-    await prisma.fleet.update({
-      where: { id: fleet.id },
-      data: {
-        status: 'RETURNING',
-        ...(cargo ? { cargoMetal: cargo.metal, cargoCrystal: cargo.crystal } : {}),
-      },
-    });
+    if (fleet.mission === 'SCAN' && fleet.targetPlanetId) {
+      const payload = await this.buildScanPayload(fleet.targetPlanetId);
+      const planetId = fleet.targetPlanetId;
+      await prisma.$transaction([
+        ...(payload
+          ? [
+              prisma.planetScan.upsert({
+                where: { userId_planetId: { userId: fleet.userId, planetId } },
+                create: { userId: fleet.userId, planetId, scannedAt: new Date(now), data: toJson(payload) },
+                update: { scannedAt: new Date(now), data: toJson(payload) },
+              }),
+            ]
+          : []),
+        prisma.fleet.update({ where: { id: fleet.id }, data: { status: 'RETURNING' } }),
+      ]);
+      return;
+    }
+
+    if (fleet.mission === 'HUB_DELIVERY' && fleet.targetHubId) {
+      await this.unloadToHub(fleet);
+      return;
+    }
+
+    if (fleet.mission === 'HUB_PICKUP' && fleet.targetHubId) {
+      await this.loadFromHub(fleet);
+      return;
+    }
+
+    await prisma.fleet.update({ where: { id: fleet.id }, data: { status: 'RETURNING' } });
   }
 
   /**
    * Разгрузка на торговый склад хаба. Что не влезло — остается в трюме
    * и возвращается домой, поэтому расширение склада имеет смысл.
    */
-  private async unloadToHub(fleet: FleetRow): Promise<{ metal: number; crystal: number }> {
+  private async unloadToHub(fleet: FleetRow): Promise<void> {
     const hubId = fleet.targetHubId as string;
 
-    return prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx) => {
       const storage = await tx.hubStorage.upsert({
         where: { userId_hubId: { userId: fleet.userId, hubId } },
         create: { userId: fleet.userId, hubId },
         update: {},
       });
 
-      const free = Math.max(0, storageCapacity(storage.level) - storageUsed(storage));
+      const capacity = storageCapacity(storage.level);
+      const free = Math.max(0, capacity - storageUsed(storage));
       const metal = Math.min(fleet.cargoMetal, free);
       const crystal = Math.min(fleet.cargoCrystal, Math.max(0, free - metal));
 
@@ -776,16 +812,19 @@ class GameLoop {
         });
       }
 
-      // В трюме остается непринятый излишек.
-      return {
-        metal: fleet.cargoMetal - metal,
-        crystal: fleet.cargoCrystal - crystal,
-      };
+      await tx.fleet.update({
+        where: { id: fleet.id },
+        data: {
+          status: 'RETURNING',
+          cargoMetal: fleet.cargoMetal - metal,
+          cargoCrystal: fleet.cargoCrystal - crystal,
+        },
+      });
     });
   }
 
   /** Погрузка товара со склада хаба в трюмы — обратно повезем домой. */
-  private async loadFromHub(fleet: FleetRow): Promise<{ metal: number; crystal: number }> {
+  private async loadFromHub(fleet: FleetRow): Promise<void> {
     const hubId = fleet.targetHubId as string;
     const capacity = fleetCapacity({
       PROBE: fleet.probes,
@@ -793,81 +832,101 @@ class GameLoop {
       LIGHT_FIGHTER: fleet.lightFighters,
     });
 
-    return prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx) => {
       const storage = await tx.hubStorage.findUnique({
         where: { userId_hubId: { userId: fleet.userId, hubId } },
       });
-      if (!storage) return { metal: 0, crystal: 0 };
 
-      const metal = Math.min(fleet.pickupMetal, storage.metal, capacity);
-      const crystal = Math.min(fleet.pickupCrystal, storage.crystal, Math.max(0, capacity - metal));
+      const metal = storage ? Math.min(fleet.pickupMetal, storage.metal, capacity) : 0;
+      const crystal = storage
+        ? Math.min(fleet.pickupCrystal, storage.crystal, Math.max(0, capacity - metal))
+        : 0;
 
-      if (metal > 0 || crystal > 0) {
-        await tx.hubStorage.update({
-          where: { id: storage.id },
+      if (storage && (metal > 0 || crystal > 0)) {
+        // Условное списание: параллельная сделка на бирже могла увести товар.
+        const taken = await tx.hubStorage.updateMany({
+          where: { id: storage.id, metal: { gte: metal }, crystal: { gte: crystal } },
           data: { metal: { decrement: metal }, crystal: { decrement: crystal } },
         });
+        if (taken.count === 0) {
+          await tx.fleet.update({ where: { id: fleet.id }, data: { status: 'RETURNING' } });
+          return;
+        }
       }
 
-      return { metal, crystal };
+      await tx.fleet.update({
+        where: { id: fleet.id },
+        data: { status: 'RETURNING', cargoMetal: metal, cargoCrystal: crystal },
+      });
     });
-  }
-
-  /** Возврат: корабли и невыгруженный груз возвращаются на базу отправления. */
-  private async handleReturn(fleet: FleetRow): Promise<void> {
-    this.returnShips(fleet.originBaseId, {
-      PROBE: fleet.probes,
-      TRANSPORTER: fleet.transporters,
-      LIGHT_FIGHTER: fleet.lightFighters,
-    });
-    if (fleet.cargoMetal > 0 || fleet.cargoCrystal > 0) {
-      this.depositResources(fleet.originBaseId, fleet.cargoMetal, fleet.cargoCrystal);
-    }
-    await prisma.fleet.delete({ where: { id: fleet.id } });
   }
 
   /**
-   * Зачисление ресурсов на базу: если владелец сейчас в памяти — правим состояние,
-   * иначе инкрементим прямо в БД (иначе следующий сброс состояния затер бы прилет).
+   * Возврат: корабли и невыгруженный груз возвращаются на базу отправления.
+   * Зачисление и удаление флота — одной транзакцией, иначе перезапуск
+   * посреди операции либо задвоил бы корабли, либо потерял их.
    */
-  private depositResources(baseId: string, metal: number, crystal: number): void {
-    if (metal <= 0 && crystal <= 0) return;
+  private async handleReturn(fleet: FleetRow): Promise<void> {
+    const ships: ShipCounts = {
+      PROBE: fleet.probes,
+      TRANSPORTER: fleet.transporters,
+      LIGHT_FIGHTER: fleet.lightFighters,
+    };
 
-    const base = this.findLoadedBase(baseId);
-    if (base) {
-      base.resources.metal += metal;
-      base.resources.crystal += crystal;
-      base.dirty = true;
-      return;
-    }
+    await this.flushBaseOwner(fleet.originBaseId);
 
-    void prisma.base
-      .update({
-        where: { id: baseId },
-        data: { metal: { increment: metal }, crystal: { increment: crystal } },
-      })
-      .catch((error: unknown) => console.error('[game-loop] ошибка зачисления груза:', error));
-  }
-
-  /** Возврат кораблей в ангар базы — так же через память или напрямую в БД. */
-  private returnShips(baseId: string, ships: ShipCounts): void {
-    const base = this.findLoadedBase(baseId);
-    if (base) {
-      for (const type of SHIP_TYPES) base.ships[type] += ships[type];
-      base.jobsDirty = true;
-      return;
-    }
-
+    const operations: Array<Prisma.PrismaPromise<unknown>> = [];
     for (const type of SHIP_TYPES) {
       if (ships[type] <= 0) continue;
-      void prisma.ship
-        .upsert({
-          where: { baseId_type: { baseId, type } },
-          create: { baseId, type, count: ships[type] },
+      operations.push(
+        prisma.ship.upsert({
+          where: { baseId_type: { baseId: fleet.originBaseId, type } },
+          create: { baseId: fleet.originBaseId, type, count: ships[type] },
           update: { count: { increment: ships[type] } },
-        })
-        .catch((error: unknown) => console.error('[game-loop] ошибка возврата кораблей:', error));
+        }),
+      );
     }
+    if (fleet.cargoMetal > 0 || fleet.cargoCrystal > 0) {
+      operations.push(
+        prisma.base.update({
+          where: { id: fleet.originBaseId },
+          data: { metal: { increment: fleet.cargoMetal }, crystal: { increment: fleet.cargoCrystal } },
+        }),
+      );
+    }
+    operations.push(prisma.fleet.delete({ where: { id: fleet.id } }));
+
+    await prisma.$transaction(operations);
+
+    this.applyMemoryResources(fleet.originBaseId, fleet.cargoMetal, fleet.cargoCrystal);
+    this.applyMemoryShips(fleet.originBaseId, ships);
+  }
+
+  /** Сбрасывает состояние владельца базы в БД, чтобы транзакция считала от актуальных чисел. */
+  private async flushBaseOwner(baseId: string): Promise<void> {
+    for (const user of this.users.values()) {
+      if (user.bases.has(baseId)) {
+        await this.persistUser(user);
+        return;
+      }
+    }
+  }
+
+  /** Отражает уже зачисленный в БД приход в состоянии базы, если она в памяти. */
+  private applyMemoryResources(baseId: string, metal: number, crystal: number): void {
+    if (metal <= 0 && crystal <= 0) return;
+    const base = this.findLoadedBase(baseId);
+    if (!base) return;
+    base.resources.metal += metal;
+    base.resources.crystal += crystal;
+    base.dirty = true;
+  }
+
+  private applyMemoryShips(baseId: string, ships: ShipCounts): void {
+    const base = this.findLoadedBase(baseId);
+    if (!base) return;
+    for (const type of SHIP_TYPES) base.ships[type] += ships[type];
+    base.jobsDirty = true;
   }
 
   private findLoadedBase(baseId: string): BaseRuntimeState | null {
@@ -879,12 +938,12 @@ class GameLoop {
   }
 
   /** Снимок планеты для тумана войны: свежие данные берем из памяти, если владелец онлайн. */
-  private async recordScan(userId: string, planetId: string, now: number): Promise<void> {
+  private async buildScanPayload(planetId: string): Promise<ScanPayload | null> {
     const planet = await prisma.planet.findUnique({
       where: { id: planetId },
       include: { base: { include: { user: true, ships: true } } },
     });
-    if (!planet) return;
+    if (!planet) return null;
 
     const richness = {
       metal: planet.metalRichness,
@@ -936,11 +995,7 @@ class GameLoop {
       };
     }
 
-    await prisma.planetScan.upsert({
-      where: { userId_planetId: { userId, planetId } },
-      create: { userId, planetId, scannedAt: new Date(now), data: toJson(payload) },
-      update: { scannedAt: new Date(now), data: toJson(payload) },
-    });
+    return payload;
   }
 
   /* ------------------------- Сохранение и рассылка ------------------------- */

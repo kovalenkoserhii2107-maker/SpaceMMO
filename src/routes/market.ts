@@ -8,6 +8,7 @@ import {
   upgradeStorage,
 } from '../services/marketService.js';
 import { requireAuth } from './middleware.js';
+import { positiveInt, positivePrice } from './validation.js';
 
 export const marketRouter: Router = Router();
 
@@ -42,18 +43,34 @@ marketRouter.post('/orders', async (req, res) => {
     return;
   }
 
+  const quantity = positiveInt(body.quantity);
+  const pricePerUnit = positivePrice(body.pricePerUnit);
+  if (quantity === null) {
+    res.status(400).json({ error: 'Объем должен быть целым положительным числом' });
+    return;
+  }
+  if (pricePerUnit === null) {
+    res.status(400).json({ error: 'Цена должна быть положительным числом' });
+    return;
+  }
+
   const result = await placeOrder(req.userId as string, {
     side: body.side,
     resource: body.resource,
-    quantity: Math.floor(Number(body.quantity)),
-    pricePerUnit: Math.round(Number(body.pricePerUnit) * 100) / 100,
+    quantity,
+    pricePerUnit,
   });
   res.status(result.ok ? 200 : 409).json(result);
 });
 
 /** Исполнить чужой ордер целиком или частично. */
 marketRouter.post('/orders/:orderId/fill', async (req, res) => {
-  const quantity = Math.floor(Number((req.body as { quantity?: unknown } | undefined)?.quantity));
+  const quantity = positiveInt((req.body as { quantity?: unknown } | undefined)?.quantity);
+  if (quantity === null) {
+    res.status(400).json({ error: 'Объем сделки должен быть целым положительным числом' });
+    return;
+  }
+
   const result = await fillOrder(req.userId as string, req.params.orderId, quantity);
   res.status(result.ok ? 200 : 409).json(result);
 });

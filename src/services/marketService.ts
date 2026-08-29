@@ -210,24 +210,28 @@ export async function placeOrder(
   try {
     await prisma.$transaction(async (tx) => {
       if (input.side === 'SELL') {
-        const storage = await tx.hubStorage.findUniqueOrThrow({
-          where: { userId_hubId: { userId, hubId: hub.id } },
-        });
-        if (storage[field] < input.quantity) {
-          throw new MarketError(
-            `На складе хаба только ${Math.floor(storage[field])} — ${RESOURCE_LABELS[input.resource]}`,
-          );
-        }
-        await tx.hubStorage.update({
-          where: { id: storage.id },
+        // Условное списание: товар уходит в залог только если он реально есть.
+        // Обычный read-modify-write здесь давал гонку и уводил склад в минус.
+        const locked = await tx.hubStorage.updateMany({
+          where: { userId, hubId: hub.id, [field]: { gte: input.quantity } },
           data: { [field]: { decrement: input.quantity } },
         });
+        if (locked.count === 0) {
+          const storage = await tx.hubStorage.findUnique({
+            where: { userId_hubId: { userId, hubId: hub.id } },
+          });
+          throw new MarketError(
+            `На складе хаба только ${Math.floor(storage?.[field] ?? 0)} — ${RESOURCE_LABELS[input.resource]}`,
+          );
+        }
       } else {
-        const user = await tx.user.findUniqueOrThrow({ where: { id: userId } });
-        if (user.credits < total) {
+        const paid = await tx.user.updateMany({
+          where: { id: userId, credits: { gte: total } },
+          data: { credits: { decrement: total } },
+        });
+        if (paid.count === 0) {
           throw new MarketError(`Не хватает криптогривны: нужно ${total} ₴`);
         }
-        await tx.user.update({ where: { id: userId }, data: { credits: { decrement: total } } });
       }
 
       await tx.marketOrder.create({
@@ -263,27 +267,24 @@ export async function cancelOrder(userId: string, orderId: string): Promise<Mark
       const order = await tx.marketOrder.findUnique({ where: { id: orderId } });
       if (!order || order.userId !== userId) throw new MarketError('Ордер не найден');
 
+      // Удаляем первым делом: если два запроса на отмену пришли разом,
+      // вернуть залог сможет только тот, чей DELETE реально сработал.
+      const removed = await tx.marketOrder.deleteMany({ where: { id: order.id, userId } });
+      if (removed.count === 0) throw new MarketError('Ордер уже снят');
+
       if (order.side === 'SELL') {
         const field = order.resource === 'METAL' ? 'metal' : 'crystal';
         const storage = await tx.hubStorage.findUniqueOrThrow({
           where: { userId_hubId: { userId, hubId: order.hubId } },
         });
-        const free = storageCapacity(storage.level) - storageUsed(storage);
-        if (free < order.remaining) {
-          throw new MarketError('На складе хаба не хватает места, чтобы вернуть товар');
-        }
-        await tx.hubStorage.update({
-          where: { id: storage.id },
-          data: { [field]: { increment: order.remaining } },
-        });
+        await incrementStorage(tx, storage.id, field, order.remaining, storageCapacity(storage.level),
+          'На складе хаба не хватает места, чтобы вернуть товар');
       } else {
         await tx.user.update({
           where: { id: userId },
           data: { credits: { increment: tradeTotal(order.remaining, order.pricePerUnit) } },
         });
       }
-
-      await tx.marketOrder.delete({ where: { id: order.id } });
     });
   } catch (error) {
     return toError(error, 'Не удалось отменить ордер');
@@ -321,60 +322,52 @@ export async function fillOrder(
       total = tradeTotal(executed, order.pricePerUnit);
       const field = order.resource === 'METAL' ? 'metal' : 'crystal';
 
+      // Захватываем объем в самом ордере условным списанием: если параллельный
+      // запрос успел раньше, count будет 0 и фантомной сделки не случится.
+      const taken = await tx.marketOrder.updateMany({
+        where: { id: order.id, remaining: { gte: executed } },
+        data: { remaining: { decrement: executed } },
+      });
+      if (taken.count === 0) throw new MarketError('Ордер разобрали, попробуй меньший объем');
+
       const myStorage = await tx.hubStorage.upsert({
         where: { userId_hubId: { userId, hubId: order.hubId } },
         create: { userId, hubId: order.hubId },
         update: {},
       });
-      const me = await tx.user.findUniqueOrThrow({ where: { id: userId } });
 
       if (order.side === 'SELL') {
         // Мы покупаем: платим криптогривну, товар ложится на наш склад хаба.
-        if (me.credits < total) throw new MarketError(`Не хватает криптогривны: нужно ${total} ₴`);
-        const free = storageCapacity(myStorage.level) - storageUsed(myStorage);
-        if (free < executed) {
-          throw new MarketError(`На складе хаба свободно только ${Math.floor(free)}`);
-        }
-
-        await tx.user.update({ where: { id: userId }, data: { credits: { decrement: total } } });
-        await tx.user.update({ where: { id: order.userId }, data: { credits: { increment: total } } });
-        await tx.hubStorage.update({
-          where: { id: myStorage.id },
-          data: { [field]: { increment: executed } },
+        const paid = await tx.user.updateMany({
+          where: { id: userId, credits: { gte: total } },
+          data: { credits: { decrement: total } },
         });
+        if (paid.count === 0) throw new MarketError(`Не хватает криптогривны: нужно ${total} ₴`);
+
+        await incrementStorage(tx, myStorage.id, field, executed, storageCapacity(myStorage.level),
+          `На складе хаба свободно только ${Math.floor(storageCapacity(myStorage.level) - storageUsed(myStorage))}`);
+        await tx.user.update({ where: { id: order.userId }, data: { credits: { increment: total } } });
       } else {
-        // Мы продаем: товар уходит со склада, криптогривна приходит нам.
-        if (myStorage[field] < executed) {
+        // Мы продаем: товар уходит со склада, криптогривна покупателя уже в залоге.
+        const shipped = await tx.hubStorage.updateMany({
+          where: { id: myStorage.id, [field]: { gte: executed } },
+          data: { [field]: { decrement: executed } },
+        });
+        if (shipped.count === 0) {
           throw new MarketError(`На складе хаба только ${Math.floor(myStorage[field])}`);
         }
+
         const buyerStorage = await tx.hubStorage.upsert({
           where: { userId_hubId: { userId: order.userId, hubId: order.hubId } },
           create: { userId: order.userId, hubId: order.hubId },
           update: {},
         });
-        const buyerFree = storageCapacity(buyerStorage.level) - storageUsed(buyerStorage);
-        if (buyerFree < executed) {
-          throw new MarketError('У покупателя не хватает места на складе хаба');
-        }
-
-        await tx.hubStorage.update({
-          where: { id: myStorage.id },
-          data: { [field]: { decrement: executed } },
-        });
-        await tx.hubStorage.update({
-          where: { id: buyerStorage.id },
-          data: { [field]: { increment: executed } },
-        });
-        // Криптогривна покупателя уже заблокирована при выставлении ордера.
+        await incrementStorage(tx, buyerStorage.id, field, executed, storageCapacity(buyerStorage.level),
+          'У покупателя не хватает места на складе хаба');
         await tx.user.update({ where: { id: userId }, data: { credits: { increment: total } } });
       }
 
-      const remaining = order.remaining - executed;
-      if (remaining > 0) {
-        await tx.marketOrder.update({ where: { id: order.id }, data: { remaining } });
-      } else {
-        await tx.marketOrder.delete({ where: { id: order.id } });
-      }
+      await tx.marketOrder.deleteMany({ where: { id: order.id, remaining: { lte: 0 } } });
 
       await tx.trade.create({
         data: {
@@ -396,6 +389,31 @@ export async function fillOrder(
   if (counterpartId) await syncCredits(counterpartId);
 
   return { ok: true, message: `Сделка исполнена: ${executed} единиц на ${total} ₴` };
+}
+
+/**
+ * Пополнение склада хаба с проверкой вместимости прямо в UPDATE:
+ * арифметику «занято + приход <= вместимость» нельзя выразить фильтром Prisma,
+ * поэтому используем условный SQL — иначе параллельные зачисления переполняют склад.
+ */
+async function incrementStorage(
+  tx: Pick<typeof prisma, '$executeRaw'>,
+  storageId: string,
+  field: 'metal' | 'crystal',
+  amount: number,
+  capacity: number,
+  errorMessage: string,
+): Promise<void> {
+  if (amount <= 0) return;
+
+  const updated =
+    field === 'metal'
+      ? await tx.$executeRaw`UPDATE hub_storages SET metal = metal + ${amount}
+          WHERE id = ${storageId} AND metal + crystal + ${amount} <= ${capacity}`
+      : await tx.$executeRaw`UPDATE hub_storages SET crystal = crystal + ${amount}
+          WHERE id = ${storageId} AND metal + crystal + ${amount} <= ${capacity}`;
+
+  if (updated === 0) throw new MarketError(errorMessage);
 }
 
 class MarketError extends Error {}
