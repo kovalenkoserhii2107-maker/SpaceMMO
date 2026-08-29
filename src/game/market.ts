@@ -3,10 +3,10 @@
  * Валюта — криптогривна, товар физически лежит на складе хаба.
  */
 
-export const TRADE_RESOURCES = ['METAL', 'CRYSTAL'] as const;
+const TRADE_RESOURCES = ['METAL', 'CRYSTAL'] as const;
 export type TradeResource = (typeof TRADE_RESOURCES)[number];
 
-export const ORDER_SIDES = ['BUY', 'SELL'] as const;
+const ORDER_SIDES = ['BUY', 'SELL'] as const;
 export type OrderSide = (typeof ORDER_SIDES)[number];
 
 export function isTradeResource(value: unknown): value is TradeResource {
@@ -21,14 +21,6 @@ export const RESOURCE_LABELS: Record<TradeResource, string> = {
   METAL: 'Металл',
   CRYSTAL: 'Кристаллы',
 };
-
-export const SIDE_LABELS: Record<OrderSide, string> = {
-  BUY: 'Покупка',
-  SELL: 'Продажа',
-};
-
-/** Стартовый баланс криптогривны нового аккаунта. */
-export const STARTING_CREDITS = 1000;
 
 /** Вместимость личного склада на хабе (общая на металл и кристаллы). */
 export function storageCapacity(level: number): number {
@@ -49,13 +41,9 @@ export function storageUsed(storage: { metal: number; crystal: number }): number
   return storage.metal + storage.crystal;
 }
 
-export function storageFree(storage: { metal: number; crystal: number; level: number }): number {
-  return Math.max(0, storageCapacity(storage.level) - storageUsed(storage));
-}
-
 /** Максимальные разумные пределы ордера, чтобы нельзя было сломать биржу вводом. */
-export const MAX_ORDER_QUANTITY = 1_000_000;
-export const MAX_ORDER_PRICE = 100_000;
+const MAX_ORDER_QUANTITY = 1_000_000;
+const MAX_ORDER_PRICE = 100_000;
 
 export interface OrderInput {
   side: OrderSide;

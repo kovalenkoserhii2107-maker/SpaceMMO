@@ -89,6 +89,7 @@ export async function getDiplomacy(userId: string): Promise<DiplomacyView> {
         };
       }),
     battles: battles.map((report) => {
+      // Json пишет только боевой модуль, поэтому форма данных известна заранее.
       const data = report.data as unknown as BattleData;
       const role = report.attackerId === userId ? 'ATTACKER' : 'DEFENDER';
       return {

@@ -84,10 +84,6 @@ export function techDescription(tech: TechnologyType): string {
   return TECHNOLOGIES[tech].description;
 }
 
-export function techLabRequirement(tech: TechnologyType): number {
-  return TECHNOLOGIES[tech].labLevel;
-}
-
 export function researchCost(tech: TechnologyType, targetLevel: number): ResourceAmounts {
   const { cost } = TECHNOLOGIES[tech];
   const scale = Math.pow(cost.factor, targetLevel - 1);

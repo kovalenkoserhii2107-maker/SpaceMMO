@@ -86,6 +86,7 @@ export async function buildSystemMap(userId: string): Promise<SystemMap | null> 
     const scan = scanByPlanet.get(planet.id);
     return foreignPlanetView(
       facts,
+      // Снимок разведки пишет Game Loop, структура данных известна заранее.
       scan ? { data: scan.data as unknown as ScanPayload, scannedAt: scan.scannedAt } : null,
       now,
     );

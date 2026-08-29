@@ -176,19 +176,30 @@ export interface StateUpdatePayload {
   serverTime: number;
 }
 
+/**
+ * События сервер → клиент.
+ * `state:update` уходит каждый тик и содержит полное состояние игрока:
+ * клиент ничего не досчитывает сам, кроме плавной интерполяции маркеров флотов.
+ */
 export interface ServerToClientEvents {
   'session:ready': (payload: { userId: string; username: string }) => void;
   'state:update': (payload: StateUpdatePayload) => void;
 }
 
+/**
+ * События клиент → сервер.
+ * Намеренно одно: все изменяющие действия идут через REST, где их удобнее
+ * валидировать и возвращать понятную ошибку. По сокету клиент может только
+ * попросить внеочередной снимок состояния (например, сразу после действия).
+ */
 export interface ClientToServerEvents {
   'state:request': () => void;
 }
 
-export interface InterServerEvents {
-  ping: () => void;
-}
+/** Обмен между узлами Socket.IO не используется: сервер работает в одном процессе. */
+export type InterServerEvents = Record<string, never>;
 
+/** Данные, которые сервер держит на сокете после авторизации по токену. */
 export interface SocketData {
   userId: string;
   username: string;

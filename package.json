@@ -12,7 +12,8 @@
     "generate": "tsx src/scripts/generateSystem.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "check:rules": "tsx src/scripts/checkRules.ts"
+    "check:rules": "tsx src/scripts/checkRules.ts",
+    "audit": "tsc -p tsconfig.audit.json"
   },
   "keywords": [],
   "author": "",

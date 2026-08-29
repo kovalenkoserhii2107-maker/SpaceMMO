@@ -15,7 +15,7 @@ export const BUILDING_TYPES = [
 export type BuildingType = (typeof BUILDING_TYPES)[number];
 
 /** Шахты — единственные постройки, которые дают ресурсы. */
-export type MineType = 'METAL_MINE' | 'CRYSTAL_MINE' | 'DEUTERIUM_MINE';
+type MineType = 'METAL_MINE' | 'CRYSTAL_MINE' | 'DEUTERIUM_MINE';
 
 export function isBuildingType(value: unknown): value is BuildingType {
   return typeof value === 'string' && (BUILDING_TYPES as readonly string[]).includes(value);
@@ -45,10 +45,10 @@ export interface EconomyBonuses {
   energy: number;
 }
 
-export const NEUTRAL_BONUSES: EconomyBonuses = { mining: 1, energy: 1 };
+const NEUTRAL_BONUSES: EconomyBonuses = { mining: 1, energy: 1 };
 
 /** Базовая выработка энергии колониального реактора — доступна без построек. */
-export const BASE_ENERGY_OUTPUT = 20;
+const BASE_ENERGY_OUTPUT = 20;
 
 /** Базовая добыча ресурсов в секунду на 1 уровне при коэффициенте 1.0. */
 const BASE_YIELD_PER_SECOND: Record<MineType, number> = {
@@ -206,10 +206,6 @@ function mineOutput(
   const level = levels[type];
   if (level <= 0) return 0;
   return BASE_YIELD_PER_SECOND[type] * level * Math.pow(1.1, level) * richness * bonuses.mining;
-}
-
-export function levelsAfterUpgrade(levels: BuildingLevels, type: BuildingType): BuildingLevels {
-  return { ...levels, [type]: levels[type] + 1 };
 }
 
 export function hasEnoughResources(stock: ResourceAmounts, cost: ResourceAmounts): boolean {

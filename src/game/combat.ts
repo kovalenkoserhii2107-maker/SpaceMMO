@@ -3,8 +3,14 @@
  * сравниваем боевую мощь сторон и списываем потери пропорционально.
  * Модуль чистый и детерминированный — один и тот же ввод всегда дает один и тот же бой.
  */
-import { DEFENSE_TYPES, defenseLabel, type DefenseCounts, type DefenseType } from './defenses.js';
-import { SHIP_TYPES, shipLabel, type ShipCounts, type ShipType } from './ships.js';
+import {
+  DEFENSE_TYPES,
+  defenseLabel,
+  emptyDefenseCounts,
+  type DefenseCounts,
+  type DefenseType,
+} from './defenses.js';
+import { emptyShipCounts, SHIP_TYPES, shipLabel, type ShipCounts, type ShipType } from './ships.js';
 
 interface CombatProfile {
   /** Урон в единицу боя. */
@@ -26,7 +32,7 @@ const DEFENSE_COMBAT: Record<DefenseType, CombatProfile> = {
 };
 
 /** Доля ресурсов со склада побежденного, которую можно вывезти. */
-export const PLUNDER_SHARE = 0.5;
+const PLUNDER_SHARE = 0.5;
 
 export interface SideForces {
   ships: ShipCounts;
@@ -63,7 +69,7 @@ export interface BattleOutcome {
   defenderLosses: UnitLoss[];
 }
 
-export function sidePower(forces: SideForces): SidePower {
+function sidePower(forces: SideForces): SidePower {
   let firepower = 0;
   let endurance = 0;
 
@@ -87,8 +93,20 @@ export function sidePower(forces: SideForces): SidePower {
 }
 
 /**
- * Бой. Побеждает сторона с большей мощью; проигравший теряет всё,
- * победитель — долю, равную отношению сил. Равенство трактуется в пользу защитника.
+ * Расчет боя.
+ *
+ * Модель намеренно мгновенная, без раундовой симуляции:
+ * - мощь стороны = суммарный урон × суммарная живучесть (корпус + щиты);
+ * - побеждает сторона с большей мощью, при равенстве держится защитник;
+ * - проигравший теряет всё, победитель — долю, равную отношению сил,
+ *   то есть чем убедительнее перевес, тем дешевле обходится победа.
+ *
+ * Расчет детерминированный: одинаковый состав сторон всегда дает одинаковый
+ * результат. Это сознательный выбор — бой можно воспроизвести в тестах и
+ * объяснить игроку цифрами в отчете. Фактор удачи, если понадобится,
+ * добавляется здесь одним множителем к `strength`.
+ *
+ * Флот без единого орудия (например, одни зонды) не может победить в принципе.
  */
 export function resolveBattle(attacker: SideForces, defender: SideForces): BattleOutcome {
   const attackerPower = sidePower(attacker);
@@ -126,7 +144,13 @@ export function resolveBattle(attacker: SideForces, defender: SideForces): Battl
   };
 }
 
-/** Сколько ресурсов можно вывезти: половина склада, но не больше трюмов. */
+/**
+ * Сколько ресурсов увезет победитель.
+ *
+ * Ограничений два: доля склада побежденного (PLUNDER_SHARE) и вместимость
+ * трюмов **уцелевших** кораблей. Второе обычно и является потолком: разбитый
+ * в бою флот увозит немного, даже если склад ломится.
+ */
 export function plunderAmount(
   stock: { metal: number; crystal: number },
   capacity: number,
@@ -148,7 +172,7 @@ function safeRatio(part: number, whole: number): number {
 }
 
 function applyShipLosses(ships: ShipCounts, lossRatio: number): ShipCounts {
-  const survivors = { PROBE: 0, TRANSPORTER: 0, LIGHT_FIGHTER: 0 } as ShipCounts;
+  const survivors = emptyShipCounts();
   for (const type of SHIP_TYPES) {
     survivors[type] = survive(ships[type], lossRatio);
   }
@@ -156,14 +180,14 @@ function applyShipLosses(ships: ShipCounts, lossRatio: number): ShipCounts {
 }
 
 function applyDefenseLosses(defenses: DefenseCounts, lossRatio: number): DefenseCounts {
-  const survivors = { ROCKET_LAUNCHER: 0, LASER_TURRET: 0 } as DefenseCounts;
+  const survivors = emptyDefenseCounts();
   for (const type of DEFENSE_TYPES) {
     survivors[type] = survive(defenses[type], lossRatio);
   }
   return survivors;
 }
 
-/** Потери округляются вверх: половина корабля не выживает. */
+/** Потери округляются вверх: половина корабля не выживает, а поврежденных единиц в модели нет. */
 function survive(count: number, lossRatio: number): number {
   if (count <= 0) return 0;
   if (lossRatio >= 1) return 0;

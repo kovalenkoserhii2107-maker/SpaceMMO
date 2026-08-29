@@ -175,17 +175,10 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .richness div { text-align: center; font-size: 12px; color: var(--muted); }
 .richness b { display: block; font-size: 15px; color: var(--text); }
 
-.buildings { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
-
-.building { padding: 16px; display: grid; gap: 12px; }
-.building header { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
-.building h4 { margin: 0; font-size: 15px; }
 .level { font-size: 12px; color: var(--accent); border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; }
 
 .cost { display: flex; gap: 14px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .cost span.lack { color: var(--err); }
-.energy-note { font-size: 11px; color: var(--muted); }
-.energy-note.bad { color: var(--warn); }
 
 .build-message { padding: 10px 14px; border-radius: 10px; font-size: 13px; border: 1px solid var(--line); background: var(--panel-2); }
 .build-message.ok { color: var(--ok); border-color: rgba(74, 222, 128, 0.35); }

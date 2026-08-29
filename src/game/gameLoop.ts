@@ -47,7 +47,6 @@ import {
   emptyDefenseCounts,
   MAX_DEFENSE_ORDER,
   missingDefenseRequirements,
-  type DefenseCounts,
   type DefenseType,
 } from './defenses.js';
 import { plunderAmount, resolveBattle, type SideForces } from './combat.js';
@@ -79,7 +78,7 @@ import {
   type ShipType,
 } from './ships.js';
 
-export const TICK_INTERVAL_MS = 1000;
+const TICK_INTERVAL_MS = 1000;
 const PERSIST_EVERY_TICKS = 10;
 /** Максимальный догоняемый офлайн-период (сутки). */
 const MAX_OFFLINE_SECONDS = 24 * 60 * 60;
@@ -388,7 +387,7 @@ class GameLoop {
       quantity,
       remaining: quantity,
       unitSeconds,
-      nextUnitAt: this.queueEndsAt(base, now) + unitSeconds * 1000,
+      nextUnitAt: this.queueEndsAt(base.shipJobs, now) + unitSeconds * 1000,
       createdAt: now,
     });
     base.dirty = true;
@@ -603,7 +602,7 @@ class GameLoop {
       quantity,
       remaining: quantity,
       unitSeconds,
-      nextUnitAt: this.defenseQueueEndsAt(base, now) + unitSeconds * 1000,
+      nextUnitAt: this.queueEndsAt(base.defenseJobs, now) + unitSeconds * 1000,
       createdAt: now,
     });
     base.dirty = true;
@@ -613,24 +612,17 @@ class GameLoop {
     return { ok: true, message: `Заказ принят: ${quantity} шт., по ${unitSeconds} с за установку` };
   }
 
-  private defenseQueueEndsAt(base: BaseRuntimeState, now: number): number {
-    const head = base.defenseJobs[0];
+  /**
+   * Момент, когда очередь верфи освободится от уже стоящих заказов.
+   * Считается одинаково для кораблей и обороны: очереди независимы,
+   * но устроены по одному принципу — тикает только первый заказ.
+   */
+  private queueEndsAt(jobs: readonly QueueJob[], now: number): number {
+    const head = jobs[0];
     if (!head) return now;
 
     let end = Math.max(head.nextUnitAt, now) + (head.remaining - 1) * head.unitSeconds * 1000;
-    for (const job of base.defenseJobs.slice(1)) {
-      end += job.remaining * job.unitSeconds * 1000;
-    }
-    return end;
-  }
-
-  /** Момент, когда верфь освободится от уже стоящих в очереди заказов. */
-  private queueEndsAt(base: BaseRuntimeState, now: number): number {
-    const head = base.shipJobs[0];
-    if (!head) return now;
-
-    let end = Math.max(head.nextUnitAt, now) + (head.remaining - 1) * head.unitSeconds * 1000;
-    for (const job of base.shipJobs.slice(1)) {
+    for (const job of jobs.slice(1)) {
       end += job.remaining * job.unitSeconds * 1000;
     }
     return end;
@@ -643,6 +635,19 @@ class GameLoop {
 
   /* ------------------------- Тик и таймеры ------------------------- */
 
+  /**
+   * Один тик игрового мира. Порядок шагов важен:
+   *
+   * 1. неактивные игроки выгружаются из памяти (их таймеры абсолютны и не теряются);
+   * 2. `settleUser` начисляет ресурсы и закрывает истекшие таймеры;
+   * 3. состояние рассылается подключенным сокетам;
+   * 4. раз в FLEET_SWEEP_EVERY_TICKS проверяются прилеты флотов — глобально,
+   *    независимо от того, кто сейчас в сети;
+   * 5. раз в PERSIST_EVERY_TICKS ресурсы пачкой уходят в БД.
+   *
+   * Тик защищен флагом `ticking`: если запись в БД затянулась, следующий
+   * интервал не запускает второй проход по тем же данным.
+   */
   private async tick(): Promise<void> {
     if (this.ticking) return;
     this.ticking = true;
@@ -684,11 +689,19 @@ class GameLoop {
     }
   }
 
-  /**
-   * Начисляет ресурсы и закрывает завершенные таймеры.
-   * Период разбивается на отрезки по моментам завершения стройки и исследования,
-   * поэтому добыча за офлайн считается с учетом уровней, действовавших в каждый момент.
-   * Возвращает true, если что-то завершилось и это нужно сохранить.
+/**
+   * Начисляет ресурсы и закрывает завершенные таймеры игрока.
+   *
+   * Ключевая тонкость — догон офлайна. Нельзя просто умножить текущую добычу
+   * на время простоя: за это время могла достроиться шахта или закрыться
+   * исследование, поднявшее добычу. Поэтому период разбивается на отрезки по
+   * моментам завершения стройки и исследования, и на каждом отрезке действует
+   * та добыча, которая была актуальна именно тогда.
+   *
+   * Очереди верфи и обороны разбираются после начисления: выпуск кораблей
+   * и пушек на добычу не влияет, поэтому дробить период под них не нужно.
+   *
+   * @returns true, если что-то завершилось и состояние нужно немедленно сохранить.
    */
   private settleUser(user: UserRuntimeState, now: number): boolean {
     let structural = false;
@@ -734,8 +747,14 @@ class GameLoop {
 
     for (const base of user.bases.values()) {
       this.accrueTo(base, user, now);
-      if (this.settleShipJobs(base, now)) structural = true;
-      if (this.settleDefenseJobs(base, now)) structural = true;
+      if (this.settleQueue(base.shipJobs, base.ships, now)) {
+        base.jobsDirty = true;
+        structural = true;
+      }
+      if (this.settleQueue(base.defenseJobs, base.defenses, now)) {
+        base.jobsDirty = true;
+        structural = true;
+      }
     }
 
     return structural;
@@ -748,67 +767,59 @@ class GameLoop {
     base.lastTickAt = time;
   }
 
-  /** Выпускает корабли, у которых наступило время выхода. */
-  private settleShipJobs(base: BaseRuntimeState, now: number): boolean {
+  /**
+   * Выпускает готовые единицы из очереди верфи.
+   *
+   * Общий код для кораблей и обороны: очереди хранятся отдельно, но правила
+   * одинаковые — заказы идут строго по порядку, единицы выходят поштучно,
+   * а следующий заказ стартует ровно в момент завершения предыдущего.
+   * Счетчик шагов страхует от зависания на большом офлайн-периоде.
+   *
+   * @param jobs очередь заказов; исчерпанные заказы удаляются из нее
+   * @param counts ангар или позиции обороны, куда попадают готовые единицы
+   */
+  private settleQueue<T extends string>(
+    jobs: QueueJob<T>[],
+    counts: Record<T, number>,
+    now: number,
+  ): boolean {
     let changed = false;
     let steps = 0;
 
-    while (base.shipJobs.length > 0 && steps < MAX_QUEUE_STEPS) {
+    while (jobs.length > 0 && steps < MAX_QUEUE_STEPS) {
       steps += 1;
-      const job = base.shipJobs[0];
+      const job = jobs[0];
       if (!job || job.nextUnitAt > now) break;
 
-      base.ships[job.type] += 1;
+      counts[job.type] += 1;
       job.remaining -= 1;
       changed = true;
 
       if (job.remaining <= 0) {
         const finishedAt = job.nextUnitAt;
-        base.shipJobs.shift();
-        const next = base.shipJobs[0];
+        jobs.shift();
+        const next = jobs[0];
         if (next) next.nextUnitAt = finishedAt + next.unitSeconds * 1000;
       } else {
         job.nextUnitAt += job.unitSeconds * 1000;
       }
     }
 
-    if (changed) base.jobsDirty = true;
-    return changed;
-  }
-
-  /** Выпускает готовые оборонительные установки — та же логика, что у верфи. */
-  private settleDefenseJobs(base: BaseRuntimeState, now: number): boolean {
-    let changed = false;
-    let steps = 0;
-
-    while (base.defenseJobs.length > 0 && steps < MAX_QUEUE_STEPS) {
-      steps += 1;
-      const job = base.defenseJobs[0];
-      if (!job || job.nextUnitAt > now) break;
-
-      base.defenses[job.type] += 1;
-      job.remaining -= 1;
-      changed = true;
-
-      if (job.remaining <= 0) {
-        const finishedAt = job.nextUnitAt;
-        base.defenseJobs.shift();
-        const next = base.defenseJobs[0];
-        if (next) next.nextUnitAt = finishedAt + next.unitSeconds * 1000;
-      } else {
-        job.nextUnitAt += job.unitSeconds * 1000;
-      }
-    }
-
-    if (changed) base.jobsDirty = true;
     return changed;
   }
 
   /* ------------------------- Флоты в полете ------------------------- */
 
   /**
-   * Прилеты и возвраты обрабатываются глобально, а не в состоянии игрока:
-   * груз должен долетать до получателя, даже если отправитель офлайн.
+   * Прилеты и возвраты флотов.
+   *
+   * Обрабатываются глобальным запросом к БД, а не через состояние игрока
+   * в памяти: груз должен долетать до получателя и корабли должны
+   * возвращаться домой, даже когда обе стороны офлайн.
+   *
+   * Каждый флот обрабатывается независимо и в своей транзакции — ошибка на
+   * одном не мешает остальным. После разбора кэш флотов обновляется только
+   * тем игрокам, кто сейчас в сети и увидит изменения в интерфейсе.
    */
   private async sweepFleets(now: number): Promise<void> {
     const timestamp = new Date(now);
@@ -903,17 +914,17 @@ class GameLoop {
     }
 
     if (fleet.mission === 'ATTACK' && fleet.targetPlanetId) {
-      await this.resolveAttack(fleet, now);
+      await this.resolveAttack(fleet, fleet.targetPlanetId, now);
       return;
     }
 
     if (fleet.mission === 'HUB_DELIVERY' && fleet.targetHubId) {
-      await this.unloadToHub(fleet);
+      await this.unloadToHub(fleet, fleet.targetHubId);
       return;
     }
 
     if (fleet.mission === 'HUB_PICKUP' && fleet.targetHubId) {
-      await this.loadFromHub(fleet);
+      await this.loadFromHub(fleet, fleet.targetHubId);
       return;
     }
 
@@ -923,12 +934,19 @@ class GameLoop {
   /**
    * Бой при прилете атакующего флота.
    *
-   * Расчет боя, списание уничтоженных кораблей и пушек, грабеж склада,
-   * судьба флота и отчет — все в одной транзакции: частично примененный бой
-   * означал бы задвоенные потери или воскресшие корабли после перезапуска.
+   * Последовательность:
+   * 1. состояние защитника сбрасывается из памяти в БД, чтобы бой считался
+   *    по актуальным силам, а не по данным десятисекундной давности;
+   * 2. в одной транзакции: чтение сил защитника → расчет боя → списание
+   *    уничтоженных кораблей и пушек → грабеж склада → судьба флота
+   *    (разворот с добычей или полное уничтожение) → запись отчета;
+   * 3. память защитника приводится к результату боя.
+   *
+   * Всё внутри одной транзакции сознательно: частично примененный бой после
+   * жесткого перезапуска означал бы задвоенные потери, воскресшие корабли
+   * или груз, списанный у защитника, но не доехавший до атакующего.
    */
-  private async resolveAttack(fleet: FleetRow, now: number): Promise<void> {
-    const planetId = fleet.targetPlanetId as string;
+  private async resolveAttack(fleet: FleetRow, planetId: string, now: number): Promise<void> {
     const planet = await prisma.planet.findUnique({
       where: { id: planetId },
       include: { base: true },
@@ -1079,9 +1097,7 @@ class GameLoop {
    * Разгрузка на торговый склад хаба. Что не влезло — остается в трюме
    * и возвращается домой, поэтому расширение склада имеет смысл.
    */
-  private async unloadToHub(fleet: FleetRow): Promise<void> {
-    const hubId = fleet.targetHubId as string;
-
+  private async unloadToHub(fleet: FleetRow, hubId: string): Promise<void> {
     await prisma.$transaction(async (tx) => {
       const storage = await tx.hubStorage.upsert({
         where: { userId_hubId: { userId: fleet.userId, hubId } },
@@ -1113,8 +1129,7 @@ class GameLoop {
   }
 
   /** Погрузка товара со склада хаба в трюмы — обратно повезем домой. */
-  private async loadFromHub(fleet: FleetRow): Promise<void> {
-    const hubId = fleet.targetHubId as string;
+  private async loadFromHub(fleet: FleetRow, hubId: string): Promise<void> {
     const capacity = fleetCapacity({
       PROBE: fleet.probes,
       TRANSPORTER: fleet.transporters,
@@ -1301,7 +1316,14 @@ class GameLoop {
     this.emitUser(userId);
   }
 
-  /** Пакетная запись изменений игрока. Ошибка не роняет тик — флаги возвращаются. */
+  /**
+   * Пакетная запись всего изменившегося состояния игрока одной транзакцией.
+   *
+   * Флаги `dirty` (ресурсы и уровни) и `jobsDirty` (очереди, флот, оборона)
+   * снимаются ДО запроса: иначе параллельное изменение состояния во время
+   * записи потерялось бы. Если транзакция упала, флаги возвращаются обратно,
+   * и данные уедут в БД на следующем проходе — тик при этом не падает.
+   */
   private async persistUser(user: UserRuntimeState): Promise<void> {
     const operations: Array<Prisma.PrismaPromise<unknown>> = [];
     const touched: BaseRuntimeState[] = [];
@@ -1466,6 +1488,14 @@ class GameLoop {
 /** Prisma требует индексируемый тип для Json-полей, обычные объекты не подходят. */
 function toJson(payload: object): Prisma.InputJsonObject {
   return payload as unknown as Prisma.InputJsonObject;
+}
+
+/** Заказ в очереди верфи: одинаково устроен для кораблей и обороны. */
+interface QueueJob<T extends string = string> {
+  type: T;
+  remaining: number;
+  unitSeconds: number;
+  nextUnitAt: number;
 }
 
 type FleetRow = Prisma.FleetModel & {

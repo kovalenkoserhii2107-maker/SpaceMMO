@@ -1,36 +1,37 @@
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { declarePeace, declareWar, getDiplomacy } from '../services/warService.js';
-import { requireAuth } from './middleware.js';
+import { currentUser, requireAuth } from './middleware.js';
+import type { ActionResponse, DiplomacyResponse, ErrorResponse } from '../types/api.js';
 
 export const warRouter: Router = Router();
 
 warRouter.use(requireAuth);
 
 /** Дипломатия и отчеты о боях. */
-warRouter.get('/', async (req, res) => {
-  res.json(await getDiplomacy(req.userId as string));
+warRouter.get('/', async (req, res: Response<DiplomacyResponse>) => {
+  res.json(await getDiplomacy(currentUser(req).id));
 });
 
 /** Объявить войну игроку. */
-warRouter.post('/declare', async (req, res) => {
+warRouter.post('/declare', async (req, res: Response<ActionResponse | ErrorResponse>) => {
   const targetId = (req.body as { targetId?: unknown } | undefined)?.targetId;
   if (typeof targetId !== 'string') {
     res.status(400).json({ error: 'Не указан противник' });
     return;
   }
 
-  const result = await declareWar(req.userId as string, targetId);
+  const result = await declareWar(currentUser(req).id, targetId);
   res.status(result.ok ? 200 : 409).json(result);
 });
 
 /** Заключить мир. */
-warRouter.post('/peace', async (req, res) => {
+warRouter.post('/peace', async (req, res: Response<ActionResponse | ErrorResponse>) => {
   const targetId = (req.body as { targetId?: unknown } | undefined)?.targetId;
   if (typeof targetId !== 'string') {
     res.status(400).json({ error: 'Не указан противник' });
     return;
   }
 
-  const result = await declarePeace(req.userId as string, targetId);
+  const result = await declarePeace(currentUser(req).id, targetId);
   res.status(result.ok ? 200 : 409).json(result);
 });

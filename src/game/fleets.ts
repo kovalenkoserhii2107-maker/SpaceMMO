@@ -6,7 +6,7 @@ import type { ResourceAmounts } from './rules.js';
 import type { TechLevels } from './techTree.js';
 import { SHIP_TYPES, shipLabel, type ShipCounts, type ShipType } from './ships.js';
 
-export const FLEET_MISSIONS = ['TRANSPORT', 'SCAN', 'HUB_DELIVERY', 'HUB_PICKUP', 'ATTACK'] as const;
+const FLEET_MISSIONS = ['TRANSPORT', 'SCAN', 'HUB_DELIVERY', 'HUB_PICKUP', 'ATTACK'] as const;
 export type FleetMission = (typeof FLEET_MISSIONS)[number];
 
 export function isFleetMission(value: unknown): value is FleetMission {
@@ -47,20 +47,8 @@ const SECONDS_PER_ORBIT = 25;
 /** Прирост скорости флота за уровень реактивного двигателя. */
 const DRIVE_SPEED_BONUS = 0.1;
 
-export function shipSpeed(type: ShipType): number {
-  return FLIGHT_PROFILES[type].speed;
-}
-
-export function shipCargo(type: ShipType): number {
-  return FLIGHT_PROFILES[type].cargo;
-}
-
-export function shipFuelPerSecond(type: ShipType): number {
-  return FLIGHT_PROFILES[type].fuelPerSecond;
-}
-
 /** Расстояние в орбитах внутри системы. */
-export function orbitDistance(fromPosition: number, toPosition: number): number {
+function orbitDistance(fromPosition: number, toPosition: number): number {
   return Math.abs(fromPosition - toPosition);
 }
 
@@ -69,7 +57,7 @@ export function fleetSize(ships: ShipCounts): number {
 }
 
 /** Скорость флота определяется самым медленным кораблем и двигателем. */
-export function fleetSpeed(ships: ShipCounts, techs: TechLevels): number {
+function fleetSpeed(ships: ShipCounts, techs: TechLevels): number {
   let slowest = Number.POSITIVE_INFINITY;
   for (const type of SHIP_TYPES) {
     if (ships[type] > 0) slowest = Math.min(slowest, FLIGHT_PROFILES[type].speed);
@@ -79,7 +67,7 @@ export function fleetSpeed(ships: ShipCounts, techs: TechLevels): number {
 }
 
 /** Время полета в одну сторону, секунды. */
-export function flightSeconds(ships: ShipCounts, techs: TechLevels, distance: number): number {
+function flightSeconds(ships: ShipCounts, techs: TechLevels, distance: number): number {
   const speed = fleetSpeed(ships, techs);
   if (speed <= 0) return 0;
   const raw = ((BASE_FLIGHT_SECONDS + SECONDS_PER_ORBIT * distance) * 100) / speed;
@@ -95,7 +83,7 @@ export function fleetCapacity(ships: ShipCounts): number {
  * Расход дейтерия за весь маршрут (туда и обратно).
  * Зависит от состава флота и времени в пути, как и требует ТЗ.
  */
-export function fuelCost(ships: ShipCounts, seconds: number): number {
+function fuelCost(ships: ShipCounts, seconds: number): number {
   const perSecond = SHIP_TYPES.reduce(
     (total, type) => total + ships[type] * FLIGHT_PROFILES[type].fuelPerSecond,
     0,

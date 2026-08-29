@@ -26,6 +26,7 @@ npm run dev                 # http://localhost:3000
 | `npm run dev` | dev-сервер с автоперезапуском |
 | `npm run build` / `npm start` | сборка и запуск production-версии |
 | `npm run typecheck` | строгая проверка типов |
+| `npm run audit` | поиск мертвого кода: неиспользуемые переменные и параметры |
 | `npm run generate` | генерация стартовой солнечной системы |
 | `npm run check:rules` | sanity-check формул добычи и энергии |
 | `npm run prisma:migrate` | миграции БД |
@@ -147,6 +148,15 @@ public/                клиент: логин + командный центр
 | GET | `/api/war` | дипломатия и отчеты о боях |
 | POST | `/api/war/declare` | объявить войну |
 | POST | `/api/war/peace` | заключить мир |
+
+## Качество кода
+- Строгий TypeScript: `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`.
+  Отдельный прогон `npm run audit` добавляет `noUnusedLocals` и `noUnusedParameters`.
+- Ответы REST API типизированы через `Response<...>` ([types/api.ts](src/types/api.ts)),
+  события Socket.IO — через типовые контракты ([types/socket.ts](src/types/socket.ts)):
+  расхождение между сервером и клиентом ловит компилятор.
+- Игровые правила вынесены в чистые модули без обращений к БД, поэтому формулы
+  проверяются отдельно от инфраструктуры (`npm run check:rules`).
 
 ## Надежность
 - Гонки на бирже закрыты условными `UPDATE` (списание проходит, только если товар или

@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import express from 'express';
+import express, { type Response } from 'express';
 import { Server } from 'socket.io';
 import { env } from './config/env.js';
 import { disconnectPrisma } from './db/prisma.js';
@@ -11,6 +11,7 @@ import { gameRouter } from './routes/game.js';
 import { marketRouter } from './routes/market.js';
 import { warRouter } from './routes/war.js';
 import { findUserByToken } from './services/userService.js';
+import type { HealthResponse } from './types/api.js';
 import type {
   ClientToServerEvents,
   InterServerEvents,
@@ -24,7 +25,7 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.join(rootDir, 'public')));
 
-app.get('/api/health', (_req, res) => {
+app.get('/api/health', (_req, res: Response<HealthResponse>) => {
   res.json({ ok: true, serverTime: Date.now() });
 });
 app.use('/api/auth', authRouter);

@@ -1,9 +1,10 @@
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { loginOrRegister, NoFreePlanetError, normalizeUsername } from '../services/userService.js';
+import type { ErrorResponse, LoginResponse } from '../types/api.js';
 
 export const authRouter: Router = Router();
 
-authRouter.post('/login', async (req, res) => {
+authRouter.post('/login', async (req, res: Response<LoginResponse | ErrorResponse>) => {
   const username = normalizeUsername((req.body as { username?: unknown } | undefined)?.username);
   if (!username) {
     res.status(400).json({ error: 'Ник должен быть от 3 до 24 символов (буквы, цифры, пробел, - и _)' });

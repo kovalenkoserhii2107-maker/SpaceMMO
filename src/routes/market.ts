@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { isOrderSide, isTradeResource } from '../game/market.js';
 import {
   cancelOrder,
@@ -7,26 +7,27 @@ import {
   placeOrder,
   upgradeStorage,
 } from '../services/marketService.js';
-import { requireAuth } from './middleware.js';
+import { currentUser, requireAuth } from './middleware.js';
 import { positiveInt, positivePrice } from './validation.js';
+import type { ActionResponse, ErrorResponse, MarketResponse } from '../types/api.js';
 
 export const marketRouter: Router = Router();
 
 marketRouter.use(requireAuth);
 
 /** Состояние биржи: склад на хабе, стакан, свои ордера и история сделок. */
-marketRouter.get('/', async (req, res) => {
-  res.json(await getMarketView(req.userId as string));
+marketRouter.get('/', async (req, res: Response<MarketResponse>) => {
+  res.json(await getMarketView(currentUser(req).id));
 });
 
 /** Расширение личного склада на хабе. */
-marketRouter.post('/storage/upgrade', async (req, res) => {
-  const result = await upgradeStorage(req.userId as string);
+marketRouter.post('/storage/upgrade', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const result = await upgradeStorage(currentUser(req).id);
   res.status(result.ok ? 200 : 409).json(result);
 });
 
 /** Выставить ордер на покупку или продажу. */
-marketRouter.post('/orders', async (req, res) => {
+marketRouter.post('/orders', async (req, res: Response<ActionResponse | ErrorResponse>) => {
   const body = (req.body ?? {}) as {
     side?: unknown;
     resource?: unknown;
@@ -54,7 +55,7 @@ marketRouter.post('/orders', async (req, res) => {
     return;
   }
 
-  const result = await placeOrder(req.userId as string, {
+  const result = await placeOrder(currentUser(req).id, {
     side: body.side,
     resource: body.resource,
     quantity,
@@ -64,19 +65,19 @@ marketRouter.post('/orders', async (req, res) => {
 });
 
 /** Исполнить чужой ордер целиком или частично. */
-marketRouter.post('/orders/:orderId/fill', async (req, res) => {
+marketRouter.post('/orders/:orderId/fill', async (req, res: Response<ActionResponse | ErrorResponse>) => {
   const quantity = positiveInt((req.body as { quantity?: unknown } | undefined)?.quantity);
   if (quantity === null) {
     res.status(400).json({ error: 'Объем сделки должен быть целым положительным числом' });
     return;
   }
 
-  const result = await fillOrder(req.userId as string, req.params.orderId, quantity);
+  const result = await fillOrder(currentUser(req).id, req.params.orderId, quantity);
   res.status(result.ok ? 200 : 409).json(result);
 });
 
 /** Снять свой ордер. */
-marketRouter.delete('/orders/:orderId', async (req, res) => {
-  const result = await cancelOrder(req.userId as string, req.params.orderId);
+marketRouter.delete('/orders/:orderId', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const result = await cancelOrder(currentUser(req).id, req.params.orderId);
   res.status(result.ok ? 200 : 409).json(result);
 });

@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { gameLoop } from '../game/gameLoop.js';
 import { isBuildingType } from '../game/rules.js';
 import { isTechnologyType } from '../game/techTree.js';
@@ -6,53 +6,60 @@ import { emptyShipCounts, isShipType, SHIP_TYPES } from '../game/ships.js';
 import { isDefenseType } from '../game/defenses.js';
 import { isFleetMission, planFlight } from '../game/fleets.js';
 import { buildSystemMap } from '../services/mapService.js';
-import { requireAuth } from './middleware.js';
+import { currentUser, requireAuth } from './middleware.js';
 import { amountsOrNull, nonNegativeInt, positiveInt } from './validation.js';
+import type {
+  ActionResponse,
+  ErrorResponse,
+  FlightPreviewResponse,
+  MapResponse,
+  StateResponse,
+} from '../types/api.js';
 
 export const gameRouter: Router = Router();
 
 gameRouter.use(requireAuth);
 
 /** Текущее состояние игрока: базы, очереди, технологии, флот. */
-gameRouter.get('/state', async (req, res) => {
-  const userId = req.userId as string;
-  await gameLoop.getUser(userId);
-  const payload = gameLoop.getSnapshot(userId);
+gameRouter.get('/state', async (req, res: Response<StateResponse | ErrorResponse>) => {
+  const user = currentUser(req);
+  await gameLoop.getUser(user.id);
+  const payload = gameLoop.getSnapshot(user.id);
 
   if (!payload) {
     res.status(404).json({ error: 'Состояние игрока не найдено' });
     return;
   }
-  res.json({ user: { id: userId, username: req.username }, ...payload });
+  res.json({ user: { id: user.id, username: user.username }, ...payload });
 });
 
 /** Поставить здание в стройку. */
-gameRouter.post('/bases/:baseId/build', async (req, res) => {
+gameRouter.post('/bases/:baseId/build', async (req, res: Response<ActionResponse | ErrorResponse>) => {
   const type = (req.body as { type?: unknown } | undefined)?.type;
   if (!isBuildingType(type)) {
     res.status(400).json({ error: 'Неизвестный тип постройки' });
     return;
   }
 
-  const result = await gameLoop.startBuild(req.userId as string, req.params.baseId, type);
+  const result = await gameLoop.startBuild(currentUser(req).id, req.params.baseId, type);
   res.status(result.ok ? 200 : 409).json(result);
 });
 
 /** Запустить исследование в лаборатории базы. */
-gameRouter.post('/bases/:baseId/research', async (req, res) => {
+gameRouter.post('/bases/:baseId/research', async (req, res: Response<ActionResponse | ErrorResponse>) => {
   const tech = (req.body as { tech?: unknown } | undefined)?.tech;
   if (!isTechnologyType(tech)) {
     res.status(400).json({ error: 'Неизвестная технология' });
     return;
   }
 
-  const result = await gameLoop.startResearch(req.userId as string, req.params.baseId, tech);
+  const result = await gameLoop.startResearch(currentUser(req).id, req.params.baseId, tech);
   res.status(result.ok ? 200 : 409).json(result);
 });
 
 /** Карта системы с учетом тумана войны. */
-gameRouter.get('/map', async (req, res) => {
-  const map = await buildSystemMap(req.userId as string);
+gameRouter.get('/map', async (req, res: Response<MapResponse | ErrorResponse>) => {
+  const map = await buildSystemMap(currentUser(req).id);
   if (!map) {
     res.status(404).json({ error: 'Система не найдена' });
     return;
@@ -61,7 +68,7 @@ gameRouter.get('/map', async (req, res) => {
 });
 
 /** Заказать корабли на верфи. */
-gameRouter.post('/bases/:baseId/ships', async (req, res) => {
+gameRouter.post('/bases/:baseId/ships', async (req, res: Response<ActionResponse | ErrorResponse>) => {
   const body = req.body as { type?: unknown; quantity?: unknown } | undefined;
   if (!isShipType(body?.type)) {
     res.status(400).json({ error: 'Неизвестный класс корабля' });
@@ -74,12 +81,12 @@ gameRouter.post('/bases/:baseId/ships', async (req, res) => {
     return;
   }
 
-  const result = await gameLoop.orderShips(req.userId as string, req.params.baseId, body.type, quantity);
+  const result = await gameLoop.orderShips(currentUser(req).id, req.params.baseId, body.type, quantity);
   res.status(result.ok ? 200 : 409).json(result);
 });
 
 /** Заказать стационарную оборону на верфи. */
-gameRouter.post('/bases/:baseId/defenses', async (req, res) => {
+gameRouter.post('/bases/:baseId/defenses', async (req, res: Response<ActionResponse | ErrorResponse>) => {
   const body = req.body as { type?: unknown; quantity?: unknown } | undefined;
   if (!isDefenseType(body?.type)) {
     res.status(400).json({ error: 'Неизвестный тип обороны' });
@@ -92,7 +99,7 @@ gameRouter.post('/bases/:baseId/defenses', async (req, res) => {
     return;
   }
 
-  const result = await gameLoop.orderDefenses(req.userId as string, req.params.baseId, body.type, quantity);
+  const result = await gameLoop.orderDefenses(currentUser(req).id, req.params.baseId, body.type, quantity);
   res.status(result.ok ? 200 : 409).json(result);
 });
 
@@ -124,9 +131,9 @@ function readShips(input: Record<string, unknown> | undefined) {
 }
 
 /** Предрасчет маршрута: время, топливо, трюмы. Формулы остаются на сервере. */
-gameRouter.post('/bases/:baseId/fleets/preview', async (req, res) => {
+gameRouter.post('/bases/:baseId/fleets/preview', async (req, res: Response<FlightPreviewResponse | ErrorResponse>) => {
   const body = (req.body ?? {}) as FleetRequestBody;
-  const user = await gameLoop.getUser(req.userId as string);
+  const user = await gameLoop.getUser(currentUser(req).id);
   const base = user?.bases.get(req.params.baseId);
   if (!user || !base) {
     res.status(404).json({ error: 'База не найдена' });
@@ -149,7 +156,7 @@ gameRouter.post('/bases/:baseId/fleets/preview', async (req, res) => {
 });
 
 /** Отправить флот с базы на другую планету. */
-gameRouter.post('/bases/:baseId/fleets', async (req, res) => {
+gameRouter.post('/bases/:baseId/fleets', async (req, res: Response<ActionResponse | ErrorResponse>) => {
   const body = (req.body ?? {}) as FleetRequestBody;
 
   if (!isFleetMission(body.mission)) {
@@ -177,7 +184,7 @@ gameRouter.post('/bases/:baseId/fleets', async (req, res) => {
   }
 
   const result = await gameLoop.sendFleet(
-    req.userId as string,
+    currentUser(req).id,
     req.params.baseId,
     target,
     body.mission,
