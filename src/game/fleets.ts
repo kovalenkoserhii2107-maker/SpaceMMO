@@ -38,7 +38,7 @@ export function isHubMission(mission: FleetMission): boolean {
 interface FlightProfile {
   /** Базовая скорость: чем выше, тем короче перелет. */
   speed: number;
-  /** Грузоподъемность (металл + кристаллы). */
+  /** Грузоподъемность: металл, кристаллы и дейтерий делят один трюм. */
   cargo: number;
   /** Расход дейтерия в секунду полета на один корабль. */
   fuelPerSecond: number;
@@ -230,13 +230,16 @@ export function validateComposition(mission: FleetMission, ships: ShipCounts): s
   return null;
 }
 
-/** Проверка груза: только металл и кристаллы, в пределах трюма. */
-export function validateCargo(
-  ships: ShipCounts,
-  cargo: Pick<ResourceAmounts, 'metal' | 'crystal'>,
-): string | null {
-  if (cargo.metal < 0 || cargo.crystal < 0) return 'Некорректный объем груза';
-  const total = cargo.metal + cargo.crystal;
+/**
+ * Проверка груза: три ресурса делят один трюм.
+ * Дейтерий возится наравне с металлом и кристаллами — он и топливо, и товар,
+ * поэтому колонии умеют перебрасывать его между собой.
+ */
+export function validateCargo(ships: ShipCounts, cargo: ResourceAmounts): string | null {
+  if (cargo.metal < 0 || cargo.crystal < 0 || cargo.deuterium < 0) {
+    return 'Некорректный объем груза';
+  }
+  const total = cargo.metal + cargo.crystal + cargo.deuterium;
   if (total <= 0) return null;
 
   const capacity = fleetCapacity(ships);

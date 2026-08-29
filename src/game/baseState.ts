@@ -106,7 +106,7 @@ export interface FleetRuntimeState {
   targetHubId: string | null;
   targetName: string;
   ships: ShipCounts;
-  cargo: { metal: number; crystal: number; antimatter: number };
+  cargo: { metal: number; crystal: number; deuterium: number; antimatter: number };
   pickup: { metal: number; crystal: number };
   fuelSpent: number;
   distance: number;

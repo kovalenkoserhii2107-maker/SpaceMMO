@@ -130,6 +130,7 @@
           <button type="button" class="tab" data-tab="market">Хаб и биржа</button>
           <button type="button" class="tab" data-tab="war">Экспедиции и войны</button>
           <button type="button" class="tab" data-tab="syndicate">Синдикат</button>
+          <button type="button" class="tab" data-tab="simulator">Симулятор</button>
         </nav>
 
         <section data-panel="buildings">
@@ -177,10 +178,18 @@
                   <span>Миссия</span>
                   <select id="mission"></select>
                 </label>
+                <div class="preset-row">
+                  <label class="field">
+                    <span>Шаблон флота</span>
+                    <select id="preset-select"><option value="">— вручную —</option></select>
+                  </label>
+                  <button type="button" class="ghost" id="preset-manage">Шаблоны</button>
+                </div>
                 <div id="fleet-inputs" class="fleet-inputs"></div>
                 <div id="cargo-inputs" class="fleet-inputs">
                   <label class="field"><span id="cargo-metal-label">Металл</span><input id="cargo-metal" type="number" min="0" value="0"></label>
                   <label class="field"><span id="cargo-crystal-label">Кристаллы</span><input id="cargo-crystal" type="number" min="0" value="0"></label>
+                  <label class="field" id="cargo-deuterium-field"><span id="cargo-deuterium-label">Дейтерий</span><input id="cargo-deuterium" type="number" min="0" value="0"></label>
                 </div>
                 <div id="flight-plan" class="flight-plan">Выбери корабли, чтобы увидеть расчет.</div>
                 <button id="send-fleet" type="button" class="primary">Отправить флот</button>
@@ -253,6 +262,62 @@
 
         <section data-panel="syndicate" hidden>
           <div id="syndicate-panel"></div>
+        </section>
+
+        <section data-panel="simulator" hidden>
+          <div class="sim-grid">
+            <div class="hub-card">
+              <h3 class="section-title">Атакующий флот</h3>
+              <div id="sim-attacker" class="fleet-inputs"></div>
+              <button type="button" class="ghost" id="sim-fill-mine">Подставить флот базы</button>
+            </div>
+
+            <div class="hub-card">
+              <h3 class="section-title">Защитник</h3>
+              <label class="field">
+                <span>Загрузить из отчета шпионажа</span>
+                <select id="sim-espionage"><option value="">— вручную —</option></select>
+              </label>
+              <p id="sim-espionage-note" class="storage-note" hidden></p>
+              <div id="sim-defender" class="fleet-inputs"></div>
+              <div id="sim-defenses" class="fleet-inputs"></div>
+              <h4 class="sim-subtitle">Склад защитника (для расчета добычи)</h4>
+              <div class="fleet-inputs">
+                <label class="field"><span>Металл</span><input id="sim-stock-metal" type="number" min="0" value="0"></label>
+                <label class="field"><span>Кристаллы</span><input id="sim-stock-crystal" type="number" min="0" value="0"></label>
+                <label class="field"><span>Дейтерий</span><input id="sim-stock-deuterium" type="number" min="0" value="0"></label>
+                <label class="field"><span>Ур. хранилища</span><input id="sim-stock-storage" type="number" min="0" value="0"></label>
+              </div>
+            </div>
+          </div>
+
+          <div class="sim-actions">
+            <button type="button" class="primary" id="sim-run">Симулировать</button>
+            <button type="button" class="ghost" id="sim-reset">Очистить</button>
+            <span class="storage-note">Расчет идет по тем же формулам, что и настоящий бой. Ничего не отправляется и не тратится.</span>
+          </div>
+
+          <div id="sim-result" class="battles"></div>
+        </section>
+
+        <!-- Управление шаблонами флотов -->
+        <section data-panel="presets" hidden>
+          <div class="sim-actions">
+            <button type="button" class="ghost" id="preset-back">← К карте системы</button>
+          </div>
+          <h3 class="section-title">Шаблоны флотов</h3>
+          <p class="storage-note">Шаблон — это только состав. Наличие кораблей проверяется при отправке, поэтому состав можно сохранить заранее.</p>
+          <div id="preset-list" class="queue"></div>
+
+          <h3 class="section-title">Новый шаблон</h3>
+          <div class="hub-card">
+            <label class="field"><span>Название</span><input id="preset-name" type="text" maxlength="32" placeholder="Фарм-отряд"></label>
+            <div id="preset-inputs" class="fleet-inputs"></div>
+            <div class="sim-actions">
+              <button type="button" class="primary" id="preset-save">Сохранить шаблон</button>
+              <button type="button" class="ghost" id="preset-cancel" hidden>Отменить правку</button>
+            </div>
+          </div>
         </section>
 
         <p id="build-message" class="build-message" hidden></p>

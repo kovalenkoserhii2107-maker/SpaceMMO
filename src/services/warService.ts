@@ -55,7 +55,7 @@ export interface DiplomacyView {
     planetName: string;
     attackerName: string;
     defenderName: string;
-    plunder: { metal: number; crystal: number };
+    plunder: { metal: number; crystal: number; deuterium: number };
     /** Почему увезли именно столько: что спрятало хранилище защитника. */
     storageDefense: StorageDefenseReport | null;
     myLosses: Array<{ label: string; lost: number; before: number }>;
@@ -106,7 +106,7 @@ interface BattleData {
   defenderLosses: Array<{ label: string; lost: number; before: number }>;
   attackerDamageReport?: DamageReport;
   defenderDamageReport?: DamageReport;
-  plunder: { metal: number; crystal: number };
+  plunder: { metal: number; crystal: number; deuterium: number };
   storageDefense?: StorageDefenseReport;
 }
 
@@ -238,7 +238,11 @@ export async function getDiplomacy(commanderId: string): Promise<DiplomacyView> 
         planetName: data.planetName,
         attackerName: data.attackerName,
         defenderName: data.defenderName,
-        plunder: { metal: report.plunderMetal, crystal: report.plunderCrystal },
+        plunder: {
+          metal: report.plunderMetal,
+          crystal: report.plunderCrystal,
+          deuterium: report.plunderDeuterium,
+        },
         storageDefense: data.storageDefense ?? null,
         myLosses: role === 'ATTACKER' ? data.attackerLosses : data.defenderLosses,
         enemyLosses: role === 'ATTACKER' ? data.defenderLosses : data.attackerLosses,

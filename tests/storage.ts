@@ -256,8 +256,8 @@ const HOLDS = 1_000_000;
 }
 
 {
-  // Дейтерий занимает место и потому выталкивает металл в излишек,
-  // но танкеров нет — увозится только металл.
+  // Дейтерий занимает место в хранилище и вывозится наравне с остальными:
+  // трюмы транспортов принимают его как обычный груз.
   const loot = plunderAmount({ metal: 5000, crystal: 0, deuterium: 5000 }, CAPACITY, HOLDS);
   check(
     'дейтерий считается в лимите склада',
@@ -265,9 +265,34 @@ const HOLDS = 1_000_000;
     `лежало ${loot.stored}, излишек ${loot.surplus}`,
   );
   check(
-    'дейтерий не вывозится: увозится только его доля металла',
-    loot.metal === 450 && loot.crystal === 0,
-    `${loot.metal} Me`,
+    'дейтерий вывозится наравне с металлом и кристаллами',
+    loot.metal === 450 && loot.deuterium === 450 && loot.crystal === 0,
+    `${loot.metal} Me + ${loot.deuterium} De`,
+  );
+  check(
+    'суммарно увезли 90% излишка',
+    loot.metal + loot.crystal + loot.deuterium === 900,
+    `${loot.metal + loot.crystal + loot.deuterium} из излишка ${loot.surplus}`,
+  );
+}
+
+{
+  // Трюмы забиваются по порядку, поэтому при нехватке места дейтерий грузят
+  // последним — но склад защитника теряет ровно то, что уехало.
+  const loot = plunderAmount({ metal: 6000, crystal: 6000, deuterium: 8000 }, CAPACITY, 900);
+  check(
+    'при нехватке трюмов дейтерий грузится последним',
+    loot.metal === 900 && loot.crystal === 0 && loot.deuterium === 0 && loot.cargoLimited,
+    `${loot.metal} Me + ${loot.crystal} Cr + ${loot.deuterium} De при трюмах 900`,
+  );
+}
+
+{
+  const loot = plunderAmount({ metal: 0, crystal: 0, deuterium: 20000 }, CAPACITY, HOLDS);
+  check(
+    'склад из одного дейтерия отдает дейтерий',
+    loot.deuterium === 9900 && loot.metal === 0,
+    `${loot.deuterium} De`,
   );
 }
 

@@ -97,6 +97,29 @@
     tradeLog: $('trade-log'),
     cargoMetalLabel: $('cargo-metal-label'),
     cargoCrystalLabel: $('cargo-crystal-label'),
+    cargoDeuterium: $('cargo-deuterium'),
+    cargoDeuteriumField: $('cargo-deuterium-field'),
+    presetSelect: $('preset-select'),
+    presetManage: $('preset-manage'),
+    presetList: $('preset-list'),
+    presetName: $('preset-name'),
+    presetInputs: $('preset-inputs'),
+    presetSave: $('preset-save'),
+    presetBack: $('preset-back'),
+    presetCancel: $('preset-cancel'),
+    simAttacker: $('sim-attacker'),
+    simDefender: $('sim-defender'),
+    simDefenses: $('sim-defenses'),
+    simEspionage: $('sim-espionage'),
+    simEspionageNote: $('sim-espionage-note'),
+    simStockMetal: $('sim-stock-metal'),
+    simStockCrystal: $('sim-stock-crystal'),
+    simStockDeuterium: $('sim-stock-deuterium'),
+    simStockStorage: $('sim-stock-storage'),
+    simRun: $('sim-run'),
+    simReset: $('sim-reset'),
+    simResult: $('sim-result'),
+    simFillMine: $('sim-fill-mine'),
     defenses: $('defenses'),
     defenseSummary: $('defense-summary'),
     defenseQueue: $('defense-queue'),
@@ -340,6 +363,7 @@
     await loadGalaxy();
     await loadMarket();
     await loadWar();
+    await loadPresets();
   }
 
   /**
@@ -436,26 +460,39 @@
 
   el.tabs.addEventListener('click', (event) => {
     const button = event.target.closest('.tab');
-    if (!button) return;
-    state.activeTab = button.dataset.tab;
+    if (button) showPanel(button.dataset.tab);
+  });
+
+  /**
+   * Переключение панели. Вынесено из обработчика вкладок, потому что панель
+   * шаблонов открывается кнопкой из формы отправки, а вкладки для нее нет.
+   */
+  function showPanel(name) {
+    state.activeTab = name;
 
     for (const tab of el.tabs.querySelectorAll('.tab')) {
-      tab.classList.toggle('active', tab.dataset.tab === state.activeTab);
+      tab.classList.toggle('active', tab.dataset.tab === name);
     }
     for (const panel of document.querySelectorAll('[data-panel]')) {
-      panel.hidden = panel.dataset.panel !== state.activeTab;
+      panel.hidden = panel.dataset.panel !== name;
     }
-    if (state.activeTab === 'map') {
+
+    if (name === 'map') {
       void loadMap();
       void loadGalaxy();
     }
-    if (state.activeTab === 'market') void loadMarket();
-    if (state.activeTab === 'syndicate') void loadSyndicate();
-    if (state.activeTab === 'war') {
+    if (name === 'market') void loadMarket();
+    if (name === 'syndicate') void loadSyndicate();
+    if (name === 'war') {
       void loadWar();
       void refreshProfile();
     }
-  });
+    if (name === 'simulator') {
+      initSimulator();
+      void loadEspionageTargets();
+    }
+    if (name === 'presets') void loadPresets();
+  }
 
   /* ---------- Рендер ---------- */
 
@@ -868,9 +905,13 @@
     });
   }
 
-  async function send(url, body) {
+  async function send(url, body, method = 'POST') {
     try {
-      const response = await fetch(url, { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) });
+      const response = await fetch(url, {
+        method,
+        headers: authHeaders(),
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
       const data = await response.json();
 
       if (!response.ok) {
@@ -1175,18 +1216,59 @@
       ? `<br>шахты: ${planet.buildings.METAL_MINE}/${planet.buildings.CRYSTAL_MINE}/${planet.buildings.DEUTERIUM_MINE}` +
         ` · лаб ${planet.buildings.RESEARCH_LAB} · верфь ${planet.buildings.SHIPYARD}`
       : '';
-    const resources = planet.resources
-      ? `<br>склад: ${fmt(planet.resources.metal)} Me · ${fmt(planet.resources.crystal)} Cr · ${fmt(planet.resources.deuterium)} De`
+    // Флот и склад меняются быстро: после суток сервер их уже не отдает,
+    // и показывать нечего — вместо цифр честные «???».
+    const unknown = '<span class="unknown-value">???</span>';
+    const resources = planet.colonized
+      ? planet.resources
+        ? `<br>склад: ${fmt(planet.resources.metal)} Me · ${fmt(planet.resources.crystal)} Cr · ${fmt(planet.resources.deuterium)} De`
+        : planet.staleHidden
+          ? `<br>склад: ${unknown}`
+          : ''
       : '';
-    const fleet = planet.fleet
-      ? `<br>флот: зонды ${planet.fleet.PROBE} · транспорты ${planet.fleet.TRANSPORTER} · истребители ${planet.fleet.LIGHT_FIGHTER}`
+    const fleet = planet.colonized
+      ? planet.fleet
+        ? `<br>флот: зонды ${planet.fleet.PROBE} · транспорты ${planet.fleet.TRANSPORTER} · ` +
+          `истребители ${planet.fleet.LIGHT_FIGHTER} · крейсера ${planet.fleet.HEAVY_CRUISER} · ` +
+          `фрегаты ${planet.fleet.ION_FRIGATE}`
+        : planet.staleHidden
+          ? `<br>флот: ${unknown}`
+          : ''
       : '';
-    const age = planet.visibility === 'SCANNED'
-      ? `<br><span class="unknown">данные разведки: ${fmtTime(planet.scanAgeSeconds)} назад</span>`
-      : '';
+    const defenses = planet.defenses
+      ? `<br>оборона: ракеты ${planet.defenses.ROCKET_LAUNCHER} · лазеры ${planet.defenses.LASER_TURRET}`
+      : planet.colonized && planet.staleHidden
+        ? `<br>оборона: ${unknown}`
+        : '';
+    const age = planet.visibility === 'SCANNED' ? scanAgeHtml(planet) : '';
     const hint = short ? '' : '<br>';
 
-    return head + owner + rich + buildings + resources + fleet + age + hint;
+    return head + owner + rich + buildings + resources + fleet + defenses + age + hint;
+  }
+
+  const FRESHNESS_LABELS = {
+    FRESH: { css: 'fresh', text: 'данные свежие' },
+    STALE: { css: 'stale', text: 'данные могут быть неточны' },
+    OUTDATED: { css: 'outdated', text: 'данные устарели' },
+  };
+
+  /**
+   * Индикатор свежести разведданных.
+   * Снимок зонда не обновляется сам, поэтому возраст — такая же часть данных,
+   * как и сами цифры: по суточному снимку планировать атаку нельзя.
+   */
+  function scanAgeHtml(planet) {
+    const mark = FRESHNESS_LABELS[planet.freshness] || FRESHNESS_LABELS.OUTDATED;
+    const age = `разведка ${fmtTime(planet.scanAgeSeconds)} назад`;
+    const badge = `<span class="freshness ${mark.css}">${age}</span>`;
+
+    if (planet.freshness === 'OUTDATED') {
+      return `<br>${badge}<br><span class="scan-hidden">Данные устарели: флот и склад скрыты. Отправь зонд заново.</span>`;
+    }
+    if (planet.freshness === 'STALE') {
+      return `<br>${badge}<br><span class="scan-warning">Данные могут быть неточны.</span>`;
+    }
+    return `<br>${badge}`;
   }
 
   function selectPlanet(planetId) {
@@ -1229,6 +1311,11 @@
     const pickup = el.mission.value === 'HUB_PICKUP';
     el.cargoMetalLabel.textContent = pickup ? 'Забрать металла' : 'Металл';
     el.cargoCrystalLabel.textContent = pickup ? 'Забрать кристаллов' : 'Кристаллы';
+
+    // Хаб торгует только металлом и кристаллами, дейтерий туда не возят.
+    const hubRun = pickup || el.mission.value === 'HUB_DELIVERY';
+    el.cargoDeuteriumField.hidden = hubRun;
+    if (hubRun) el.cargoDeuterium.value = '0';
   }
 
   function renderPlanetInfo() {
@@ -1357,7 +1444,10 @@
       }
       map.plan = await response.json();
 
-      const cargo = Number(el.cargoMetal.value || 0) + Number(el.cargoCrystal.value || 0);
+      const cargo =
+        Number(el.cargoMetal.value || 0) +
+        Number(el.cargoCrystal.value || 0) +
+        Number(el.cargoDeuterium.value || 0);
       const overload = cargo > map.plan.capacity;
       const jump = map.plan.kind === 'INTERSTELLAR';
 
@@ -1388,6 +1478,7 @@
     const amounts = {
       metal: Number(el.cargoMetal.value) || 0,
       crystal: Number(el.cargoCrystal.value) || 0,
+      deuterium: Number(el.cargoDeuterium.value) || 0,
     };
     const pickup = el.mission.value === 'HUB_PICKUP';
 
@@ -1395,8 +1486,8 @@
       ...target,
       mission: el.mission.value,
       ships: readComposition(),
-      cargo: pickup ? { metal: 0, crystal: 0 } : amounts,
-      pickup: pickup ? amounts : { metal: 0, crystal: 0 },
+      cargo: pickup ? { metal: 0, crystal: 0, deuterium: 0 } : amounts,
+      pickup: pickup ? { metal: amounts.metal, crystal: amounts.crystal } : { metal: 0, crystal: 0 },
     });
 
     // Сбрасываем форму, чтобы повторный клик не отправил тот же флот дважды.
@@ -1404,6 +1495,8 @@
       for (const refs of Object.values(fleetInputs)) refs.input.value = '0';
       el.cargoMetal.value = '0';
       el.cargoCrystal.value = '0';
+      el.cargoDeuterium.value = '0';
+      el.presetSelect.value = '';
       map.plan = null;
       el.flightPlan.textContent = 'Выбери корабли, чтобы увидеть расчет.';
     }
@@ -1448,6 +1541,7 @@
   });
   el.cargoMetal.addEventListener('input', schedulePlan);
   el.cargoCrystal.addEventListener('input', schedulePlan);
+  el.cargoDeuterium.addEventListener('input', schedulePlan);
 
 
   /* ---------- Хаб и биржа ---------- */
@@ -2477,7 +2571,388 @@
     el.syndicatePanel.appendChild(footer);
   }
 
+
+  /* ---------- Шаблоны флотов ---------- */
+
+  const presets = { list: [], editingId: null };
+
+  async function loadPresets() {
+    renderPresetInputs();
+    try {
+      const response = await fetch('/api/commander/fleet-templates', { headers: authHeaders() });
+      if (!response.ok) return;
+      presets.list = (await response.json()).templates || [];
+      renderPresetSelect();
+      renderPresetList();
+    } catch (error) {
+      // Молча: без шаблонов интерфейс отправки работает как раньше.
+    }
+  }
+
+  function renderPresetSelect() {
+    const current = el.presetSelect.value;
+    el.presetSelect.innerHTML = '<option value="">— вручную —</option>';
+    for (const preset of presets.list) {
+      const option = document.createElement('option');
+      option.value = preset.id;
+      option.textContent = `${preset.name} (${preset.size})`;
+      el.presetSelect.appendChild(option);
+    }
+    if (presets.list.some((preset) => preset.id === current)) el.presetSelect.value = current;
+  }
+
+  /**
+   * Шаблон заполняет инпуты, но не отправляет флот: игрок видит состав
+   * и может поправить его перед вылетом.
+   */
+  function applyPreset(id) {
+    const preset = presets.list.find((item) => item.id === id);
+    if (!preset) return;
+
+    for (const [type, refs] of Object.entries(fleetInputs)) {
+      refs.input.value = String(preset.ships[type] || 0);
+    }
+    schedulePlan();
+
+    const base = activeBase();
+    const missing = base
+      ? Object.keys(SHIP_LABELS).filter((type) => (preset.ships[type] || 0) > base.fleet[type])
+      : [];
+    if (missing.length) {
+      showBuildMessage(`Шаблон «${preset.name}»: на базе не хватает кораблей`, false);
+    }
+  }
+
+  function renderPresetList() {
+    el.presetList.innerHTML = '';
+    if (!presets.list.length) {
+      const empty = document.createElement('div');
+      empty.className = 'queue-item';
+      empty.textContent = 'Шаблонов пока нет';
+      el.presetList.appendChild(empty);
+      return;
+    }
+
+    for (const preset of presets.list) {
+      const item = document.createElement('div');
+      item.className = 'queue-item preset-item';
+
+      const body = document.createElement('div');
+      body.className = 'preset-body';
+      body.innerHTML =
+        `<div class="preset-name">${preset.name}</div>` +
+        `<div class="preset-ships">${describePreset(preset.ships)}</div>`;
+
+      const actions = document.createElement('div');
+      actions.className = 'preset-actions';
+
+      const edit = document.createElement('button');
+      edit.type = 'button';
+      edit.className = 'ghost';
+      edit.textContent = 'Править';
+      edit.addEventListener('click', () => startPresetEdit(preset));
+
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'ghost';
+      remove.textContent = 'Удалить';
+      remove.addEventListener('click', () => deletePreset(preset));
+
+      actions.append(edit, remove);
+      item.append(body, actions);
+      el.presetList.appendChild(item);
+    }
+  }
+
+  function describePreset(ships) {
+    const parts = Object.entries(SHIP_LABELS)
+      .filter(([type]) => (ships[type] || 0) > 0)
+      .map(([type, label]) => `${label} ×${ships[type]}`);
+    return parts.length ? parts.join(', ') : 'пустой состав';
+  }
+
+  const presetInputs = {};
+
+  function renderPresetInputs() {
+    if (el.presetInputs.childElementCount > 0) return;
+    for (const [type, label] of Object.entries(SHIP_LABELS)) {
+      const field = document.createElement('label');
+      field.className = 'field';
+      const caption = document.createElement('span');
+      caption.textContent = label;
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.min = '0';
+      input.value = '0';
+      field.append(caption, input);
+      el.presetInputs.appendChild(field);
+      presetInputs[type] = input;
+    }
+  }
+
+  function readPresetInputs() {
+    const ships = {};
+    for (const [type, input] of Object.entries(presetInputs)) {
+      ships[type] = Math.max(0, Math.floor(Number(input.value) || 0));
+    }
+    return ships;
+  }
+
+  function startPresetEdit(preset) {
+    presets.editingId = preset.id;
+    el.presetName.value = preset.name;
+    for (const [type, input] of Object.entries(presetInputs)) {
+      input.value = String(preset.ships[type] || 0);
+    }
+    el.presetSave.textContent = 'Сохранить изменения';
+    el.presetCancel.hidden = false;
+  }
+
+  function resetPresetForm() {
+    presets.editingId = null;
+    el.presetName.value = '';
+    for (const input of Object.values(presetInputs)) input.value = '0';
+    el.presetSave.textContent = 'Сохранить шаблон';
+    el.presetCancel.hidden = true;
+  }
+
+  async function savePreset() {
+    const name = el.presetName.value.trim();
+    const body = { name, ships: readPresetInputs() };
+    const editing = presets.editingId;
+
+    const ok = editing
+      ? await send(`/api/commander/fleet-templates/${editing}`, body, 'PUT')
+      : await send('/api/commander/fleet-templates', body);
+
+    if (ok) {
+      resetPresetForm();
+      await loadPresets();
+    }
+  }
+
+  async function deletePreset(preset) {
+    if (await send(`/api/commander/fleet-templates/${preset.id}`, undefined, 'DELETE')) {
+      if (presets.editingId === preset.id) resetPresetForm();
+      await loadPresets();
+    }
+  }
+
+  el.presetSelect.addEventListener('change', () => {
+    if (el.presetSelect.value) applyPreset(el.presetSelect.value);
+  });
+  el.presetManage.addEventListener('click', () => {
+    renderPresetInputs();
+    showPanel('presets');
+  });
+  el.presetBack.addEventListener('click', () => showPanel('map'));
+  el.presetSave.addEventListener('click', () => void savePreset());
+  el.presetCancel.addEventListener('click', () => resetPresetForm());
+
+  /* ---------- Боевой симулятор ---------- */
+
+  const sim = { attacker: {}, defender: {}, defenses: {}, targets: [] };
+
+  const DEFENSE_SIM_LABELS = { ROCKET_LAUNCHER: 'Ракетные установки', LASER_TURRET: 'Лазерные орудия' };
+
+  function buildCountInputs(container, labels, store) {
+    if (container.childElementCount > 0) return;
+    for (const [type, label] of Object.entries(labels)) {
+      const field = document.createElement('label');
+      field.className = 'field';
+      const caption = document.createElement('span');
+      caption.textContent = label;
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.min = '0';
+      input.value = '0';
+      field.append(caption, input);
+      container.appendChild(field);
+      store[type] = input;
+    }
+  }
+
+  function readCounts(store) {
+    const counts = {};
+    for (const [type, input] of Object.entries(store)) {
+      counts[type] = Math.max(0, Math.floor(Number(input.value) || 0));
+    }
+    return counts;
+  }
+
+  function writeCounts(store, values) {
+    for (const [type, input] of Object.entries(store)) {
+      input.value = String((values && values[type]) || 0);
+    }
+  }
+
+  function initSimulator() {
+    buildCountInputs(el.simAttacker, SHIP_LABELS, sim.attacker);
+    buildCountInputs(el.simDefender, SHIP_LABELS, sim.defender);
+    buildCountInputs(el.simDefenses, DEFENSE_SIM_LABELS, sim.defenses);
+  }
+
+  /** Разведанные цели: то, что можно подставить одним выбором. */
+  async function loadEspionageTargets() {
+    try {
+      const response = await fetch('/api/commander/espionage', { headers: authHeaders() });
+      if (!response.ok) return;
+      sim.targets = (await response.json()).targets || [];
+    } catch (error) {
+      sim.targets = [];
+    }
+
+    el.simEspionage.innerHTML = '<option value="">— вручную —</option>';
+    for (const target of sim.targets) {
+      const option = document.createElement('option');
+      option.value = target.planetId;
+      option.textContent =
+        `${target.planetName} (${target.owner || 'без владельца'}) · ${fmtTime(target.ageSeconds)} назад`;
+      el.simEspionage.appendChild(option);
+    }
+    if (!sim.targets.length) {
+      el.simEspionage.innerHTML = '<option value="">нет свежих отчетов разведки</option>';
+    }
+  }
+
+  function applyEspionage(planetId) {
+    const target = sim.targets.find((item) => item.planetId === planetId);
+    if (!target) {
+      el.simEspionageNote.hidden = true;
+      return;
+    }
+
+    writeCounts(sim.defender, target.ships);
+    writeCounts(sim.defenses, target.defenses);
+    el.simStockMetal.value = String(target.stock.metal);
+    el.simStockCrystal.value = String(target.stock.crystal);
+    el.simStockDeuterium.value = String(target.stock.deuterium);
+    el.simStockStorage.value = String(target.stock.storageLevel);
+
+    // Возраст снимка — часть ответа: по суточным данным планировать нельзя.
+    const notes = [];
+    if (target.freshness === 'STALE') notes.push('Данные могут быть неточны: снимку больше часа.');
+    if (!target.hasDefenseData) notes.push('В этом снимке нет обороны — заполни ее вручную.');
+    el.simEspionageNote.hidden = notes.length === 0;
+    el.simEspionageNote.textContent = notes.join(' ');
+    el.simEspionageNote.style.color = target.freshness === 'STALE' ? 'var(--warn)' : '';
+  }
+
+  async function runSimulation() {
+    const body = {
+      attacker: { ships: readCounts(sim.attacker) },
+      defender: {
+        ships: readCounts(sim.defender),
+        defenses: readCounts(sim.defenses),
+        stock: {
+          metal: Math.max(0, Math.floor(Number(el.simStockMetal.value) || 0)),
+          crystal: Math.max(0, Math.floor(Number(el.simStockCrystal.value) || 0)),
+          deuterium: Math.max(0, Math.floor(Number(el.simStockDeuterium.value) || 0)),
+          storageLevel: Math.max(0, Math.floor(Number(el.simStockStorage.value) || 0)),
+        },
+      },
+    };
+
+    try {
+      const response = await fetch('/api/commander/simulate', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(body),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        showBuildMessage(data.error || 'Симуляция не удалась', false);
+        return;
+      }
+      renderSimulation(data);
+    } catch (error) {
+      showBuildMessage('Симуляция не удалась', false);
+    }
+  }
+
+  function renderSimulation(result) {
+    el.simResult.innerHTML = '';
+
+    const card = document.createElement('article');
+    card.className = `battle ${result.attackerWins ? 'win' : 'loss'}`;
+
+    const header = document.createElement('header');
+    const title = document.createElement('h4');
+    title.textContent = 'Прогноз боя';
+    const verdict = document.createElement('span');
+    verdict.className = 'verdict';
+    verdict.textContent = result.attackerWins ? 'атака проходит' : 'атака захлебывается';
+    header.append(title, verdict);
+    card.appendChild(header);
+
+    card.appendChild(line(
+      `огневая мощь: <b>${fmt(result.attackerPower)}</b> против <b>${fmt(result.defenderPower)}</b> · ` +
+      `потери атакующего <b>${Math.round(result.attackerLossRatio * 100)}%</b>, ` +
+      `защитника <b>${Math.round(result.defenderLossRatio * 100)}%</b>`));
+
+    card.appendChild(line(
+      `мои потери: <b>${describeLosses(result.attackerLosses)}</b><br>` +
+      `потери противника: <b>${describeLosses(result.defenderLosses)}</b>`));
+
+    for (const [report, caption] of [
+      [result.attackerDamageReport, 'урон атакующего'],
+      [result.defenderDamageReport, 'урон защитника'],
+    ]) {
+      if (!report) continue;
+      const mix = (report.damageMix || []).map((d) => d.label).join(', ') || 'без оружия';
+      card.appendChild(line(
+        `${caption} (${mix}): щиты поглотили <b>${fmt(report.shield)}</b>, ` +
+        `броня <b>${fmt(report.armor)}</b>, по корпусу прошло <b>${fmt(report.hull)}</b>`));
+    }
+
+    if (result.plunder) {
+      const loot = result.plunder;
+      const total = loot.metal + loot.crystal + loot.deuterium;
+      card.appendChild(line(
+        `добыча: <b>${fmt(loot.metal)}</b> Me · <b>${fmt(loot.crystal)}</b> Cr · ` +
+        `<b>${fmt(loot.deuterium)}</b> De (всего ${fmt(total)})<br>` +
+        `хранилище защитника прячет <b>${fmt(loot.protectedAmount)}</b>, ` +
+        `уязвимый излишек <b>${fmt(loot.surplus)}</b>` +
+        (loot.cargoLimited
+          ? `<br><span class="scan-warning">Трюмы уцелевших вмещают ${fmt(result.survivingCapacity)} — ` +
+            `взять можно было ${fmt(loot.takeable)}. Добавь транспортов.</span>`
+          : '')));
+    } else if (result.attackerWins) {
+      card.appendChild(line('добыча: склад защитника не задан — заполни его, чтобы увидеть трофеи'));
+    }
+
+    card.appendChild(line('Это прогноз: бой считается по тем же формулам, но реальный состав противника мог измениться.'));
+    el.simResult.appendChild(card);
+  }
+
+  function line(html) {
+    const node = document.createElement('div');
+    node.className = 'line';
+    node.innerHTML = html;
+    return node;
+  }
+
+  el.simRun.addEventListener('click', () => void runSimulation());
+  el.simEspionage.addEventListener('change', () => applyEspionage(el.simEspionage.value));
+  el.simReset.addEventListener('click', () => {
+    writeCounts(sim.attacker, {});
+    writeCounts(sim.defender, {});
+    writeCounts(sim.defenses, {});
+    el.simStockMetal.value = '0';
+    el.simStockCrystal.value = '0';
+    el.simStockDeuterium.value = '0';
+    el.simStockStorage.value = '0';
+    el.simEspionage.value = '';
+    el.simEspionageNote.hidden = true;
+    el.simResult.innerHTML = '';
+  });
+  el.simFillMine.addEventListener('click', () => {
+    const base = activeBase();
+    if (base) writeCounts(sim.attacker, base.fleet);
+  });
+
   /* ---------- Старт ---------- */
+
   el.logout.addEventListener('click', () => logout());
 
   if (state.token) {

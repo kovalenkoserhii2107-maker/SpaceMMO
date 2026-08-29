@@ -169,7 +169,7 @@ export interface FleetSnapshot {
   targetName: string;
   ships: ShipCounts;
   composition: string;
-  cargo: { metal: number; crystal: number; antimatter: number };
+  cargo: { metal: number; crystal: number; deuterium: number; antimatter: number };
   pickup: { metal: number; crystal: number };
   fuelSpent: number;
   distance: number;

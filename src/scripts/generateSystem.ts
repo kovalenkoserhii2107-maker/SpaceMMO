@@ -170,11 +170,21 @@ async function main(): Promise<void> {
   const usedNames = new Set(existing.map((system) => system.name));
   const blackHoles = existing.filter((system) => system.anomaly === SystemAnomaly.BLACK_HOLE).length;
 
-  const target = randomInt(GALAXY_MIN_SYSTEMS, GALAXY_MAX_SYSTEMS);
+  // Размер галактики можно задать явно: `npm run generate -- 25`.
+  // Без аргумента берем стартовый разброс — он же и потолок, поэтому заполненную
+  // галактику иначе не расширить, а без свободных планет новых игроков не принять.
+  const requested = Number(process.argv[2]);
+  const target =
+    Number.isInteger(requested) && requested > 0
+      ? requested
+      : randomInt(GALAXY_MIN_SYSTEMS, GALAXY_MAX_SYSTEMS);
   const toCreate = Math.max(0, target - existing.length);
 
   if (existing.length > 0) {
-    console.log(`[generate] в галактике уже есть систем: ${existing.length}, добавляю еще ${toCreate}`);
+    console.log(
+      `[generate] в галактике уже есть систем: ${existing.length}, добавляю еще ${toCreate}` +
+        (toCreate === 0 ? ' (укажи размер аргументом, чтобы расширить: npm run generate -- 25)' : ''),
+    );
   }
 
   // Черных дыр в галактике должно быть 1-2.

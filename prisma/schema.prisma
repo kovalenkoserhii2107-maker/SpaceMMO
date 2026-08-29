@@ -76,6 +76,7 @@ model Commander {
   researches       Research[]
   researchJob      ResearchJob?
   fleets           Fleet[]
+  fleetTemplates   FleetTemplate[]
   scans            PlanetScan[]
   hubStorages      HubStorage[]
   orders           MarketOrder[]
@@ -424,8 +425,9 @@ model BattleReport {
   planetId   String
   winner     BattleWinner
 
-  plunderMetal   Float @default(0)
-  plunderCrystal Float @default(0)
+  plunderMetal     Float @default(0)
+  plunderCrystal   Float @default(0)
+  plunderDeuterium Float @default(0)
 
   data      Json
   createdAt DateTime @default(now())
@@ -531,10 +533,11 @@ model Fleet {
   heavyCruisers Int @default(0)
   ionFrigates   Int @default(0)
 
-  /// Груз на борту (дейтерий возится только как топливо).
+  /// Груз на борту: металл, кристаллы и дейтерий занимают трюмы.
   cargoMetal      Float @default(0)
   cargoCrystal    Float @default(0)
-  /// Антиматерия, найденная в экспедиции, едет домой в баках.
+  cargoDeuterium  Float @default(0)
+  /// Антиматерия, найденная в экспедиции, едет домой в баках и трюмы не занимает.
   cargoAntimatter Float @default(0)
 
   /// Сколько запрошено к вывозу с хаба (для миссии HUB_PICKUP).
@@ -567,6 +570,28 @@ model Fleet {
   @@index([status, returnsAt])
   @@index([commanderId])
   @@map("fleets")
+}
+
+/// Сохраненный состав флота: пресет для быстрой отправки.
+model FleetTemplate {
+  id          String @id @default(cuid())
+  commanderId String
+  name        String
+
+  probes        Int @default(0)
+  transporters  Int @default(0)
+  lightFighters Int @default(0)
+  heavyCruisers Int @default(0)
+  ionFrigates   Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  commander Commander @relation(fields: [commanderId], references: [id], onDelete: Cascade)
+
+  @@unique([commanderId, name])
+  @@index([commanderId])
+  @@map("fleet_templates")
 }
 
 /// Результат сканирования планеты зондом — основа «тумана войны».

@@ -16,7 +16,8 @@
     "audit": "tsc -p tsconfig.audit.json",
     "legacy:password": "tsx src/scripts/legacyPassword.ts",
     "test:stand": "tsx src/scripts/testStand.ts",
-    "test:storage": "tsx tests/storage.ts"
+    "test:storage": "tsx tests/storage.ts",
+    "test:commander": "tsx tests/commander.ts"
   },
   "keywords": [],
   "author": "",

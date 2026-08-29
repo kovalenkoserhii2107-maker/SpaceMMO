@@ -4,8 +4,18 @@
  */
 import { prisma } from '../db/prisma.js';
 import { gameLoop } from '../game/gameLoop.js';
-import { foreignPlanetView, ownPlanetView, type PlanetView, type ScanPayload } from '../game/fogOfWar.js';
-import { emptyShipCounts } from '../game/ships.js';
+import {
+  foreignPlanetView,
+  normalizeDefenses,
+  normalizeShips,
+  ownPlanetView,
+  scanFreshness,
+  type PlanetView,
+  type ScanFreshness,
+  type ScanPayload,
+} from '../game/fogOfWar.js';
+import { emptyDefenseCounts, type DefenseCounts, type DefenseType } from '../game/defenses.js';
+import { emptyShipCounts, type ShipCounts } from '../game/ships.js';
 import { storageCapacity, storageUsed } from '../game/market.js';
 import type { GalaxyMap, HubView, SystemMap } from '../types/socket.js';
 
@@ -36,7 +46,7 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
     prisma.planet.findMany({
       where: { systemId: targetSystem.id },
       orderBy: { position: 'asc' },
-      include: { base: { include: { commander: true, ships: true } } },
+      include: { base: { include: { commander: true, ships: true, defenses: true } } },
     }),
     prisma.planetScan.findMany({ where: { commanderId } }),
     prisma.tradeHub.findUnique({
@@ -96,6 +106,7 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
               antimatter: Math.round(ownBase.antimatter),
             },
         fleet: live ? { ...live.ships } : shipsFromRows(ownBase.ships),
+        defenses: live ? { ...live.defenses } : defensesFromRows(ownBase.defenses),
       };
       return ownPlanetView(facts, payload);
     }
@@ -192,4 +203,72 @@ function shipsFromRows(rows: Array<{ type: keyof ReturnType<typeof emptyShipCoun
   const ships = emptyShipCounts();
   for (const row of rows) ships[row.type] = row.count;
   return ships;
+}
+
+/**
+ * Разведанные чужие колонии — источник для боевого симулятора.
+ *
+ * Отдаем только снимки, которые еще не устарели: у устаревших флот и оборона
+ * скрыты туманом войны, и подставлять в симулятор нечего.
+ */
+export async function listEspionageTargets(commanderId: string): Promise<EspionageTarget[]> {
+  const scans = await prisma.planetScan.findMany({
+    where: { commanderId },
+    include: { planet: { include: { system: { select: { name: true } } } } },
+    orderBy: { scannedAt: 'desc' },
+    take: 30,
+  });
+
+  const now = Date.now();
+  const targets: EspionageTarget[] = [];
+
+  for (const scan of scans) {
+    const data = scan.data as unknown as ScanPayload;
+    if (!data.colonized) continue;
+
+    const ageSeconds = Math.max(0, Math.round((now - scan.scannedAt.getTime()) / 1000));
+    if (scanFreshness(ageSeconds) === 'OUTDATED') continue;
+
+    targets.push({
+      planetId: scan.planetId,
+      planetName: scan.planet.name,
+      systemName: scan.planet.system.name,
+      owner: data.owner,
+      ageSeconds,
+      freshness: scanFreshness(ageSeconds),
+      // Старые снимки писались, когда классов и обороны было меньше, поэтому
+      // состав нормализуем: недостающие ключи должны быть нулями, а не undefined.
+      ships: normalizeShips(data.fleet),
+      defenses: normalizeDefenses(data.defenses),
+      hasDefenseData: Boolean(data.defenses),
+      stock: {
+        metal: data.resources?.metal ?? 0,
+        crystal: data.resources?.crystal ?? 0,
+        deuterium: data.resources?.deuterium ?? 0,
+        storageLevel: data.buildings?.STORAGE ?? 0,
+      },
+    });
+  }
+
+  return targets;
+}
+
+export interface EspionageTarget {
+  planetId: string;
+  planetName: string;
+  systemName: string;
+  owner: string | null;
+  ageSeconds: number;
+  freshness: ScanFreshness;
+  ships: ShipCounts;
+  defenses: DefenseCounts;
+  /** У старых снимков обороны нет — интерфейс об этом предупреждает. */
+  hasDefenseData: boolean;
+  stock: { metal: number; crystal: number; deuterium: number; storageLevel: number };
+}
+
+function defensesFromRows(rows: Array<{ type: DefenseType; count: number }>): DefenseCounts {
+  const defenses = emptyDefenseCounts();
+  for (const row of rows) defenses[row.type] = row.count;
+  return defenses;
 }

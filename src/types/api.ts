@@ -4,6 +4,9 @@
  * а не в рантайме.
  */
 import type { FlightPlan } from '../game/fleets.js';
+import type { EspionageTarget } from '../services/mapService.js';
+import type { FleetTemplateView } from '../services/fleetTemplateService.js';
+import type { SimulationResult } from '../services/simulationService.js';
 import type { CommanderProfile } from '../services/commanderService.js';
 import type { MarketView } from '../services/marketService.js';
 import type { DiplomacyView } from '../services/warService.js';
@@ -55,3 +58,14 @@ export type GalaxyResponse = GalaxyMap;
 export type FlightPreviewResponse = FlightPlan;
 export type MarketResponse = MarketView;
 export type DiplomacyResponse = DiplomacyView;
+
+/** Инструменты командира: симулятор, шаблоны флотов и разведданные. */
+export type SimulationResponse = SimulationResult;
+
+export interface FleetTemplatesResponse {
+  templates: FleetTemplateView[];
+}
+
+export interface EspionageResponse {
+  targets: EspionageTarget[];
+}

@@ -335,6 +335,7 @@ export function resolveBattle(attacker: SideForces, defender: SideForces): Battl
 export interface PlunderResult {
   metal: number;
   crystal: number;
+  deuterium: number;
   /** Вместимость хранилища защитника. */
   storageCapacity: number;
   /** Сколько всего лежало на складе (металл + кристаллы + дейтерий). */
@@ -361,8 +362,8 @@ export interface PlunderResult {
  * Половина склада больше не выносится: полупустая база не теряет ничего,
  * и заполненность склада становится осмысленным риском.
  *
- * Дейтерий занимает место в хранилище и потому выталкивает металл с кристаллами
- * в излишек, но сам не вывозится: транспортных танкеров в игре пока нет.
+ * Вывозятся все три ресурса: дейтерий занимает трюмы наравне с металлом
+ * и кристаллами, поэтому и грабится наравне с ними.
  */
 export function plunderAmount(
   stock: { metal: number; crystal: number; deuterium: number },
@@ -371,7 +372,8 @@ export function plunderAmount(
 ): PlunderResult {
   const metal = Math.max(0, stock.metal);
   const crystal = Math.max(0, stock.crystal);
-  const stored = metal + crystal + Math.max(0, stock.deuterium);
+  const deuterium = Math.max(0, stock.deuterium);
+  const stored = metal + crystal + deuterium;
 
   const protectedAmount = Math.min(stored, Math.max(0, storageCapacity) * PROTECTED_STORAGE_SHARE);
   const surplus = Math.max(0, stored - protectedAmount);
@@ -381,21 +383,27 @@ export function plunderAmount(
   const share = stored > 0 ? (RAID_SHARE * surplus) / stored : 0;
   const availableMetal = Math.floor(metal * share);
   const availableCrystal = Math.floor(crystal * share);
-  const takeable = availableMetal + availableCrystal;
+  const availableDeuterium = Math.floor(deuterium * share);
+  const takeable = availableMetal + availableCrystal + availableDeuterium;
 
-  const room = Math.max(0, cargoCapacity);
+  // Трюмы забиваются по порядку: сперва металл, затем кристаллы, потом дейтерий.
+  let room = Math.max(0, cargoCapacity);
   const takenMetal = Math.min(availableMetal, room);
-  const takenCrystal = Math.min(availableCrystal, room - takenMetal);
+  room -= takenMetal;
+  const takenCrystal = Math.min(availableCrystal, room);
+  room -= takenCrystal;
+  const takenDeuterium = Math.min(availableDeuterium, room);
 
   return {
     metal: takenMetal,
     crystal: takenCrystal,
+    deuterium: takenDeuterium,
     storageCapacity,
     stored,
     protectedAmount,
     surplus,
     takeable,
-    cargoLimited: takenMetal + takenCrystal < takeable,
+    cargoLimited: takenMetal + takenCrystal + takenDeuterium < takeable,
   };
 }
 

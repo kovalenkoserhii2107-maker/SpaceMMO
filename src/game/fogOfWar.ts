@@ -3,10 +3,65 @@
  * Своя планета — всё; чужая — только астрономические данные,
  * пока туда не слетает зонд. Данные скана «стареют» и остаются снимком.
  */
+import { DEFENSE_TYPES, emptyDefenseCounts, type DefenseCounts } from './defenses.js';
 import type { BuildingLevels } from './rules.js';
-import type { ShipCounts } from './ships.js';
+import { SHIP_TYPES, emptyShipCounts, type ShipCounts } from './ships.js';
 
 export type PlanetVisibility = 'OWN' | 'SCANNED' | 'UNKNOWN';
+
+/**
+ * Свежесть разведданных.
+ *
+ * Снимок зонда не обновляется сам, а флот и склад противника меняются быстро.
+ * Поэтому старые цифры не показываются как факт: через сутки они устаревают
+ * настолько, что верить им опаснее, чем не знать вовсе.
+ */
+export type ScanFreshness = 'FRESH' | 'STALE' | 'OUTDATED';
+
+/** До часа данные считаем актуальными. */
+const FRESH_SECONDS = 3600;
+/** После суток флот и склад скрываются: цифры уже вводят в заблуждение. */
+const OUTDATED_SECONDS = 24 * 3600;
+
+export function scanFreshness(ageSeconds: number): ScanFreshness {
+  if (ageSeconds < FRESH_SECONDS) return 'FRESH';
+  if (ageSeconds < OUTDATED_SECONDS) return 'STALE';
+  return 'OUTDATED';
+}
+
+/*
+ * Снимки лежат в БД как JSON и переживают изменения игры: в старых нет ни новых
+ * классов кораблей, ни обороны. Нормализация обязательна — иначе недостающий
+ * ключ уезжает в интерфейс как `undefined` и игрок видит «крейсера undefined».
+ */
+
+export function normalizeShips(source: Partial<ShipCounts> | null | undefined): ShipCounts {
+  const ships = emptyShipCounts();
+  if (!source) return ships;
+  for (const type of SHIP_TYPES) ships[type] = safeCount(source[type]);
+  return ships;
+}
+
+export function normalizeDefenses(source: Partial<DefenseCounts> | null | undefined): DefenseCounts {
+  const defenses = emptyDefenseCounts();
+  if (!source) return defenses;
+  for (const type of DEFENSE_TYPES) defenses[type] = safeCount(source[type]);
+  return defenses;
+}
+
+function normalizeRichness(source: Partial<ScanPayload['richness']> | null | undefined) {
+  return {
+    metal: source?.metal ?? 0,
+    crystal: source?.crystal ?? 0,
+    deuterium: source?.deuterium ?? 0,
+    energy: source?.energy ?? 0,
+    antimatter: source?.antimatter ?? 0,
+  };
+}
+
+function safeCount(value: number | undefined): number {
+  return Number.isFinite(value) ? Math.max(0, Math.trunc(value as number)) : 0;
+}
 
 /** Снимок планеты, который зонд сохраняет в PlanetScan.data. */
 export interface ScanPayload {
@@ -16,6 +71,8 @@ export interface ScanPayload {
   buildings: BuildingLevels | null;
   resources: { metal: number; crystal: number; deuterium: number; antimatter: number } | null;
   fleet: ShipCounts | null;
+  /** Стационарная оборона колонии. У снимков, снятых до Этапа 12, поля нет. */
+  defenses?: DefenseCounts | null;
 }
 
 export interface PlanetView {
@@ -33,8 +90,16 @@ export interface PlanetView {
   buildings: BuildingLevels | null;
   resources: ScanPayload['resources'] | null;
   fleet: ShipCounts | null;
+  defenses: DefenseCounts | null;
   /** Возраст данных разведки в секундах. */
   scanAgeSeconds: number | null;
+  /** Свежесть разведданных; null — планета не разведана. */
+  freshness: ScanFreshness | null;
+  /**
+   * Данные устарели настолько, что флот и склад скрыты.
+   * Уровни построек остаются: здания не разбирают за сутки.
+   */
+  staleHidden: boolean;
 }
 
 interface PlanetFacts {
@@ -57,7 +122,10 @@ export function ownPlanetView(facts: PlanetFacts, payload: ScanPayload): PlanetV
     buildings: payload.buildings,
     resources: payload.resources,
     fleet: payload.fleet,
+    defenses: payload.defenses ?? null,
     scanAgeSeconds: 0,
+    freshness: 'FRESH',
+    staleHidden: false,
   };
 }
 
@@ -78,9 +146,19 @@ export function foreignPlanetView(
       buildings: null,
       resources: null,
       fleet: null,
+      defenses: null,
       scanAgeSeconds: null,
+      freshness: null,
+      staleHidden: false,
     };
   }
+
+  const ageSeconds = Math.max(0, Math.round((now - scan.scannedAt.getTime()) / 1000));
+  const freshness = scanFreshness(ageSeconds);
+  // Устаревшие цифры не отдаем даже в API: клиент не должен иметь возможности
+  // показать их «на свой страх и риск» — это ровно тот случай, когда отсутствие
+  // данных честнее старых данных.
+  const outdated = freshness === 'OUTDATED';
 
   return {
     ...facts,
@@ -88,10 +166,13 @@ export function foreignPlanetView(
     colonized: scan.data.colonized,
     owner: scan.data.owner,
     isOwn: false,
-    richness: scan.data.richness,
+    richness: normalizeRichness(scan.data.richness),
     buildings: scan.data.buildings,
-    resources: scan.data.resources,
-    fleet: scan.data.fleet,
-    scanAgeSeconds: Math.max(0, Math.round((now - scan.scannedAt.getTime()) / 1000)),
+    resources: outdated ? null : scan.data.resources,
+    fleet: outdated ? null : normalizeShips(scan.data.fleet),
+    defenses: outdated || !scan.data.defenses ? null : normalizeDefenses(scan.data.defenses),
+    scanAgeSeconds: ageSeconds,
+    freshness,
+    staleHidden: outdated,
   };
 }

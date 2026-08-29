@@ -434,7 +434,7 @@ class GameLoop {
     target: { planetId?: string; hubId?: string; systemId?: string },
     mission: FleetMission,
     ships: ShipCounts,
-    cargo: { metal: number; crystal: number },
+    cargo: { metal: number; crystal: number; deuterium: number },
     pickup: { metal: number; crystal: number } = { metal: 0, crystal: 0 },
   ): Promise<ActionResult> {
     const commander = await this.getCommander(commanderId);
@@ -526,7 +526,14 @@ class GameLoop {
     }
 
     // Груз берем только для рейсов, которые что-то везут туда.
-    const outboundCargo = mission === 'HUB_PICKUP' ? { metal: 0, crystal: 0 } : cargo;
+    // Хаб торгует лишь металлом и кристаллами, поэтому дейтерий туда не грузим.
+    const empty = { metal: 0, crystal: 0, deuterium: 0 };
+    const outboundCargo =
+      mission === 'HUB_PICKUP'
+        ? empty
+        : mission === 'HUB_DELIVERY'
+        ? { ...cargo, deuterium: 0 }
+        : cargo;
     const cargoError = validateCargo(ships, outboundCargo);
     if (cargoError) return { ok: false, error: cargoError };
     if (outboundCargo.metal > base.resources.metal || outboundCargo.crystal > base.resources.crystal) {
@@ -560,8 +567,18 @@ class GameLoop {
           error: `Не хватает антиматерии: нужно ${plan.antimatter}, на базе ${Math.floor(base.resources.antimatter)}`,
         };
       }
-    } else if (base.resources.deuterium < plan.fuel) {
-      return { ok: false, error: `Не хватает дейтерия: нужно ${plan.fuel}` };
+    }
+
+    // Дейтерий уходит и в баки, и в трюмы — проверяем сумму, иначе флот
+    // улетал бы на топливе, которое сам же и увез грузом.
+    const deuteriumNeeded = (plan.kind === 'INTERSTELLAR' ? 0 : plan.fuel) + outboundCargo.deuterium;
+    if (base.resources.deuterium < deuteriumNeeded) {
+      return {
+        ok: false,
+        error:
+          `Не хватает дейтерия: нужно ${deuteriumNeeded}` +
+          (outboundCargo.deuterium > 0 ? ` (топливо ${plan.fuel} + груз ${outboundCargo.deuterium})` : ''),
+      };
     }
 
     const now = Date.now();
@@ -570,7 +587,7 @@ class GameLoop {
 
     base.resources.metal -= outboundCargo.metal;
     base.resources.crystal -= outboundCargo.crystal;
-    base.resources.deuterium -= plan.fuel;
+    base.resources.deuterium -= plan.fuel + outboundCargo.deuterium;
     base.resources.antimatter -= plan.antimatter;
     for (const type of SHIP_TYPES) base.ships[type] -= ships[type];
     base.dirty = true;
@@ -593,6 +610,7 @@ class GameLoop {
         ionFrigates: ships.ION_FRIGATE,
         cargoMetal: outboundCargo.metal,
         cargoCrystal: outboundCargo.crystal,
+        cargoDeuterium: outboundCargo.deuterium,
         pickupMetal: request.metal,
         pickupCrystal: request.crystal,
         fuelSpent: plan.fuel,
@@ -998,14 +1016,22 @@ class GameLoop {
       await prisma.$transaction([
         prisma.base.update({
           where: { id: targetBase.id },
-          data: { metal: { increment: fleet.cargoMetal }, crystal: { increment: fleet.cargoCrystal } },
+          data: {
+            metal: { increment: fleet.cargoMetal },
+            crystal: { increment: fleet.cargoCrystal },
+            deuterium: { increment: fleet.cargoDeuterium },
+          },
         }),
         prisma.fleet.update({
           where: { id: fleet.id },
-          data: { status: 'RETURNING', cargoMetal: 0, cargoCrystal: 0 },
+          data: { status: 'RETURNING', cargoMetal: 0, cargoCrystal: 0, cargoDeuterium: 0 },
         }),
       ]);
-      this.applyMemoryResources(targetBase.id, fleet.cargoMetal, fleet.cargoCrystal);
+      this.applyMemoryResources(targetBase.id, {
+        metal: fleet.cargoMetal,
+        crystal: fleet.cargoCrystal,
+        deuterium: fleet.cargoDeuterium,
+      });
       return;
     }
 
@@ -1195,10 +1221,14 @@ class GameLoop {
         });
       }
 
-      if (plunder.metal > 0 || plunder.crystal > 0) {
+      if (plunder.metal > 0 || plunder.crystal > 0 || plunder.deuterium > 0) {
         await tx.base.update({
           where: { id: defenderBaseId },
-          data: { metal: { decrement: plunder.metal }, crystal: { decrement: plunder.crystal } },
+          data: {
+            metal: { decrement: plunder.metal },
+            crystal: { decrement: plunder.crystal },
+            deuterium: { decrement: plunder.deuterium },
+          },
         });
       }
 
@@ -1219,6 +1249,7 @@ class GameLoop {
             ionFrigates: outcome.attackerSurvivors.ION_FRIGATE,
             cargoMetal: plunder.metal,
             cargoCrystal: plunder.crystal,
+            cargoDeuterium: plunder.deuterium,
           },
         });
       } else {
@@ -1255,6 +1286,7 @@ class GameLoop {
           winner: outcome.winner,
           plunderMetal: plunder.metal,
           plunderCrystal: plunder.crystal,
+          plunderDeuterium: plunder.deuterium,
           data: toJson({
             planetName: planet.name,
             attackerName: attackerProfile.nickname,
@@ -1293,7 +1325,7 @@ class GameLoop {
   private applyBattleToMemory(
     baseId: string,
     outcome: ReturnType<typeof resolveBattle>,
-    plunder: { metal: number; crystal: number },
+    plunder: { metal: number; crystal: number; deuterium: number },
   ): void {
     const base = this.findLoadedBase(baseId);
     if (!base) return;
@@ -1302,6 +1334,7 @@ class GameLoop {
     for (const type of DEFENSE_TYPES) base.defenses[type] = outcome.defenderSurvivorDefenses[type];
     base.resources.metal = Math.max(0, base.resources.metal - plunder.metal);
     base.resources.crystal = Math.max(0, base.resources.crystal - plunder.crystal);
+    base.resources.deuterium = Math.max(0, base.resources.deuterium - plunder.deuterium);
     base.dirty = true;
     base.jobsDirty = true;
   }
@@ -1395,13 +1428,19 @@ class GameLoop {
         }),
       );
     }
-    if (fleet.cargoMetal > 0 || fleet.cargoCrystal > 0 || fleet.cargoAntimatter > 0) {
+    if (
+      fleet.cargoMetal > 0 ||
+      fleet.cargoCrystal > 0 ||
+      fleet.cargoDeuterium > 0 ||
+      fleet.cargoAntimatter > 0
+    ) {
       operations.push(
         prisma.base.update({
           where: { id: fleet.originBaseId },
           data: {
             metal: { increment: fleet.cargoMetal },
             crystal: { increment: fleet.cargoCrystal },
+            deuterium: { increment: fleet.cargoDeuterium },
             antimatter: { increment: fleet.cargoAntimatter },
           },
         }),
@@ -1411,12 +1450,12 @@ class GameLoop {
 
     await prisma.$transaction(operations);
 
-    this.applyMemoryResources(
-      fleet.originBaseId,
-      fleet.cargoMetal,
-      fleet.cargoCrystal,
-      fleet.cargoAntimatter,
-    );
+    this.applyMemoryResources(fleet.originBaseId, {
+      metal: fleet.cargoMetal,
+      crystal: fleet.cargoCrystal,
+      deuterium: fleet.cargoDeuterium,
+      antimatter: fleet.cargoAntimatter,
+    });
     this.applyMemoryShips(fleet.originBaseId, ships);
   }
 
@@ -1433,15 +1472,19 @@ class GameLoop {
   /** Отражает уже зачисленный в БД приход в состоянии базы, если она в памяти. */
   private applyMemoryResources(
     baseId: string,
-    metal: number,
-    crystal: number,
-    antimatter = 0,
+    amounts: { metal?: number; crystal?: number; deuterium?: number; antimatter?: number },
   ): void {
-    if (metal <= 0 && crystal <= 0 && antimatter <= 0) return;
+    const metal = amounts.metal ?? 0;
+    const crystal = amounts.crystal ?? 0;
+    const deuterium = amounts.deuterium ?? 0;
+    const antimatter = amounts.antimatter ?? 0;
+    if (metal <= 0 && crystal <= 0 && deuterium <= 0 && antimatter <= 0) return;
+
     const base = this.findLoadedBase(baseId);
     if (!base) return;
     base.resources.metal += metal;
     base.resources.crystal += crystal;
+    base.resources.deuterium += deuterium;
     base.resources.antimatter += antimatter;
     base.dirty = true;
   }
@@ -1465,7 +1508,7 @@ class GameLoop {
   private async buildScanPayload(planetId: string): Promise<ScanPayload | null> {
     const planet = await prisma.planet.findUnique({
       where: { id: planetId },
-      include: { base: { include: { commander: true, ships: true } } },
+      include: { base: { include: { commander: true, ships: true, defenses: true } } },
     });
     if (!planet) return null;
 
@@ -1484,6 +1527,7 @@ class GameLoop {
       buildings: null,
       resources: null,
       fleet: null,
+      defenses: null,
     };
 
     if (planet.base) {
@@ -1513,6 +1557,13 @@ class GameLoop {
         for (const ship of planet.base.ships) fleet[ship.type] = ship.count;
       }
 
+      // Оборона входит в разведданные: без нее симулятор боя считал бы
+      // по половине сил противника и обещал победу там, где ее нет.
+      const defenses = live ? { ...live.defenses } : emptyDefenseCounts();
+      if (!live) {
+        for (const item of planet.base.defenses) defenses[item.type] = item.count;
+      }
+
       payload = {
         owner: planet.base.commander.nickname,
         colonized: true,
@@ -1525,6 +1576,7 @@ class GameLoop {
           antimatter: Math.round(resources.antimatter),
         },
         fleet,
+        defenses,
       };
     }
 
@@ -1773,6 +1825,7 @@ function toFleetRuntime(row: FleetRow): FleetRuntimeState {
     cargo: {
       metal: row.cargoMetal,
       crystal: row.cargoCrystal,
+      deuterium: row.cargoDeuterium,
       antimatter: row.cargoAntimatter,
     },
     pickup: { metal: row.pickupMetal, crystal: row.pickupCrystal },
