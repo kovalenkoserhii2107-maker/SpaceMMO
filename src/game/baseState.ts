@@ -123,7 +123,7 @@ export interface ResearchJobState {
 export interface BaseRuntimeState {
   id: string;
   name: string;
-  userId: string;
+  commanderId: string;
   planetId: string;
   planetName: string;
   planetType: string;
@@ -150,8 +150,8 @@ export interface BaseRuntimeState {
   jobsDirty: boolean;
 }
 
-export interface UserRuntimeState {
-  userId: string;
+export interface CommanderRuntimeState {
+  commanderId: string;
   /** Баланс криптогривны. Меняется только через биржу, тик его не трогает. */
   credits: number;
   /** Последнее обращение — по нему выгружаются игроки без активных сокетов. */
@@ -199,8 +199,8 @@ export function accrue(state: BaseRuntimeState, techs: TechLevels, seconds: numb
   state.dirty = true;
 }
 
-export function toSnapshot(state: BaseRuntimeState, user: UserRuntimeState, now: number): BaseSnapshot {
-  const bonuses = economyBonuses(user.techs);
+export function toSnapshot(state: BaseRuntimeState, commander: CommanderRuntimeState, now: number): BaseSnapshot {
+  const bonuses = economyBonuses(commander.techs);
   const modifiers = systemModifiers(state.anomaly);
   const defenseDrain = defenseEnergyUsage(state.defenses);
   const output = energyOutput(state.levels, state.richness, bonuses);
@@ -244,9 +244,9 @@ export function toSnapshot(state: BaseRuntimeState, user: UserRuntimeState, now:
         }
       : null,
     buildings: BUILDING_TYPES.map((type) => buildingCard(type, state)),
-    technologies: TECHNOLOGY_TYPES.map((tech) => technologyCard(tech, state, user)),
-    ships: SHIP_TYPES.map((type) => shipCard(type, state, user)),
-    defenseCards: DEFENSE_TYPES.map((type) => defenseCard(type, state, user)),
+    technologies: TECHNOLOGY_TYPES.map((tech) => technologyCard(tech, state, commander)),
+    ships: SHIP_TYPES.map((type) => shipCard(type, state, commander)),
+    defenseCards: DEFENSE_TYPES.map((type) => defenseCard(type, state, commander)),
     fleet: { ...state.ships },
     defenses: { ...state.defenses },
     shipQueue: state.shipJobs.map((job) => ({
@@ -273,7 +273,7 @@ export function toSnapshot(state: BaseRuntimeState, user: UserRuntimeState, now:
 function defenseCard(
   type: DefenseType,
   state: BaseRuntimeState,
-  user: UserRuntimeState,
+  commander: CommanderRuntimeState,
 ): DefenseCard {
   const cost = defenseCost(type);
 
@@ -285,7 +285,7 @@ function defenseCard(
     unitSeconds: defenseUnitSeconds(type, state.levels.SHIPYARD, systemModifiers(state.anomaly)),
     owned: state.defenses[type],
     canAfford: hasEnoughResources(state.resources, cost),
-    requirements: missingDefenseRequirements(type, state.levels, user.techs),
+    requirements: missingDefenseRequirements(type, state.levels, commander.techs),
   };
 }
 
@@ -315,32 +315,32 @@ function buildingCard(type: BuildingType, state: BaseRuntimeState): BuildingCard
 function technologyCard(
   tech: TechnologyType,
   state: BaseRuntimeState,
-  user: UserRuntimeState,
+  commander: CommanderRuntimeState,
 ): TechnologyCard {
-  const nextLevel = user.techs[tech] + 1;
+  const nextLevel = commander.techs[tech] + 1;
   const cost = researchCost(tech, nextLevel);
 
   return {
     tech,
     label: techLabel(tech),
     description: techDescription(tech),
-    level: user.techs[tech],
+    level: commander.techs[tech],
     nextLevel,
     cost,
     seconds: researchSeconds(
       tech,
       nextLevel,
       state.levels.RESEARCH_LAB,
-      user.techs,
+      commander.techs,
       systemModifiers(state.anomaly),
     ),
     canAfford: hasEnoughResources(state.resources, cost),
-    requirements: missingTechRequirements(tech, state.levels, user.techs),
-    busy: user.research !== null,
+    requirements: missingTechRequirements(tech, state.levels, commander.techs),
+    busy: commander.research !== null,
   };
 }
 
-function shipCard(type: ShipType, state: BaseRuntimeState, user: UserRuntimeState): ShipCard {
+function shipCard(type: ShipType, state: BaseRuntimeState, commander: CommanderRuntimeState): ShipCard {
   const cost = shipCost(type);
 
   return {
@@ -351,29 +351,29 @@ function shipCard(type: ShipType, state: BaseRuntimeState, user: UserRuntimeStat
     unitSeconds: shipUnitSeconds(type, state.levels.SHIPYARD, systemModifiers(state.anomaly)),
     owned: state.ships[type],
     canAfford: hasEnoughResources(state.resources, cost),
-    requirements: missingShipRequirements(type, state.levels, user.techs),
+    requirements: missingShipRequirements(type, state.levels, commander.techs),
   };
 }
 
-export function researchSnapshot(user: UserRuntimeState, now: number): ResearchSnapshot {
+export function researchSnapshot(commander: CommanderRuntimeState, now: number): ResearchSnapshot {
   return {
-    techs: { ...user.techs },
-    active: user.research
+    techs: { ...commander.techs },
+    active: commander.research
       ? {
-          tech: user.research.tech,
-          label: techLabel(user.research.tech),
-          targetLevel: user.research.targetLevel,
-          baseId: user.research.baseId,
-          totalSeconds: Math.round((user.research.finishesAt - user.research.startedAt) / 1000),
-          remainingSeconds: Math.max(0, Math.ceil((user.research.finishesAt - now) / 1000)),
+          tech: commander.research.tech,
+          label: techLabel(commander.research.tech),
+          targetLevel: commander.research.targetLevel,
+          baseId: commander.research.baseId,
+          totalSeconds: Math.round((commander.research.finishesAt - commander.research.startedAt) / 1000),
+          remainingSeconds: Math.max(0, Math.ceil((commander.research.finishesAt - now) / 1000)),
         }
       : null,
   };
 }
 
 /** Снимки флотов в полете: клиент сам плавно двигает маркеры по меткам времени. */
-export function fleetSnapshots(user: UserRuntimeState, now: number): FleetSnapshot[] {
-  return user.fleets.map((fleet) => {
+export function fleetSnapshots(commander: CommanderRuntimeState, now: number): FleetSnapshot[] {
+  return commander.fleets.map((fleet) => {
     const outbound = fleet.status === 'OUTBOUND';
     const legStart = outbound ? fleet.departedAt : fleet.arrivesAt;
     const legEnd = outbound ? fleet.arrivesAt : fleet.returnsAt;

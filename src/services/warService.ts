@@ -22,8 +22,8 @@ export interface ExpeditionReportView {
 export interface DiplomacyView {
   /** Игроки, чьи колонии есть в системе игрока. */
   players: Array<{
-    userId: string;
-    username: string;
+    commanderId: string;
+    nickname: string;
     planetName: string;
     atWar: boolean;
     /** Войну объявили мы. */
@@ -61,9 +61,9 @@ interface BattleData {
   plunder: { metal: number; crystal: number };
 }
 
-export async function getDiplomacy(userId: string): Promise<DiplomacyView> {
+export async function getDiplomacy(commanderId: string): Promise<DiplomacyView> {
   const home = await prisma.base.findFirst({
-    where: { userId },
+    where: { commanderId },
     include: { planet: true },
   });
 
@@ -71,26 +71,26 @@ export async function getDiplomacy(userId: string): Promise<DiplomacyView> {
     home
       ? prisma.planet.findMany({
           where: { systemId: home.planet.systemId, base: { isNot: null } },
-          include: { base: { include: { user: { select: { id: true, username: true } } } } },
+          include: { base: { include: { commander: { select: { id: true, nickname: true } } } } },
           orderBy: { position: 'asc' },
         })
       : Promise.resolve([]),
     prisma.warDeclaration.findMany({
-      where: { OR: [{ aggressorId: userId }, { targetId: userId }] },
+      where: { OR: [{ aggressorId: commanderId }, { targetId: commanderId }] },
     }),
     prisma.battleReport.findMany({
-      where: { OR: [{ attackerId: userId }, { defenderId: userId }] },
+      where: { OR: [{ attackerId: commanderId }, { defenderId: commanderId }] },
       orderBy: { createdAt: 'desc' },
       take: 20,
     }),
     prisma.expeditionReport.findMany({
-      where: { userId },
+      where: { commanderId },
       include: { system: { select: { name: true } } },
       orderBy: { createdAt: 'desc' },
       take: 20,
     }),
-    prisma.fleet.count({ where: { userId, mission: 'EXPEDITION' } }),
-    prisma.research.findMany({ where: { userId } }),
+    prisma.fleet.count({ where: { commanderId, mission: 'EXPEDITION' } }),
+    prisma.research.findMany({ where: { commanderId } }),
   ]);
 
   const techLevels = emptyTechLevels();
@@ -119,27 +119,27 @@ export async function getDiplomacy(userId: string): Promise<DiplomacyView> {
       };
     }),
     players: planets
-      .filter((planet) => planet.base && planet.base.userId !== userId)
+      .filter((planet) => planet.base && planet.base.commanderId !== commanderId)
       .map((planet) => {
-        const opponentId = planet.base!.userId;
+        const opponentId = planet.base!.commanderId;
         const war = wars.find(
           (item) =>
-            (item.aggressorId === userId && item.targetId === opponentId) ||
-            (item.aggressorId === opponentId && item.targetId === userId),
+            (item.aggressorId === commanderId && item.targetId === opponentId) ||
+            (item.aggressorId === opponentId && item.targetId === commanderId),
         );
         return {
-          userId: opponentId,
-          username: planet.base!.user.username,
+          commanderId: opponentId,
+          nickname: planet.base!.commander.nickname,
           planetName: planet.name,
           atWar: Boolean(war),
-          declaredByMe: war?.aggressorId === userId,
+          declaredByMe: war?.aggressorId === commanderId,
           declaredAt: war ? war.declaredAt.getTime() : null,
         };
       }),
     battles: battles.map((report) => {
       // Json пишет только боевой модуль, поэтому форма данных известна заранее.
       const data = report.data as unknown as BattleData;
-      const role = report.attackerId === userId ? 'ATTACKER' : 'DEFENDER';
+      const role = report.attackerId === commanderId ? 'ATTACKER' : 'DEFENDER';
       return {
         id: report.id,
         role,
@@ -160,34 +160,34 @@ export async function getDiplomacy(userId: string): Promise<DiplomacyView> {
 }
 
 /** Объявление войны. Себе объявить нельзя, повтор ничего не ломает. */
-export async function declareWar(userId: string, targetId: string): Promise<WarResult> {
+export async function declareWar(commanderId: string, targetId: string): Promise<WarResult> {
   if (!targetId) return { ok: false, error: 'Не указан противник' };
-  if (targetId === userId) return { ok: false, error: 'Нельзя объявить войну самому себе' };
+  if (targetId === commanderId) return { ok: false, error: 'Нельзя объявить войну самому себе' };
 
-  const target = await prisma.user.findUnique({ where: { id: targetId } });
-  if (!target) return { ok: false, error: 'Игрок не найден' };
+  const target = await prisma.commander.findUnique({ where: { id: targetId } });
+  if (!target) return { ok: false, error: 'Командир не найден' };
 
   const existing = await prisma.warDeclaration.findFirst({
     where: {
       OR: [
-        { aggressorId: userId, targetId },
-        { aggressorId: targetId, targetId: userId },
+        { aggressorId: commanderId, targetId },
+        { aggressorId: targetId, targetId: commanderId },
       ],
     },
   });
   if (existing) return { ok: false, error: 'Война уже идет' };
 
-  await prisma.warDeclaration.create({ data: { aggressorId: userId, targetId } });
-  return { ok: true, message: `Война объявлена: ${target.username}` };
+  await prisma.warDeclaration.create({ data: { aggressorId: commanderId, targetId } });
+  return { ok: true, message: `Война объявлена: ${target.nickname}` };
 }
 
 /** Мир: снимает объявление войны в любую сторону. */
-export async function declarePeace(userId: string, targetId: string): Promise<WarResult> {
+export async function declarePeace(commanderId: string, targetId: string): Promise<WarResult> {
   const removed = await prisma.warDeclaration.deleteMany({
     where: {
       OR: [
-        { aggressorId: userId, targetId },
-        { aggressorId: targetId, targetId: userId },
+        { aggressorId: commanderId, targetId },
+        { aggressorId: targetId, targetId: commanderId },
       ],
     },
   });

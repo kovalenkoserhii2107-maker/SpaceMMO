@@ -4,6 +4,7 @@
  * а не в рантайме.
  */
 import type { FlightPlan } from '../game/fleets.js';
+import type { CommanderProfile } from '../services/commanderService.js';
 import type { MarketView } from '../services/marketService.js';
 import type { DiplomacyView } from '../services/warService.js';
 import type { GalaxyMap, StateUpdatePayload, SystemMap } from './socket.js';
@@ -23,14 +24,30 @@ export interface HealthResponse {
   serverTime: number;
 }
 
-export interface LoginResponse {
+export interface AccountView {
+  id: string;
+  email: string;
+}
+
+/** Ответ на регистрацию, вход и смену пароля. */
+export interface AuthResponse {
   token: string;
-  user: { id: string; username: string };
+  user: AccountView;
+  commander: CommanderProfile | null;
+  /** Есть ли у аккаунта командир — клиент решает, куда вести игрока. */
+  hasCommander?: boolean;
+}
+
+/** Текущая сессия: аккаунт, командир и доступные аватары. */
+export interface SessionResponse {
+  user: AccountView;
+  commander: CommanderProfile | null;
+  avatars: Array<{ id: string; label: string; glyph: string }>;
 }
 
 /** Полное состояние игрока: то же, что уходит по WebSocket, плюс сам игрок. */
 export type StateResponse = StateUpdatePayload & {
-  user: { id: string; username: string | undefined };
+  commander: { id: string; nickname: string };
 };
 
 export type MapResponse = SystemMap;

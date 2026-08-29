@@ -13,7 +13,8 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "check:rules": "tsx src/scripts/checkRules.ts",
-    "audit": "tsc -p tsconfig.audit.json"
+    "audit": "tsc -p tsconfig.audit.json",
+    "legacy:password": "tsx src/scripts/legacyPassword.ts"
   },
   "keywords": [],
   "author": "",
@@ -24,11 +25,13 @@
     "@prisma/client": "^7.10.0",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
     "pg": "^8.23.0",
     "socket.io": "^4.8.3"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^26.4.0",
     "@types/pg": "^8.23.1",
     "prisma": "^7.10.0",

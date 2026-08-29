@@ -16,8 +16,8 @@ import type { GalaxyMap, HubView, SystemMap } from '../types/socket.js';
  *   Чужие системы показываются с тем же туманом войны: планеты видно как объекты,
  *   а их содержимое — только после разведки зондом.
  */
-export async function buildSystemMap(userId: string, systemId?: string): Promise<SystemMap | null> {
-  const user = await gameLoop.getUser(userId);
+export async function buildSystemMap(commanderId: string, systemId?: string): Promise<SystemMap | null> {
+  const user = await gameLoop.getCommander(commanderId);
   const homeBase = user ? [...user.bases.values()][0] : null;
   if (!user || !homeBase) return null;
 
@@ -36,12 +36,12 @@ export async function buildSystemMap(userId: string, systemId?: string): Promise
     prisma.planet.findMany({
       where: { systemId: targetSystem.id },
       orderBy: { position: 'asc' },
-      include: { base: { include: { user: true, ships: true } } },
+      include: { base: { include: { commander: true, ships: true } } },
     }),
-    prisma.planetScan.findMany({ where: { userId } }),
+    prisma.planetScan.findMany({ where: { commanderId } }),
     prisma.tradeHub.findUnique({
       where: { systemId: targetSystem.id },
-      include: { storages: { where: { userId } } },
+      include: { storages: { where: { commanderId } } },
     }),
   ]);
 
@@ -57,11 +57,11 @@ export async function buildSystemMap(userId: string, systemId?: string): Promise
       size: planet.size,
     };
 
-    const ownBase = planet.base && planet.base.userId === userId ? planet.base : null;
+    const ownBase = planet.base && planet.base.commanderId === commanderId ? planet.base : null;
     if (ownBase) {
       const live = user.bases.get(ownBase.id);
       const payload: ScanPayload = {
-        owner: planet.base?.user.username ?? null,
+        owner: planet.base?.commander.nickname ?? null,
         colonized: true,
         richness: {
           metal: planet.metalRichness,
@@ -146,8 +146,8 @@ export async function buildSystemMap(userId: string, systemId?: string): Promise
  * кто живет в системе и что там на планетах. Поэтому в списке отмечаются
  * только свои колонии и системы, где у игрока есть данные разведки.
  */
-export async function buildGalaxyMap(userId: string): Promise<GalaxyMap | null> {
-  const user = await gameLoop.getUser(userId);
+export async function buildGalaxyMap(commanderId: string): Promise<GalaxyMap | null> {
+  const user = await gameLoop.getCommander(commanderId);
   const homeBase = user ? [...user.bases.values()][0] : null;
   if (!user || !homeBase) return null;
 
@@ -161,10 +161,10 @@ export async function buildGalaxyMap(userId: string): Promise<GalaxyMap | null> 
     prisma.solarSystem.findMany({
       orderBy: [{ galaxyX: 'asc' }, { galaxyY: 'asc' }],
       include: {
-        planets: { select: { id: true, base: { select: { userId: true } } } },
+        planets: { select: { id: true, base: { select: { commanderId: true } } } },
       },
     }),
-    prisma.planetScan.findMany({ where: { userId }, select: { planetId: true } }),
+    prisma.planetScan.findMany({ where: { commanderId }, select: { planetId: true } }),
   ]);
 
   const scanned = new Set(scans.map((scan) => scan.planetId));
@@ -180,7 +180,7 @@ export async function buildGalaxyMap(userId: string): Promise<GalaxyMap | null> 
       anomaly: system.anomaly,
       planetCount: system.planets.length,
       isHome: system.id === home.systemId,
-      hasOwnColony: system.planets.some((planet) => planet.base?.userId === userId),
+      hasOwnColony: system.planets.some((planet) => planet.base?.commanderId === commanderId),
       colonized: system.planets.some((planet) => planet.base !== null),
       scannedPlanets: system.planets.filter((planet) => scanned.has(planet.id)).length,
     })),

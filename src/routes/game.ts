@@ -6,7 +6,7 @@ import { emptyShipCounts, isShipType, SHIP_TYPES } from '../game/ships.js';
 import { isDefenseType } from '../game/defenses.js';
 import { isFleetMission, planFlight } from '../game/fleets.js';
 import { buildGalaxyMap, buildSystemMap } from '../services/mapService.js';
-import { currentUser, requireAuth } from './middleware.js';
+import { currentCommander, requireAuth, requireCommander } from './middleware.js';
 import { amountsOrNull, nonNegativeInt, positiveInt } from './validation.js';
 import type {
   ActionResponse,
@@ -20,18 +20,19 @@ import type {
 export const gameRouter: Router = Router();
 
 gameRouter.use(requireAuth);
+gameRouter.use(requireCommander);
 
 /** Текущее состояние игрока: базы, очереди, технологии, флот. */
 gameRouter.get('/state', async (req, res: Response<StateResponse | ErrorResponse>) => {
-  const user = currentUser(req);
-  await gameLoop.getUser(user.id);
-  const payload = gameLoop.getSnapshot(user.id);
+  const commander = currentCommander(req);
+  await gameLoop.getCommander(commander.id);
+  const payload = gameLoop.getSnapshot(commander.id);
 
   if (!payload) {
     res.status(404).json({ error: 'Состояние игрока не найдено' });
     return;
   }
-  res.json({ user: { id: user.id, username: user.username }, ...payload });
+  res.json({ commander: { id: commander.id, nickname: commander.nickname }, ...payload });
 });
 
 /** Поставить здание в стройку. */
@@ -42,7 +43,7 @@ gameRouter.post('/bases/:baseId/build', async (req, res: Response<ActionResponse
     return;
   }
 
-  const result = await gameLoop.startBuild(currentUser(req).id, req.params.baseId, type);
+  const result = await gameLoop.startBuild(currentCommander(req).id, req.params.baseId, type);
   res.status(result.ok ? 200 : 409).json(result);
 });
 
@@ -54,14 +55,14 @@ gameRouter.post('/bases/:baseId/research', async (req, res: Response<ActionRespo
     return;
   }
 
-  const result = await gameLoop.startResearch(currentUser(req).id, req.params.baseId, tech);
+  const result = await gameLoop.startResearch(currentCommander(req).id, req.params.baseId, tech);
   res.status(result.ok ? 200 : 409).json(result);
 });
 
 /** Карта системы с учетом тумана войны. */
 /** Макро-карта галактики: все системы с координатами. */
 gameRouter.get('/galaxy', async (req, res: Response<GalaxyResponse | ErrorResponse>) => {
-  const galaxy = await buildGalaxyMap(currentUser(req).id);
+  const galaxy = await buildGalaxyMap(currentCommander(req).id);
   if (!galaxy) {
     res.status(404).json({ error: 'Галактика не найдена' });
     return;
@@ -72,7 +73,7 @@ gameRouter.get('/galaxy', async (req, res: Response<GalaxyResponse | ErrorRespon
 /** Карта системы. Без параметра — родная система игрока. */
 gameRouter.get('/map', async (req, res: Response<MapResponse | ErrorResponse>) => {
   const systemId = typeof req.query.systemId === 'string' ? req.query.systemId : undefined;
-  const map = await buildSystemMap(currentUser(req).id, systemId);
+  const map = await buildSystemMap(currentCommander(req).id, systemId);
   if (!map) {
     res.status(404).json({ error: 'Система не найдена' });
     return;
@@ -94,7 +95,7 @@ gameRouter.post('/bases/:baseId/ships', async (req, res: Response<ActionResponse
     return;
   }
 
-  const result = await gameLoop.orderShips(currentUser(req).id, req.params.baseId, body.type, quantity);
+  const result = await gameLoop.orderShips(currentCommander(req).id, req.params.baseId, body.type, quantity);
   res.status(result.ok ? 200 : 409).json(result);
 });
 
@@ -112,7 +113,7 @@ gameRouter.post('/bases/:baseId/defenses', async (req, res: Response<ActionRespo
     return;
   }
 
-  const result = await gameLoop.orderDefenses(currentUser(req).id, req.params.baseId, body.type, quantity);
+  const result = await gameLoop.orderDefenses(currentCommander(req).id, req.params.baseId, body.type, quantity);
   res.status(result.ok ? 200 : 409).json(result);
 });
 
@@ -148,9 +149,9 @@ function readShips(input: Record<string, unknown> | undefined) {
 /** Предрасчет маршрута: время, топливо, трюмы. Формулы остаются на сервере. */
 gameRouter.post('/bases/:baseId/fleets/preview', async (req, res: Response<FlightPreviewResponse | ErrorResponse>) => {
   const body = (req.body ?? {}) as FleetRequestBody;
-  const user = await gameLoop.getUser(currentUser(req).id);
-  const base = user?.bases.get(req.params.baseId);
-  if (!user || !base) {
+  const commander = await gameLoop.getCommander(currentCommander(req).id);
+  const base = commander?.bases.get(req.params.baseId);
+  if (!commander || !base) {
     res.status(404).json({ error: 'База не найдена' });
     return;
   }
@@ -167,7 +168,7 @@ gameRouter.post('/bases/:baseId/fleets/preview', async (req, res: Response<Fligh
     return;
   }
 
-  res.json(planFlight(ships, user.techs, { position: base.position, system: base.galaxy }, target));
+  res.json(planFlight(ships, commander.techs, { position: base.position, system: base.galaxy }, target));
 });
 
 /** Отправить флот с базы на другую планету. */
@@ -201,7 +202,7 @@ gameRouter.post('/bases/:baseId/fleets', async (req, res: Response<ActionRespons
   }
 
   const result = await gameLoop.sendFleet(
-    currentUser(req).id,
+    currentCommander(req).id,
     req.params.baseId,
     target,
     body.mission,

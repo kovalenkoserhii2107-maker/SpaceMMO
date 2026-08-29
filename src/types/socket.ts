@@ -214,7 +214,7 @@ export interface StateUpdatePayload {
  * клиент ничего не досчитывает сам, кроме плавной интерполяции маркеров флотов.
  */
 export interface ServerToClientEvents {
-  'session:ready': (payload: { userId: string; username: string }) => void;
+  'session:ready': (payload: { commanderId: string; nickname: string }) => void;
   'state:update': (payload: StateUpdatePayload) => void;
 }
 
@@ -233,6 +233,6 @@ export type InterServerEvents = Record<string, never>;
 
 /** Данные, которые сервер держит на сокете после авторизации по токену. */
 export interface SocketData {
-  userId: string;
-  username: string;
+  commanderId: string;
+  nickname: string;
 }

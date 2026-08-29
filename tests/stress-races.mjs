@@ -1,5 +1,23 @@
 import { readFileSync } from 'node:fs';
-const ids = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+const config = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+
+/** Тесты сами проходят авторизацию: сессия теперь JWT, а не токен из БД. */
+async function signIn(email, password) {
+  const res = await fetch('http://localhost:3000/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  const data = await res.json();
+  if (!data.token) throw new Error(`Не удалось войти как ${email}: ${JSON.stringify(data)}`);
+  return data.token;
+}
+
+const ids = {
+  ...config,
+  admiralToken: await signIn(config.admiralEmail, config.admiralPassword),
+  pilotToken: await signIn(config.pilotEmail, config.pilotPassword),
+};
 const H = (t) => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${t}` });
 
 async function api(method, path, token, body) {

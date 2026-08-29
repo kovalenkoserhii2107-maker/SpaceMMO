@@ -456,3 +456,82 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .system-label.home { fill: var(--accent); }
 .galaxy-grid { stroke: rgba(120, 160, 255, 0.08); stroke-width: 1; }
 .blackhole-ring { fill: none; stroke: #ff8fd8; stroke-width: 1.5; stroke-dasharray: 2 3; }
+
+/* ---------- Этап 8: вход, командир, достижения ---------- */
+.auth-tabs { display: flex; gap: 8px; }
+.auth-tab {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+}
+.auth-tab.active { color: var(--accent); border-color: var(--accent); }
+
+#auth-form, #commander-form { display: grid; gap: 12px; }
+.field input[type="email"], .field input[type="password"], .field input[type="text"] {
+  padding: 11px 13px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(8, 12, 24, 0.8);
+  color: var(--text);
+  font: inherit;
+  width: 100%;
+}
+.field input:focus { border-color: var(--accent); outline: none; }
+
+.link-button {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 12px;
+  text-decoration: underline;
+  padding: 0;
+  justify-self: center;
+}
+.link-button:hover { color: var(--accent); }
+
+.divider { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 11px; }
+.divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+
+.providers { display: grid; gap: 8px; }
+.provider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px 14px;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  font-size: 13px;
+}
+.provider:hover { border-color: var(--accent); }
+.provider span { font-weight: 700; color: var(--accent); width: 16px; text-align: center; }
+
+.auth-message { font-size: 12px; margin: 0; line-height: 1.5; }
+.auth-message.bad { color: var(--err); }
+.auth-message.ok { color: var(--ok); }
+
+.avatars { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.avatar-option {
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+  padding: 10px 6px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 11px;
+}
+.avatar-option b { font-size: 22px; color: var(--text); }
+.avatar-option.active { border-color: var(--accent); color: var(--accent); }
+
+.commander-avatar { font-size: 15px; color: var(--accent); }
+
+.achievement { opacity: 0.5; }
+.achievement.unlocked { opacity: 1; border-color: rgba(126, 231, 135, 0.4); }
+.achievement .icon { font-size: 22px; }
+.achievement .when { font-size: 11px; color: var(--ok); }

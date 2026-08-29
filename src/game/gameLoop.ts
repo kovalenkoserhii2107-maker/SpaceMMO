@@ -27,7 +27,7 @@ import {
   type BaseRuntimeState,
   type FleetRuntimeState,
   type ShipJobState,
-  type UserRuntimeState,
+  type CommanderRuntimeState,
 } from './baseState.js';
 import {
   canJump,
@@ -57,6 +57,7 @@ import {
   type DefenseType,
 } from './defenses.js';
 import { plunderAmount, resolveBattle, type SideForces } from './combat.js';
+import { checkArchitect, checkPirateBane } from '../services/achievementService.js';
 import {
   buildSeconds,
   emptyLevels,
@@ -106,9 +107,12 @@ class GameLoop {
   private timer: NodeJS.Timeout | null = null;
   private tickCount = 0;
   private ticking = false;
-  /** Состояния online-игроков: userId -> состояние. */
-  private readonly users = new Map<string, UserRuntimeState>();
-  /** Количество сокетов игрока. */
+  /** Состояния online-командиров: commanderId -> состояние. */
+  private readonly commanders = new Map<string, CommanderRuntimeState>();
+  /** Базы, где достроилось здание: после сохранения проверим «Архитектора». */
+  private readonly pendingArchitectChecks = new Set<string>();
+
+  /** Количество сокетов командира. */
   private readonly connections = new Map<string, number>();
 
   start(io: GameServer): void {
@@ -125,42 +129,42 @@ class GameLoop {
       clearInterval(this.timer);
       this.timer = null;
     }
-    for (const user of this.users.values()) {
-      await this.persistUser(user);
+    for (const commander of this.commanders.values()) {
+      await this.persistCommander(commander);
     }
     console.log('[game-loop] остановлен');
   }
 
-  async attachUser(userId: string): Promise<void> {
-    this.connections.set(userId, (this.connections.get(userId) ?? 0) + 1);
-    await this.getUser(userId);
+  async attachCommander(commanderId: string): Promise<void> {
+    this.connections.set(commanderId, (this.connections.get(commanderId) ?? 0) + 1);
+    await this.getCommander(commanderId);
   }
 
-  async detachUser(userId: string): Promise<void> {
-    const count = (this.connections.get(userId) ?? 1) - 1;
+  async detachCommander(commanderId: string): Promise<void> {
+    const count = (this.connections.get(commanderId) ?? 1) - 1;
     if (count > 0) {
-      this.connections.set(userId, count);
+      this.connections.set(commanderId, count);
       return;
     }
-    this.connections.delete(userId);
+    this.connections.delete(commanderId);
 
-    const user = this.users.get(userId);
-    if (user) {
-      await this.persistUser(user);
-      this.users.delete(userId);
+    const commander = this.commanders.get(commanderId);
+    if (commander) {
+      await this.persistCommander(commander);
+      this.commanders.delete(commanderId);
     }
   }
 
-  /** Состояние игрока: из памяти или из БД с догоном всех таймеров. */
-  async getUser(userId: string): Promise<UserRuntimeState | null> {
-    const cached = this.users.get(userId);
+  /** Состояние командира: из памяти или из БД с догоном всех таймеров. */
+  async getCommander(commanderId: string): Promise<CommanderRuntimeState | null> {
+    const cached = this.commanders.get(commanderId);
     if (cached) {
       cached.lastAccessAt = Date.now();
       return cached;
     }
 
-    const row = await prisma.user.findUnique({
-      where: { id: userId },
+    const row = await prisma.commander.findUnique({
+      where: { id: commanderId },
       include: {
         researches: true,
         researchJob: true,
@@ -184,8 +188,8 @@ class GameLoop {
     if (!row) return null;
 
     const now = Date.now();
-    const user: UserRuntimeState = {
-      userId: row.id,
+    const commander: CommanderRuntimeState = {
+      commanderId: row.id,
       credits: row.credits,
       lastAccessAt: now,
       techs: emptyTechLevels(),
@@ -196,10 +200,10 @@ class GameLoop {
     };
 
     for (const research of row.researches) {
-      user.techs[research.tech] = research.level;
+      commander.techs[research.tech] = research.level;
     }
     if (row.researchJob) {
-      user.research = {
+      commander.research = {
         tech: row.researchJob.tech,
         targetLevel: row.researchJob.targetLevel,
         baseId: row.researchJob.baseId,
@@ -224,10 +228,10 @@ class GameLoop {
       levels.SHIPYARD = base.shipyardLevel;
       levels.ANTIMATTER_SYNTH = base.antimatterSynthLevel;
 
-      user.bases.set(base.id, {
+      commander.bases.set(base.id, {
         id: base.id,
         name: base.name,
-        userId: base.userId,
+        commanderId: base.commanderId,
         planetId: base.planetId,
         planetName: base.planet.name,
         planetType: base.planet.type,
@@ -286,24 +290,24 @@ class GameLoop {
       });
     }
 
-    this.users.set(user.userId, user);
+    this.commanders.set(commander.commanderId, commander);
 
     // Доигрываем все, что произошло, пока игрока не было в сети.
-    if (this.settleUser(user, now)) {
-      await this.persistUser(user);
+    if (this.settleCommander(commander, now)) {
+      await this.persistCommander(commander);
     }
-    return user;
+    return commander;
   }
 
-  getSnapshot(userId: string, now = Date.now()): StateUpdatePayload | null {
-    const user = this.users.get(userId);
-    if (!user) return null;
-    user.lastAccessAt = now;
+  getSnapshot(commanderId: string, now = Date.now()): StateUpdatePayload | null {
+    const commander = this.commanders.get(commanderId);
+    if (!commander) return null;
+    commander.lastAccessAt = now;
     return {
-      bases: [...user.bases.values()].map((base) => toSnapshot(base, user, now)),
-      research: researchSnapshot(user, now),
-      fleets: fleetSnapshots(user, now),
-      credits: user.credits,
+      bases: [...commander.bases.values()].map((base) => toSnapshot(base, commander, now)),
+      research: researchSnapshot(commander, now),
+      fleets: fleetSnapshots(commander, now),
+      credits: commander.credits,
       serverTime: now,
     };
   }
@@ -311,8 +315,8 @@ class GameLoop {
   /* ------------------------- Действия игрока ------------------------- */
 
   /** Постановка здания в стройку. Проверки и списание — только на сервере. */
-  async startBuild(userId: string, baseId: string, type: BuildingType): Promise<ActionResult> {
-    const base = await this.resolveBase(userId, baseId);
+  async startBuild(commanderId: string, baseId: string, type: BuildingType): Promise<ActionResult> {
+    const base = await this.resolveBase(commanderId, baseId);
     if (!base) return { ok: false, error: 'База не найдена' };
 
     const missing = missingBuildingRequirements(type, base.levels);
@@ -334,23 +338,23 @@ class GameLoop {
     base.dirty = true;
     base.jobsDirty = true;
 
-    await this.persistAndEmit(userId);
+    await this.persistAndEmit(commanderId);
     return { ok: true, message: `Стройка начата, ${seconds} с до завершения` };
   }
 
   /** Запуск исследования. Одновременно у игрока идет только одно. */
-  async startResearch(userId: string, baseId: string, tech: TechnologyType): Promise<ActionResult> {
-    const user = await this.getUser(userId);
-    const base = user?.bases.get(baseId);
-    if (!user || !base) return { ok: false, error: 'База не найдена' };
+  async startResearch(commanderId: string, baseId: string, tech: TechnologyType): Promise<ActionResult> {
+    const commander = await this.getCommander(commanderId);
+    const base = commander?.bases.get(baseId);
+    if (!commander || !base) return { ok: false, error: 'База не найдена' };
 
-    const missing = missingTechRequirements(tech, base.levels, user.techs);
+    const missing = missingTechRequirements(tech, base.levels, commander.techs);
     if (missing.length > 0) {
       return { ok: false, error: 'Не выполнены требования для исследования' };
     }
-    if (user.research) return { ok: false, error: 'Лаборатория уже занята другим исследованием' };
+    if (commander.research) return { ok: false, error: 'Лаборатория уже занята другим исследованием' };
 
-    const targetLevel = user.techs[tech] + 1;
+    const targetLevel = commander.techs[tech] + 1;
     const cost = researchCost(tech, targetLevel);
     if (!hasEnoughResources(base.resources, cost)) {
       return { ok: false, error: 'Недостаточно ресурсов' };
@@ -361,34 +365,34 @@ class GameLoop {
       tech,
       targetLevel,
       base.levels.RESEARCH_LAB,
-      user.techs,
+      commander.techs,
       systemModifiers(base.anomaly),
     );
     subtractResources(base.resources, cost);
-    user.research = { tech, targetLevel, baseId, startedAt: now, finishesAt: now + seconds * 1000 };
-    user.researchDirty = true;
+    commander.research = { tech, targetLevel, baseId, startedAt: now, finishesAt: now + seconds * 1000 };
+    commander.researchDirty = true;
     base.dirty = true;
 
-    await this.persistAndEmit(userId);
+    await this.persistAndEmit(commanderId);
     return { ok: true, message: `Исследование начато, ${seconds} с до завершения` };
   }
 
   /** Заказ кораблей на верфи. Заказы выполняются очередью, корабли выходят поштучно. */
   async orderShips(
-    userId: string,
+    commanderId: string,
     baseId: string,
     type: ShipType,
     quantity: number,
   ): Promise<ActionResult> {
-    const user = await this.getUser(userId);
-    const base = user?.bases.get(baseId);
-    if (!user || !base) return { ok: false, error: 'База не найдена' };
+    const commander = await this.getCommander(commanderId);
+    const base = commander?.bases.get(baseId);
+    if (!commander || !base) return { ok: false, error: 'База не найдена' };
 
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > MAX_SHIP_ORDER) {
       return { ok: false, error: `Количество должно быть от 1 до ${MAX_SHIP_ORDER}` };
     }
 
-    const missing = missingShipRequirements(type, base.levels, user.techs);
+    const missing = missingShipRequirements(type, base.levels, commander.techs);
     if (missing.length > 0) {
       return { ok: false, error: 'Не выполнены требования для постройки корабля' };
     }
@@ -413,7 +417,7 @@ class GameLoop {
     base.dirty = true;
     base.jobsDirty = true;
 
-    await this.persistAndEmit(userId);
+    await this.persistAndEmit(commanderId);
     return { ok: true, message: `Заказ принят: ${quantity} шт., по ${unitSeconds} с за корабль` };
   }
 
@@ -422,7 +426,7 @@ class GameLoop {
    * корабли, груз и дейтерий списываются с базы отправления сразу.
    */
   async sendFleet(
-    userId: string,
+    commanderId: string,
     baseId: string,
     target: { planetId?: string; hubId?: string; systemId?: string },
     mission: FleetMission,
@@ -430,9 +434,9 @@ class GameLoop {
     cargo: { metal: number; crystal: number },
     pickup: { metal: number; crystal: number } = { metal: 0, crystal: 0 },
   ): Promise<ActionResult> {
-    const user = await this.getUser(userId);
-    const base = user?.bases.get(baseId);
-    if (!user || !base) return { ok: false, error: 'База не найдена' };
+    const commander = await this.getCommander(commanderId);
+    const base = commander?.bases.get(baseId);
+    if (!commander || !base) return { ok: false, error: 'База не найдена' };
 
     const compositionError = validateComposition(mission, ships);
     if (compositionError) return { ok: false, error: compositionError };
@@ -440,11 +444,13 @@ class GameLoop {
     // Доступность самой миссии проверяем раньше наличия кораблей:
     // «экспедиции недоступны» — более фундаментальный отказ, чем «не хватает кораблей».
     if (mission === 'EXPEDITION') {
-      if (!canExplore(user.techs)) {
+      if (!canExplore(commander.techs)) {
         return { ok: false, error: 'Для экспедиций нужна технология «Астрофизика»' };
       }
-      const slots = expeditionSlots(user.techs);
-      const active = user.fleets.filter((fleet) => fleet.mission === 'EXPEDITION').length;
+      const slots = expeditionSlots(commander.techs);
+      const active = commander.fleets.filter(
+      (fleet: FleetRuntimeState) => fleet.mission === 'EXPEDITION',
+    ).length;
       if (active >= slots) {
         return {
           ok: false,
@@ -499,14 +505,14 @@ class GameLoop {
 
       if (mission === 'ATTACK') {
         if (!planet.base) return { ok: false, error: 'Атаковать необитаемую планету бессмысленно' };
-        if (planet.base.userId === userId) {
+        if (planet.base.commanderId === commanderId) {
           return { ok: false, error: 'Нельзя атаковать собственную колонию' };
         }
         const war = await prisma.warDeclaration.findFirst({
           where: {
             OR: [
-              { aggressorId: userId, targetId: planet.base.userId },
-              { aggressorId: planet.base.userId, targetId: userId },
+              { aggressorId: commanderId, targetId: planet.base.commanderId },
+              { aggressorId: planet.base.commanderId, targetId: commanderId },
             ],
           },
         });
@@ -538,14 +544,14 @@ class GameLoop {
 
     const plan = planFlight(
       ships,
-      user.techs,
+      commander.techs,
       { position: base.position, system: base.galaxy },
       target_,
     );
 
     // Межзвездный прыжок возможен только с гипердвигателем и идет на антиматерии.
     if (plan.kind === 'INTERSTELLAR') {
-      if (!canJump(user.techs)) {
+      if (!canJump(commander.techs)) {
         return { ok: false, error: 'Для межзвездного прыжка нужен «Гипердвигатель»' };
       }
       if (base.resources.antimatter < plan.antimatter) {
@@ -572,7 +578,7 @@ class GameLoop {
 
     const created = await prisma.fleet.create({
       data: {
-        userId,
+        commanderId,
         originBaseId: base.id,
         originPlanetId: base.planetId,
         targetPlanetId,
@@ -599,8 +605,8 @@ class GameLoop {
       include: { originPlanet: true, targetPlanet: true, targetHub: true, targetSystem: true },
     });
 
-    user.fleets.push(toFleetRuntime(created));
-    await this.persistAndEmit(userId);
+    commander.fleets.push(toFleetRuntime(created));
+    await this.persistAndEmit(commanderId);
 
     return {
       ok: true,
@@ -619,11 +625,11 @@ class GameLoop {
    * Обновление баланса криптогривны в памяти после биржевой операции.
    * Источник правды по балансу — БД: тик его не пишет, поэтому конфликта нет.
    */
-  syncCredits(userId: string, credits: number): void {
-    const user = this.users.get(userId);
-    if (!user) return;
-    user.credits = credits;
-    this.emitUser(userId);
+  syncCredits(commanderId: string, credits: number): void {
+    const commander = this.commanders.get(commanderId);
+    if (!commander) return;
+    commander.credits = credits;
+    this.emitUser(commanderId);
   }
 
   /** Орбита и координаты системы цели — нужны для предрасчета маршрута. */
@@ -651,20 +657,20 @@ class GameLoop {
 
   /** Заказ стационарной обороны. Очередь своя, но правила те же, что у кораблей. */
   async orderDefenses(
-    userId: string,
+    commanderId: string,
     baseId: string,
     type: DefenseType,
     quantity: number,
   ): Promise<ActionResult> {
-    const user = await this.getUser(userId);
-    const base = user?.bases.get(baseId);
-    if (!user || !base) return { ok: false, error: 'База не найдена' };
+    const commander = await this.getCommander(commanderId);
+    const base = commander?.bases.get(baseId);
+    if (!commander || !base) return { ok: false, error: 'База не найдена' };
 
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > MAX_DEFENSE_ORDER) {
       return { ok: false, error: `Количество должно быть от 1 до ${MAX_DEFENSE_ORDER}` };
     }
 
-    const missing = missingDefenseRequirements(type, base.levels, user.techs);
+    const missing = missingDefenseRequirements(type, base.levels, commander.techs);
     if (missing.length > 0) {
       return { ok: false, error: 'Не выполнены требования для постройки обороны' };
     }
@@ -689,7 +695,7 @@ class GameLoop {
     base.dirty = true;
     base.jobsDirty = true;
 
-    await this.persistAndEmit(userId);
+    await this.persistAndEmit(commanderId);
     return { ok: true, message: `Заказ принят: ${quantity} шт., по ${unitSeconds} с за установку` };
   }
 
@@ -709,9 +715,9 @@ class GameLoop {
     return end;
   }
 
-  private async resolveBase(userId: string, baseId: string): Promise<BaseRuntimeState | null> {
-    const user = await this.getUser(userId);
-    return user?.bases.get(baseId) ?? null;
+  private async resolveBase(commanderId: string, baseId: string): Promise<BaseRuntimeState | null> {
+    const commander = await this.getCommander(commanderId);
+    return commander?.bases.get(baseId) ?? null;
   }
 
   /* ------------------------- Тик и таймеры ------------------------- */
@@ -735,23 +741,24 @@ class GameLoop {
 
     try {
       const now = Date.now();
-      for (const user of this.users.values()) {
-        const connected = (this.connections.get(user.userId) ?? 0) > 0;
+      for (const commander of this.commanders.values()) {
+        const connected = (this.connections.get(commander.commanderId) ?? 0) > 0;
 
         // Игрок без сокетов держится в памяти недолго: таймеры считаются
         // от абсолютных меток времени, поэтому выгрузка ничего не теряет.
-        if (!connected && now - user.lastAccessAt > IDLE_EVICT_MS) {
-          this.settleUser(user, now);
-          await this.persistUser(user);
-          this.users.delete(user.userId);
+        if (!connected && now - commander.lastAccessAt > IDLE_EVICT_MS) {
+          this.settleCommander(commander, now);
+          await this.persistCommander(commander);
+          this.commanders.delete(commander.commanderId);
           continue;
         }
 
-        const structural = this.settleUser(user, now);
+        const structural = this.settleCommander(commander, now);
         if (structural) {
-          await this.persistUser(user);
+          await this.persistCommander(commander);
+          await this.flushAchievementChecks();
         }
-        if (connected) this.emitUser(user.userId, now);
+        if (connected) this.emitUser(commander.commanderId, now);
       }
 
       this.tickCount += 1;
@@ -759,8 +766,8 @@ class GameLoop {
         await this.sweepFleets(now);
       }
       if (this.tickCount % PERSIST_EVERY_TICKS === 0) {
-        for (const user of this.users.values()) {
-          await this.persistUser(user);
+        for (const commander of this.commanders.values()) {
+          await this.persistCommander(commander);
         }
       }
     } catch (error) {
@@ -784,24 +791,24 @@ class GameLoop {
    *
    * @returns true, если что-то завершилось и состояние нужно немедленно сохранить.
    */
-  private settleUser(user: UserRuntimeState, now: number): boolean {
+  private settleCommander(commander: CommanderRuntimeState, now: number): boolean {
     let structural = false;
 
     const events: Array<{ time: number; apply: () => void }> = [];
 
-    if (user.research && user.research.finishesAt <= now) {
-      const research = user.research;
+    if (commander.research && commander.research.finishesAt <= now) {
+      const research = commander.research;
       events.push({
         time: research.finishesAt,
         apply: () => {
-          user.techs[research.tech] = research.targetLevel;
-          user.research = null;
-          user.researchDirty = true;
+          commander.techs[research.tech] = research.targetLevel;
+          commander.research = null;
+          commander.researchDirty = true;
         },
       });
     }
 
-    for (const base of user.bases.values()) {
+    for (const base of commander.bases.values()) {
       const job = base.buildJob;
       if (job && job.finishesAt <= now) {
         events.push({
@@ -811,6 +818,8 @@ class GameLoop {
             base.buildJob = null;
             base.dirty = true;
             base.jobsDirty = true;
+            // Достижения проверяем после сохранения состояния, поэтому только помечаем базу.
+            this.pendingArchitectChecks.add(`${commander.commanderId}:${base.id}`);
           },
         });
       }
@@ -819,15 +828,15 @@ class GameLoop {
     events.sort((a, b) => a.time - b.time);
 
     for (const event of events) {
-      for (const base of user.bases.values()) {
-        this.accrueTo(base, user, event.time);
+      for (const base of commander.bases.values()) {
+        this.accrueTo(base, commander, event.time);
       }
       event.apply();
       structural = true;
     }
 
-    for (const base of user.bases.values()) {
-      this.accrueTo(base, user, now);
+    for (const base of commander.bases.values()) {
+      this.accrueTo(base, commander, now);
       if (this.settleQueue(base.shipJobs, base.ships, now)) {
         base.jobsDirty = true;
         structural = true;
@@ -841,10 +850,10 @@ class GameLoop {
     return structural;
   }
 
-  private accrueTo(base: BaseRuntimeState, user: UserRuntimeState, time: number): void {
+  private accrueTo(base: BaseRuntimeState, commander: CommanderRuntimeState, time: number): void {
     const seconds = (time - base.lastTickAt) / 1000;
     if (seconds <= 0) return;
-    accrue(base, user.techs, seconds);
+    accrue(base, commander.techs, seconds);
     base.lastTickAt = time;
   }
 
@@ -889,6 +898,28 @@ class GameLoop {
     return changed;
   }
 
+  /**
+   * Проверка достижений после того, как состояние уже записано в БД.
+   * Движок читает данные из базы, поэтому запускать его до сохранения нельзя —
+   * он увидел бы старые уровни построек.
+   */
+  private async flushAchievementChecks(): Promise<void> {
+    if (this.pendingArchitectChecks.size === 0) return;
+
+    const checks = [...this.pendingArchitectChecks];
+    this.pendingArchitectChecks.clear();
+
+    for (const entry of checks) {
+      const [commanderId, baseId] = entry.split(':');
+      if (!commanderId || !baseId) continue;
+      try {
+        await checkArchitect(commanderId, baseId);
+      } catch (error) {
+        console.error('[achievements] проверка «Архитектора» не удалась:', error);
+      }
+    }
+  }
+
   /* ------------------------- Флоты в полете ------------------------- */
 
   /**
@@ -926,22 +957,22 @@ class GameLoop {
         } else {
           await this.handleReturn(fleet);
         }
-        affectedUsers.add(fleet.userId);
+        affectedUsers.add(fleet.commanderId);
       } catch (error) {
         console.error(`[game-loop] ошибка обработки флота ${fleet.id}:`, error);
       }
     }
 
     // Обновляем кэш флотов у тех, кто сейчас в сети.
-    for (const userId of affectedUsers) {
-      const user = this.users.get(userId);
-      if (!user) continue;
+    for (const commanderId of affectedUsers) {
+      const commander = this.commanders.get(commanderId);
+      if (!commander) continue;
       const rows = await prisma.fleet.findMany({
-        where: { userId },
+        where: { commanderId },
         include: { originPlanet: true, targetPlanet: true, targetHub: true, targetSystem: true },
         orderBy: { arrivesAt: 'asc' },
       });
-      user.fleets = rows.map(toFleetRuntime);
+      commander.fleets = rows.map(toFleetRuntime);
     }
   }
 
@@ -983,8 +1014,8 @@ class GameLoop {
         ...(payload
           ? [
               prisma.planetScan.upsert({
-                where: { userId_planetId: { userId: fleet.userId, planetId } },
-                create: { userId: fleet.userId, planetId, scannedAt: new Date(now), data: toJson(payload) },
+                where: { commanderId_planetId: { commanderId: fleet.commanderId, planetId } },
+                create: { commanderId: fleet.commanderId, planetId, scannedAt: new Date(now), data: toJson(payload) },
                 update: { scannedAt: new Date(now), data: toJson(payload) },
               }),
             ]
@@ -1035,8 +1066,8 @@ class GameLoop {
       LIGHT_FIGHTER: fleet.lightFighters,
     };
 
-    const user = await this.getUser(fleet.userId);
-    const techs = user ? user.techs : emptyTechLevels();
+    const commander = await this.getCommander(fleet.commanderId);
+    const techs = commander ? commander.techs : emptyTechLevels();
     const result = resolveExpedition(ships, fleetCapacity(ships), techs);
 
     const survivorCount = SHIP_TYPES.reduce((total, type) => total + result.survivors[type], 0);
@@ -1065,7 +1096,7 @@ class GameLoop {
 
       await tx.expeditionReport.create({
         data: {
-          userId: fleet.userId,
+          commanderId: fleet.commanderId,
           systemId,
           outcome: result.outcome,
           lootMetal: metal,
@@ -1083,6 +1114,10 @@ class GameLoop {
         },
       });
     });
+
+    await checkPirateBane(fleet.commanderId, result.outcome).catch((error: unknown) =>
+      console.error('[achievements] проверка «Грозы пиратов» не удалась:', error),
+    );
   }
 
   /**
@@ -1113,7 +1148,7 @@ class GameLoop {
     }
 
     const defenderBaseId = planet.base.id;
-    const defenderId = planet.base.userId;
+    const defenderId = planet.base.commanderId;
 
     // Сначала сбрасываем состояние защитника в БД, чтобы бой считался по актуальным силам.
     await this.flushBaseOwner(defenderBaseId);
@@ -1193,14 +1228,30 @@ class GameLoop {
         await tx.fleet.delete({ where: { id: fleet.id } });
       }
 
-      const [attackerUser, defenderUser] = await Promise.all([
-        tx.user.findUniqueOrThrow({ where: { id: fleet.userId }, select: { username: true } }),
-        tx.user.findUniqueOrThrow({ where: { id: defenderId }, select: { username: true } }),
+      const [attackerProfile, defenderProfile] = await Promise.all([
+        tx.commander.findUniqueOrThrow({ where: { id: fleet.commanderId }, select: { nickname: true } }),
+        tx.commander.findUniqueOrThrow({ where: { id: defenderId }, select: { nickname: true } }),
       ]);
+
+      // Счетчики боев в профиле командира.
+      await tx.commander.update({
+        where: { id: fleet.commanderId },
+        data:
+          outcome.winner === 'ATTACKER'
+            ? { battlesWon: { increment: 1 } }
+            : { battlesLost: { increment: 1 } },
+      });
+      await tx.commander.update({
+        where: { id: defenderId },
+        data:
+          outcome.winner === 'DEFENDER'
+            ? { battlesWon: { increment: 1 } }
+            : { battlesLost: { increment: 1 } },
+      });
 
       await tx.battleReport.create({
         data: {
-          attackerId: fleet.userId,
+          attackerId: fleet.commanderId,
           defenderId,
           planetId,
           winner: outcome.winner,
@@ -1208,8 +1259,8 @@ class GameLoop {
           plunderCrystal: plunder.crystal,
           data: toJson({
             planetName: planet.name,
-            attackerName: attackerUser.username,
-            defenderName: defenderUser.username,
+            attackerName: attackerProfile.nickname,
+            defenderName: defenderProfile.nickname,
             attackerForces: attackerShips,
             defenderForces: { ships: defenderShips, defenses: defenderDefenses },
             attackerPower: outcome.attackerPower,
@@ -1254,8 +1305,8 @@ class GameLoop {
   private async unloadToHub(fleet: FleetRow, hubId: string): Promise<void> {
     await prisma.$transaction(async (tx) => {
       const storage = await tx.hubStorage.upsert({
-        where: { userId_hubId: { userId: fleet.userId, hubId } },
-        create: { userId: fleet.userId, hubId },
+        where: { commanderId_hubId: { commanderId: fleet.commanderId, hubId } },
+        create: { commanderId: fleet.commanderId, hubId },
         update: {},
       });
 
@@ -1292,7 +1343,7 @@ class GameLoop {
 
     await prisma.$transaction(async (tx) => {
       const storage = await tx.hubStorage.findUnique({
-        where: { userId_hubId: { userId: fleet.userId, hubId } },
+        where: { commanderId_hubId: { commanderId: fleet.commanderId, hubId } },
       });
 
       const metal = storage ? Math.min(fleet.pickupMetal, storage.metal, capacity) : 0;
@@ -1371,9 +1422,9 @@ class GameLoop {
 
   /** Сбрасывает состояние владельца базы в БД, чтобы транзакция считала от актуальных чисел. */
   private async flushBaseOwner(baseId: string): Promise<void> {
-    for (const user of this.users.values()) {
-      if (user.bases.has(baseId)) {
-        await this.persistUser(user);
+    for (const commander of this.commanders.values()) {
+      if (commander.bases.has(baseId)) {
+        await this.persistCommander(commander);
         return;
       }
     }
@@ -1403,8 +1454,8 @@ class GameLoop {
   }
 
   private findLoadedBase(baseId: string): BaseRuntimeState | null {
-    for (const user of this.users.values()) {
-      const base = user.bases.get(baseId);
+    for (const commander of this.commanders.values()) {
+      const base = commander.bases.get(baseId);
       if (base) return base;
     }
     return null;
@@ -1414,7 +1465,7 @@ class GameLoop {
   private async buildScanPayload(planetId: string): Promise<ScanPayload | null> {
     const planet = await prisma.planet.findUnique({
       where: { id: planetId },
-      include: { base: { include: { user: true, ships: true } } },
+      include: { base: { include: { commander: true, ships: true } } },
     });
     if (!planet) return null;
 
@@ -1462,7 +1513,7 @@ class GameLoop {
       }
 
       payload = {
-        owner: planet.base.user.username,
+        owner: planet.base.commander.nickname,
         colonized: true,
         richness,
         buildings: levels,
@@ -1481,16 +1532,16 @@ class GameLoop {
 
   /* ------------------------- Сохранение и рассылка ------------------------- */
 
-  private emitUser(userId: string, now = Date.now()): void {
+  private emitUser(commanderId: string, now = Date.now()): void {
     if (!this.io) return;
-    const payload = this.getSnapshot(userId, now);
-    if (payload) this.io.to(roomForUser(userId)).emit('state:update', payload);
+    const payload = this.getSnapshot(commanderId, now);
+    if (payload) this.io.to(roomForCommander(commanderId)).emit('state:update', payload);
   }
 
-  private async persistAndEmit(userId: string): Promise<void> {
-    const user = this.users.get(userId);
-    if (user) await this.persistUser(user);
-    this.emitUser(userId);
+  private async persistAndEmit(commanderId: string): Promise<void> {
+    const commander = this.commanders.get(commanderId);
+    if (commander) await this.persistCommander(commander);
+    this.emitUser(commanderId);
   }
 
   /**
@@ -1501,11 +1552,11 @@ class GameLoop {
    * записи потерялось бы. Если транзакция упала, флаги возвращаются обратно,
    * и данные уедут в БД на следующем проходе — тик при этом не падает.
    */
-  private async persistUser(user: UserRuntimeState): Promise<void> {
+  private async persistCommander(commander: CommanderRuntimeState): Promise<void> {
     const operations: Array<Prisma.PrismaPromise<unknown>> = [];
     const touched: BaseRuntimeState[] = [];
 
-    for (const base of user.bases.values()) {
+    for (const base of commander.bases.values()) {
       if (!base.dirty && !base.jobsDirty) continue;
       touched.push(base);
 
@@ -1615,27 +1666,27 @@ class GameLoop {
       }
     }
 
-    if (user.researchDirty) {
-      for (const [tech, level] of Object.entries(user.techs) as Array<[TechnologyType, number]>) {
+    if (commander.researchDirty) {
+      for (const [tech, level] of Object.entries(commander.techs) as Array<[TechnologyType, number]>) {
         operations.push(
           prisma.research.upsert({
-            where: { userId_tech: { userId: user.userId, tech } },
-            create: { userId: user.userId, tech, level },
+            where: { commanderId_tech: { commanderId: commander.commanderId, tech } },
+            create: { commanderId: commander.commanderId, tech, level },
             update: { level },
           }),
         );
       }
-      operations.push(prisma.researchJob.deleteMany({ where: { userId: user.userId } }));
-      if (user.research) {
+      operations.push(prisma.researchJob.deleteMany({ where: { commanderId: commander.commanderId } }));
+      if (commander.research) {
         operations.push(
           prisma.researchJob.create({
             data: {
-              userId: user.userId,
-              baseId: user.research.baseId,
-              tech: user.research.tech,
-              targetLevel: user.research.targetLevel,
-              startedAt: new Date(user.research.startedAt),
-              finishesAt: new Date(user.research.finishesAt),
+              commanderId: commander.commanderId,
+              baseId: commander.research.baseId,
+              tech: commander.research.tech,
+              targetLevel: commander.research.targetLevel,
+              startedAt: new Date(commander.research.startedAt),
+              finishesAt: new Date(commander.research.finishesAt),
             },
           }),
         );
@@ -1644,12 +1695,12 @@ class GameLoop {
 
     if (operations.length === 0) return;
 
-    const researchWasDirty = user.researchDirty;
+    const researchWasDirty = commander.researchDirty;
     for (const base of touched) {
       base.dirty = false;
       base.jobsDirty = false;
     }
-    user.researchDirty = false;
+    commander.researchDirty = false;
 
     try {
       await prisma.$transaction(operations);
@@ -1659,7 +1710,7 @@ class GameLoop {
         base.dirty = true;
         base.jobsDirty = true;
       }
-      user.researchDirty = researchWasDirty;
+      commander.researchDirty = researchWasDirty;
     }
   }
 }
@@ -1724,8 +1775,8 @@ function safeAmount(value: number): number {
   return Number.isFinite(value) ? value : 0;
 }
 
-export function roomForUser(userId: string): string {
-  return `user:${userId}`;
+export function roomForCommander(commanderId: string): string {
+  return `commander:${commanderId}`;
 }
 
 export const gameLoop = new GameLoop();

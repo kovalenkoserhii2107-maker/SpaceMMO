@@ -9,14 +9,69 @@
 <body>
   <div class="starfield"></div>
 
-  <!-- Экран входа -->
-  <section id="login-screen" class="screen login">
-    <form id="login-form" class="login-card" autocomplete="off">
+  <!-- Экран входа и регистрации -->
+  <section id="auth-screen" class="screen login">
+    <div class="login-card">
       <h1>Командный центр</h1>
-      <p class="muted">Введи позывной адмирала, чтобы получить стартовую колонию.</p>
-      <input id="username" name="username" type="text" placeholder="Позывной" maxlength="24" required />
-      <button type="submit" class="primary">Войти в галактику</button>
-      <p id="login-error" class="error" hidden></p>
+      <p class="muted">Авторизуйся, чтобы принять командование флотом.</p>
+
+      <div class="auth-tabs">
+        <button type="button" class="auth-tab active" data-auth="login">Вход</button>
+        <button type="button" class="auth-tab" data-auth="register">Регистрация</button>
+      </div>
+
+      <form id="auth-form" autocomplete="on">
+        <label class="field">
+          <span>Email</span>
+          <input id="auth-email" type="email" name="email" autocomplete="email" required />
+        </label>
+        <label class="field">
+          <span>Пароль</span>
+          <input id="auth-password" type="password" name="password" autocomplete="current-password" required minlength="8" />
+        </label>
+        <button type="submit" class="primary" id="auth-submit">Войти</button>
+      </form>
+
+      <button type="button" class="link-button" id="forgot-password">Забыли пароль?</button>
+
+      <div class="divider"><span>или</span></div>
+
+      <div class="providers">
+        <button type="button" class="provider" data-provider="GOOGLE"><span>G</span> Google</button>
+        <button type="button" class="provider" data-provider="FACEBOOK"><span>f</span> Facebook</button>
+        <button type="button" class="provider" data-provider="APPLE"><span>&#63743;</span> Apple</button>
+      </div>
+
+      <p id="auth-message" class="auth-message" hidden></p>
+    </div>
+  </section>
+
+  <!-- Экран смены пароля -->
+  <section id="reset-screen" class="screen login" hidden>
+    <form id="reset-form" class="login-card" autocomplete="off">
+      <h1>Смена пароля</h1>
+      <p class="muted">Введи код из письма и новый пароль. Пока почта не подключена, код показывается прямо здесь.</p>
+      <label class="field"><span>Код восстановления</span><input id="reset-token" type="text" required /></label>
+      <label class="field"><span>Новый пароль</span><input id="reset-password" type="password" minlength="8" required /></label>
+      <button type="submit" class="primary">Установить пароль</button>
+      <button type="button" class="link-button" id="reset-back">Назад ко входу</button>
+      <p id="reset-message" class="auth-message" hidden></p>
+    </form>
+  </section>
+
+  <!-- Создание командира -->
+  <section id="commander-screen" class="screen login" hidden>
+    <form id="commander-form" class="login-card" autocomplete="off">
+      <h1>Создание командира</h1>
+      <p class="muted">Аккаунт создан. Осталось выбрать позывной и аватар — и флот твой.</p>
+      <label class="field">
+        <span>Позывной</span>
+        <input id="commander-nickname" type="text" maxlength="24" required />
+      </label>
+      <div class="field"><span>Аватар</span><div id="avatar-picker" class="avatars"></div></div>
+      <button type="submit" class="primary">Принять командование</button>
+      <button type="button" class="link-button" id="commander-logout">Выйти из аккаунта</button>
+      <p id="commander-message" class="auth-message" hidden></p>
     </form>
   </section>
 
@@ -37,6 +92,7 @@
         <div class="res" title="Криптогривна"><span class="ico credits">₴</span><b id="res-credits">0</b><small>криптогривна</small></div>
       </div>
       <div class="user">
+        <span id="commander-avatar" class="commander-avatar">✦</span>
         <span id="user-name">—</span>
         <span id="conn-status" class="status offline">офлайн</span>
         <button id="logout" class="ghost" type="button">Выйти</button>
@@ -169,6 +225,12 @@
         </section>
 
         <section data-panel="war" hidden>
+          <h3 class="section-title">Профиль командира</h3>
+          <div id="commander-profile" class="hub-card"></div>
+
+          <h3 class="section-title">Достижения</h3>
+          <div id="achievements" class="cards"></div>
+
           <h3 class="section-title">Экспедиции в глубокий космос</h3>
           <div id="expedition-slots" class="hub-card"></div>
           <div id="expeditions" class="battles"></div>

@@ -5,12 +5,15 @@ import express, { type Response } from 'express';
 import { Server } from 'socket.io';
 import { env } from './config/env.js';
 import { disconnectPrisma } from './db/prisma.js';
-import { gameLoop, roomForUser } from './game/gameLoop.js';
+import { gameLoop, roomForCommander } from './game/gameLoop.js';
 import { authRouter } from './routes/auth.js';
 import { gameRouter } from './routes/game.js';
 import { marketRouter } from './routes/market.js';
 import { warRouter } from './routes/war.js';
-import { findUserByToken } from './services/userService.js';
+import { verifyToken } from './services/authService.js';
+import { prisma } from './db/prisma.js';
+import { ensureAchievements } from './services/achievementService.js';
+import { warnIfInsecureSecret } from './config/auth.js';
 import type { HealthResponse } from './types/api.js';
 import type {
   ClientToServerEvents,
@@ -40,42 +43,61 @@ const io = new Server<ClientToServerEvents, ServerToClientEvents, InterServerEve
   { cors: { origin: true } },
 );
 
-/** Авторизация сокета тем же opaque-токеном, что и REST. */
+/**
+ * Авторизация сокета тем же JWT, что и REST.
+ * Игрок без командира до игрового канала не допускается: сокет отдает
+ * состояние игры, а его у такого аккаунта еще нет.
+ */
 io.use(async (socket, next) => {
   const token = (socket.handshake.auth as { token?: unknown } | undefined)?.token;
-  const user = typeof token === 'string' ? await findUserByToken(token) : null;
-  if (!user) {
+  const payload = typeof token === 'string' ? verifyToken(token) : null;
+  if (!payload) {
     next(new Error('unauthorized'));
     return;
   }
-  socket.data.userId = user.id;
-  socket.data.username = user.username;
+
+  const user = await prisma.user.findUnique({
+    where: { id: payload.sub },
+    include: { commander: { select: { id: true, nickname: true } } },
+  });
+  if (!user?.commander) {
+    next(new Error('commander required'));
+    return;
+  }
+
+  socket.data.commanderId = user.commander.id;
+  socket.data.nickname = user.commander.nickname;
   next();
 });
 
 io.on('connection', (socket) => {
-  const { userId, username } = socket.data;
-  void socket.join(roomForUser(userId));
+  const { commanderId, nickname } = socket.data;
+  void socket.join(roomForCommander(commanderId));
 
-  void gameLoop.attachUser(userId).then(() => {
-    socket.emit('session:ready', { userId, username });
+  void gameLoop.attachCommander(commanderId).then(() => {
+    socket.emit('session:ready', { commanderId, nickname });
     sendState();
   });
 
   socket.on('state:request', sendState);
 
   function sendState(): void {
-    const payload = gameLoop.getSnapshot(userId);
+    const payload = gameLoop.getSnapshot(commanderId);
     if (payload) socket.emit('state:update', payload);
   }
 
   socket.on('disconnect', () => {
-    void gameLoop.detachUser(userId);
+    void gameLoop.detachCommander(commanderId);
   });
 });
 
 httpServer.listen(env.port, () => {
   console.log(`[server] http://localhost:${env.port} (${env.nodeEnv})`);
+  warnIfInsecureSecret();
+  // Каталог достижений синхронизируется с кодом при каждом старте.
+  void ensureAchievements().catch((error: unknown) =>
+    console.error('[achievements] не удалось синхронизировать каталог:', error),
+  );
   gameLoop.start(io);
 });
 

@@ -18,11 +18,28 @@
 
   const $ = (id) => document.getElementById(id);
   const el = {
-    loginScreen: $('login-screen'),
-    loginForm: $('login-form'),
-    username: $('username'),
-    loginError: $('login-error'),
     dashboard: $('dashboard'),
+    authTabs: document.querySelector('.auth-tabs'),
+    authForm: $('auth-form'),
+    authEmail: $('auth-email'),
+    authPassword: $('auth-password'),
+    authSubmit: $('auth-submit'),
+    authMessage: $('auth-message'),
+    forgotPassword: $('forgot-password'),
+    providers: document.querySelector('.providers'),
+    resetForm: $('reset-form'),
+    resetToken: $('reset-token'),
+    resetPassword: $('reset-password'),
+    resetMessage: $('reset-message'),
+    resetBack: $('reset-back'),
+    commanderForm: $('commander-form'),
+    commanderNickname: $('commander-nickname'),
+    commanderMessage: $('commander-message'),
+    commanderLogout: $('commander-logout'),
+    commanderProfile: $('commander-profile'),
+    commanderAvatar: $('commander-avatar'),
+    avatarPicker: $('avatar-picker'),
+    achievements: $('achievements'),
     userName: $('user-name'),
     connStatus: $('conn-status'),
     logout: $('logout'),
@@ -116,75 +133,273 @@
     return `${s} с`;
   }
 
-  /* ---------- Авторизация ---------- */
+  /* ---------- Этап 8: авторизация и онбординг ---------- */
 
-  el.loginForm.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    el.loginError.hidden = true;
+  const auth = { mode: 'login', avatars: [], avatarId: 'nova', profile: null };
 
-    try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: el.username.value }),
-      });
-      const data = await response.json();
+  const screens = {
+    auth: $('auth-screen'),
+    reset: $('reset-screen'),
+    commander: $('commander-screen'),
+    dashboard: $('dashboard'),
+  };
 
-      if (!response.ok) {
-        showLoginError(data.error || 'Не удалось войти');
-        return;
-      }
-
-      state.token = data.token;
-      localStorage.setItem(TOKEN_KEY, data.token);
-      await enterGame();
-    } catch (error) {
-      showLoginError('Сервер недоступен');
-    }
-  });
-
-  el.logout.addEventListener('click', () => {
-    localStorage.removeItem(TOKEN_KEY);
-    if (state.socket) state.socket.disconnect();
-    state.token = '';
-    state.bases = [];
-    cards.buildings.clear();
-    cards.technologies.clear();
-    cards.ships.clear();
-    cardsBaseId = null;
-    el.dashboard.hidden = true;
-    el.loginScreen.hidden = false;
-  });
-
-  function showLoginError(message) {
-    el.loginError.textContent = message;
-    el.loginError.hidden = false;
+  function showScreen(name) {
+    for (const [key, node] of Object.entries(screens)) node.hidden = key !== name;
   }
 
+  function showAuthMessage(node, text, ok) {
+    node.textContent = text;
+    node.className = `auth-message ${ok ? 'ok' : 'bad'}`;
+    node.hidden = false;
+  }
+
+  async function api(path, options = {}) {
+    const response = await fetch(path, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
+        ...(options.headers || {}),
+      },
+    });
+    let data = null;
+    try { data = await response.json(); } catch (error) { data = null; }
+    return { ok: response.ok, status: response.status, data: data || {} };
+  }
+
+  /* --- переключение вход / регистрация --- */
+  el.authTabs.addEventListener('click', (event) => {
+    const button = event.target.closest('.auth-tab');
+    if (!button) return;
+    auth.mode = button.dataset.auth;
+    for (const tab of el.authTabs.querySelectorAll('.auth-tab')) {
+      tab.classList.toggle('active', tab.dataset.auth === auth.mode);
+    }
+    el.authSubmit.textContent = auth.mode === 'login' ? 'Войти' : 'Создать аккаунт';
+    el.authPassword.autocomplete = auth.mode === 'login' ? 'current-password' : 'new-password';
+    el.authMessage.hidden = true;
+  });
+
+  el.authForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const path = auth.mode === 'login' ? '/api/auth/login' : '/api/auth/register';
+    const result = await api(path, {
+      method: 'POST',
+      body: JSON.stringify({ email: el.authEmail.value, password: el.authPassword.value }),
+    });
+
+    if (!result.ok) {
+      showAuthMessage(el.authMessage, result.data.error || 'Не удалось войти', false);
+      return;
+    }
+
+    state.token = result.data.token;
+    localStorage.setItem(TOKEN_KEY, state.token);
+    await startSession();
+  });
+
+  /* --- вход через провайдеров: обработчики готовы, ключей пока нет --- */
+  el.providers.addEventListener('click', async (event) => {
+    const button = event.target.closest('.provider');
+    if (!button) return;
+
+    const provider = button.dataset.provider;
+    // Когда появятся ключи, здесь будет получение id_token у SDK провайдера.
+    const result = await api(`/api/auth/oauth/${provider.toLowerCase()}`, {
+      method: 'POST',
+      body: JSON.stringify({ idToken: '' }),
+    });
+    showAuthMessage(el.authMessage, result.data.error || 'Провайдер ответил неожиданно', result.ok);
+  });
+
+  /* --- смена пароля --- */
+  el.forgotPassword.addEventListener('click', async () => {
+    const email = el.authEmail.value.trim();
+    if (!email) {
+      showAuthMessage(el.authMessage, 'Введи email — на него придет код', false);
+      return;
+    }
+
+    const result = await api('/api/auth/password/reset-request', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
+    if (!result.ok) {
+      showAuthMessage(el.authMessage, result.data.error || 'Не удалось создать запрос', false);
+      return;
+    }
+
+    showScreen('reset');
+    el.resetToken.value = result.data.devToken || '';
+    showAuthMessage(
+      el.resetMessage,
+      result.data.devToken
+        ? 'Код подставлен автоматически: почта еще не подключена.'
+        : result.data.message,
+      true,
+    );
+  });
+
+  el.resetBack.addEventListener('click', () => showScreen('auth'));
+
+  el.resetForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const result = await api('/api/auth/password/reset', {
+      method: 'POST',
+      body: JSON.stringify({ token: el.resetToken.value.trim(), password: el.resetPassword.value }),
+    });
+
+    if (!result.ok) {
+      showAuthMessage(el.resetMessage, result.data.error || 'Не удалось сменить пароль', false);
+      return;
+    }
+
+    state.token = result.data.token;
+    localStorage.setItem(TOKEN_KEY, state.token);
+    await startSession();
+  });
+
+  /* --- онбординг: создание командира --- */
+  function renderAvatars() {
+    el.avatarPicker.innerHTML = '';
+    for (const avatar of auth.avatars) {
+      const option = document.createElement('button');
+      option.type = 'button';
+      option.className = `avatar-option${avatar.id === auth.avatarId ? ' active' : ''}`;
+      option.innerHTML = `<b>${avatar.glyph}</b>${avatar.label}`;
+      option.addEventListener('click', () => {
+        auth.avatarId = avatar.id;
+        renderAvatars();
+      });
+      el.avatarPicker.appendChild(option);
+    }
+  }
+
+  el.commanderForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const result = await api('/api/auth/commander', {
+      method: 'POST',
+      body: JSON.stringify({ nickname: el.commanderNickname.value, avatarId: auth.avatarId }),
+    });
+
+    if (!result.ok) {
+      showAuthMessage(el.commanderMessage, result.data.error || 'Не удалось создать командира', false);
+      return;
+    }
+    auth.profile = result.data.commander;
+    await enterGame();
+  });
+
+  el.commanderLogout.addEventListener('click', () => logout());
+
+  function authHeaders() {
+    return { 'Content-Type': 'application/json', Authorization: `Bearer ${state.token}` };
+  }
+
+  /** Загрузка игрового состояния и переход в дашборд. */
   async function enterGame() {
     const response = await fetch('/api/state', { headers: authHeaders() });
+
+    if (response.status === 409) {
+      // Сервер требует онбординг: аккаунт есть, командира еще нет.
+      renderAvatars();
+      showScreen('commander');
+      return;
+    }
     if (!response.ok) {
-      localStorage.removeItem(TOKEN_KEY);
-      state.token = '';
-      showLoginError('Сессия истекла, войди заново');
+      logout();
+      showAuthMessage(el.authMessage, 'Сессия истекла, войди заново', false);
       return;
     }
 
     const data = await response.json();
-    state.username = data.user.username;
-    el.userName.textContent = data.user.username;
-    el.loginScreen.hidden = true;
-    el.dashboard.hidden = false;
+    state.username = data.commander.nickname;
+    el.userName.textContent = data.commander.nickname;
+    if (auth.profile) {
+      const avatar = auth.avatars.find((item) => item.id === auth.profile.avatarId);
+      el.commanderAvatar.textContent = avatar ? avatar.glyph : '✦';
+    }
+    showScreen('dashboard');
+
     applyState(data);
     connectSocket();
+    renderProfile();
     await loadMap();
     await loadGalaxy();
     await loadMarket();
     await loadWar();
   }
 
-  function authHeaders() {
-    return { 'Content-Type': 'application/json', Authorization: `Bearer ${state.token}` };
+  /**
+   * Точка входа после получения токена: сервер сам решает, пускать ли в игру.
+   * Нет командира — показываем онбординг, а не пустой дашборд.
+   */
+  async function startSession() {
+    const session = await api('/api/auth/me');
+    if (!session.ok) {
+      logout();
+      return;
+    }
+
+    auth.avatars = session.data.avatars || [];
+    auth.profile = session.data.commander;
+    if (!auth.avatarId && auth.avatars.length) auth.avatarId = auth.avatars[0].id;
+
+    if (!session.data.commander) {
+      renderAvatars();
+      showScreen('commander');
+      return;
+    }
+    await enterGame();
+  }
+
+  function logout() {
+    localStorage.removeItem(TOKEN_KEY);
+    if (state.socket) state.socket.disconnect();
+    state.token = '';
+    state.bases = [];
+    auth.profile = null;
+    cards.buildings.clear();
+    cards.technologies.clear();
+    cards.ships.clear();
+    cards.defenses.clear();
+    cardsBaseId = null;
+    showScreen('auth');
+  }
+
+  /* --- профиль и достижения --- */
+  function renderProfile() {
+    if (!auth.profile) return;
+    const p = auth.profile;
+    const avatar = auth.avatars.find((item) => item.id === p.avatarId);
+
+    el.commanderProfile.innerHTML =
+      `<div class="hub-storage"><b>${avatar ? avatar.glyph : '✦'} ${p.nickname}</b><br>` +
+      `боев выиграно: <b>${p.battlesWon}</b> · проиграно: <b>${p.battlesLost}</b><br>` +
+      `родная колония: <b>${p.homePlanet || '—'}</b><br>` +
+      `в строю с ${new Date(p.createdAt).toLocaleDateString('ru-RU')}</div>`;
+
+    el.achievements.innerHTML = '';
+    for (const achievement of p.achievements || []) {
+      const card = document.createElement('article');
+      card.className = `card achievement${achievement.unlockedAt ? ' unlocked' : ''}`;
+      card.innerHTML =
+        `<header><h4>${achievement.icon} ${achievement.title}</h4></header>` +
+        `<div class="desc">${achievement.description}</div>` +
+        (achievement.unlockedAt
+          ? `<div class="when">получено ${new Date(achievement.unlockedAt).toLocaleString('ru-RU')}</div>`
+          : '<div class="time">еще не получено</div>');
+      el.achievements.appendChild(card);
+    }
+  }
+
+  async function refreshProfile() {
+    const session = await api('/api/auth/me');
+    if (!session.ok) return;
+    auth.avatars = session.data.avatars || auth.avatars;
+    auth.profile = session.data.commander;
+    renderProfile();
   }
 
   /* ---------- Реалтайм ---------- */
@@ -224,7 +439,10 @@
       void loadGalaxy();
     }
     if (state.activeTab === 'market') void loadMarket();
-    if (state.activeTab === 'war') void loadWar();
+    if (state.activeTab === 'war') {
+      void loadWar();
+      void refreshProfile();
+    }
   });
 
   /* ---------- Рендер ---------- */
@@ -1442,7 +1660,7 @@
 
       const info = document.createElement('div');
       const title = document.createElement('b');
-      title.textContent = `${player.username} · ${player.planetName}`;
+      title.textContent = `${player.nickname} · ${player.planetName}`;
       const status = document.createElement('div');
       status.className = player.atWar ? 'status-war' : 'status-peace';
       status.textContent = player.atWar
@@ -1455,7 +1673,7 @@
       button.className = player.atWar ? 'ghost' : 'primary';
       button.textContent = player.atWar ? 'Заключить мир' : 'Объявить войну';
       button.addEventListener('click', async () => {
-        await send(`/api/war/${player.atWar ? 'peace' : 'declare'}`, { targetId: player.userId });
+        await send(`/api/war/${player.atWar ? 'peace' : 'declare'}`, { targetId: player.commanderId });
         await loadWar();
         await loadMap();
       });
@@ -1809,9 +2027,11 @@
   }
 
   /* ---------- Старт ---------- */
+  el.logout.addEventListener('click', () => logout());
+
   if (state.token) {
-    enterGame().catch(() => {
-      el.loginScreen.hidden = false;
-    });
+    startSession().catch(() => showScreen('auth'));
+  } else {
+    showScreen('auth');
   }
 })();

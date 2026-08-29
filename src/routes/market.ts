@@ -7,22 +7,23 @@ import {
   placeOrder,
   upgradeStorage,
 } from '../services/marketService.js';
-import { currentUser, requireAuth } from './middleware.js';
+import { currentCommander, requireAuth, requireCommander } from './middleware.js';
 import { positiveInt, positivePrice } from './validation.js';
 import type { ActionResponse, ErrorResponse, MarketResponse } from '../types/api.js';
 
 export const marketRouter: Router = Router();
 
 marketRouter.use(requireAuth);
+marketRouter.use(requireCommander);
 
 /** Состояние биржи: склад на хабе, стакан, свои ордера и история сделок. */
 marketRouter.get('/', async (req, res: Response<MarketResponse>) => {
-  res.json(await getMarketView(currentUser(req).id));
+  res.json(await getMarketView(currentCommander(req).id));
 });
 
 /** Расширение личного склада на хабе. */
 marketRouter.post('/storage/upgrade', async (req, res: Response<ActionResponse | ErrorResponse>) => {
-  const result = await upgradeStorage(currentUser(req).id);
+  const result = await upgradeStorage(currentCommander(req).id);
   res.status(result.ok ? 200 : 409).json(result);
 });
 
@@ -55,7 +56,7 @@ marketRouter.post('/orders', async (req, res: Response<ActionResponse | ErrorRes
     return;
   }
 
-  const result = await placeOrder(currentUser(req).id, {
+  const result = await placeOrder(currentCommander(req).id, {
     side: body.side,
     resource: body.resource,
     quantity,
@@ -72,12 +73,12 @@ marketRouter.post('/orders/:orderId/fill', async (req, res: Response<ActionRespo
     return;
   }
 
-  const result = await fillOrder(currentUser(req).id, req.params.orderId, quantity);
+  const result = await fillOrder(currentCommander(req).id, req.params.orderId, quantity);
   res.status(result.ok ? 200 : 409).json(result);
 });
 
 /** Снять свой ордер. */
 marketRouter.delete('/orders/:orderId', async (req, res: Response<ActionResponse | ErrorResponse>) => {
-  const result = await cancelOrder(currentUser(req).id, req.params.orderId);
+  const result = await cancelOrder(currentCommander(req).id, req.params.orderId);
   res.status(result.ok ? 200 : 409).json(result);
 });

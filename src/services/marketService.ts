@@ -59,28 +59,28 @@ export interface PublicOrder {
 }
 
 /** Хаб системы, в которой стоит база игрока. */
-async function findHubForUser(userId: string) {
+async function findHubForUser(commanderId: string) {
   return prisma.tradeHub.findFirst({
-    where: { system: { planets: { some: { base: { userId } } } } },
+    where: { system: { planets: { some: { base: { commanderId } } } } },
   });
 }
 
-async function ensureStorage(userId: string, hubId: string) {
+async function ensureStorage(commanderId: string, hubId: string) {
   return prisma.hubStorage.upsert({
-    where: { userId_hubId: { userId, hubId } },
-    create: { userId, hubId },
+    where: { commanderId_hubId: { commanderId, hubId } },
+    create: { commanderId, hubId },
     update: {},
   });
 }
 
-export async function getMarketView(userId: string): Promise<MarketView> {
-  const user = await prisma.user.findUnique({ where: { id: userId } });
-  const hub = await findHubForUser(userId);
+export async function getMarketView(commanderId: string): Promise<MarketView> {
+  const commander = await prisma.commander.findUnique({ where: { id: commanderId } });
+  const hub = await findHubForUser(commanderId);
 
-  if (!user || !hub) {
+  if (!commander || !hub) {
     return {
       hub: null,
-      credits: user?.credits ?? 0,
+      credits: commander?.credits ?? 0,
       storage: null,
       book: { METAL: { buy: [], sell: [] }, CRYSTAL: { buy: [], sell: [] } },
       myOrders: [],
@@ -89,15 +89,15 @@ export async function getMarketView(userId: string): Promise<MarketView> {
   }
 
   const [storage, orders, trades] = await Promise.all([
-    prisma.hubStorage.findUnique({ where: { userId_hubId: { userId, hubId: hub.id } } }),
+    prisma.hubStorage.findUnique({ where: { commanderId_hubId: { commanderId, hubId: hub.id } } }),
     prisma.marketOrder.findMany({
       where: { hubId: hub.id, remaining: { gt: 0 } },
-      include: { user: { select: { username: true } } },
+      include: { commander: { select: { nickname: true } } },
       orderBy: { createdAt: 'asc' },
     }),
     prisma.trade.findMany({
       where: { hubId: hub.id },
-      include: { buyer: { select: { username: true } }, seller: { select: { username: true } } },
+      include: { buyer: { select: { nickname: true } }, seller: { select: { nickname: true } } },
       orderBy: { createdAt: 'desc' },
       take: 15,
     }),
@@ -110,8 +110,8 @@ export async function getMarketView(userId: string): Promise<MarketView> {
     pricePerUnit: order.pricePerUnit,
     remaining: order.remaining,
     quantity: order.quantity,
-    trader: order.user.username,
-    mine: order.userId === userId,
+    trader: order.commander.nickname,
+    mine: order.commanderId === commanderId,
     createdAt: order.createdAt.getTime(),
   });
 
@@ -135,7 +135,7 @@ export async function getMarketView(userId: string): Promise<MarketView> {
 
   return {
     hub: { hubId: hub.id, name: hub.name },
-    credits: round2(user.credits),
+    credits: round2(commander.credits),
     storage: {
       metal: Math.round(storage?.metal ?? 0),
       crystal: Math.round(storage?.crystal ?? 0),
@@ -147,27 +147,27 @@ export async function getMarketView(userId: string): Promise<MarketView> {
       nextCapacity: storageCapacity(level + 1),
     },
     book,
-    myOrders: orders.filter((order) => order.userId === userId).map(toPublic),
+    myOrders: orders.filter((order) => order.commanderId === commanderId).map(toPublic),
     trades: trades.map((trade) => ({
       id: trade.id,
       resource: trade.resource,
       quantity: trade.quantity,
       pricePerUnit: trade.pricePerUnit,
       total: trade.total,
-      buyer: trade.buyer.username,
-      seller: trade.seller.username,
+      buyer: trade.buyer.nickname,
+      seller: trade.seller.nickname,
       createdAt: trade.createdAt.getTime(),
-      mine: trade.buyerId === userId || trade.sellerId === userId,
+      mine: trade.buyerId === commanderId || trade.sellerId === commanderId,
     })),
   };
 }
 
 /** Расширение личного склада на хабе — платится товаром, который уже лежит на складе. */
-export async function upgradeStorage(userId: string): Promise<MarketResult> {
-  const hub = await findHubForUser(userId);
+export async function upgradeStorage(commanderId: string): Promise<MarketResult> {
+  const hub = await findHubForUser(commanderId);
   if (!hub) return { ok: false, error: 'Торговый хаб не найден' };
 
-  const storage = await ensureStorage(userId, hub.id);
+  const storage = await ensureStorage(commanderId, hub.id);
   const cost = storageUpgradeCost(storage.level + 1);
 
   if (storage.metal < cost.metal || storage.crystal < cost.crystal) {
@@ -203,15 +203,15 @@ export async function upgradeStorage(userId: string): Promise<MarketResult> {
  * уводила склад и баланс в минус (см. tests/stress-market-fleet.mjs).
  */
 export async function placeOrder(
-  userId: string,
+  commanderId: string,
   input: { side: OrderSide; resource: TradeResource; quantity: number; pricePerUnit: number },
 ): Promise<MarketResult> {
   const invalid = validateOrder(input);
   if (invalid) return { ok: false, error: invalid };
 
-  const hub = await findHubForUser(userId);
+  const hub = await findHubForUser(commanderId);
   if (!hub) return { ok: false, error: 'Торговый хаб не найден' };
-  await ensureStorage(userId, hub.id);
+  await ensureStorage(commanderId, hub.id);
 
   const field = input.resource === 'METAL' ? 'metal' : 'crystal';
   const total = tradeTotal(input.quantity, input.pricePerUnit);
@@ -222,20 +222,20 @@ export async function placeOrder(
         // Условное списание: товар уходит в залог только если он реально есть.
         // Обычный read-modify-write здесь давал гонку и уводил склад в минус.
         const locked = await tx.hubStorage.updateMany({
-          where: { userId, hubId: hub.id, [field]: { gte: input.quantity } },
+          where: { commanderId, hubId: hub.id, [field]: { gte: input.quantity } },
           data: { [field]: { decrement: input.quantity } },
         });
         if (locked.count === 0) {
           const storage = await tx.hubStorage.findUnique({
-            where: { userId_hubId: { userId, hubId: hub.id } },
+            where: { commanderId_hubId: { commanderId, hubId: hub.id } },
           });
           throw new MarketError(
             `На складе хаба только ${Math.floor(storage?.[field] ?? 0)} — ${RESOURCE_LABELS[input.resource]}`,
           );
         }
       } else {
-        const paid = await tx.user.updateMany({
-          where: { id: userId, credits: { gte: total } },
+        const paid = await tx.commander.updateMany({
+          where: { id: commanderId, credits: { gte: total } },
           data: { credits: { decrement: total } },
         });
         if (paid.count === 0) {
@@ -246,7 +246,7 @@ export async function placeOrder(
       await tx.marketOrder.create({
         data: {
           hubId: hub.id,
-          userId,
+          commanderId,
           side: input.side,
           resource: input.resource,
           pricePerUnit: input.pricePerUnit,
@@ -259,7 +259,7 @@ export async function placeOrder(
     return toError(error, 'Не удалось выставить ордер');
   }
 
-  await syncCredits(userId);
+  await syncCredits(commanderId);
   return {
     ok: true,
     message:
@@ -276,27 +276,27 @@ export async function placeOrder(
  * сможет только тот запрос, чей DELETE реально удалил строку. Иначе залог
  * вернулся бы дважды.
  */
-export async function cancelOrder(userId: string, orderId: string): Promise<MarketResult> {
+export async function cancelOrder(commanderId: string, orderId: string): Promise<MarketResult> {
   try {
     await prisma.$transaction(async (tx) => {
       const order = await tx.marketOrder.findUnique({ where: { id: orderId } });
-      if (!order || order.userId !== userId) throw new MarketError('Ордер не найден');
+      if (!order || order.commanderId !== commanderId) throw new MarketError('Ордер не найден');
 
       // Удаляем первым делом: если два запроса на отмену пришли разом,
       // вернуть залог сможет только тот, чей DELETE реально сработал.
-      const removed = await tx.marketOrder.deleteMany({ where: { id: order.id, userId } });
+      const removed = await tx.marketOrder.deleteMany({ where: { id: order.id, commanderId } });
       if (removed.count === 0) throw new MarketError('Ордер уже снят');
 
       if (order.side === 'SELL') {
         const field = order.resource === 'METAL' ? 'metal' : 'crystal';
         const storage = await tx.hubStorage.findUniqueOrThrow({
-          where: { userId_hubId: { userId, hubId: order.hubId } },
+          where: { commanderId_hubId: { commanderId, hubId: order.hubId } },
         });
         await incrementStorage(tx, storage.id, field, order.remaining, storageCapacity(storage.level),
           'На складе хаба не хватает места, чтобы вернуть товар');
       } else {
-        await tx.user.update({
-          where: { id: userId },
+        await tx.commander.update({
+          where: { id: commanderId },
           data: { credits: { increment: tradeTotal(order.remaining, order.pricePerUnit) } },
         });
       }
@@ -305,7 +305,7 @@ export async function cancelOrder(userId: string, orderId: string): Promise<Mark
     return toError(error, 'Не удалось отменить ордер');
   }
 
-  await syncCredits(userId);
+  await syncCredits(commanderId);
   return { ok: true, message: 'Ордер отменен, заблокированное вернулось' };
 }
 
@@ -327,7 +327,7 @@ export async function cancelOrder(userId: string, orderId: string): Promise<Mark
  * выставления, поэтому продавцу она просто начисляется.
  */
 export async function fillOrder(
-  userId: string,
+  commanderId: string,
   orderId: string,
   quantity: number,
 ): Promise<MarketResult> {
@@ -343,9 +343,9 @@ export async function fillOrder(
     await prisma.$transaction(async (tx) => {
       const order = await tx.marketOrder.findUnique({ where: { id: orderId } });
       if (!order || order.remaining <= 0) throw new MarketError('Ордер уже исполнен или снят');
-      if (order.userId === userId) throw new MarketError('Нельзя торговать с самим собой');
+      if (order.commanderId === commanderId) throw new MarketError('Нельзя торговать с самим собой');
 
-      counterpartId = order.userId;
+      counterpartId = order.commanderId;
       executed = Math.min(quantity, order.remaining);
       total = tradeTotal(executed, order.pricePerUnit);
       const field = order.resource === 'METAL' ? 'metal' : 'crystal';
@@ -359,22 +359,22 @@ export async function fillOrder(
       if (taken.count === 0) throw new MarketError('Ордер разобрали, попробуй меньший объем');
 
       const myStorage = await tx.hubStorage.upsert({
-        where: { userId_hubId: { userId, hubId: order.hubId } },
-        create: { userId, hubId: order.hubId },
+        where: { commanderId_hubId: { commanderId, hubId: order.hubId } },
+        create: { commanderId, hubId: order.hubId },
         update: {},
       });
 
       if (order.side === 'SELL') {
         // Мы покупаем: платим криптогривну, товар ложится на наш склад хаба.
-        const paid = await tx.user.updateMany({
-          where: { id: userId, credits: { gte: total } },
+        const paid = await tx.commander.updateMany({
+          where: { id: commanderId, credits: { gte: total } },
           data: { credits: { decrement: total } },
         });
         if (paid.count === 0) throw new MarketError(`Не хватает криптогривны: нужно ${total} ₴`);
 
         await incrementStorage(tx, myStorage.id, field, executed, storageCapacity(myStorage.level),
           `На складе хаба свободно только ${Math.floor(storageCapacity(myStorage.level) - storageUsed(myStorage))}`);
-        await tx.user.update({ where: { id: order.userId }, data: { credits: { increment: total } } });
+        await tx.commander.update({ where: { id: order.commanderId }, data: { credits: { increment: total } } });
       } else {
         // Мы продаем: товар уходит со склада, криптогривна покупателя уже в залоге.
         const shipped = await tx.hubStorage.updateMany({
@@ -386,13 +386,13 @@ export async function fillOrder(
         }
 
         const buyerStorage = await tx.hubStorage.upsert({
-          where: { userId_hubId: { userId: order.userId, hubId: order.hubId } },
-          create: { userId: order.userId, hubId: order.hubId },
+          where: { commanderId_hubId: { commanderId: order.commanderId, hubId: order.hubId } },
+          create: { commanderId: order.commanderId, hubId: order.hubId },
           update: {},
         });
         await incrementStorage(tx, buyerStorage.id, field, executed, storageCapacity(buyerStorage.level),
           'У покупателя не хватает места на складе хаба');
-        await tx.user.update({ where: { id: userId }, data: { credits: { increment: total } } });
+        await tx.commander.update({ where: { id: commanderId }, data: { credits: { increment: total } } });
       }
 
       await tx.marketOrder.deleteMany({ where: { id: order.id, remaining: { lte: 0 } } });
@@ -400,8 +400,8 @@ export async function fillOrder(
       await tx.trade.create({
         data: {
           hubId: order.hubId,
-          buyerId: order.side === 'SELL' ? userId : order.userId,
-          sellerId: order.side === 'SELL' ? order.userId : userId,
+          buyerId: order.side === 'SELL' ? commanderId : order.commanderId,
+          sellerId: order.side === 'SELL' ? order.commanderId : commanderId,
           resource: order.resource,
           quantity: executed,
           pricePerUnit: order.pricePerUnit,
@@ -413,7 +413,7 @@ export async function fillOrder(
     return toError(error, 'Сделка не прошла');
   }
 
-  await syncCredits(userId);
+  await syncCredits(commanderId);
   if (counterpartId) await syncCredits(counterpartId);
 
   return { ok: true, message: `Сделка исполнена: ${executed} единиц на ${total} ₴` };
@@ -453,9 +453,12 @@ function toError(error: unknown, fallback: string): MarketResult {
 }
 
 /** Баланс изменился — обновляем кэш игрока в Game Loop, если он в сети. */
-async function syncCredits(userId: string): Promise<void> {
-  const user = await prisma.user.findUnique({ where: { id: userId }, select: { credits: true } });
-  if (user) gameLoop.syncCredits(userId, user.credits);
+async function syncCredits(commanderId: string): Promise<void> {
+  const commander = await prisma.commander.findUnique({
+    where: { id: commanderId },
+    select: { credits: true },
+  });
+  if (commander) gameLoop.syncCredits(commanderId, commander.credits);
 }
 
 function round2(value: number): number {

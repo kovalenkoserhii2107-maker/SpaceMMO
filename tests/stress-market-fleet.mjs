@@ -1,6 +1,24 @@
 import { readFileSync } from 'node:fs';
 
-const ids = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+const config = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+
+/** Тесты сами проходят авторизацию: сессия теперь JWT, а не токен из БД. */
+async function signIn(email, password) {
+  const res = await fetch('http://localhost:3000/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  const data = await res.json();
+  if (!data.token) throw new Error(`Не удалось войти как ${email}: ${JSON.stringify(data)}`);
+  return data.token;
+}
+
+const ids = {
+  ...config,
+  admiralToken: await signIn(config.admiralEmail, config.admiralPassword),
+  pilotToken: await signIn(config.pilotEmail, config.pilotPassword),
+};
 const BASE_URL = 'http://localhost:3000';
 
 const H = (token) => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` });
@@ -242,12 +260,14 @@ async function testCombatGuards() {
   // Убеждаемся, что войны нет, и проверяем запрет атаки.
   const diplomacy = (await api('GET', '/api/war', ids.admiralToken)).data;
   const target = diplomacy.players.find((p) => p.planetName === enemy.name);
-  if (target?.atWar) await api('POST', '/api/war/peace', ids.admiralToken, { targetId: target.userId });
+  if (target?.atWar) {
+    await api('POST', '/api/war/peace', ids.admiralToken, { targetId: target.commanderId });
+  }
 
   const noWar = await attack({ targetPlanetId: enemy.planetId, mission: 'ATTACK', ships: { LIGHT_FIGHTER: 1 }, cargo: {} });
   check('атака без объявления войны отклонена', noWar.status >= 400, JSON.stringify(noWar.data));
 
-  const myId = mine.user.id;
+  const myId = mine.commander.id;
   const selfWar = await api('POST', '/api/war/declare', ids.admiralToken, { targetId: myId });
   check('война самому себе отклонена', selfWar.status >= 400, JSON.stringify(selfWar.data));
 

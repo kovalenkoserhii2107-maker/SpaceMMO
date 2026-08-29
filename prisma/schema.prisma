@@ -6,6 +6,8 @@
 // ЭТАП 5: Defense, DefenseJob, BattleReport, WarDeclaration.
 // ЭТАП 6: макро-координаты систем, аномалии, антиматерия и межзвездные прыжки.
 // ЭТАП 7: экспедиции в глубокий космос и PvE-события.
+// ЭТАП 8: User отвечает только за авторизацию, игровая личность вынесена
+// в Commander, добавлены достижения.
 
 generator client {
   provider = "prisma-client"
@@ -16,16 +18,49 @@ datasource db {
   provider = "postgresql"
 }
 
-/// Игрок. Авторизация на Этапе 1 — упрощенная (логин без пароля, opaque-токен сессии).
+/// Учетная запись: отвечает только за вход в игру (Этап 8).
+/// Игровая личность вынесена в Commander.
 model User {
-  id           String   @id @default(cuid())
-  username     String   @unique
-  sessionToken String   @unique
-  /// Криптогривна — глобальная валюта аккаунта (Этап 4).
-  credits      Float    @default(1000)
-  createdAt    DateTime @default(now())
-  lastSeenAt   DateTime @default(now())
+  id           String       @id @default(cuid())
+  email        String       @unique
+  authProvider AuthProvider @default(LOCAL)
+  /// Идентификатор пользователя у внешнего провайдера (Google/Apple/Facebook).
+  providerId   String?
+  /// Хеш пароля для локальных аккаунтов; у OAuth-аккаунтов пуст.
+  passwordHash String?
 
+  /// Одноразовый токен смены пароля.
+  passwordResetToken   String?   @unique
+  passwordResetExpires DateTime?
+
+  createdAt   DateTime  @default(now())
+  lastLoginAt DateTime?
+
+  commander Commander?
+
+  @@unique([authProvider, providerId])
+  @@map("users")
+}
+
+/// Командир — игровая личность. Все базы, флоты и ресурсы принадлежат ему.
+model Commander {
+  id       String @id @default(cuid())
+  userId   String @unique
+  nickname String @unique
+  /// Идентификатор аватара из набора заглушек.
+  avatarId String @default("nova")
+
+  /// Криптогривна — валюта командира.
+  credits Float @default(1000)
+
+  /// Счетчики боев для профиля.
+  battlesWon  Int @default(0)
+  battlesLost Int @default(0)
+
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+
+  user         User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
   bases        Base[]
   researches   Research[]
   researchJob  ResearchJob?
@@ -33,15 +68,51 @@ model User {
   scans        PlanetScan[]
   hubStorages  HubStorage[]
   orders       MarketOrder[]
-  purchases    Trade[]            @relation("TradeBuyer")
-  sales        Trade[]            @relation("TradeSeller")
+  purchases    Trade[]                @relation("TradeBuyer")
+  sales        Trade[]                @relation("TradeSeller")
   expeditions  ExpeditionReport[]
-  attacksMade  BattleReport[]     @relation("BattleAttacker")
-  attacksTaken BattleReport[]     @relation("BattleDefender")
-  warsStarted  WarDeclaration[]   @relation("WarAggressor")
-  warsAgainst  WarDeclaration[]   @relation("WarTarget")
+  attacksMade  BattleReport[]         @relation("BattleAttacker")
+  attacksTaken BattleReport[]         @relation("BattleDefender")
+  warsStarted  WarDeclaration[]       @relation("WarAggressor")
+  warsAgainst  WarDeclaration[]       @relation("WarTarget")
+  achievements CommanderAchievement[]
 
-  @@map("users")
+  @@map("commanders")
+}
+
+/// Каталог достижений. Наполняется при старте сервера.
+model Achievement {
+  id          String @id @default(cuid())
+  /// Стабильный код, по которому движок выдает награду.
+  code        String @unique
+  title       String
+  description String
+  icon        String @default("★")
+
+  commanders CommanderAchievement[]
+
+  @@map("achievements")
+}
+
+/// Выданное достижение.
+model CommanderAchievement {
+  id            String   @id @default(cuid())
+  commanderId   String
+  achievementId String
+  unlockedAt    DateTime @default(now())
+
+  commander   Commander   @relation(fields: [commanderId], references: [id], onDelete: Cascade)
+  achievement Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+
+  @@unique([commanderId, achievementId])
+  @@map("commander_achievements")
+}
+
+enum AuthProvider {
+  LOCAL
+  GOOGLE
+  APPLE
+  FACEBOOK
 }
 
 /// Звездная система — макро-объект галактической карты.
@@ -100,10 +171,10 @@ model Planet {
 
 /// База игрока на планете: склад ресурсов и уровни инфраструктуры.
 model Base {
-  id       String @id @default(cuid())
-  name     String
-  userId   String
-  planetId String @unique
+  id          String @id @default(cuid())
+  name        String
+  commanderId String
+  planetId    String @unique
 
   /// Склад ресурсов (дробные значения — начисление идет каждую секунду).
   metal      Float @default(500)
@@ -129,7 +200,7 @@ model Base {
   lastTickAt DateTime @default(now())
   createdAt  DateTime @default(now())
 
-  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  commander   Commander    @relation(fields: [commanderId], references: [id], onDelete: Cascade)
   planet      Planet       @relation(fields: [planetId], references: [id], onDelete: Cascade)
   fleets      Fleet[]
   buildJob    BuildJob?
@@ -139,7 +210,7 @@ model Base {
   defenseJobs DefenseJob[]
   researchJob ResearchJob?
 
-  @@index([userId])
+  @@index([commanderId])
   @@map("bases")
 }
 
@@ -159,21 +230,21 @@ model BuildJob {
 
 /// Изученные технологии игрока (общие для всех его баз).
 model Research {
-  id     String         @id @default(cuid())
-  userId String
-  tech   TechnologyType
-  level  Int            @default(0)
+  id          String         @id @default(cuid())
+  commanderId String
+  tech        TechnologyType
+  level       Int            @default(0)
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  commander Commander @relation(fields: [commanderId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, tech])
+  @@unique([commanderId, tech])
   @@map("researches")
 }
 
 /// Активное исследование игрока. Одновременно активно не больше одного.
 model ResearchJob {
   id          String         @id @default(cuid())
-  userId      String         @unique
+  commanderId String         @unique
   /// Лаборатория, с которой запущено исследование (с нее списаны ресурсы).
   baseId      String         @unique
   tech        TechnologyType
@@ -181,8 +252,8 @@ model ResearchJob {
   startedAt   DateTime       @default(now())
   finishesAt  DateTime
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  base Base @relation(fields: [baseId], references: [id], onDelete: Cascade)
+  commander Commander @relation(fields: [commanderId], references: [id], onDelete: Cascade)
+  base      Base      @relation(fields: [baseId], references: [id], onDelete: Cascade)
 
   @@map("research_jobs")
 }
@@ -244,9 +315,9 @@ model BattleReport {
   data      Json
   createdAt DateTime @default(now())
 
-  attacker User   @relation("BattleAttacker", fields: [attackerId], references: [id], onDelete: Cascade)
-  defender User   @relation("BattleDefender", fields: [defenderId], references: [id], onDelete: Cascade)
-  planet   Planet @relation(fields: [planetId], references: [id], onDelete: Cascade)
+  attacker Commander @relation("BattleAttacker", fields: [attackerId], references: [id], onDelete: Cascade)
+  defender Commander @relation("BattleDefender", fields: [defenderId], references: [id], onDelete: Cascade)
+  planet   Planet    @relation(fields: [planetId], references: [id], onDelete: Cascade)
 
   @@index([attackerId, createdAt])
   @@index([defenderId, createdAt])
@@ -255,10 +326,10 @@ model BattleReport {
 
 /// Отчет об экспедиции в глубокий космос: что нашли или кого встретили.
 model ExpeditionReport {
-  id       String            @id @default(cuid())
-  userId   String
-  systemId String
-  outcome  ExpeditionOutcome
+  id          String            @id @default(cuid())
+  commanderId String
+  systemId    String
+  outcome     ExpeditionOutcome
 
   /// Найденное за вылет.
   lootMetal      Float @default(0)
@@ -270,10 +341,10 @@ model ExpeditionReport {
   data      Json
   createdAt DateTime @default(now())
 
-  user   User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  system SolarSystem @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  commander Commander   @relation(fields: [commanderId], references: [id], onDelete: Cascade)
+  system    SolarSystem @relation(fields: [systemId], references: [id], onDelete: Cascade)
 
-  @@index([userId, createdAt])
+  @@index([commanderId, createdAt])
   @@map("expedition_reports")
 }
 
@@ -284,8 +355,8 @@ model WarDeclaration {
   targetId    String
   declaredAt  DateTime @default(now())
 
-  aggressor User @relation("WarAggressor", fields: [aggressorId], references: [id], onDelete: Cascade)
-  target    User @relation("WarTarget", fields: [targetId], references: [id], onDelete: Cascade)
+  aggressor Commander @relation("WarAggressor", fields: [aggressorId], references: [id], onDelete: Cascade)
+  target    Commander @relation("WarTarget", fields: [targetId], references: [id], onDelete: Cascade)
 
   @@unique([aggressorId, targetId])
   @@map("war_declarations")
@@ -325,7 +396,7 @@ model ShipJob {
 /// Полет флота между планетами. Время в пути и возврат считает Game Loop.
 model Fleet {
   id             String  @id @default(cuid())
-  userId         String
+  commanderId    String
   /// База отправления — туда вернется флот и оттуда списано топливо.
   originBaseId   String
   originPlanetId String
@@ -368,7 +439,7 @@ model Fleet {
   returnsAt  DateTime
   createdAt  DateTime @default(now())
 
-  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  commander    Commander    @relation(fields: [commanderId], references: [id], onDelete: Cascade)
   originBase   Base         @relation(fields: [originBaseId], references: [id], onDelete: Cascade)
   originPlanet Planet       @relation("FleetOrigin", fields: [originPlanetId], references: [id], onDelete: Cascade)
   targetPlanet Planet?      @relation("FleetTarget", fields: [targetPlanetId], references: [id], onDelete: Cascade)
@@ -377,23 +448,23 @@ model Fleet {
 
   @@index([status, arrivesAt])
   @@index([status, returnsAt])
-  @@index([userId])
+  @@index([commanderId])
   @@map("fleets")
 }
 
 /// Результат сканирования планеты зондом — основа «тумана войны».
 model PlanetScan {
-  id        String   @id @default(cuid())
-  userId    String
-  planetId  String
-  scannedAt DateTime @default(now())
+  id          String   @id @default(cuid())
+  commanderId String
+  planetId    String
+  scannedAt   DateTime @default(now())
   /// Снимок данных планеты на момент сканирования.
-  data      Json
+  data        Json
 
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  planet Planet @relation(fields: [planetId], references: [id], onDelete: Cascade)
+  commander Commander @relation(fields: [commanderId], references: [id], onDelete: Cascade)
+  planet    Planet    @relation(fields: [planetId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, planetId])
+  @@unique([commanderId, planetId])
   @@map("planet_scans")
 }
 
@@ -416,27 +487,27 @@ model TradeHub {
 
 /// Личный торговый склад игрока на хабе. Товар сюда привозят транспортом.
 model HubStorage {
-  id     String @id @default(cuid())
-  userId String
-  hubId  String
+  id          String @id @default(cuid())
+  commanderId String
+  hubId       String
 
   metal   Float @default(0)
   crystal Float @default(0)
   /// Уровень склада определяет вместимость.
   level   Int   @default(1)
 
-  user User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  hub  TradeHub @relation(fields: [hubId], references: [id], onDelete: Cascade)
+  commander Commander @relation(fields: [commanderId], references: [id], onDelete: Cascade)
+  hub       TradeHub  @relation(fields: [hubId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, hubId])
+  @@unique([commanderId, hubId])
   @@map("hub_storages")
 }
 
 /// Ордер в биржевом стакане. Товар (продажа) или криптогривна (покупка) блокируются при выставлении.
 model MarketOrder {
-  id     String @id @default(cuid())
-  hubId  String
-  userId String
+  id          String @id @default(cuid())
+  hubId       String
+  commanderId String
 
   side         OrderSide
   resource     TradeResource
@@ -448,8 +519,8 @@ model MarketOrder {
 
   createdAt DateTime @default(now())
 
-  hub  TradeHub @relation(fields: [hubId], references: [id], onDelete: Cascade)
-  user User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  hub       TradeHub  @relation(fields: [hubId], references: [id], onDelete: Cascade)
+  commander Commander @relation(fields: [commanderId], references: [id], onDelete: Cascade)
 
   @@index([hubId, resource, side, pricePerUnit])
   @@map("market_orders")
@@ -469,9 +540,9 @@ model Trade {
 
   createdAt DateTime @default(now())
 
-  hub    TradeHub @relation(fields: [hubId], references: [id], onDelete: Cascade)
-  buyer  User     @relation("TradeBuyer", fields: [buyerId], references: [id], onDelete: Cascade)
-  seller User     @relation("TradeSeller", fields: [sellerId], references: [id], onDelete: Cascade)
+  hub    TradeHub  @relation(fields: [hubId], references: [id], onDelete: Cascade)
+  buyer  Commander @relation("TradeBuyer", fields: [buyerId], references: [id], onDelete: Cascade)
+  seller Commander @relation("TradeSeller", fields: [sellerId], references: [id], onDelete: Cascade)
 
   @@index([hubId, createdAt])
   @@map("trades")

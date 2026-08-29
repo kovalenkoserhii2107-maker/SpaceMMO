@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
-import { findUserByToken } from '../services/userService.js';
+import { prisma } from '../db/prisma.js';
+import { verifyToken } from '../services/authService.js';
 import type { ErrorResponse } from '../types/api.js';
 
 declare global {
@@ -7,20 +8,33 @@ declare global {
   namespace Express {
     interface Request {
       userId?: string;
-      username?: string;
+      email?: string;
+      commanderId?: string;
+      nickname?: string;
     }
   }
 }
 
 /**
- * Пользователь защищенного роута.
- * Приведение типа безопасно: за всеми такими роутами стоит `requireAuth`,
- * который иначе не пустил бы запрос дальше.
+ * Учетная запись защищенного роута.
+ * Приведение типа безопасно: за такими роутами стоит `requireAuth`.
  */
-export function currentUser(req: Request): { id: string; username: string } {
-  return { id: req.userId as string, username: req.username as string };
+export function currentAccount(req: Request): { id: string; email: string } {
+  return { id: req.userId as string, email: req.email as string };
 }
 
+/**
+ * Командир защищенного роута.
+ * Безопасно за `requireCommander`, который иначе вернул бы 409.
+ */
+export function currentCommander(req: Request): { id: string; nickname: string } {
+  return { id: req.commanderId as string, nickname: req.nickname as string };
+}
+
+/**
+ * Проверка JWT. Токен выдается и локальным входом, и (в будущем) OAuth —
+ * дальше по коду разницы нет, поэтому middleware один на все способы входа.
+ */
 export async function requireAuth(
   req: Request,
   res: Response<ErrorResponse>,
@@ -28,14 +42,43 @@ export async function requireAuth(
 ): Promise<void> {
   const header = req.header('authorization') ?? '';
   const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
-  const user = await findUserByToken(token);
+  const payload = token ? verifyToken(token) : null;
 
-  if (!user) {
+  if (!payload) {
     res.status(401).json({ error: 'Требуется авторизация' });
     return;
   }
 
+  const user = await prisma.user.findUnique({
+    where: { id: payload.sub },
+    include: { commander: { select: { id: true, nickname: true } } },
+  });
+  if (!user) {
+    res.status(401).json({ error: 'Учетная запись не найдена' });
+    return;
+  }
+
   req.userId = user.id;
-  req.username = user.username;
+  req.email = user.email;
+  if (user.commander) {
+    req.commanderId = user.commander.id;
+    req.nickname = user.commander.nickname;
+  }
+  next();
+}
+
+/**
+ * Онбординг: авторизованный игрок без командира в игру не попадает.
+ * Клиент по коду `COMMANDER_REQUIRED` открывает экран создания профиля.
+ */
+export function requireCommander(
+  req: Request,
+  res: Response<ErrorResponse & { code?: string }>,
+  next: NextFunction,
+): void {
+  if (!req.commanderId) {
+    res.status(409).json({ error: 'Сначала создай командира', code: 'COMMANDER_REQUIRED' });
+    return;
+  }
   next();
 }
