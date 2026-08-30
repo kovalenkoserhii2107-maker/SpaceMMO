@@ -935,11 +935,13 @@
       const unit = document.createElement('div');
       unit.className = 'garrison-unit';
       unit.title = label;
-      unit.appendChild(artNode(type, label, kind, 'art-chip'));
 
-      const text = document.createElement('span');
-      text.innerHTML = `<b>${fmt(count)}</b><small>${label}</small>`;
-      unit.appendChild(text);
+      const value = document.createElement('b');
+      value.textContent = fmt(count);
+      const name = document.createElement('small');
+      name.textContent = label;
+
+      unit.append(artNode(type, label, kind, 'art-chip'), value, name);
       node.appendChild(unit);
     }
 
@@ -1246,10 +1248,12 @@
   }
 
   /**
-   * Состав флота или обороны на базе. Строка из шести чисел не отвечала на
-   * вопрос «что у меня есть»: класс опознавался только по подписи, а боевые
-   * характеристики лежали в карточке ниже, куда надо было доскроллить.
-   * Здесь у каждого класса свой силуэт, счетчик и его профиль боя.
+   * Ангар верфи и позиции обороны: что у нас есть и на что оно способно.
+   *
+   * Отличается от гарнизона в паспорте колонии намеренно. Паспорт отвечает
+   * «сколько чего стоит на планете» и потому идет узкой ведомостью; здесь
+   * игрок решает, что строить дальше, и ему нужны сами характеристики —
+   * профиль единицы и то, что этот класс дает флоту в сумме.
    *
    * Перерисовывается только при изменении состава: пересобирать картинки
    * каждую секунду значит каждую секунду заново дергать их загрузку.
@@ -1271,15 +1275,28 @@
     }
 
     for (const card of owned) {
+      const count = counts[card.type] || 0;
+      const combat = card.combat || { attack: 0, shield: 0, hull: 0, note: null };
+      // Суммарные числа класса: одиночная атака 15 ничего не говорит, а «залп
+      // 75 по всем пяти» сразу сравнимо с обороной цели в отчете разведки.
+      const salvo = combat.attack * count;
+      const endurance = (combat.shield + combat.hull) * count;
+
       const unit = document.createElement('article');
       unit.className = 'roster-unit';
-      unit.appendChild(artNode(card.type, card.label, card.kind, 'art-chip'));
+      unit.appendChild(artNode(card.type, card.label, card.kind, 'art-tile'));
 
       const body = document.createElement('div');
       body.className = 'roster-body';
       body.innerHTML =
-        `<span class="roster-head"><b>${fmt(counts[card.type] || 0)}</b> ${escapeHtml(card.label)}</span>` +
-        `<span class="roster-combat">${escapeHtml(combatLine(card.combat))}</span>`;
+        `<span class="roster-head">${escapeHtml(card.label)}<b>×${fmt(count)}</b></span>` +
+        '<span class="roster-stats">' +
+        `<span><i>атака</i>${fmt(combat.attack)}</span>` +
+        `<span><i>щит</i>${fmt(combat.shield)}</span>` +
+        `<span><i>корпус</i>${fmt(combat.hull)}</span>` +
+        '</span>' +
+        `<span class="roster-total">залп <b>${fmt(salvo)}</b> · живучесть <b>${fmt(endurance)}</b></span>` +
+        (combat.note ? `<span class="roster-note">${escapeHtml(combat.note)}</span>` : '');
       unit.appendChild(body);
       node.appendChild(unit);
     }

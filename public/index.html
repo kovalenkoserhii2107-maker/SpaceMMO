@@ -295,18 +295,20 @@
 
       <main class="content">
         <!--
-          Сводка активной базы: паспорт колонии. Слева портрет планеты, справа
-          адрес, склад, богатство недр и гарнизон — флот на орбите и оборона.
-          Все это состояние одной базы, и разносить его по вкладкам значит
-          заставлять игрока помнить числа при переходе между разделами.
+          Паспорт активной базы, три колонки: кто и где мы (портрет, адрес,
+          склад), что у нас стоит (гарнизон) и что под нами лежит (недра).
+          Три колонки, а не одна лента: на широком экране полоса склада
+          и полосы богатства тянулись от края до края, и глазу приходилось
+          проходить полтора метра пикселей ради одного числа справа.
         -->
         <section class="planet-card">
-          <div class="colony-art" id="colony-art"></div>
-
-          <div class="colony-main">
-            <div class="colony-head">
-              <h2 id="base-name">—</h2>
-              <p class="muted" id="planet-meta">—</p>
+          <div class="colony-col colony-id">
+            <div class="colony-ident">
+              <div class="colony-art" id="colony-art"></div>
+              <div class="colony-head">
+                <h2 id="base-name">—</h2>
+                <p class="muted" id="planet-meta">—</p>
+              </div>
             </div>
 
             <div class="storage" id="storage">
@@ -317,21 +319,23 @@
               <div class="storage-bar"><i id="storage-fill"></i></div>
               <p class="storage-note" id="storage-note"></p>
             </div>
+          </div>
 
+          <div class="colony-col colony-garrison">
+            <div class="colony-block">
+              <h3 class="colony-sub">Флот на орбите <b id="garrison-fleet-total">0</b></h3>
+              <div id="garrison-fleet" class="garrison"></div>
+            </div>
+            <div class="colony-block">
+              <h3 class="colony-sub">Оборона планеты <b id="garrison-defense-total">0</b></h3>
+              <div id="garrison-defense" class="garrison"></div>
+            </div>
+          </div>
+
+          <div class="colony-col">
             <div class="colony-block">
               <h3 class="colony-sub">Богатство недр</h3>
               <div class="richness" id="richness"></div>
-            </div>
-
-            <div class="colony-garrison">
-              <div class="colony-block">
-                <h3 class="colony-sub">Флот на орбите <b id="garrison-fleet-total">0</b></h3>
-                <div id="garrison-fleet" class="garrison"></div>
-              </div>
-              <div class="colony-block">
-                <h3 class="colony-sub">Оборона планеты <b id="garrison-defense-total">0</b></h3>
-                <div id="garrison-defense" class="garrison"></div>
-              </div>
             </div>
           </div>
         </section>
