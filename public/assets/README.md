@@ -7,6 +7,7 @@
 | `buildings/` | `/assets/buildings/ore_mine.webp` | значение `BuildingType` |
 | `ships/` | `/assets/ships/heavy_cruiser.webp` | значение `ShipType` |
 | `defense/` | `/assets/defense/cannon_turret.webp` | значение `DefenseType` |
+| `tech/` | `/assets/tech/mining_tech.webp` | значение `TechnologyType` |
 
 Полный список ожидаемых файлов:
 
@@ -18,5 +19,12 @@
 
 **defense:** `cannon_turret`, `laser_turret`
 
+**tech:** `energy_tech`, `computing_tech`, `mining_tech`, `combustion_drive`,
+`hyperspace_physics`, `hyperdrive`, `astrophysics`
+
 Формат — `.webp`, квадрат (рекомендуется 256×256). Пока файла нет, карточка
 показывает стилизованную заглушку: верстка от отсутствия картинки не ломается.
+
+Имя файла обязано совпадать с типом объекта в нижнем регистре — таблицы
+соответствий в коде нет намеренно. Если картинка не появилась, первым делом
+сверь имя со списком выше.

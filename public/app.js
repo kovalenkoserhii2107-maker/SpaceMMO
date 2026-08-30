@@ -204,7 +204,7 @@
    * Пока картинки нет, карточка показывает заглушку: `onerror` помечает блок
    * классом, и верстка от отсутствия файла не разъезжается.
    */
-  const ART_FOLDERS = { building: 'buildings', ship: 'ships', defense: 'defense' };
+  const ART_FOLDERS = { building: 'buildings', ship: 'ships', defense: 'defense', tech: 'tech' };
 
   function artNode(type, label, kind) {
     const slug = type.toLowerCase();
@@ -777,7 +777,7 @@
       }
       for (const tech of base.technologies) {
         cards.technologies.set(tech.tech, createActionCard(el.technologies, tech.label, tech.description, () =>
-          send(`/api/bases/${base.baseId}/research`, { tech: tech.tech })));
+          send(`/api/bases/${base.baseId}/research`, { tech: tech.tech }), tech.tech, 'tech'));
       }
       for (const ship of base.ships) {
         cards.ships.set(ship.type, createShipCard(el.ships, ship, base.baseId));

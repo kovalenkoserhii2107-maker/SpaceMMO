@@ -3,3 +3,4 @@ dist/
 .env
 src/generated/
 stand.json
+.DS_Store
