@@ -420,13 +420,27 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .map-wrap { display: grid; grid-template-columns: 1fr 300px; gap: 16px; align-items: start; }
 @media (max-width: 900px) { .map-wrap { grid-template-columns: 1fr; } }
 
+/*
+ * Фон карты — тайл звездного поля под сильным затемнением.
+ *
+ * Затемнение обязательно: планеты и звезды смешиваются с фоном через `screen`,
+ * и яркая подложка съела бы их свечение. Градиент кладется поверх картинки
+ * одним фоном, поэтому отдельного слоя-затемнителя не нужно.
+ *
+ * Оранжевого пятна слева здесь больше нет: оно рисовало «солнце» с тех пор,
+ * когда карта была горизонтальной полосой со звездой у левого края, и после
+ * перехода на круговую карту просто просвечивало из-под настоящей звезды.
+ */
 .map-canvas {
   position: relative;
   border: 1px solid var(--line);
   border-radius: 14px;
-  background:
-    radial-gradient(600px 240px at 8% 50%, rgba(255, 196, 84, 0.16), transparent 60%),
-    var(--panel);
+  background-color: var(--bg);
+  background-image:
+    linear-gradient(rgba(0, 0, 15, 0.85), rgba(0, 0, 15, 0.85)),
+    url('/assets/bg/space_bg.webp');
+  background-repeat: repeat, repeat;
+  background-size: auto, 512px 512px;
   overflow: hidden;
 }
 .map-canvas svg { display: block; width: 100%; height: auto; }
@@ -452,8 +466,6 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .hit-area { fill: transparent; }
 .fleet-line { stroke: rgba(157, 123, 255, 0.5); stroke-width: 1.5; stroke-dasharray: 4 4; }
 .fleet-marker { fill: var(--accent-2); }
-.star-core { fill: url(#starGlow); }
-.hole-core { fill: url(#holeGlow); }
 
 /*
  * Карта круговая, поэтому холст квадратный. Карточка планеты рядом уезжает
@@ -744,14 +756,15 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .map-caption b { color: var(--text); }
 .map-caption .anomaly { color: #ff8fd8; }
 
-.system-node { cursor: pointer; }
-.system-node:hover circle.star { filter: brightness(1.4); }
-.system-node.home circle.halo { stroke: var(--accent); }
-.system-node.selected circle.halo { stroke: var(--accent-2); stroke-width: 2.5; }
+.system-node { cursor: pointer; transition: filter 0.15s ease; }
+.system-node:hover { filter: brightness(1.3); }
+/* Своя система обведена кольцом: миниатюры похожи, и без метки ее не найти. */
+.home-ring { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+.system-node.selected .home-ring { stroke: var(--accent-2); stroke-width: 2.5; }
 .system-label { font-size: 11px; fill: var(--muted); text-anchor: middle; }
+.system-label.name { font-size: 12px; fill: var(--text); font-weight: 600; }
 .system-label.home { fill: var(--accent); }
 .galaxy-grid { stroke: rgba(120, 160, 255, 0.08); stroke-width: 1; }
-.blackhole-ring { fill: none; stroke: #ff8fd8; stroke-width: 1.5; stroke-dasharray: 2 3; }
 
 /* ---------- Вход, командир, достижения ---------- */
 .auth-tabs { display: flex; gap: 8px; }

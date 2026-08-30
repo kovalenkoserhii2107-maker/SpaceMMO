@@ -56,12 +56,20 @@ const PLANET_SLOTS = [
  */
 const KNOWN_DRAFTS = new Set(['automation.webp', 'plasma_technology.webp']);
 
+/** Миниатюры систем на макро-карте: по два варианта на звезду и на дыру. */
+const SYSTEM_SLOTS = ['system_star_1', 'system_star_2', 'system_bh_1', 'system_bh_2'];
+
+/** Фон карты: тайл звездного поля. */
+const BACKGROUND_SLOTS = ['space_bg'];
+
 const GROUPS: Array<{ folder: string; kind: string; types: readonly string[] }> = [
   { folder: 'buildings', kind: 'постройки', types: BUILDING_TYPES },
   { folder: 'ships', kind: 'корабли', types: SHIP_TYPES },
   { folder: 'defense', kind: 'оборона', types: DEFENSE_TYPES },
   { folder: 'tech', kind: 'технологии', types: TECHNOLOGY_TYPES },
   { folder: 'planets', kind: 'тела карты', types: PLANET_SLOTS },
+  { folder: 'systems', kind: 'миниатюры систем', types: SYSTEM_SLOTS },
+  { folder: 'bg', kind: 'фон карты', types: BACKGROUND_SLOTS },
 ];
 
 console.log('\n=== Папки и соответствие имен ===');

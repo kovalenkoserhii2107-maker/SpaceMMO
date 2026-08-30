@@ -1085,6 +1085,8 @@
    * Множитель к базовому радиусу, а не абсолютный размер: геометрия карты
    * подстраивается под число орбит, и жесткие пиксели ее сломали бы.
    */
+  const PLANET_BASE_RADIUS = 26;
+
   const PLANET_SCALE = {
     GAS_GIANT: 1.45,
     OCEANIC: 1.1,
@@ -1131,14 +1133,18 @@
   const MAP = {
     size: 860,
     center: 430,
-    starRadius: 58,
-    /** Первая орбита отодвинута за корону звезды и кольцо хаба. */
-    firstOrbit: 168,
-    /** До внешней орбиты: остаток радиуса уходит под тело планеты и две подписи. */
-    lastOrbit: 300,
-    /** Хаб висит на своем кольце между короной звезды и первой орбитой. */
-    hubOrbit: 118,
-    deepOrbit: 334,
+    starRadius: 46,
+    /** Первая орбита ложится сразу за разлетом короны. */
+    firstOrbit: 122,
+    /** Хаб висит на своем кольце между звездой и планетами. */
+    hubOrbit: 104,
+    /** Система с хабом отодвигает планеты, чтобы станция не села на орбиту. */
+    hubClearance: 38,
+    /** Дальше орбиты не уходят: снаружи подписи и точка глубокого космоса. */
+    lastOrbit: 322,
+    /** Желаемый зазор между орбитами; ужимается, когда планет много. */
+    orbitStep: 62,
+    deepOrbit: 356,
   };
 
   const map = {
@@ -1166,11 +1172,55 @@
     return positions.length ? Math.max(...positions) : 1;
   }
 
-  function orbitRadius(position) {
+  /** Первая орбита: в системе с хабом она отодвинута за его кольцо. */
+  function firstOrbit() {
+    return MAP.firstOrbit + (map.data && map.data.hub ? MAP.hubClearance : 0);
+  }
+
+  /**
+   * Зазор между орбитами.
+   *
+   * Раньше орбиты всегда растягивались до внешнего края, и система из трех планет
+   * занимала столько же места, сколько из десяти. Теперь шаг фиксированный, пока
+   * планеты помещаются, и ужимается, только когда их много: тесная система
+   * выглядит тесной, просторная — просторной.
+   */
+  function orbitStep() {
     const last = maxPosition();
-    if (last <= 1) return MAP.firstOrbit;
-    const step = (MAP.lastOrbit - MAP.firstOrbit) / (last - 1);
-    return MAP.firstOrbit + (position - 1) * step;
+    if (last <= 1) return 0;
+    const room = (MAP.lastOrbit - firstOrbit()) / (last - 1);
+    return Math.min(MAP.orbitStep, room);
+  }
+
+  function orbitRadius(position) {
+    return firstOrbit() + (position - 1) * orbitStep();
+  }
+
+  /**
+   * Поправка к размеру планет при тесных орбитах.
+   *
+   * Соседние позиции разведены по углу, поэтому в системе из трех планет они
+   * далеко друг от друга даже на соседних кольцах, а в системе из десяти —
+   * рядом. Считаем реальное расстояние между центрами соседей и, если крупные
+   * тела в него не влезают, ужимаем все планеты разом: пропорции типов
+   * сохраняются, а слипаться им нечем.
+   */
+  function planetSquash() {
+    const last = maxPosition();
+    if (last <= 1) return 1;
+
+    const first = firstOrbit();
+    const step = orbitStep();
+    const delta = (2 * Math.PI) / last;
+    // Худший случай — самые внутренние кольца: там дуга между соседями короче.
+    const near = Math.sqrt(
+      first * first + (first + step) * (first + step) -
+      2 * first * (first + step) * Math.cos(delta),
+    );
+
+    const biggest = PLANET_BASE_RADIUS * Math.max(...Object.values(PLANET_SCALE));
+    const needed = biggest * 2 + 18;
+    return Math.min(1, near / needed);
   }
 
   /**
@@ -1295,10 +1345,6 @@
 
     const defs = svgEl('defs');
     defs.innerHTML =
-      '<radialGradient id="starGlow"><stop offset="0%" stop-color="#fff3c4"/>' +
-      '<stop offset="55%" stop-color="#ffb347"/><stop offset="100%" stop-color="rgba(255,140,60,0)"/></radialGradient>' +
-      '<radialGradient id="holeGlow"><stop offset="0%" stop-color="#05070f"/>' +
-      '<stop offset="70%" stop-color="#2b1840"/><stop offset="100%" stop-color="rgba(157,123,255,0)"/></radialGradient>' +
       // Мягкий круглый спад по краю светящегося тела. Режим screen убирает черный
       // фон картинки, но яркое содержимое, доходящее до края кадра, все равно
       // обрывалось бы прямой линией — маска растворяет его вместо обрезки.
@@ -1327,7 +1373,9 @@
 
       // Размер зависит от типа, а не от разведанности: величина планеты видна
       // в телескоп, для этого зонд не нужен. Туман войны гасит ее цветом.
-      const radius = Math.round(26 * (PLANET_SCALE[planet.type] || 1));
+      const radius = Math.round(
+        PLANET_BASE_RADIUS * (PLANET_SCALE[planet.type] || 1) * planetSquash(),
+      );
 
       // Пунктирное кольцо обломков — под телом планеты, чтобы не перекрывать его.
       if (planet.debris && planet.debris.ore + planet.debris.polymers > 0) {
@@ -1394,13 +1442,15 @@
     const hole = map.data.anomaly === 'BLACK_HOLE';
     const group = svgEl('g', { class: 'star-node' });
 
-    group.appendChild(svgEl('circle', {
-      class: hole ? 'hole-core' : 'star-core',
-      cx: MAP.center, cy: MAP.center, r: MAP.starRadius + 22,
-    }));
+    /*
+     * Под картинкой пусто. Раньше здесь лежал нарисованный градиентом диск —
+     * желтая корона у звезды и фиолетовый ореол у дыры, — и он просвечивал
+     * из-под арта, споря с ним и цветом, и краем. Свечение целиком дает сама
+     * картинка через `screen`.
+     */
     celestialBody(group, MAP.center, MAP.center, MAP.starRadius, {
       kind: 'glow',
-      fill: hole ? '#120b1f' : '#ffb347',
+      fill: 'transparent',
       src: `/assets/planets/${hole ? 'black_hole' : 'star'}.webp`,
       spread: STAR_SPREAD,
     });
@@ -1421,7 +1471,52 @@
       group.appendChild(anomaly);
     }
 
+    group.addEventListener('mouseenter', () => showStarTooltip(hole));
+    group.addEventListener('mouseleave', hideTooltip);
     svg.appendChild(group);
+  }
+
+  /*
+   * Температура по классу звезды. Значения — обычные для спектральных классов
+   * порядки, они дают почувствовать разницу между тусклым красным карликом
+   * и голубым гигантом. У черной дыры температуры нет: измерять нечего.
+   */
+  const STAR_TEMPERATURE = {
+    BLUE: '~10 000 K',
+    WHITE: '~7 500 K',
+    YELLOW: '~5 700 K',
+    ORANGE: '~4 500 K',
+    RED: '~3 200 K',
+  };
+
+  const STAR_CLASS_LABELS = {
+    BLUE: 'голубая',
+    WHITE: 'белая',
+    YELLOW: 'желтая',
+    ORANGE: 'оранжевая',
+    RED: 'красная',
+  };
+
+  function showStarTooltip(hole) {
+    const data = map.data;
+    const klass = hole
+      ? 'черная дыра'
+      : `${STAR_CLASS_LABELS[data.starClass] || ''} (${data.starClass})`.trim();
+
+    tipContent(
+      `<div class="pd-head"><b>${escapeHtml(data.systemName)}</b>` +
+      `<span>центр системы</span></div>` +
+      pdSection('светило', [
+        pdCell('класс', escapeHtml(klass), 'wide'),
+        pdCell('температура', hole ? 'неизвестна' : (STAR_TEMPERATURE[data.starClass] || 'неизвестна')),
+        pdCell('планет', data.planets.length),
+      ]) +
+      (hole
+        ? '<div class="pd-note unknown">Искажение времени: синтез антиматерии +50%, ' +
+          'стройка и наука на 30% дольше.</div>'
+        : ''),
+    );
+    anchorTooltip(el.systemMap, MAP.center, MAP.center, MAP.starRadius);
   }
 
   /** Точка выхода в глубокий космос: своя орбита за внешним кольцом системы. */
@@ -1463,7 +1558,7 @@
         '<span>16-я позиция · точка экспедиций</span></div>' +
         '<div class="pd-note unknown">Что там — неизвестно до прилета.</div>',
       );
-      anchorTooltip(x, y, DEEP_SPACE_RADIUS);
+      anchorTooltip(el.systemMap, x, y, DEEP_SPACE_RADIUS);
     });
     group.addEventListener('mouseleave', hideTooltip);
     group.addEventListener('click', () => selectDeepSpace());
@@ -1529,7 +1624,7 @@
           ])
         : head + '<div class="pd-note">склада на станции пока нет</div>',
     );
-    anchorTooltip(x, y, HUB_RADIUS);
+    anchorTooltip(el.systemMap, x, y, HUB_RADIUS);
   }
 
   function selectHub(hub) {
@@ -1597,7 +1692,7 @@
   function showTooltip(planet, x, y, radius) {
     map.hoverId = planet.planetId;
     tipContent(planetDetailsHtml(planet, true));
-    anchorTooltip(x, y, radius);
+    anchorTooltip(el.systemMap, x, y, radius);
   }
 
   /**
@@ -1608,8 +1703,10 @@
    * стоит шевельнуть рукой. Координаты переводим матрицей самого SVG, поэтому
    * привязка не зависит от того, как карта отмасштабирована под ширину экрана.
    */
-  function anchorTooltip(svgX, svgY, svgRadius) {
-    const ctm = el.systemMap.getScreenCTM();
+  function anchorTooltip(svg, svgX, svgY, svgRadius) {
+    // Карта системы и карта галактики — разные SVG со своим масштабом,
+    // поэтому матрицу берем у того, на котором висит тело.
+    const ctm = svg.getScreenCTM();
     if (!ctm) return;
 
     const canvas = el.mapCanvas.getBoundingClientRect();
@@ -1642,16 +1739,6 @@
     tip.classList.remove('playing');
     void tip.offsetWidth;
     tip.classList.add('playing');
-  }
-
-  /** Тултип у курсора — для карты галактики, где привязывать не к чему. */
-  function positionTooltip(event) {
-    const rect = el.mapCanvas.getBoundingClientRect();
-    const left = Math.min(Math.max(8, event.clientX - rect.left + 14), Math.max(8, rect.width - 268));
-    const top = Math.min(Math.max(8, event.clientY - rect.top - 20), Math.max(8, rect.height - 150));
-    el.mapTooltip.classList.remove('anchored', 'flip', 'playing');
-    el.mapTooltip.style.left = `${left}px`;
-    el.mapTooltip.style.top = `${top}px`;
   }
 
   function hideTooltip() {
@@ -2779,6 +2866,21 @@
   /* ---------- Макро-карта галактики ---------- */
 
   const GALAXY = { width: 900, height: 560, margin: 60 };
+  /** Сторона миниатюры системы на макро-карте. */
+  const SYSTEM_ICON = 48;
+
+  /*
+   * Картинка системы выбирается по классу и координатам.
+   *
+   * Вариантов два на каждый вид, и берутся они по координатам, а не случайно:
+   * система обязана выглядеть одинаково при каждой перерисовке карты, иначе
+   * при обновлении она бы мигала другим артом.
+   */
+  function systemArt(system) {
+    const kind = system.anomaly === 'BLACK_HOLE' ? 'bh' : 'star';
+    const variant = (Math.abs(system.galaxyX * 31 + system.galaxyY * 17) % 2) + 1;
+    return `/assets/systems/system_${kind}_${variant}.webp`;
+  }
   const galaxy = { data: null, mode: 'system' };
 
   async function loadGalaxy() {
@@ -2804,10 +2906,6 @@
       y: GALAXY.margin + ((system.galaxyY - bounds.minY) / spanY) * usableH,
     };
   }
-
-  const STAR_COLORS = {
-    BLUE: '#8ab4ff', WHITE: '#e8eeff', YELLOW: '#ffd66b', ORANGE: '#ff9f5a', RED: '#ff6b6b',
-  };
 
   function renderGalaxy() {
     if (!galaxy.data) return;
@@ -2839,56 +2937,69 @@
           (map.data && map.data.systemId === system.systemId ? ' selected' : ''),
       });
 
-      group.appendChild(svgEl('circle', {
-        class: 'halo', cx: point.x, cy: point.y, r: 16,
-        fill: 'none', stroke: system.hasOwnColony ? 'var(--accent)' : 'rgba(120,160,255,0.25)',
-        'stroke-width': system.hasOwnColony ? 2 : 1,
-      }));
-
-      if (blackHole) {
-        group.appendChild(svgEl('circle', { class: 'blackhole-ring', cx: point.x, cy: point.y, r: 11 }));
-        group.appendChild(svgEl('circle', { class: 'star', cx: point.x, cy: point.y, r: 6, fill: '#120a1c', stroke: '#ff8fd8' }));
-      } else {
+      // Своя колония отмечается кольцом: миниатюры систем похожи между собой,
+      // и без метки свою пришлось бы искать по названию.
+      if (system.hasOwnColony) {
         group.appendChild(svgEl('circle', {
-          class: 'star', cx: point.x, cy: point.y, r: 7,
-          fill: STAR_COLORS[system.starClass] || '#cfd8ff',
+          class: 'home-ring', cx: point.x, cy: point.y, r: SYSTEM_ICON / 2 + 4,
         }));
       }
 
-      const label = svgEl('text', { x: point.x, y: point.y + 30, class: `system-label${system.isHome ? ' home' : ''}` });
+      celestialBody(group, point.x, point.y, SYSTEM_ICON / 2, {
+        kind: 'glow',
+        fill: blackHole ? 'rgba(157, 123, 255, 0.16)' : 'rgba(120, 160, 255, 0.16)',
+        src: systemArt(system),
+        spread: 1,
+      });
+
+      const label = svgEl('text', { x: point.x, y: point.y + SYSTEM_ICON / 2 + 14, class: `system-label name${system.isHome ? ' home' : ''}` });
       label.textContent = system.name;
       group.appendChild(label);
 
-      const coords = svgEl('text', { x: point.x, y: point.y + 44, class: 'system-label' });
+      const coords = svgEl('text', { x: point.x, y: point.y + SYSTEM_ICON / 2 + 28, class: 'system-label' });
       coords.textContent = `${system.galaxyX}:${system.galaxyY}`;
       group.appendChild(coords);
 
-      group.addEventListener('mouseenter', (event) => showSystemTooltip(system, event));
-      group.addEventListener('mousemove', (event) => positionTooltip(event));
+      group.addEventListener('mouseenter', () => showSystemTooltip(system, point));
       group.addEventListener('mouseleave', hideTooltip);
       group.addEventListener('click', () => void openSystem(system.systemId));
       svg.appendChild(group);
     }
   }
 
-  function showSystemTooltip(system, event) {
+  function showSystemTooltip(system, point) {
     const blackHole = system.anomaly === 'BLACK_HOLE';
+    const klass = blackHole
+      ? 'черная дыра'
+      : `${STAR_CLASS_LABELS[system.starClass] || ''} (${system.starClass})`.trim();
+
     tipContent(
       `<div class="pd-head"><b>${escapeHtml(system.name)}</b>` +
-      `<span>${system.galaxyX}:${system.galaxyY} · планет ${system.planetCount}</span></div>` +
-      (blackHole
-        ? '<div class="pd-note unknown">Черная дыра: искажение времени — синтез антиматерии +50%, ' +
-          'стройка и наука на 30% дольше</div>'
-        : `<div class="pd-note">звезда класса ${escapeHtml(system.starClass)}</div>`) +
+      `<span>макро-карта галактики</span></div>` +
       (system.hasOwnColony
         ? '<div class="pd-owner own">здесь ваша колония</div>'
         : system.colonized
           ? '<div class="pd-owner foe">система заселена</div>'
           : '<div class="pd-owner">колоний нет</div>') +
-      `<div class="pd-note">${system.scannedPlanets > 0 ? `разведано планет: ${system.scannedPlanets}` : 'разведданных нет'}</div>`,
+      pdSection('система', [
+        pdCell('координаты', `${system.galaxyX}:${system.galaxyY}`),
+        pdCell('планет', system.planetCount),
+        pdCell('разведано', system.scannedPlanets > 0 ? system.scannedPlanets : '—'),
+      ]) +
+      pdSection('светило', [
+        pdCell('класс', escapeHtml(klass), 'wide'),
+        pdCell(
+          'температура',
+          blackHole ? 'неизвестна' : (STAR_TEMPERATURE[system.starClass] || 'неизвестна'),
+          'wide',
+        ),
+      ]) +
+      (blackHole
+        ? '<div class="pd-note unknown">Искажение времени: синтез антиматерии +50%, ' +
+          'стройка и наука на 30% дольше.</div>'
+        : ''),
     );
-    el.mapTooltip.hidden = false;
-    positionTooltip(event);
+    anchorTooltip(el.galaxyMap, point.x, point.y, SYSTEM_ICON / 2);
   }
 
   /** Открывает систему на микро-карте: своя или чужая, с тем же туманом войны. */
