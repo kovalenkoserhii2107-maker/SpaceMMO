@@ -1338,22 +1338,31 @@
     image.setAttribute('href', src);
   }
 
-  function renderMap() {
-    if (!map.data) return;
-    const svg = el.systemMap;
-    svg.innerHTML = '';
-
+  /**
+   * Мягкий круглый спад по краю светящегося тела.
+   *
+   * Режим `screen` убирает черный фон картинки, но яркое содержимое, доходящее
+   * до края кадра, все равно обрывалось бы прямой линией — маска растворяет его
+   * вместо обрезки. Объявление отдается каждой карте свое: ссылка `url(#glowFade)`
+   * ищется в том же SVG, и общая разметка соседней карты ей не видна.
+   */
+  function glowFadeDefs() {
     const defs = svgEl('defs');
     defs.innerHTML =
-      // Мягкий круглый спад по краю светящегося тела. Режим screen убирает черный
-      // фон картинки, но яркое содержимое, доходящее до края кадра, все равно
-      // обрывалось бы прямой линией — маска растворяет его вместо обрезки.
       '<radialGradient id="glowFadeGrad">' +
       '<stop offset="52%" stop-color="#fff"/><stop offset="100%" stop-color="#000"/>' +
       '</radialGradient>' +
       '<mask id="glowFade" maskContentUnits="objectBoundingBox">' +
       '<rect width="1" height="1" fill="url(#glowFadeGrad)"/></mask>';
-    svg.appendChild(defs);
+    return defs;
+  }
+
+  function renderMap() {
+    if (!map.data) return;
+    const svg = el.systemMap;
+    svg.innerHTML = '';
+
+    svg.appendChild(glowFadeDefs());
 
     // Орбиты рисуем первыми, чтобы тела легли поверх колец.
     for (const planet of map.data.planets) {
@@ -2865,9 +2874,17 @@
 
   /* ---------- Макро-карта галактики ---------- */
 
-  const GALAXY = { width: 900, height: 560, margin: 60 };
-  /** Сторона миниатюры системы на макро-карте. */
-  const SYSTEM_ICON = 48;
+  /*
+   * Геометрия макро-карты.
+   *
+   * Холст не фиксирован, а считается от разброса координат: шаг на одну единицу
+   * координат одинаков по обеим осям. Раньше размер был жестко задан, и данные
+   * растягивались под него — по X на координату приходился 41 пиксель, а по Y
+   * всего 24 при иконке в 48, из-за чего соседние системы налезали друг на друга.
+   */
+  const GALAXY = { margin: 74, step: 74 };
+  /** Сторона миниатюры на макро-карте: заметно меньше шага сетки, чтобы был воздух. */
+  const SYSTEM_ICON = 40;
 
   /*
    * Картинка системы выбирается по классу и координатам.
@@ -2876,10 +2893,12 @@
    * система обязана выглядеть одинаково при каждой перерисовке карты, иначе
    * при обновлении она бы мигала другим артом.
    */
+  /** Сколько вариантов миниатюр лежит в assets/systems/. */
+  const GALAXY_ART_VARIANTS = 4;
+
   function systemArt(system) {
-    const kind = system.anomaly === 'BLACK_HOLE' ? 'bh' : 'star';
-    const variant = (Math.abs(system.galaxyX * 31 + system.galaxyY * 17) % 2) + 1;
-    return `/assets/systems/system_${kind}_${variant}.webp`;
+    const variant = (Math.abs(system.galaxyX * 31 + system.galaxyY * 17) % GALAXY_ART_VARIANTS) + 1;
+    return `/assets/systems/galaxy_${variant}.webp`;
   }
   const galaxy = { data: null, mode: 'system' };
 
@@ -2895,15 +2914,23 @@
     }
   }
 
-  /** Координаты сетки галактики переводим в координаты SVG. */
+  /**
+   * Координаты сетки галактики переводим в координаты SVG.
+   * Шаг одинаков по обеим осям, поэтому расстояние между системами на карте
+   * соответствует расстоянию между ними в игре, а не форме холста.
+   */
   function galaxyPoint(system, bounds) {
-    const spanX = Math.max(1, bounds.maxX - bounds.minX);
-    const spanY = Math.max(1, bounds.maxY - bounds.minY);
-    const usableW = GALAXY.width - GALAXY.margin * 2;
-    const usableH = GALAXY.height - GALAXY.margin * 2;
     return {
-      x: GALAXY.margin + ((system.galaxyX - bounds.minX) / spanX) * usableW,
-      y: GALAXY.margin + ((system.galaxyY - bounds.minY) / spanY) * usableH,
+      x: GALAXY.margin + (system.galaxyX - bounds.minX) * GALAXY.step,
+      y: GALAXY.margin + (system.galaxyY - bounds.minY) * GALAXY.step,
+    };
+  }
+
+  /** Размер холста под разброс координат: карта растет вместе с галактикой. */
+  function galaxyCanvas(bounds) {
+    return {
+      width: GALAXY.margin * 2 + (bounds.maxX - bounds.minX) * GALAXY.step,
+      height: GALAXY.margin * 2 + (bounds.maxY - bounds.minY) * GALAXY.step,
     };
   }
 
@@ -2920,12 +2947,25 @@
       maxY: Math.max(...systems.map((s) => s.galaxyY)),
     };
 
-    // Сетка, чтобы карта читалась как координатное пространство.
-    for (let i = 0; i <= 4; i += 1) {
-      const x = GALAXY.margin + ((GALAXY.width - GALAXY.margin * 2) / 4) * i;
-      const y = GALAXY.margin + ((GALAXY.height - GALAXY.margin * 2) / 4) * i;
-      svg.appendChild(svgEl('line', { class: 'galaxy-grid', x1: x, y1: GALAXY.margin, x2: x, y2: GALAXY.height - GALAXY.margin }));
-      svg.appendChild(svgEl('line', { class: 'galaxy-grid', x1: GALAXY.margin, y1: y, x2: GALAXY.width - GALAXY.margin, y2: y }));
+    const canvas = galaxyCanvas(bounds);
+    svg.setAttribute('viewBox', `0 0 ${canvas.width} ${canvas.height}`);
+
+    // Маску краев миниатюры надо объявить в этом же SVG: ссылка на разметку
+    // соседней карты не разрешается, и края обрезались бы квадратом.
+    svg.appendChild(glowFadeDefs());
+
+    // Сетка по координатам, чтобы карта читалась как координатное пространство.
+    for (let gx = bounds.minX; gx <= bounds.maxX; gx += 1) {
+      const x = GALAXY.margin + (gx - bounds.minX) * GALAXY.step;
+      svg.appendChild(svgEl('line', {
+        class: 'galaxy-grid', x1: x, y1: GALAXY.margin, x2: x, y2: canvas.height - GALAXY.margin,
+      }));
+    }
+    for (let gy = bounds.minY; gy <= bounds.maxY; gy += 1) {
+      const y = GALAXY.margin + (gy - bounds.minY) * GALAXY.step;
+      svg.appendChild(svgEl('line', {
+        class: 'galaxy-grid', x1: GALAXY.margin, y1: y, x2: canvas.width - GALAXY.margin, y2: y,
+      }));
     }
 
     for (const system of systems) {
@@ -2945,11 +2985,13 @@
         }));
       }
 
+      // Картинка дается крупнее иконки: маске нужен запас, чтобы растворить
+      // края кадра, иначе от них осталась бы квадратная рамка.
       celestialBody(group, point.x, point.y, SYSTEM_ICON / 2, {
         kind: 'glow',
         fill: blackHole ? 'rgba(157, 123, 255, 0.16)' : 'rgba(120, 160, 255, 0.16)',
         src: systemArt(system),
-        spread: 1,
+        spread: 1.3,
       });
 
       const label = svgEl('text', { x: point.x, y: point.y + SYSTEM_ICON / 2 + 14, class: `system-label name${system.isHome ? ' home' : ''}` });
