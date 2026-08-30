@@ -33,7 +33,7 @@ const DEFENSES: Record<DefenseType, DefenseDefinition> = {
   ROCKET_LAUNCHER: {
     label: 'Ракетная установка',
     description: 'Дешевый заслон против легких кораблей.',
-    cost: { metal: 200, crystal: 0, deuterium: 0 },
+    cost: { titanite: 200, silicate: 0, tritium: 0 },
     baseSeconds: 20,
     energyDrain: 0.5,
     shipyardLevel: 1,
@@ -42,7 +42,7 @@ const DEFENSES: Record<DefenseType, DefenseDefinition> = {
   LASER_TURRET: {
     label: 'Лазерное орудие',
     description: 'Мощная турель, требует энергетики.',
-    cost: { metal: 300, crystal: 150, deuterium: 0 },
+    cost: { titanite: 300, silicate: 150, tritium: 0 },
     baseSeconds: 35,
     energyDrain: 1.2,
     shipyardLevel: 2,

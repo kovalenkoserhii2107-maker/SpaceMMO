@@ -59,14 +59,14 @@ function readStock(input: unknown): SimulationStock | null | 'INVALID' {
   if (input === undefined || input === null) return null;
   const source = input as Record<string, unknown>;
 
-  const metal = nonNegativeInt(source['metal']);
-  const crystal = nonNegativeInt(source['crystal']);
-  const deuterium = nonNegativeInt(source['deuterium']);
+  const titanite = nonNegativeInt(source['titanite']);
+  const silicate = nonNegativeInt(source['silicate']);
+  const tritium = nonNegativeInt(source['tritium']);
   const storageLevel = nonNegativeInt(source['storageLevel']);
-  if (metal === null || crystal === null || deuterium === null || storageLevel === null) {
+  if (titanite === null || silicate === null || tritium === null || storageLevel === null) {
     return 'INVALID';
   }
-  return { metal, crystal, deuterium, storageLevel };
+  return { titanite, silicate, tritium, storageLevel };
 }
 
 /**

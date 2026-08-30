@@ -18,30 +18,30 @@ import { plunderAmount, resolveBattle } from '../game/combat.js';
 import { expeditionSlots, resolveExpedition } from '../game/expeditions.js';
 import { defenseUnitSeconds, emptyDefenseCounts, type DefenseCounts } from '../game/defenses.js';
 
-const richness = { metal: 1.0, crystal: 1.0, deuterium: 1.0, energy: 1.0, antimatter: 1.0 };
+const richness = { titanite: 1.0, silicate: 1.0, tritium: 1.0, energy: 1.0, eridium: 1.0 };
 const techs = emptyTechLevels();
 const bonuses = economyBonuses(techs);
 
-console.log('--- Шахта металла без солнечной станции (дефицит энергии режет добычу) ---');
+console.log('--- Шахта титанита без солнечной станции (дефицит энергии режет добычу) ---');
 for (const level of [1, 5, 8, 9, 12]) {
-  const levels = { ...emptyLevels(), METAL_MINE: level };
+  const levels = { ...emptyLevels(), TITANITE_MINE: level };
   const efficiency = energyEfficiency(levels, richness, bonuses);
   console.log(
-    `ур.${level}: добыча ${productionPerSecond(levels, richness, bonuses).metal.toFixed(2)}/с, ` +
+    `ур.${level}: добыча ${productionPerSecond(levels, richness, bonuses).titanite.toFixed(2)}/с, ` +
       `энергия ${energyUsage(levels).toFixed(1)}/${energyOutput(levels, richness, bonuses).toFixed(1)}, ` +
       `эффективность ${(efficiency * 100).toFixed(0)}%, ` +
-      `цена след. ур. ${upgradeCost('METAL_MINE', level + 1).metal} Me / ${buildSeconds('METAL_MINE', level + 1)} с`,
+      `цена след. ур. ${upgradeCost('TITANITE_MINE', level + 1).titanite} Ti / ${buildSeconds('TITANITE_MINE', level + 1)} с`,
   );
 }
 
 console.log('\n--- Влияние технологий (шахта ур.8) ---');
 for (const [mining, energy] of [[0, 0], [5, 0], [5, 10]] as Array<[number, number]>) {
   const withTech = { ...emptyTechLevels(), MINING_TECH: mining, ENERGY_TECH: energy };
-  const levels = { ...emptyLevels(), METAL_MINE: 8 };
+  const levels = { ...emptyLevels(), TITANITE_MINE: 8 };
   const b = economyBonuses(withTech);
   console.log(
     `горное дело ${mining}, энергетика ${energy}: ` +
-      `добыча ${productionPerSecond(levels, richness, b).metal.toFixed(2)}/с, ` +
+      `добыча ${productionPerSecond(levels, richness, b).titanite.toFixed(2)}/с, ` +
       `эффективность ${(energyEfficiency(levels, richness, b) * 100).toFixed(0)}%`,
   );
 }
@@ -50,7 +50,7 @@ console.log('\n--- Исследования (лаборатория ур.1) ---'
 for (const tech of ['ENERGY_TECH', 'COMPUTING_TECH', 'MINING_TECH', 'COMBUSTION_DRIVE'] as const) {
   const cost = researchCost(tech, 1);
   console.log(
-    `${tech}: ${cost.metal} Me / ${cost.crystal} Cr / ${cost.deuterium} De, ` +
+    `${tech}: ${cost.titanite} Ti / ${cost.silicate} Si / ${cost.tritium} Tr, ` +
       `${researchSeconds(tech, 1, 1, techs)} с`,
   );
 }
@@ -74,7 +74,7 @@ console.log('\n--- Логистика (реактивный двигатель �
       const plan = planFlight(ships, drive, home, { position: 1 + distance, system: home.system });
       console.log(
         `${label}, ${distance} орбит: ${plan.flightSeconds} с в одну сторону, ` +
-          `трюмы ${plan.capacity}, топливо туда-обратно ${plan.fuel} De`,
+          `трюмы ${plan.capacity}, топливо туда-обратно ${plan.fuel} Tr`,
       );
     }
   }
@@ -149,16 +149,16 @@ console.log('\n--- Детерминированность боя ---');
   console.log(`50 прогонов одного боя дали ${unique.size} уникальных результатов: ${[...unique][0]}`);
 }
 
-console.log('\n--- Антиматерия и аномалии ---');
+console.log('\n--- Эридий и аномалии ---');
 {
-  const levels = { ...emptyLevels(), SOLAR_PLANT: 12, ANTIMATTER_SYNTH: 3 };
-  const rich = { ...richness, antimatter: 1.2 };
+  const levels = { ...emptyLevels(), SOLAR_PLANT: 12, ERIDIUM_SYNTH: 3 };
+  const rich = { ...richness, eridium: 1.2 };
   for (const [label, anomaly] of [['обычная система', 'NONE'], ['черная дыра', 'BLACK_HOLE']] as const) {
     const mods = systemModifiers(anomaly);
     const production = productionPerSecond(levels, rich, economyBonuses(techs), 0, mods);
     console.log(
-      `${label}: антиматерия ${production.antimatter.toFixed(4)}/с, ` +
-        `стройка синтезатора ур.4 ${buildSeconds('ANTIMATTER_SYNTH', 4, mods)} с, ` +
+      `${label}: эридий ${production.eridium.toFixed(4)}/с, ` +
+        `стройка синтезатора ур.4 ${buildSeconds('ERIDIUM_SYNTH', 4, mods)} с, ` +
         `гиперфизика ур.1 ${researchSeconds('HYPERSPACE_PHYSICS', 1, 3, techs, mods)} с`,
     );
   }
@@ -174,7 +174,7 @@ console.log('\n--- Гиперпрыжки ---');
       const plan = planFlight(fleet, withDrive, home, { position: 1, system: target });
       console.log(
         `${label}, дистанция ${plan.distance}: ${plan.flightSeconds} с в одну сторону, ` +
-          `антиматерии туда-обратно ${plan.antimatter}`,
+          `эридия туда-обратно ${plan.eridium}`,
       );
     }
   }
@@ -213,7 +213,7 @@ console.log('\n--- Экспедиции ---');
     for (let i = 0; i < runs; i += 1) {
       const result = resolveExpedition(fleet, capacity, withAstro, rng);
       tally[result.outcome] = (tally[result.outcome] ?? 0) + 1;
-      loot += result.loot.metal + result.loot.crystal;
+      loot += result.loot.titanite + result.loot.silicate;
     }
 
     const percent = (key: string) => (((tally[key] ?? 0) / runs) * 100).toFixed(1) + '%';
@@ -241,7 +241,7 @@ console.log('\n--- Все ветви событийного движка экс�
   const cases: Array<[string, ShipCounts, number[]]> = [
     ['мертвая тишина', strong, [0.01]],
     ['находка ресурсов', strong, [0.6, 0.1, 0.5]],
-    ['находка антиматерии', strong, [0.6, 0.99, 0.5]],
+    ['находка эридия', strong, [0.6, 0.99, 0.5]],
     ['пираты отбиты', strong, [0.99, 0.99, 0.1, 0.1]],
     ['флот потерян', weak, [0.99, 0.99, 0.99, 0.9]],
   ];
@@ -261,14 +261,14 @@ console.log('\n--- Хранилище: вместимость и останов�
   }
 
   // Догон офлайна: шахты качают неделю, но склад держит потолок.
-  const levels = { ...emptyLevels(), METAL_MINE: 10, CRYSTAL_MINE: 10, DEUTERIUM_MINE: 8, SOLAR_PLANT: 14, STORAGE: 1 };
+  const levels = { ...emptyLevels(), TITANITE_MINE: 10, SILICATE_MINE: 10, TRITIUM_MINE: 8, SOLAR_PLANT: 14, STORAGE: 1 };
   const perSecond = productionPerSecond(levels, richness, bonuses);
   const capacity = storageCapacityForLevel(levels.STORAGE);
   const week = 7 * 24 * 3600;
 
-  const stock = { metal: 500, crystal: 300, deuterium: 100, antimatter: 0 };
-  const mined = (perSecond.metal + perSecond.crystal + perSecond.deuterium) * week;
-  const used = stock.metal + stock.crystal + stock.deuterium;
+  const stock = { titanite: 500, silicate: 300, tritium: 100, eridium: 0 };
+  const mined = (perSecond.titanite + perSecond.silicate + perSecond.tritium) * week;
+  const used = stock.titanite + stock.silicate + stock.tritium;
   const free = Math.max(0, capacity - used);
   const fit = mined > free ? free / mined : 1;
 
@@ -281,12 +281,12 @@ console.log('\n--- Хранилище: вместимость и останов�
 console.log('\n--- Грабеж: механика сейфа ---');
 {
   const capacity = storageCapacityForLevel(1);
-  const cases: Array<[string, { metal: number; crystal: number; deuterium: number }, number]> = [
-    ['склад наполовину пуст — защищено всё', { metal: 3000, crystal: 2000, deuterium: 0 }, 100000],
-    ['склад ровно полон — уязвимы последние 10%', { metal: 6000, crystal: 4000, deuterium: 0 }, 100000],
-    ['склад переполнен вдвое', { metal: 12000, crystal: 8000, deuterium: 0 }, 100000],
-    ['дейтерий выталкивает металл в излишек', { metal: 5000, crystal: 0, deuterium: 5000 }, 100000],
-    ['трюмов не хватает', { metal: 12000, crystal: 8000, deuterium: 0 }, 1000],
+  const cases: Array<[string, { titanite: number; silicate: number; tritium: number }, number]> = [
+    ['склад наполовину пуст — защищено всё', { titanite: 3000, silicate: 2000, tritium: 0 }, 100000],
+    ['склад ровно полон — уязвимы последние 10%', { titanite: 6000, silicate: 4000, tritium: 0 }, 100000],
+    ['склад переполнен вдвое', { titanite: 12000, silicate: 8000, tritium: 0 }, 100000],
+    ['тритий вывозится наравне с титанитом', { titanite: 5000, silicate: 0, tritium: 5000 }, 100000],
+    ['трюмов не хватает', { titanite: 12000, silicate: 8000, tritium: 0 }, 1000],
   ];
 
   for (const [label, stock, cargo] of cases) {
@@ -294,7 +294,7 @@ console.log('\n--- Грабеж: механика сейфа ---');
     const state = storageState(stock, capacity);
     console.log(
       `${label}: лежало ${Math.round(loot.stored)}, защищено ${Math.round(loot.protectedAmount)}, ` +
-        `излишек ${Math.round(loot.surplus)} → увезли ${loot.metal} Me + ${loot.crystal} Cr` +
+        `излишек ${Math.round(loot.surplus)} → увезли ${loot.titanite} Ti + ${loot.silicate} Si + ${loot.tritium} Tr` +
         `${loot.cargoLimited ? ' (обрезали трюмы)' : ''}, уязвимо по снимку ${Math.round(state.vulnerable)}`,
     );
   }

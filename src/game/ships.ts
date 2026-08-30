@@ -47,7 +47,7 @@ const SHIPS: Record<ShipType, ShipDefinition> = {
   PROBE: {
     label: 'Зонд-разведчик',
     description: 'Дешевый разведывательный дрон. Без оружия и защиты.',
-    cost: { metal: 60, crystal: 20, deuterium: 10 },
+    cost: { titanite: 60, silicate: 20, tritium: 10 },
     baseSeconds: 20,
     shipyardLevel: 1,
     requires: { COMPUTING_TECH: 1 },
@@ -55,7 +55,7 @@ const SHIPS: Record<ShipType, ShipDefinition> = {
   TRANSPORTER: {
     label: 'Малый транспорт',
     description: 'Грузовое судно. Без оружия, только корпус.',
-    cost: { metal: 200, crystal: 60, deuterium: 20 },
+    cost: { titanite: 200, silicate: 60, tritium: 20 },
     baseSeconds: 60,
     shipyardLevel: 2,
     requires: { COMBUSTION_DRIVE: 1 },
@@ -63,7 +63,7 @@ const SHIPS: Record<ShipType, ShipDefinition> = {
   LIGHT_FIGHTER: {
     label: 'Легкий истребитель',
     description: 'Лазерный урон, только корпус. Дешев и универсален.',
-    cost: { metal: 300, crystal: 100, deuterium: 0 },
+    cost: { titanite: 300, silicate: 100, tritium: 0 },
     baseSeconds: 45,
     shipyardLevel: 2,
     requires: { COMBUSTION_DRIVE: 1 },
@@ -71,7 +71,7 @@ const SHIPS: Record<ShipType, ShipDefinition> = {
   HEAVY_CRUISER: {
     label: 'Тяжелый крейсер',
     description: 'Кинетический урон и толстая броня. Ломает броню, вязнет в щитах.',
-    cost: { metal: 1200, crystal: 400, deuterium: 100 },
+    cost: { titanite: 1200, silicate: 400, tritium: 100 },
     baseSeconds: 180,
     shipyardLevel: 3,
     requires: { COMBUSTION_DRIVE: 2 },
@@ -79,7 +79,7 @@ const SHIPS: Record<ShipType, ShipDefinition> = {
   ION_FRIGATE: {
     label: 'Ионный фрегат',
     description: 'Ионный урон и сильные щиты. Разбирает щиты, буксует против брони.',
-    cost: { metal: 500, crystal: 600, deuterium: 150 },
+    cost: { titanite: 500, silicate: 600, tritium: 150 },
     baseSeconds: 150,
     shipyardLevel: 4,
     requires: { HYPERSPACE_PHYSICS: 1 },

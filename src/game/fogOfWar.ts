@@ -51,11 +51,11 @@ export function normalizeDefenses(source: Partial<DefenseCounts> | null | undefi
 
 function normalizeRichness(source: Partial<ScanPayload['richness']> | null | undefined) {
   return {
-    metal: source?.metal ?? 0,
-    crystal: source?.crystal ?? 0,
-    deuterium: source?.deuterium ?? 0,
+    titanite: source?.titanite ?? 0,
+    silicate: source?.silicate ?? 0,
+    tritium: source?.tritium ?? 0,
     energy: source?.energy ?? 0,
-    antimatter: source?.antimatter ?? 0,
+    eridium: source?.eridium ?? 0,
   };
 }
 
@@ -67,9 +67,9 @@ function safeCount(value: number | undefined): number {
 export interface ScanPayload {
   owner: string | null;
   colonized: boolean;
-  richness: { metal: number; crystal: number; deuterium: number; energy: number; antimatter: number };
+  richness: { titanite: number; silicate: number; tritium: number; energy: number; eridium: number };
   buildings: BuildingLevels | null;
-  resources: { metal: number; crystal: number; deuterium: number; antimatter: number } | null;
+  resources: { titanite: number; silicate: number; tritium: number; eridium: number } | null;
   fleet: ShipCounts | null;
   /** Стационарная оборона колонии. У снимков, снятых до Этапа 12, поля нет. */
   defenses?: DefenseCounts | null;

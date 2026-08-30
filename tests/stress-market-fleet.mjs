@@ -46,17 +46,17 @@ async function state(token) { return (await api('GET', '/api/state', token)).dat
 /* ---------- 1. Валидация биржи ---------- */
 async function testOrderValidation() {
   const bad = [
-    ['отрицательный объем продажи', { side: 'SELL', resource: 'METAL', quantity: -100, pricePerUnit: 2 }],
-    ['отрицательный объем покупки', { side: 'BUY', resource: 'METAL', quantity: -100, pricePerUnit: 2 }],
-    ['отрицательная цена', { side: 'SELL', resource: 'METAL', quantity: 100, pricePerUnit: -5 }],
-    ['нулевой объем', { side: 'SELL', resource: 'METAL', quantity: 0, pricePerUnit: 2 }],
-    ['нулевая цена', { side: 'SELL', resource: 'METAL', quantity: 100, pricePerUnit: 0 }],
-    ['текст вместо объема', { side: 'SELL', resource: 'METAL', quantity: 'сто', pricePerUnit: 2 }],
-    ['Infinity в цене', { side: 'BUY', resource: 'METAL', quantity: 10, pricePerUnit: 1e400 }],
-    ['объем больше лимита', { side: 'SELL', resource: 'METAL', quantity: 1e12, pricePerUnit: 1 }],
-    ['покупка сверх баланса', { side: 'BUY', resource: 'METAL', quantity: 100000, pricePerUnit: 99 }],
-    ['неизвестный ресурс', { side: 'SELL', resource: 'DEUTERIUM', quantity: 10, pricePerUnit: 1 }],
-    ['неизвестная сторона', { side: 'STEAL', resource: 'METAL', quantity: 10, pricePerUnit: 1 }],
+    ['отрицательный объем продажи', { side: 'SELL', resource: 'TITANITE', quantity: -100, pricePerUnit: 2 }],
+    ['отрицательный объем покупки', { side: 'BUY', resource: 'TITANITE', quantity: -100, pricePerUnit: 2 }],
+    ['отрицательная цена', { side: 'SELL', resource: 'TITANITE', quantity: 100, pricePerUnit: -5 }],
+    ['нулевой объем', { side: 'SELL', resource: 'TITANITE', quantity: 0, pricePerUnit: 2 }],
+    ['нулевая цена', { side: 'SELL', resource: 'TITANITE', quantity: 100, pricePerUnit: 0 }],
+    ['текст вместо объема', { side: 'SELL', resource: 'TITANITE', quantity: 'сто', pricePerUnit: 2 }],
+    ['Infinity в цене', { side: 'BUY', resource: 'TITANITE', quantity: 10, pricePerUnit: 1e400 }],
+    ['объем больше лимита', { side: 'SELL', resource: 'TITANITE', quantity: 1e12, pricePerUnit: 1 }],
+    ['покупка сверх баланса', { side: 'BUY', resource: 'TITANITE', quantity: 100000, pricePerUnit: 99 }],
+    ['неизвестный ресурс', { side: 'SELL', resource: 'TRITIUM', quantity: 10, pricePerUnit: 1 }],
+    ['неизвестная сторона', { side: 'STEAL', resource: 'TITANITE', quantity: 10, pricePerUnit: 1 }],
   ];
 
   const before = await market(ids.admiralToken);
@@ -68,21 +68,21 @@ async function testOrderValidation() {
   check(
     'баланс и склад не изменились после атак на ордера',
     before.credits === after.credits &&
-      before.storage.metal === after.storage.metal &&
-      before.storage.crystal === after.storage.crystal,
-    `${before.credits}/${before.storage.metal} -> ${after.credits}/${after.storage.metal}`,
+      before.storage.titanite === after.storage.titanite &&
+      before.storage.silicate === after.storage.silicate,
+    `${before.credits}/${before.storage.titanite} -> ${after.credits}/${after.storage.titanite}`,
   );
 }
 
 /* ---------- 2. Валидация исполнения ---------- */
 async function testFillValidation() {
   const created = await api('POST', '/api/market/orders', ids.pilotToken, {
-    side: 'SELL', resource: 'METAL', quantity: 100, pricePerUnit: 2,
+    side: 'SELL', resource: 'TITANITE', quantity: 100, pricePerUnit: 2,
   });
   check('ордер для теста исполнения создан', created.status === 200, JSON.stringify(created.data));
 
   const book = await market(ids.admiralToken);
-  const order = book.book.METAL.sell.find((o) => !o.mine);
+  const order = book.book.TITANITE.sell.find((o) => !o.mine);
   if (!order) { check('ордер найден в стакане', false); return null; }
 
   const beforeMe = await market(ids.admiralToken);
@@ -103,7 +103,7 @@ async function testFillValidation() {
   check(
     'балансы обеих сторон не поехали после атак на сделку',
     beforeMe.credits === afterMe.credits && beforeThem.credits === afterThem.credits &&
-      beforeMe.storage.metal === afterMe.storage.metal && beforeThem.storage.metal === afterThem.storage.metal,
+      beforeMe.storage.titanite === afterMe.storage.titanite && beforeThem.storage.titanite === afterThem.storage.titanite,
     `me ${beforeMe.credits}->${afterMe.credits}, them ${beforeThem.credits}->${afterThem.credits}`,
   );
 
@@ -114,10 +114,10 @@ async function testFillValidation() {
 async function testRace() {
   // Новый ордер ровно на 100 единиц.
   await api('POST', '/api/market/orders', ids.pilotToken, {
-    side: 'SELL', resource: 'METAL', quantity: 100, pricePerUnit: 2,
+    side: 'SELL', resource: 'TITANITE', quantity: 100, pricePerUnit: 2,
   });
   const book = await market(ids.admiralToken);
-  const order = book.book.METAL.sell.filter((o) => !o.mine).sort((a, b) => b.createdAt - a.createdAt)[0];
+  const order = book.book.TITANITE.sell.filter((o) => !o.mine).sort((a, b) => b.createdAt - a.createdAt)[0];
   if (!order) { check('ордер для гонки создан', false); return; }
 
   const beforeBuyer = await market(ids.admiralToken);
@@ -133,36 +133,36 @@ async function testRace() {
   const afterBuyer = await market(ids.admiralToken);
   const afterSeller = await market(ids.pilotToken);
 
-  const metalGained = afterBuyer.storage.metal - beforeBuyer.storage.metal;
-  const metalLost = beforeSeller.storage.metal - afterSeller.storage.metal;
+  const titaniteGained = afterBuyer.storage.titanite - beforeBuyer.storage.titanite;
+  const titaniteLost = beforeSeller.storage.titanite - afterSeller.storage.titanite;
   const creditsPaid = beforeBuyer.credits - afterBuyer.credits;
   const creditsEarned = afterSeller.credits - beforeSeller.credits;
 
   check(
-    'гонка: получено ровно 100 металла, не больше',
-    metalGained === 100,
-    `успешных ответов ${ok.length}, получено ${metalGained}`,
+    'гонка: получено ровно 100 титанита, не больше',
+    titaniteGained === 100,
+    `успешных ответов ${ok.length}, получено ${titaniteGained}`,
   );
   check(
     'гонка: деньги и товар сходятся (нет фантомных сделок)',
-    creditsPaid === 200 && creditsEarned === 200 && metalLost === 0,
-    `оплачено ${creditsPaid} ₴, получено продавцом ${creditsEarned} ₴, списано у продавца сверх залога ${metalLost}`,
+    creditsPaid === 200 && creditsEarned === 200 && titaniteLost === 0,
+    `оплачено ${creditsPaid} ₴, получено продавцом ${creditsEarned} ₴, списано у продавца сверх залога ${titaniteLost}`,
   );
 
-  const leftover = (await market(ids.admiralToken)).book.METAL.sell.find((o) => o.id === order.id);
+  const leftover = (await market(ids.admiralToken)).book.TITANITE.sell.find((o) => o.id === order.id);
   check('гонка: ордер исчерпан', !leftover, leftover ? `остаток ${leftover.remaining}` : 'ордера нет');
 }
 
 /* ---------- 4. Гонка: параллельные ордера сверх запаса ---------- */
 async function testEscrowRace() {
   const before = await market(ids.pilotToken);
-  const available = before.storage.metal;
+  const available = before.storage.titanite;
 
-  // 6 параллельных ордеров, каждый на весь доступный металл.
+  // 6 параллельных ордеров, каждый на весь доступный титанит.
   const attempts = await Promise.all(
     Array.from({ length: 6 }, () =>
       api('POST', '/api/market/orders', ids.pilotToken, {
-        side: 'SELL', resource: 'METAL', quantity: available, pricePerUnit: 3,
+        side: 'SELL', resource: 'TITANITE', quantity: available, pricePerUnit: 3,
       })),
   );
   const ok = attempts.filter((a) => a.status === 200).length;
@@ -170,8 +170,8 @@ async function testEscrowRace() {
 
   check(
     'гонка залога: нельзя заблокировать больше, чем лежит на складе',
-    after.storage.metal >= 0 && ok * available <= available + 0.001,
-    `успешных ордеров ${ok} по ${available}, на складе осталось ${after.storage.metal}`,
+    after.storage.titanite >= 0 && ok * available <= available + 0.001,
+    `успешных ордеров ${ok} по ${available}, на складе осталось ${after.storage.titanite}`,
   );
 
   // Убираем за собой.
@@ -188,7 +188,7 @@ async function testCreditRace() {
   const attempts = await Promise.all(
     Array.from({ length: 6 }, () =>
       api('POST', '/api/market/orders', ids.pilotToken, {
-        side: 'BUY', resource: 'CRYSTAL', quantity, pricePerUnit: 1,
+        side: 'BUY', resource: 'SILICATE', quantity, pricePerUnit: 1,
       })),
   );
   const ok = attempts.filter((a) => a.status === 200).length;
@@ -210,13 +210,13 @@ async function testFleetValidation() {
   const base = before.bases[0];
 
   const bad = [
-    ['нулевой флот с грузом', { targetHubId: ids.hubId, mission: 'HUB_DELIVERY', ships: {}, cargo: { metal: 1000, crystal: 1000 } }],
-    ['отрицательный груз', { targetHubId: ids.hubId, mission: 'HUB_DELIVERY', ships: { TRANSPORTER: 1 }, cargo: { metal: -5000, crystal: -5000 } }],
-    ['отрицательные корабли', { targetHubId: ids.hubId, mission: 'HUB_DELIVERY', ships: { TRANSPORTER: -3 }, cargo: { metal: 0, crystal: 0 } }],
-    ['дробные корабли', { targetHubId: ids.hubId, mission: 'HUB_DELIVERY', ships: { TRANSPORTER: 1.7 }, cargo: { metal: 10, crystal: 0 } }],
-    ['груз больше склада планеты', { targetHubId: ids.hubId, mission: 'HUB_DELIVERY', ships: { TRANSPORTER: 4 }, cargo: { metal: 999999, crystal: 0 } }],
-    ['вывоз с отрицательным объемом', { targetHubId: ids.hubId, mission: 'HUB_PICKUP', ships: { TRANSPORTER: 1 }, pickup: { metal: -1000, crystal: -1000 } }],
-    ['зонды без трюмов на хаб', { targetHubId: ids.hubId, mission: 'HUB_DELIVERY', ships: { PROBE: 1 }, cargo: { metal: 0, crystal: 0 } }],
+    ['нулевой флот с грузом', { targetHubId: ids.hubId, mission: 'HUB_DELIVERY', ships: {}, cargo: { titanite: 1000, silicate: 1000 } }],
+    ['отрицательный груз', { targetHubId: ids.hubId, mission: 'HUB_DELIVERY', ships: { TRANSPORTER: 1 }, cargo: { titanite: -5000, silicate: -5000 } }],
+    ['отрицательные корабли', { targetHubId: ids.hubId, mission: 'HUB_DELIVERY', ships: { TRANSPORTER: -3 }, cargo: { titanite: 0, silicate: 0 } }],
+    ['дробные корабли', { targetHubId: ids.hubId, mission: 'HUB_DELIVERY', ships: { TRANSPORTER: 1.7 }, cargo: { titanite: 10, silicate: 0 } }],
+    ['груз больше склада планеты', { targetHubId: ids.hubId, mission: 'HUB_DELIVERY', ships: { TRANSPORTER: 4 }, cargo: { titanite: 999999, silicate: 0 } }],
+    ['вывоз с отрицательным объемом', { targetHubId: ids.hubId, mission: 'HUB_PICKUP', ships: { TRANSPORTER: 1 }, pickup: { titanite: -1000, silicate: -1000 } }],
+    ['зонды без трюмов на хаб', { targetHubId: ids.hubId, mission: 'HUB_DELIVERY', ships: { PROBE: 1 }, cargo: { titanite: 0, silicate: 0 } }],
     ['неизвестная миссия', { targetHubId: ids.hubId, mission: 'PLUNDER', ships: { TRANSPORTER: 1 }, cargo: {} }],
     ['полет в никуда', { mission: 'TRANSPORT', ships: { TRANSPORTER: 1 }, cargo: {} }],
   ];
@@ -231,8 +231,8 @@ async function testFleetValidation() {
   check(
     'ресурсы и ангар не пострадали от аномальных вылетов',
     afterBase.fleet.TRANSPORTER === base.fleet.TRANSPORTER &&
-      afterBase.resources.metal >= base.resources.metal - 1 &&
-      afterBase.resources.crystal >= base.resources.crystal - 1,
+      afterBase.resources.titanite >= base.resources.titanite - 1 &&
+      afterBase.resources.silicate >= base.resources.silicate - 1,
     `транспорты ${base.fleet.TRANSPORTER} -> ${afterBase.fleet.TRANSPORTER}`,
   );
   check(

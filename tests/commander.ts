@@ -1,6 +1,6 @@
 /**
  * Инструменты командира: боевой симулятор, шаблоны флотов и старение разведданных.
- * Плюс логистика дейтерия — он теперь возится в трюмах, а не только жжется как топливо.
+ * Плюс логистика трития — он теперь возится в трюмах, а не только жжется как топливо.
  *
  * Чистые формулы проверяются прямо на игровых модулях, симулятор и шаблоны —
  * по живому API: у них есть и валидация, и права доступа.
@@ -36,35 +36,35 @@ function fleet(partial: Partial<ShipCounts>): ShipCounts {
   return { ...emptyShipCounts(), ...partial };
 }
 
-/* ------------------------- 1. Дейтерий в трюмах ------------------------- */
+/* ------------------------- 1. Тритий в трюмах ------------------------- */
 
-console.log('\n=== 1. Дейтерий возится в трюмах ===');
+console.log('\n=== 1. Тритий возится в трюмах ===');
 
 {
   const ships = fleet({ TRANSPORTER: 1 });
   const capacity = fleetCapacity(ships);
 
   check(
-    'дейтерий занимает трюм наравне с металлом и кристаллами',
-    validateCargo(ships, { metal: 0, crystal: 0, deuterium: capacity }) === null,
+    'тритий занимает трюм наравне с титанитом и силикатами',
+    validateCargo(ships, { titanite: 0, silicate: 0, tritium: capacity }) === null,
     `трюм ${capacity}`,
   );
   check(
-    'перегруз одним дейтерием отклоняется',
-    validateCargo(ships, { metal: 0, crystal: 0, deuterium: capacity + 1 }) !== null,
+    'перегруз одним тритием отклоняется',
+    validateCargo(ships, { titanite: 0, silicate: 0, tritium: capacity + 1 }) !== null,
   );
   check(
     'три ресурса делят один трюм, а не три отдельных',
     validateCargo(ships, {
-      metal: capacity / 2,
-      crystal: capacity / 2,
-      deuterium: 1,
+      titanite: capacity / 2,
+      silicate: capacity / 2,
+      tritium: 1,
     }) !== null,
     'половина + половина + 1 уже перегруз',
   );
   check(
-    'отрицательный дейтерий отклоняется',
-    validateCargo(ships, { metal: 0, crystal: 0, deuterium: -1 }) !== null,
+    'отрицательный тритий отклоняется',
+    validateCargo(ships, { titanite: 0, silicate: 0, tritium: -1 }) !== null,
   );
 }
 
@@ -89,18 +89,18 @@ check(
   const payload: ScanPayload = {
     owner: 'Противник',
     colonized: true,
-    richness: { metal: 1, crystal: 1, deuterium: 1, energy: 1, antimatter: 1 },
+    richness: { titanite: 1, silicate: 1, tritium: 1, energy: 1, eridium: 1 },
     buildings: {
-      METAL_MINE: 12,
-      CRYSTAL_MINE: 8,
-      DEUTERIUM_MINE: 6,
+      TITANITE_MINE: 12,
+      SILICATE_MINE: 8,
+      TRITIUM_MINE: 6,
       SOLAR_PLANT: 14,
       RESEARCH_LAB: 4,
       SHIPYARD: 5,
-      ANTIMATTER_SYNTH: 1,
+      ERIDIUM_SYNTH: 1,
       STORAGE: 3,
     },
-    resources: { metal: 5000, crystal: 3000, deuterium: 1000, antimatter: 10 },
+    resources: { titanite: 5000, silicate: 3000, tritium: 1000, eridium: 10 },
     fleet: fleet({ HEAVY_CRUISER: 20 }),
     defenses: { ROCKET_LAUNCHER: 10, LASER_TURRET: 5 },
   };
@@ -129,8 +129,8 @@ check(
   );
   check(
     'уровни построек остаются: здания за сутки не разбирают',
-    outdated.buildings !== null && outdated.buildings.METAL_MINE === 12,
-    `шахта ур.${outdated.buildings?.METAL_MINE}`,
+    outdated.buildings !== null && outdated.buildings.TITANITE_MINE === 12,
+    `шахта ур.${outdated.buildings?.TITANITE_MINE}`,
   );
   check(
     'владелец и богатство планеты остаются известны',
@@ -143,7 +143,7 @@ check(
   const legacy = {
     owner: 'Ветеран',
     colonized: true,
-    richness: { metal: 1, crystal: 1, deuterium: 1 },
+    richness: { titanite: 1, silicate: 1, tritium: 1 },
     buildings: null,
     resources: null,
     fleet: { PROBE: 1, TRANSPORTER: 2, LIGHT_FIGHTER: 3 },
@@ -162,7 +162,7 @@ check(
   );
   check(
     'богатство старого снимка тоже дополняется',
-    view.richness?.antimatter === 0 && view.richness?.energy === 0,
+    view.richness?.eridium === 0 && view.richness?.energy === 0,
   );
 }
 
@@ -283,7 +283,7 @@ if (!token) {
       defender: {
         ships: { LIGHT_FIGHTER: 1 },
         defenses: {},
-        stock: { metal: 12000, crystal: 8000, deuterium: 0, storageLevel: 1 },
+        stock: { titanite: 12000, silicate: 8000, tritium: 0, storageLevel: 1 },
       },
     },
     token,

@@ -31,8 +31,8 @@ export function canExplore(techs: TechLevels): boolean {
 
 export interface ExpeditionResult {
   outcome: ExpeditionOutcome;
-  /** Найденные ресурсы; металл и кристаллы занимают трюмы. */
-  loot: { metal: number; crystal: number; antimatter: number };
+  /** Найденные ресурсы; титанит и силикаты занимают трюмы. */
+  loot: { titanite: number; silicate: number; eridium: number };
   /** Состав пиратов, если была засада. */
   pirates: ShipCounts | null;
   /** Результат боя с пиратами. */
@@ -87,7 +87,7 @@ export function resolveExpedition(
   if (event === 'SILENCE') {
     return {
       outcome: 'SILENCE',
-      loot: { metal: 0, crystal: 0, antimatter: 0 },
+      loot: { titanite: 0, silicate: 0, eridium: 0 },
       pirates: null,
       battle: null,
       survivors: { ...ships },
@@ -106,32 +106,32 @@ export function resolveExpedition(
 function resolveFind(ships: ShipCounts, capacity: number, level: number, rng: Rng): ExpeditionResult {
   const kind = rollWeighted(
     [
-      ['METAL', 50],
-      ['CRYSTAL', 35],
-      ['ANTIMATTER', 15 + level],
-    ] as Array<['METAL' | 'CRYSTAL' | 'ANTIMATTER', number]>,
+      ['TITANITE', 50],
+      ['SILICATE', 35],
+      ['ERIDIUM', 15 + level],
+    ] as Array<['TITANITE' | 'SILICATE' | 'ERIDIUM', number]>,
     rng,
   );
 
-  const loot = { metal: 0, crystal: 0, antimatter: 0 };
+  const loot = { titanite: 0, silicate: 0, eridium: 0 };
   const share = randomBetween(0.15, 0.45, rng) * (1 + level * 0.05);
 
-  if (kind === 'ANTIMATTER') {
-    // Антиматерия едет в баках: находка мелкая, но ценная.
-    loot.antimatter = Math.max(1, Math.floor(capacity * 0.01 * (1 + level * 0.1)));
+  if (kind === 'ERIDIUM') {
+    // Эридий едет в баках: находка мелкая, но ценная.
+    loot.eridium = Math.max(1, Math.floor(capacity * 0.01 * (1 + level * 0.1)));
     return {
       outcome: 'RESOURCES',
       loot,
       pirates: null,
       battle: null,
       survivors: { ...ships },
-      summary: `В обломках неизвестного корабля нашли контейнер с антиматерией: ${loot.antimatter}.`,
+      summary: `В обломках неизвестного корабля нашли контейнер с эридием: ${loot.eridium}.`,
     };
   }
 
   const amount = Math.floor(Math.min(capacity, capacity * share));
-  if (kind === 'METAL') loot.metal = amount;
-  else loot.crystal = amount;
+  if (kind === 'TITANITE') loot.titanite = amount;
+  else loot.silicate = amount;
 
   return {
     outcome: 'RESOURCES',
@@ -141,7 +141,7 @@ function resolveFind(ships: ShipCounts, capacity: number, level: number, rng: Rn
     survivors: { ...ships },
     summary:
       amount > 0
-        ? `Заброшенный груз: подняли на борт ${amount} ${kind === 'METAL' ? 'металла' : 'кристаллов'}.`
+        ? `Заброшенный груз: подняли на борт ${amount} ${kind === 'TITANITE' ? 'титанита' : 'силикатов'}.`
         : 'Нашли брошенный контейнер, но трюмы забиты — взять нечего.',
   };
 }
@@ -153,7 +153,7 @@ function resolveAmbush(ships: ShipCounts, capacity: number, level: number, rng: 
   if (rng() < evadeChance) {
     return {
       outcome: 'EVADED',
-      loot: { metal: 0, crystal: 0, antimatter: 0 },
+      loot: { titanite: 0, silicate: 0, eridium: 0 },
       pirates: null,
       battle: null,
       survivors: { ...ships },
@@ -170,7 +170,7 @@ function resolveAmbush(ships: ShipCounts, capacity: number, level: number, rng: 
   if (battle.winner === 'DEFENDER') {
     return {
       outcome: 'PIRATES_LOST',
-      loot: { metal: 0, crystal: 0, antimatter: 0 },
+      loot: { titanite: 0, silicate: 0, eridium: 0 },
       pirates,
       battle,
       survivors: emptyShipCounts(),
@@ -184,13 +184,13 @@ function resolveAmbush(ships: ShipCounts, capacity: number, level: number, rng: 
   const trophy = Math.floor(Math.min(capacity * 0.2, capacity));
   return {
     outcome: 'PIRATES_WON',
-    loot: { metal: trophy, crystal: 0, antimatter: 0 },
+    loot: { titanite: trophy, silicate: 0, eridium: 0 },
     pirates,
     battle,
     survivors: { ...battle.attackerSurvivors },
     summary:
       `Засада пиратов отбита (${describePirates(pirates)}). ` +
-      `Из трюмов противника подняли ${trophy} металла.`,
+      `Из трюмов противника подняли ${trophy} титанита.`,
   };
 }
 

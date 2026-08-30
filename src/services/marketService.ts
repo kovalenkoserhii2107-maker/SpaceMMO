@@ -22,12 +22,12 @@ export interface MarketView {
   hub: { hubId: string; name: string } | null;
   credits: number;
   storage: {
-    metal: number;
-    crystal: number;
+    titanite: number;
+    silicate: number;
     level: number;
     capacity: number;
     free: number;
-    upgradeCost: { metal: number; crystal: number };
+    upgradeCost: { titanite: number; silicate: number };
     nextLevel: number;
     nextCapacity: number;
   } | null;
@@ -82,7 +82,7 @@ export async function getMarketView(commanderId: string): Promise<MarketView> {
       hub: null,
       credits: commander?.credits ?? 0,
       storage: null,
-      book: { METAL: { buy: [], sell: [] }, CRYSTAL: { buy: [], sell: [] } },
+      book: { TITANITE: { buy: [], sell: [] }, SILICATE: { buy: [], sell: [] } },
       myOrders: [],
       trades: [],
     };
@@ -116,8 +116,8 @@ export async function getMarketView(commanderId: string): Promise<MarketView> {
   });
 
   const book: MarketView['book'] = {
-    METAL: { buy: [], sell: [] },
-    CRYSTAL: { buy: [], sell: [] },
+    TITANITE: { buy: [], sell: [] },
+    SILICATE: { buy: [], sell: [] },
   };
 
   for (const order of orders) {
@@ -137,11 +137,11 @@ export async function getMarketView(commanderId: string): Promise<MarketView> {
     hub: { hubId: hub.id, name: hub.name },
     credits: round2(commander.credits),
     storage: {
-      metal: Math.round(storage?.metal ?? 0),
-      crystal: Math.round(storage?.crystal ?? 0),
+      titanite: Math.round(storage?.titanite ?? 0),
+      silicate: Math.round(storage?.silicate ?? 0),
       level,
       capacity: storageCapacity(level),
-      free: Math.max(0, storageCapacity(level) - storageUsed(storage ?? { metal: 0, crystal: 0 })),
+      free: Math.max(0, storageCapacity(level) - storageUsed(storage ?? { titanite: 0, silicate: 0 })),
       upgradeCost: storageUpgradeCost(level + 1),
       nextLevel: level + 1,
       nextCapacity: storageCapacity(level + 1),
@@ -170,18 +170,18 @@ export async function upgradeStorage(commanderId: string): Promise<MarketResult>
   const storage = await ensureStorage(commanderId, hub.id);
   const cost = storageUpgradeCost(storage.level + 1);
 
-  if (storage.metal < cost.metal || storage.crystal < cost.crystal) {
+  if (storage.titanite < cost.titanite || storage.silicate < cost.silicate) {
     return {
       ok: false,
-      error: `Нужно ${cost.metal} металла и ${cost.crystal} кристаллов на складе хаба`,
+      error: `Нужно ${cost.titanite} титанита и ${cost.silicate} силикатов на складе хаба`,
     };
   }
 
   const updated = await prisma.hubStorage.update({
     where: { id: storage.id },
     data: {
-      metal: { decrement: cost.metal },
-      crystal: { decrement: cost.crystal },
+      titanite: { decrement: cost.titanite },
+      silicate: { decrement: cost.silicate },
       level: { increment: 1 },
     },
   });
@@ -196,7 +196,7 @@ export async function upgradeStorage(commanderId: string): Promise<MarketResult>
  * Выставление ордера в стакан.
  *
  * Товар (для продажи) или криптогривна (для покупки) списываются в залог
- * сразу — иначе один и тот же металл можно было бы выставить в десяти ордерах.
+ * сразу — иначе один и тот же титанит можно было бы выставить в десяти ордерах.
  *
  * Списание идет условным `UPDATE ... WHERE поле >= сумма`: обычная схема
  * «прочитать остаток → сравнить → записать» под параллельными запросами
@@ -213,7 +213,7 @@ export async function placeOrder(
   if (!hub) return { ok: false, error: 'Торговый хаб не найден' };
   await ensureStorage(commanderId, hub.id);
 
-  const field = input.resource === 'METAL' ? 'metal' : 'crystal';
+  const field = input.resource === 'TITANITE' ? 'titanite' : 'silicate';
   const total = tradeTotal(input.quantity, input.pricePerUnit);
 
   try {
@@ -288,7 +288,7 @@ export async function cancelOrder(commanderId: string, orderId: string): Promise
       if (removed.count === 0) throw new MarketError('Ордер уже снят');
 
       if (order.side === 'SELL') {
-        const field = order.resource === 'METAL' ? 'metal' : 'crystal';
+        const field = order.resource === 'TITANITE' ? 'titanite' : 'silicate';
         const storage = await tx.hubStorage.findUniqueOrThrow({
           where: { commanderId_hubId: { commanderId, hubId: order.hubId } },
         });
@@ -348,7 +348,7 @@ export async function fillOrder(
       counterpartId = order.commanderId;
       executed = Math.min(quantity, order.remaining);
       total = tradeTotal(executed, order.pricePerUnit);
-      const field = order.resource === 'METAL' ? 'metal' : 'crystal';
+      const field = order.resource === 'TITANITE' ? 'titanite' : 'silicate';
 
       // Захватываем объем в самом ордере условным списанием: если параллельный
       // запрос успел раньше, count будет 0 и фантомной сделки не случится.
@@ -427,7 +427,7 @@ export async function fillOrder(
 async function incrementStorage(
   tx: Pick<typeof prisma, '$executeRaw'>,
   storageId: string,
-  field: 'metal' | 'crystal',
+  field: 'titanite' | 'silicate',
   amount: number,
   capacity: number,
   errorMessage: string,
@@ -435,11 +435,11 @@ async function incrementStorage(
   if (amount <= 0) return;
 
   const updated =
-    field === 'metal'
-      ? await tx.$executeRaw`UPDATE hub_storages SET metal = metal + ${amount}
-          WHERE id = ${storageId} AND metal + crystal + ${amount} <= ${capacity}`
-      : await tx.$executeRaw`UPDATE hub_storages SET crystal = crystal + ${amount}
-          WHERE id = ${storageId} AND metal + crystal + ${amount} <= ${capacity}`;
+    field === 'titanite'
+      ? await tx.$executeRaw`UPDATE hub_storages SET titanite = titanite + ${amount}
+          WHERE id = ${storageId} AND titanite + silicate + ${amount} <= ${capacity}`
+      : await tx.$executeRaw`UPDATE hub_storages SET silicate = silicate + ${amount}
+          WHERE id = ${storageId} AND titanite + silicate + ${amount} <= ${capacity}`;
 
   if (updated === 0) throw new MarketError(errorMessage);
 }

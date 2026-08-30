@@ -123,8 +123,8 @@ interface FleetRequestBody {
   targetSystemId?: unknown;
   mission?: unknown;
   ships?: Record<string, unknown>;
-  cargo?: { metal?: unknown; crystal?: unknown; deuterium?: unknown };
-  pickup?: { metal?: unknown; crystal?: unknown };
+  cargo?: { titanite?: unknown; silicate?: unknown; tritium?: unknown };
+  pickup?: { titanite?: unknown; silicate?: unknown };
 }
 
 function readTarget(body: FleetRequestBody): { planetId?: string; hubId?: string; systemId?: string } {

@@ -74,36 +74,36 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
         owner: planet.base?.commander.nickname ?? null,
         colonized: true,
         richness: {
-          metal: planet.metalRichness,
-          crystal: planet.crystalRichness,
-          deuterium: planet.deuteriumRichness,
+          titanite: planet.titaniteRichness,
+          silicate: planet.silicateRichness,
+          tritium: planet.tritiumRichness,
           energy: planet.energyRichness,
-          antimatter: planet.antimatterRichness,
+          eridium: planet.eridiumRichness,
         },
         buildings: live
           ? { ...live.levels }
           : {
-              METAL_MINE: ownBase.metalMineLevel,
-              CRYSTAL_MINE: ownBase.crystalMineLevel,
-              DEUTERIUM_MINE: ownBase.deuteriumMineLevel,
+              TITANITE_MINE: ownBase.titaniteMineLevel,
+              SILICATE_MINE: ownBase.silicateMineLevel,
+              TRITIUM_MINE: ownBase.tritiumMineLevel,
               SOLAR_PLANT: ownBase.solarPlantLevel,
               RESEARCH_LAB: ownBase.researchLabLevel,
               SHIPYARD: ownBase.shipyardLevel,
-              ANTIMATTER_SYNTH: ownBase.antimatterSynthLevel,
+              ERIDIUM_SYNTH: ownBase.eridiumSynthLevel,
               STORAGE: ownBase.storageLevel,
             },
         resources: live
           ? {
-              metal: Math.round(live.resources.metal),
-              crystal: Math.round(live.resources.crystal),
-              deuterium: Math.round(live.resources.deuterium),
-              antimatter: Math.round(live.resources.antimatter),
+              titanite: Math.round(live.resources.titanite),
+              silicate: Math.round(live.resources.silicate),
+              tritium: Math.round(live.resources.tritium),
+              eridium: Math.round(live.resources.eridium),
             }
           : {
-              metal: Math.round(ownBase.metal),
-              crystal: Math.round(ownBase.crystal),
-              deuterium: Math.round(ownBase.deuterium),
-              antimatter: Math.round(ownBase.antimatter),
+              titanite: Math.round(ownBase.titanite),
+              silicate: Math.round(ownBase.silicate),
+              tritium: Math.round(ownBase.tritium),
+              eridium: Math.round(ownBase.eridium),
             },
         fleet: live ? { ...live.ships } : shipsFromRows(ownBase.ships),
         defenses: live ? { ...live.defenses } : defensesFromRows(ownBase.defenses),
@@ -128,8 +128,8 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
         position: hub.position,
         storage: storage
           ? {
-              metal: Math.round(storage.metal),
-              crystal: Math.round(storage.crystal),
+              titanite: Math.round(storage.titanite),
+              silicate: Math.round(storage.silicate),
               level: storage.level,
               capacity: storageCapacity(storage.level),
               free: Math.max(0, storageCapacity(storage.level) - storageUsed(storage)),
@@ -242,9 +242,9 @@ export async function listEspionageTargets(commanderId: string): Promise<Espiona
       defenses: normalizeDefenses(data.defenses),
       hasDefenseData: Boolean(data.defenses),
       stock: {
-        metal: data.resources?.metal ?? 0,
-        crystal: data.resources?.crystal ?? 0,
-        deuterium: data.resources?.deuterium ?? 0,
+        titanite: data.resources?.titanite ?? 0,
+        silicate: data.resources?.silicate ?? 0,
+        tritium: data.resources?.tritium ?? 0,
         storageLevel: data.buildings?.STORAGE ?? 0,
       },
     });
@@ -264,7 +264,7 @@ export interface EspionageTarget {
   defenses: DefenseCounts;
   /** У старых снимков обороны нет — интерфейс об этом предупреждает. */
   hasDefenseData: boolean;
-  stock: { metal: number; crystal: number; deuterium: number; storageLevel: number };
+  stock: { titanite: number; silicate: number; tritium: number; storageLevel: number };
 }
 
 function defensesFromRows(rows: Array<{ type: DefenseType; count: number }>): DefenseCounts {

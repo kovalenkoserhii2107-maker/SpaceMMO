@@ -58,7 +58,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
   ENERGY_TECH: {
     label: 'Энергетика',
     description: '+2% к выработке энергии базы за уровень. Открывает путь к остальным технологиям.',
-    cost: { metal: 0, crystal: 200, deuterium: 100, factor: 2.0 },
+    cost: { titanite: 0, silicate: 200, tritium: 100, factor: 2.0 },
     baseSeconds: 90,
     timeFactor: 1.8,
     labLevel: 1,
@@ -67,7 +67,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
   COMPUTING_TECH: {
     label: 'Вычислительная техника',
     description: '-3% к времени исследований за уровень. Нужна для постройки зондов.',
-    cost: { metal: 0, crystal: 100, deuterium: 75, factor: 2.0 },
+    cost: { titanite: 0, silicate: 100, tritium: 75, factor: 2.0 },
     baseSeconds: 60,
     timeFactor: 1.8,
     labLevel: 1,
@@ -76,7 +76,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
   MINING_TECH: {
     label: 'Горное дело',
     description: '+2% к добыче всех шахт за уровень.',
-    cost: { metal: 200, crystal: 100, deuterium: 0, factor: 1.8 },
+    cost: { titanite: 200, silicate: 100, tritium: 0, factor: 1.8 },
     baseSeconds: 75,
     timeFactor: 1.7,
     labLevel: 2,
@@ -85,7 +85,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
   COMBUSTION_DRIVE: {
     label: 'Реактивный двигатель',
     description: 'Открывает постройку транспортников и легких истребителей.',
-    cost: { metal: 100, crystal: 0, deuterium: 60, factor: 1.9 },
+    cost: { titanite: 100, silicate: 0, tritium: 60, factor: 1.9 },
     baseSeconds: 80,
     timeFactor: 1.7,
     labLevel: 2,
@@ -93,8 +93,8 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
   },
   HYPERSPACE_PHYSICS: {
     label: 'Гиперпространственная физика',
-    description: 'Открывает постройку синтезатора антиматерии.',
-    cost: { metal: 800, crystal: 1200, deuterium: 600, factor: 2.1 },
+    description: 'Открывает постройку синтезатора эридия.',
+    cost: { titanite: 800, silicate: 1200, tritium: 600, factor: 2.1 },
     baseSeconds: 240,
     timeFactor: 1.8,
     labLevel: 3,
@@ -105,7 +105,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
     description:
       'Открывает экспедиции в глубокий космос. Уровень задает число одновременных ' +
       'экспедиций (1 → 1, 4 → 2, 9 → 3), увеличивает находки и помогает уходить от засад.',
-    cost: { metal: 400, crystal: 800, deuterium: 400, factor: 1.9 },
+    cost: { titanite: 400, silicate: 800, tritium: 400, factor: 1.9 },
     baseSeconds: 180,
     timeFactor: 1.75,
     labLevel: 2,
@@ -114,9 +114,9 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
   HYPERDRIVE: {
     label: 'Гипердвигатель',
     description:
-      'Открывает межзвездные прыжки на антиматерии. Каждый уровень ускоряет прыжок ' +
+      'Открывает межзвездные прыжки на эридия. Каждый уровень ускоряет прыжок ' +
       'и снижает расход топлива.',
-    cost: { metal: 1500, crystal: 1000, deuterium: 900, factor: 2.0 },
+    cost: { titanite: 1500, silicate: 1000, tritium: 900, factor: 2.0 },
     baseSeconds: 300,
     timeFactor: 1.8,
     labLevel: 3,
@@ -136,9 +136,9 @@ export function researchCost(tech: TechnologyType, targetLevel: number): Resourc
   const { cost } = TECHNOLOGIES[tech];
   const scale = Math.pow(cost.factor, targetLevel - 1);
   return {
-    metal: Math.floor(cost.metal * scale),
-    crystal: Math.floor(cost.crystal * scale),
-    deuterium: Math.floor(cost.deuterium * scale),
+    titanite: Math.floor(cost.titanite * scale),
+    silicate: Math.floor(cost.silicate * scale),
+    tritium: Math.floor(cost.tritium * scale),
   };
 }
 

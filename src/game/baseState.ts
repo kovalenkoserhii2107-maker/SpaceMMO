@@ -106,8 +106,8 @@ export interface FleetRuntimeState {
   targetHubId: string | null;
   targetName: string;
   ships: ShipCounts;
-  cargo: { metal: number; crystal: number; deuterium: number; antimatter: number };
-  pickup: { metal: number; crystal: number };
+  cargo: { titanite: number; silicate: number; tritium: number; eridium: number };
+  pickup: { titanite: number; silicate: number };
   fuelSpent: number;
   distance: number;
   speed: number;
@@ -180,8 +180,8 @@ export interface CommanderRuntimeState {
  * начисление обрезается по остатку свободного места.
  *
  * Обрезается ровно та доля, которая не влезла, и одинаково для всех трех
- * ресурсов — иначе на полном складе металл вытеснял бы дейтерий просто потому,
- * что его добывают быстрее. Антиматерия под лимит не попадает.
+ * ресурсов — иначе на полном складе титанит вытеснял бы тритий просто потому,
+ * что его добывают быстрее. Эридий под лимит не попадает.
  */
 export function accrue(state: BaseRuntimeState, techs: TechLevels, seconds: number): void {
   if (!Number.isFinite(seconds) || seconds <= 0) return;
@@ -194,15 +194,15 @@ export function accrue(state: BaseRuntimeState, techs: TechLevels, seconds: numb
     systemModifiers(state.anomaly),
   );
 
-  const mined = (perSecond.metal + perSecond.crystal + perSecond.deuterium) * seconds;
+  const mined = (perSecond.titanite + perSecond.silicate + perSecond.tritium) * seconds;
   const free = Math.max(0, storageCapacity(state.levels) - storedTotal(state.resources));
   const fit = mined > free ? free / mined : 1;
 
   const next: BaseStock = {
-    metal: state.resources.metal + perSecond.metal * seconds * fit,
-    crystal: state.resources.crystal + perSecond.crystal * seconds * fit,
-    deuterium: state.resources.deuterium + perSecond.deuterium * seconds * fit,
-    antimatter: state.resources.antimatter + perSecond.antimatter * seconds,
+    titanite: state.resources.titanite + perSecond.titanite * seconds * fit,
+    silicate: state.resources.silicate + perSecond.silicate * seconds * fit,
+    tritium: state.resources.tritium + perSecond.tritium * seconds * fit,
+    eridium: state.resources.eridium + perSecond.eridium * seconds,
   };
 
   if (Object.values(next).some((value) => !Number.isFinite(value))) {
@@ -240,10 +240,10 @@ export function toSnapshot(state: BaseRuntimeState, commander: CommanderRuntimeS
     size: state.size,
     richness: { ...state.richness },
     resources: {
-      metal: round(state.resources.metal),
-      crystal: round(state.resources.crystal),
-      deuterium: round(state.resources.deuterium),
-      antimatter: Math.round(state.resources.antimatter * 1000) / 1000,
+      titanite: round(state.resources.titanite),
+      silicate: round(state.resources.silicate),
+      tritium: round(state.resources.tritium),
+      eridium: Math.round(state.resources.eridium * 1000) / 1000,
     },
     productionPerSecond: roundAll(
       productionPerSecond(state.levels, state.richness, bonuses, defenseDrain, modifiers),
@@ -456,9 +456,9 @@ function round(value: number): number {
 
 function roundAll(amounts: BaseStock): BaseStock {
   return {
-    metal: Math.round(amounts.metal * 1000) / 1000,
-    crystal: Math.round(amounts.crystal * 1000) / 1000,
-    deuterium: Math.round(amounts.deuterium * 1000) / 1000,
-    antimatter: Math.round(amounts.antimatter * 100000) / 100000,
+    titanite: Math.round(amounts.titanite * 1000) / 1000,
+    silicate: Math.round(amounts.silicate * 1000) / 1000,
+    tritium: Math.round(amounts.tritium * 1000) / 1000,
+    eridium: Math.round(amounts.eridium * 100000) / 100000,
   };
 }

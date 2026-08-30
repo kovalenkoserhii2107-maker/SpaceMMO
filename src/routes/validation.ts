@@ -23,24 +23,24 @@ export function positivePrice(value: unknown): number | null {
   return Math.round(parsed * 100) / 100;
 }
 
-/** Пара «металл/кристаллы» из тела запроса. */
+/** Пара «титанит/силикаты» из тела запроса. */
 export function amountsOrNull(
-  input: { metal?: unknown; crystal?: unknown } | undefined,
-): { metal: number; crystal: number } | null {
-  const metal = nonNegativeInt(input?.metal);
-  const crystal = nonNegativeInt(input?.crystal);
-  if (metal === null || crystal === null) return null;
-  return { metal, crystal };
+  input: { titanite?: unknown; silicate?: unknown } | undefined,
+): { titanite: number; silicate: number } | null {
+  const titanite = nonNegativeInt(input?.titanite);
+  const silicate = nonNegativeInt(input?.silicate);
+  if (titanite === null || silicate === null) return null;
+  return { titanite, silicate };
 }
 
-/** Груз флота: металл, кристаллы и дейтерий делят один трюм. */
+/** Груз флота: титанит, силикаты и тритий делят один трюм. */
 export function cargoOrNull(
-  input: { metal?: unknown; crystal?: unknown; deuterium?: unknown } | undefined,
-): { metal: number; crystal: number; deuterium: number } | null {
+  input: { titanite?: unknown; silicate?: unknown; tritium?: unknown } | undefined,
+): { titanite: number; silicate: number; tritium: number } | null {
   const amounts = amountsOrNull(input);
-  const deuterium = nonNegativeInt(input?.deuterium);
-  if (!amounts || deuterium === null) return null;
-  return { ...amounts, deuterium };
+  const tritium = nonNegativeInt(input?.tritium);
+  if (!amounts || tritium === null) return null;
+  return { ...amounts, tritium };
 }
 
 /** Состав флота: только целые неотрицательные значения, иначе запрос отклоняется. */

@@ -333,12 +333,12 @@ export function resolveBattle(attacker: SideForces, defender: SideForces): Battl
 
 /** Что удалось вывезти и почему именно столько — основа отчета для агрессора. */
 export interface PlunderResult {
-  metal: number;
-  crystal: number;
-  deuterium: number;
+  titanite: number;
+  silicate: number;
+  tritium: number;
   /** Вместимость хранилища защитника. */
   storageCapacity: number;
-  /** Сколько всего лежало на складе (металл + кристаллы + дейтерий). */
+  /** Сколько всего лежало на складе (титанит + силикаты + тритий). */
   stored: number;
   /** Несгораемый объем: 90% вместимости, но не больше того, что реально лежит. */
   protectedAmount: number;
@@ -362,18 +362,18 @@ export interface PlunderResult {
  * Половина склада больше не выносится: полупустая база не теряет ничего,
  * и заполненность склада становится осмысленным риском.
  *
- * Вывозятся все три ресурса: дейтерий занимает трюмы наравне с металлом
- * и кристаллами, поэтому и грабится наравне с ними.
+ * Вывозятся все три ресурса: тритий занимает трюмы наравне с титанитом
+ * и силикатами, поэтому и грабится наравне с ними.
  */
 export function plunderAmount(
-  stock: { metal: number; crystal: number; deuterium: number },
+  stock: { titanite: number; silicate: number; tritium: number },
   storageCapacity: number,
   cargoCapacity: number,
 ): PlunderResult {
-  const metal = Math.max(0, stock.metal);
-  const crystal = Math.max(0, stock.crystal);
-  const deuterium = Math.max(0, stock.deuterium);
-  const stored = metal + crystal + deuterium;
+  const titanite = Math.max(0, stock.titanite);
+  const silicate = Math.max(0, stock.silicate);
+  const tritium = Math.max(0, stock.tritium);
+  const stored = titanite + silicate + tritium;
 
   const protectedAmount = Math.min(stored, Math.max(0, storageCapacity) * PROTECTED_STORAGE_SHARE);
   const surplus = Math.max(0, stored - protectedAmount);
@@ -381,29 +381,29 @@ export function plunderAmount(
   // Доля каждого ресурса, которая уходит агрессору: излишек «размазан» по складу
   // пропорционально, поэтому пропорцию считаем один раз и применяем ко всем типам.
   const share = stored > 0 ? (RAID_SHARE * surplus) / stored : 0;
-  const availableMetal = Math.floor(metal * share);
-  const availableCrystal = Math.floor(crystal * share);
-  const availableDeuterium = Math.floor(deuterium * share);
-  const takeable = availableMetal + availableCrystal + availableDeuterium;
+  const availableTitanite = Math.floor(titanite * share);
+  const availableSilicate = Math.floor(silicate * share);
+  const availableTritium = Math.floor(tritium * share);
+  const takeable = availableTitanite + availableSilicate + availableTritium;
 
-  // Трюмы забиваются по порядку: сперва металл, затем кристаллы, потом дейтерий.
+  // Трюмы забиваются по порядку: сперва титанит, затем силикаты, потом тритий.
   let room = Math.max(0, cargoCapacity);
-  const takenMetal = Math.min(availableMetal, room);
-  room -= takenMetal;
-  const takenCrystal = Math.min(availableCrystal, room);
-  room -= takenCrystal;
-  const takenDeuterium = Math.min(availableDeuterium, room);
+  const takenTitanite = Math.min(availableTitanite, room);
+  room -= takenTitanite;
+  const takenSilicate = Math.min(availableSilicate, room);
+  room -= takenSilicate;
+  const takenTritium = Math.min(availableTritium, room);
 
   return {
-    metal: takenMetal,
-    crystal: takenCrystal,
-    deuterium: takenDeuterium,
+    titanite: takenTitanite,
+    silicate: takenSilicate,
+    tritium: takenTritium,
     storageCapacity,
     stored,
     protectedAmount,
     surplus,
     takeable,
-    cargoLimited: takenMetal + takenCrystal + takenDeuterium < takeable,
+    cargoLimited: takenTitanite + takenSilicate + takenTritium < takeable,
   };
 }
 

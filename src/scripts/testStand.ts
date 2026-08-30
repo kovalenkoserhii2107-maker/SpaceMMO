@@ -5,9 +5,24 @@
  * с криптогривной, товаром на складе хаба и вне синдикатов. Скрипт приводит
  * стенд в известное состояние и печатает конфигурацию для тестов.
  *
- * Запуск: npm run test:stand > stand.json
+ * Перед подготовкой стенд удаляет одноразовые аккаунты прошлых прогонов —
+ * иначе занятые ими колонии копятся и галактика заканчивается.
+ *
+ * Запуск: npm run --silent test:stand > stand.json
  */
 import { prisma } from '../db/prisma.js';
+import { cleanupTestAccounts } from './cleanupTestAccounts.js';
+
+// Одноразовые аккаунты прошлых прогонов держат колонии и выедают галактику,
+// поэтому стенд начинается с уборки: иначе онбординг однажды упрется
+// в «нет свободных планет».
+const cleaned = await cleanupTestAccounts();
+if (cleaned.removed > 0) {
+  console.error(
+    `[stand] убрано одноразовых аккаунтов: ${cleaned.removed}, ` +
+      `освобождено колоний: ${cleaned.freedPlanets}`,
+  );
+}
 
 const ADMIRAL_PASSWORD = 'admiral-pass-123';
 const PILOT_PASSWORD = 'pilot-pass-123';
@@ -38,8 +53,8 @@ await prisma.commander.updateMany({
 for (const commander of [admiral, pilot]) {
   await prisma.hubStorage.upsert({
     where: { commanderId_hubId: { commanderId: commander.id, hubId: hub.id } },
-    create: { commanderId: commander.id, hubId: hub.id, metal: 20000, crystal: 20000, level: 8 },
-    update: { metal: 20000, crystal: 20000, level: 8 },
+    create: { commanderId: commander.id, hubId: hub.id, titanite: 20000, silicate: 20000, level: 8 },
+    update: { titanite: 20000, silicate: 20000, level: 8 },
   });
 }
 

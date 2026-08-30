@@ -13,7 +13,7 @@ export interface ExpeditionReportView {
   outcome: string;
   systemName: string;
   summary: string;
-  loot: { metal: number; crystal: number; antimatter: number };
+  loot: { titanite: number; silicate: number; eridium: number };
   losses: Array<{ label: string; lost: number; before: number }>;
   pirates: { LIGHT_FIGHTER: number; TRANSPORTER: number } | null;
   createdAt: number;
@@ -55,7 +55,7 @@ export interface DiplomacyView {
     planetName: string;
     attackerName: string;
     defenderName: string;
-    plunder: { metal: number; crystal: number; deuterium: number };
+    plunder: { titanite: number; silicate: number; tritium: number };
     /** Почему увезли именно столько: что спрятало хранилище защитника. */
     storageDefense: StorageDefenseReport | null;
     myLosses: Array<{ label: string; lost: number; before: number }>;
@@ -106,7 +106,7 @@ interface BattleData {
   defenderLosses: Array<{ label: string; lost: number; before: number }>;
   attackerDamageReport?: DamageReport;
   defenderDamageReport?: DamageReport;
-  plunder: { metal: number; crystal: number; deuterium: number };
+  plunder: { titanite: number; silicate: number; tritium: number };
   storageDefense?: StorageDefenseReport;
 }
 
@@ -199,9 +199,9 @@ export async function getDiplomacy(commanderId: string): Promise<DiplomacyView> 
         systemName: report.system.name,
         summary: report.summary,
         loot: {
-          metal: report.lootMetal,
-          crystal: report.lootCrystal,
-          antimatter: report.lootAntimatter,
+          titanite: report.lootTitanite,
+          silicate: report.lootSilicate,
+          eridium: report.lootEridium,
         },
         losses: (data.losses ?? []).filter((item) => item.lost > 0),
         pirates: data.pirates ?? null,
@@ -239,9 +239,9 @@ export async function getDiplomacy(commanderId: string): Promise<DiplomacyView> 
         attackerName: data.attackerName,
         defenderName: data.defenderName,
         plunder: {
-          metal: report.plunderMetal,
-          crystal: report.plunderCrystal,
-          deuterium: report.plunderDeuterium,
+          titanite: report.plunderTitanite,
+          silicate: report.plunderSilicate,
+          tritium: report.plunderTritium,
         },
         storageDefense: data.storageDefense ?? null,
         myLosses: role === 'ATTACKER' ? data.attackerLosses : data.defenderLosses,

@@ -82,15 +82,15 @@ export interface BaseSnapshot {
   planetType: string;
   size: number;
   richness: {
-    metal: number;
-    crystal: number;
-    deuterium: number;
+    titanite: number;
+    silicate: number;
+    tritium: number;
     energy: number;
-    antimatter: number;
+    eridium: number;
   };
   resources: BaseStock;
   productionPerSecond: BaseStock;
-  /** Комплексное хранилище: общий лимит на металл, кристаллы и дейтерий. */
+  /** Комплексное хранилище: общий лимит на титанит, силикаты и тритий. */
   storage: {
     capacity: number;
     used: number;
@@ -169,8 +169,8 @@ export interface FleetSnapshot {
   targetName: string;
   ships: ShipCounts;
   composition: string;
-  cargo: { metal: number; crystal: number; deuterium: number; antimatter: number };
-  pickup: { metal: number; crystal: number };
+  cargo: { titanite: number; silicate: number; tritium: number; eridium: number };
+  pickup: { titanite: number; silicate: number };
   fuelSpent: number;
   distance: number;
   speed: number;
@@ -187,7 +187,7 @@ export interface HubView {
   hubId: string;
   name: string;
   position: number;
-  storage: { metal: number; crystal: number; level: number; capacity: number; free: number } | null;
+  storage: { titanite: number; silicate: number; level: number; capacity: number; free: number } | null;
 }
 
 /** Карта системы с учетом тумана войны. */

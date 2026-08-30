@@ -38,21 +38,21 @@ export function isHubMission(mission: FleetMission): boolean {
 interface FlightProfile {
   /** Базовая скорость: чем выше, тем короче перелет. */
   speed: number;
-  /** Грузоподъемность: металл, кристаллы и дейтерий делят один трюм. */
+  /** Грузоподъемность: титанит, силикаты и тритий делят один трюм. */
   cargo: number;
-  /** Расход дейтерия в секунду полета на один корабль. */
+  /** Расход трития в секунду полета на один корабль. */
   fuelPerSecond: number;
-  /** Расход антиматерии на одну единицу межзвездного расстояния. */
-  antimatterPerDistance: number;
+  /** Расход эридия на одну единицу межзвездного расстояния. */
+  eridiumPerDistance: number;
 }
 
 const FLIGHT_PROFILES: Record<ShipType, FlightProfile> = {
-  PROBE: { speed: 200, cargo: 0, fuelPerSecond: 0.05, antimatterPerDistance: 0.2 },
-  TRANSPORTER: { speed: 100, cargo: 2000, fuelPerSecond: 0.4, antimatterPerDistance: 1.5 },
-  LIGHT_FIGHTER: { speed: 150, cargo: 50, fuelPerSecond: 0.2, antimatterPerDistance: 0.8 },
+  PROBE: { speed: 200, cargo: 0, fuelPerSecond: 0.05, eridiumPerDistance: 0.2 },
+  TRANSPORTER: { speed: 100, cargo: 2000, fuelPerSecond: 0.4, eridiumPerDistance: 1.5 },
+  LIGHT_FIGHTER: { speed: 150, cargo: 50, fuelPerSecond: 0.2, eridiumPerDistance: 0.8 },
   // Тяжелые классы медленнее и прожорливее: за огневую мощь платят логистикой.
-  HEAVY_CRUISER: { speed: 90, cargo: 300, fuelPerSecond: 0.8, antimatterPerDistance: 2.5 },
-  ION_FRIGATE: { speed: 120, cargo: 150, fuelPerSecond: 0.6, antimatterPerDistance: 2.0 },
+  HEAVY_CRUISER: { speed: 90, cargo: 300, fuelPerSecond: 0.8, eridiumPerDistance: 2.5 },
+  ION_FRIGATE: { speed: 120, cargo: 150, fuelPerSecond: 0.6, eridiumPerDistance: 2.0 },
 };
 
 /** Базовое время перелета между соседними орбитами, секунды. */
@@ -119,7 +119,7 @@ export function fleetCapacity(ships: ShipCounts): number {
 }
 
 /**
- * Расход дейтерия за весь маршрут (туда и обратно).
+ * Расход трития за весь маршрут (туда и обратно).
  * Зависит от состава флота и времени в пути, как и требует ТЗ.
  */
 function fuelCost(ships: ShipCounts, seconds: number): number {
@@ -139,18 +139,18 @@ export interface FlightPlan {
   speed: number;
   flightSeconds: number;
   capacity: number;
-  /** Расход дейтерия (внутри системы). */
+  /** Расход трития (внутри системы). */
   fuel: number;
-  /** Расход антиматерии (межзвездный прыжок). */
-  antimatter: number;
+  /** Расход эридия (межзвездный прыжок). */
+  eridium: number;
 }
 
 /**
  * Полный расчет маршрута — используется и при проверке вылета, и для предпросмотра в UI.
  *
  * Логика раздвоена:
- * - внутри системы флот идет на обычной тяге и жжет дейтерий, время зависит от орбит;
- * - между системами выполняется гиперпрыжок на антиматерии, а время и расход
+ * - внутри системы флот идет на обычной тяге и жжет тритий, время зависит от орбит;
+ * - между системами выполняется гиперпрыжок на эридии, а время и расход
  *   зависят от расстояния между системами на макро-карте и уровня гипердвигателя.
  */
 export function planFlight(
@@ -172,7 +172,7 @@ export function planFlight(
       flightSeconds: seconds,
       capacity: fleetCapacity(ships),
       fuel: fuelCost(ships, seconds),
-      antimatter: 0,
+      eridium: 0,
     };
   }
 
@@ -185,7 +185,7 @@ export function planFlight(
     flightSeconds: seconds,
     capacity: fleetCapacity(ships),
     fuel: 0,
-    antimatter: jumpAntimatterCost(ships, techs, distance),
+    eridium: jumpEridiumCost(ships, techs, distance),
   };
 }
 
@@ -198,10 +198,10 @@ function jumpSeconds(ships: ShipCounts, techs: TechLevels, distance: number): nu
   return Math.max(30, Math.round(raw));
 }
 
-/** Расход антиматерии за весь маршрут (туда и обратно). */
-function jumpAntimatterCost(ships: ShipCounts, techs: TechLevels, distance: number): number {
+/** Расход эридия за весь маршрут (туда и обратно). */
+function jumpEridiumCost(ships: ShipCounts, techs: TechLevels, distance: number): number {
   const perDistance = SHIP_TYPES.reduce(
-    (total, type) => total + ships[type] * FLIGHT_PROFILES[type].antimatterPerDistance,
+    (total, type) => total + ships[type] * FLIGHT_PROFILES[type].eridiumPerDistance,
     0,
   );
   const total = (perDistance * distance * 2) / hyperdriveFactor(techs);
@@ -232,14 +232,14 @@ export function validateComposition(mission: FleetMission, ships: ShipCounts): s
 
 /**
  * Проверка груза: три ресурса делят один трюм.
- * Дейтерий возится наравне с металлом и кристаллами — он и топливо, и товар,
+ * Тритий возится наравне с титанитом и силикатами — он и топливо, и товар,
  * поэтому колонии умеют перебрасывать его между собой.
  */
 export function validateCargo(ships: ShipCounts, cargo: ResourceAmounts): string | null {
-  if (cargo.metal < 0 || cargo.crystal < 0 || cargo.deuterium < 0) {
+  if (cargo.titanite < 0 || cargo.silicate < 0 || cargo.tritium < 0) {
     return 'Некорректный объем груза';
   }
-  const total = cargo.metal + cargo.crystal + cargo.deuterium;
+  const total = cargo.titanite + cargo.silicate + cargo.tritium;
   if (total <= 0) return null;
 
   const capacity = fleetCapacity(ships);

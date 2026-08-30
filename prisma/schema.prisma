@@ -262,13 +262,13 @@ model Planet {
   size     Int
 
   /// Коэффициенты богатства (множители базовой добычи).
-  metalRichness      Float
-  crystalRichness    Float
-  deuteriumRichness  Float
+  titaniteRichness Float
+  silicateRichness Float
+  tritiumRichness  Float
   /// Коэффициент инсоляции — множитель выработки солнечных электростанций.
-  energyRichness     Float
+  energyRichness   Float
   /// Насыщенность экзотическими частицами — множитель синтеза антиматерии.
-  antimatterRichness Float @default(1)
+  eridiumRichness  Float @default(1)
 
   system        SolarSystem    @relation(fields: [systemId], references: [id], onDelete: Cascade)
   base          Base?
@@ -290,26 +290,26 @@ model Base {
   planetId    String @unique
 
   /// Склад ресурсов (дробные значения — начисление идет каждую секунду).
-  metal      Float @default(500)
-  crystal    Float @default(300)
-  deuterium  Float @default(100)
-  /// Антиматерия — топливо межзвездных прыжков (Этап 6).
-  antimatter Float @default(0)
+  titanite Float @default(500)
+  silicate Float @default(300)
+  tritium  Float @default(100)
+  /// Эридий — топливо межзвездных прыжков.
+  eridium  Float @default(0)
 
   /// Уровни инфраструктуры добычи и энергетики (Этап 1).
-  metalMineLevel     Int @default(0)
-  crystalMineLevel   Int @default(0)
-  deuteriumMineLevel Int @default(0)
-  solarPlantLevel    Int @default(0)
+  titaniteMineLevel Int @default(0)
+  silicateMineLevel Int @default(0)
+  tritiumMineLevel  Int @default(0)
+  solarPlantLevel   Int @default(0)
 
   /// Инфраструктура Этапа 2.
   researchLabLevel Int @default(0)
   shipyardLevel    Int @default(0)
 
   /// Инфраструктура Этапа 6.
-  antimatterSynthLevel Int @default(0)
+  eridiumSynthLevel Int @default(0)
 
-  /// Комплексное хранилище: общий лимит склада на металл, кристаллы и дейтерий.
+  /// Комплексное хранилище: общий лимит склада на титанит, силикат и тритий.
   storageLevel Int @default(0)
 
   /// Время последнего начисления ресурсов тиком (для догона офлайн-периода).
@@ -425,9 +425,9 @@ model BattleReport {
   planetId   String
   winner     BattleWinner
 
-  plunderMetal     Float @default(0)
-  plunderCrystal   Float @default(0)
-  plunderDeuterium Float @default(0)
+  plunderTitanite Float @default(0)
+  plunderSilicate Float @default(0)
+  plunderTritium  Float @default(0)
 
   data      Json
   createdAt DateTime @default(now())
@@ -449,9 +449,9 @@ model ExpeditionReport {
   outcome     ExpeditionOutcome
 
   /// Найденное за вылет.
-  lootMetal      Float @default(0)
-  lootCrystal    Float @default(0)
-  lootAntimatter Float @default(0)
+  lootTitanite Float @default(0)
+  lootSilicate Float @default(0)
+  lootEridium  Float @default(0)
 
   /// Человекочитаемый итог и подробности события.
   summary   String
@@ -533,26 +533,26 @@ model Fleet {
   heavyCruisers Int @default(0)
   ionFrigates   Int @default(0)
 
-  /// Груз на борту: металл, кристаллы и дейтерий занимают трюмы.
-  cargoMetal      Float @default(0)
-  cargoCrystal    Float @default(0)
-  cargoDeuterium  Float @default(0)
-  /// Антиматерия, найденная в экспедиции, едет домой в баках и трюмы не занимает.
-  cargoAntimatter Float @default(0)
+  /// Груз на борту: титанит, силикат и тритий занимают трюмы.
+  cargoTitanite Float @default(0)
+  cargoSilicate Float @default(0)
+  cargoTritium  Float @default(0)
+  /// Эридий, найденный в экспедиции, едет домой в баках и трюмы не занимает.
+  cargoEridium  Float @default(0)
 
   /// Сколько запрошено к вывозу с хаба (для миссии HUB_PICKUP).
-  pickupMetal   Float @default(0)
-  pickupCrystal Float @default(0)
+  pickupTitanite Float @default(0)
+  pickupSilicate Float @default(0)
 
-  /// Сожженный дейтерий за весь маршрут (списан при отправке).
-  fuelSpent       Float
-  /// Сожженная антиматерия — только для межзвездных прыжков.
-  antimatterSpent Float   @default(0)
+  /// Сожженный тритий за весь маршрут (списан при отправке).
+  fuelSpent    Float
+  /// Сожженный эридий — только для межзвездных прыжков.
+  eridiumSpent Float   @default(0)
   /// Прыжок между системами, а не полет внутри одной.
-  interstellar    Boolean @default(false)
+  interstellar Boolean @default(false)
   /// Расстояние в орбитах и скорость флота — для отображения.
-  distance        Int
-  speed           Float
+  distance     Int
+  speed        Float
 
   departedAt DateTime
   arrivesAt  DateTime
@@ -633,10 +633,10 @@ model HubStorage {
   commanderId String
   hubId       String
 
-  metal   Float @default(0)
-  crystal Float @default(0)
+  titanite Float @default(0)
+  silicate Float @default(0)
   /// Уровень склада определяет вместимость.
-  level   Int   @default(1)
+  level    Int   @default(1)
 
   commander Commander @relation(fields: [commanderId], references: [id], onDelete: Cascade)
   hub       TradeHub  @relation(fields: [hubId], references: [id], onDelete: Cascade)
@@ -696,8 +696,8 @@ enum OrderSide {
 }
 
 enum TradeResource {
-  METAL
-  CRYSTAL
+  TITANITE
+  SILICATE
 }
 
 enum FleetMission {
@@ -723,13 +723,13 @@ enum FleetStatus {
 }
 
 enum BuildingType {
-  METAL_MINE
-  CRYSTAL_MINE
-  DEUTERIUM_MINE
+  TITANITE_MINE
+  SILICATE_MINE
+  TRITIUM_MINE
   SOLAR_PLANT
   RESEARCH_LAB
   SHIPYARD
-  ANTIMATTER_SYNTH
+  ERIDIUM_SYNTH
   STORAGE
 }
 

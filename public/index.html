@@ -7,6 +7,44 @@
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
+<!--
+  Спрайт иконок ресурсов. Один инлайновый блок <symbol> вместо семи файлов:
+  без лишних запросов, красится через currentColor и масштабируется под кегль.
+  Каждая иконка нарисована на сетке 24×24 и опирается на форму, а не на цвет:
+  титанит — слиток, силикат — кристалл, тритий — капля, эридий — искра.
+-->
+<svg class="icon-sprite" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="ico-titanite" viewBox="0 0 24 24">
+      <path d="M4 9.5 12 5l8 4.5-8 4.5-8-4.5Z" fill="currentColor" opacity=".55"/>
+      <path d="M4 9.5v5L12 19l8-4.5v-5l-8 4.5-8-4.5Z" fill="currentColor"/>
+    </symbol>
+    <symbol id="ico-silicate" viewBox="0 0 24 24">
+      <path d="M12 2.5 19 9l-7 12.5L5 9l7-6.5Z" fill="currentColor" opacity=".55"/>
+      <path d="M12 2.5 19 9h-4l-3-6.5ZM12 2.5 5 9h4l3-6.5ZM9 9h6l-3 12.5L9 9Z" fill="currentColor"/>
+    </symbol>
+    <symbol id="ico-tritium" viewBox="0 0 24 24">
+      <path d="M12 2.5c4.2 4.6 6.3 8 6.3 10.7A6.3 6.3 0 0 1 12 19.5a6.3 6.3 0 0 1-6.3-6.3C5.7 10.5 7.8 7.1 12 2.5Z" fill="currentColor" opacity=".45"/>
+      <circle cx="12" cy="13.2" r="3.1" fill="currentColor"/>
+    </symbol>
+    <symbol id="ico-eridium" viewBox="0 0 24 24">
+      <path d="M12 2.5 13.9 9 20.5 12 13.9 15 12 21.5 10.1 15 3.5 12 10.1 9 12 2.5Z" fill="currentColor"/>
+      <circle cx="12" cy="12" r="1.9" fill="var(--bg)"/>
+    </symbol>
+    <symbol id="ico-energy" viewBox="0 0 24 24">
+      <path d="M13.5 2.5 6 13h4.5L9.8 21.5 18 10.5h-4.9l.4-8Z" fill="currentColor"/>
+    </symbol>
+    <symbol id="ico-credits" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8" opacity=".55"/>
+      <path d="M9 16.5V9.8c0-1.8 1.2-3 2.9-3 1.5 0 2.6.9 2.9 2.3M7.6 11.6h8.8M7.6 14.1h8.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="ico-efficiency" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8" opacity=".45"/>
+      <path d="M12 3.5a8.5 8.5 0 0 1 0 17Z" fill="currentColor"/>
+    </symbol>
+  </defs>
+</svg>
+
   <div class="starfield"></div>
 
   <!-- Экран входа и регистрации -->
@@ -83,13 +121,13 @@
         <span>Командный центр</span>
       </div>
       <div class="resources" id="resource-bar">
-        <div class="res" title="Металл"><span class="ico metal">◼</span><b id="res-metal">0</b><small id="rate-metal">+0/с</small></div>
-        <div class="res" title="Кристаллы"><span class="ico crystal">◆</span><b id="res-crystal">0</b><small id="rate-crystal">+0/с</small></div>
-        <div class="res" title="Дейтерий"><span class="ico deuterium">⬢</span><b id="res-deuterium">0</b><small id="rate-deuterium">+0/с</small></div>
-        <div class="res" title="Антиматерия"><span class="ico antimatter">✷</span><b id="res-antimatter">0</b><small id="rate-antimatter">+0/с</small></div>
-        <div class="res" title="Энергия"><span class="ico energy">⚡</span><b id="res-energy">0</b><small id="rate-energy">свободно</small></div>
-        <div class="res" title="Эффективность шахт"><span class="ico eff">◐</span><b id="res-efficiency">100%</b><small id="rate-efficiency">мощность шахт</small></div>
-        <div class="res" title="Криптогривна"><span class="ico credits">₴</span><b id="res-credits">0</b><small>криптогривна</small></div>
+        <div class="res" title="Титанит"><svg class="ico titanite" aria-hidden="true"><use href="#ico-titanite"/></svg><b id="res-titanite">0</b><small id="rate-titanite">+0/с</small></div>
+        <div class="res" title="Силикаты"><svg class="ico silicate" aria-hidden="true"><use href="#ico-silicate"/></svg><b id="res-silicate">0</b><small id="rate-silicate">+0/с</small></div>
+        <div class="res" title="Тритий"><svg class="ico tritium" aria-hidden="true"><use href="#ico-tritium"/></svg><b id="res-tritium">0</b><small id="rate-tritium">+0/с</small></div>
+        <div class="res" title="Эридий"><svg class="ico eridium" aria-hidden="true"><use href="#ico-eridium"/></svg><b id="res-eridium">0</b><small id="rate-eridium">+0/с</small></div>
+        <div class="res" title="Энергия"><svg class="ico energy" aria-hidden="true"><use href="#ico-energy"/></svg><b id="res-energy">0</b><small id="rate-energy">свободно</small></div>
+        <div class="res" title="Эффективность шахт"><svg class="ico efficiency" aria-hidden="true"><use href="#ico-efficiency"/></svg><b id="res-efficiency">100%</b><small id="rate-efficiency">мощность шахт</small></div>
+        <div class="res" title="Криптогривна"><svg class="ico credits" aria-hidden="true"><use href="#ico-credits"/></svg><b id="res-credits">0</b><small>криптогривна</small></div>
       </div>
       <div class="user">
         <span id="commander-avatar" class="commander-avatar">✦</span>
@@ -187,9 +225,9 @@
                 </div>
                 <div id="fleet-inputs" class="fleet-inputs"></div>
                 <div id="cargo-inputs" class="fleet-inputs">
-                  <label class="field"><span id="cargo-metal-label">Металл</span><input id="cargo-metal" type="number" min="0" value="0"></label>
-                  <label class="field"><span id="cargo-crystal-label">Кристаллы</span><input id="cargo-crystal" type="number" min="0" value="0"></label>
-                  <label class="field" id="cargo-deuterium-field"><span id="cargo-deuterium-label">Дейтерий</span><input id="cargo-deuterium" type="number" min="0" value="0"></label>
+                  <label class="field"><span id="cargo-titanite-label"><svg class="ico titanite sm" role="img" aria-label="Титанит"><title>Титанит</title><use href="#ico-titanite"/></svg> Титанит</span><input id="cargo-titanite" type="number" min="0" value="0"></label>
+                  <label class="field"><span id="cargo-silicate-label"><svg class="ico silicate sm" role="img" aria-label="Силикаты"><title>Силикаты</title><use href="#ico-silicate"/></svg> Силикаты</span><input id="cargo-silicate" type="number" min="0" value="0"></label>
+                  <label class="field" id="cargo-tritium-field"><span id="cargo-tritium-label"><svg class="ico tritium sm" role="img" aria-label="Тритий"><title>Тритий</title><use href="#ico-tritium"/></svg> Тритий</span><input id="cargo-tritium" type="number" min="0" value="0"></label>
                 </div>
                 <div id="flight-plan" class="flight-plan">Выбери корабли, чтобы увидеть расчет.</div>
                 <button id="send-fleet" type="button" class="primary">Отправить флот</button>
@@ -220,12 +258,12 @@
                 </label>
                 <label class="field"><span>Ресурс</span>
                   <select id="order-resource">
-                    <option value="METAL">Металл</option>
-                    <option value="CRYSTAL">Кристаллы</option>
+                    <option value="TITANITE">Титанит</option>
+                    <option value="SILICATE">Силикаты</option>
                   </select>
                 </label>
                 <label class="field"><span>Объем</span><input id="order-quantity" type="number" min="1" value="100"></label>
-                <label class="field"><span>Цена за ед., ₴</span><input id="order-price" type="number" min="0.01" step="0.01" value="1"></label>
+                <label class="field"><span>Цена за ед. <svg class="ico credits sm" role="img" aria-label="Криптогривна"><title>Криптогривна</title><use href="#ico-credits"/></svg></span><input id="order-price" type="number" min="0.01" step="0.01" value="1"></label>
               </div>
               <div id="order-hint" class="flight-plan">Продажа блокирует товар на складе, покупка — криптогривну.</div>
               <button id="place-order" type="button" class="primary">Выставить ордер</button>
@@ -283,9 +321,9 @@
               <div id="sim-defenses" class="fleet-inputs"></div>
               <h4 class="sim-subtitle">Склад защитника (для расчета добычи)</h4>
               <div class="fleet-inputs">
-                <label class="field"><span>Металл</span><input id="sim-stock-metal" type="number" min="0" value="0"></label>
-                <label class="field"><span>Кристаллы</span><input id="sim-stock-crystal" type="number" min="0" value="0"></label>
-                <label class="field"><span>Дейтерий</span><input id="sim-stock-deuterium" type="number" min="0" value="0"></label>
+                <label class="field"><span><svg class="ico titanite sm" role="img" aria-label="Титанит"><title>Титанит</title><use href="#ico-titanite"/></svg> Титанит</span><input id="sim-stock-titanite" type="number" min="0" value="0"></label>
+                <label class="field"><span><svg class="ico silicate sm" role="img" aria-label="Силикаты"><title>Силикаты</title><use href="#ico-silicate"/></svg> Силикаты</span><input id="sim-stock-silicate" type="number" min="0" value="0"></label>
+                <label class="field"><span><svg class="ico tritium sm" role="img" aria-label="Тритий"><title>Тритий</title><use href="#ico-tritium"/></svg> Тритий</span><input id="sim-stock-tritium" type="number" min="0" value="0"></label>
                 <label class="field"><span>Ур. хранилища</span><input id="sim-stock-storage" type="number" min="0" value="0"></label>
               </div>
             </div>

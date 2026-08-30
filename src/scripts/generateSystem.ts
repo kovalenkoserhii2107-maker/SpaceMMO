@@ -28,20 +28,20 @@ const PLANET_PREFIXES = ['Аврора', 'Кобзар', 'Веста', 'Ярил
 
 /** Профили типов планет: диапазоны коэффициентов богатства. */
 const PLANET_PROFILES: Record<PlanetType, {
-  metal: [number, number];
-  crystal: [number, number];
-  deuterium: [number, number];
+  titanite: [number, number];
+  silicate: [number, number];
+  tritium: [number, number];
   energy: [number, number];
-  antimatter: [number, number];
+  eridium: [number, number];
   size: [number, number];
 }> = {
-  ROCKY:     { metal: [1.1, 1.4], crystal: [0.8, 1.1], deuterium: [0.5, 0.8], energy: [0.9, 1.1], antimatter: [0.7, 1.0], size: [140, 210] },
-  OCEANIC:   { metal: [0.7, 1.0], crystal: [0.9, 1.2], deuterium: [1.0, 1.3], energy: [0.8, 1.0], antimatter: [0.8, 1.1], size: [160, 230] },
-  DESERT:    { metal: [0.9, 1.2], crystal: [0.7, 1.0], deuterium: [0.6, 0.9], energy: [1.2, 1.5], antimatter: [0.6, 0.9], size: [120, 190] },
-  ICE:       { metal: [0.6, 0.9], crystal: [1.0, 1.3], deuterium: [1.3, 1.6], energy: [0.6, 0.8], antimatter: [1.0, 1.3], size: [110, 180] },
-  GAS_GIANT: { metal: [0.4, 0.7], crystal: [0.6, 0.9], deuterium: [1.5, 1.9], energy: [0.7, 0.9], antimatter: [1.2, 1.6], size: [220, 300] },
-  VOLCANIC:  { metal: [1.3, 1.7], crystal: [0.9, 1.2], deuterium: [0.4, 0.7], energy: [1.1, 1.4], antimatter: [0.9, 1.2], size: [100, 170] },
-  TOXIC:     { metal: [1.0, 1.3], crystal: [1.1, 1.4], deuterium: [0.7, 1.0], energy: [0.7, 1.0], antimatter: [1.1, 1.4], size: [110, 175] },
+  ROCKY:     { titanite: [1.1, 1.4], silicate: [0.8, 1.1], tritium: [0.5, 0.8], energy: [0.9, 1.1], eridium: [0.7, 1.0], size: [140, 210] },
+  OCEANIC:   { titanite: [0.7, 1.0], silicate: [0.9, 1.2], tritium: [1.0, 1.3], energy: [0.8, 1.0], eridium: [0.8, 1.1], size: [160, 230] },
+  DESERT:    { titanite: [0.9, 1.2], silicate: [0.7, 1.0], tritium: [0.6, 0.9], energy: [1.2, 1.5], eridium: [0.6, 0.9], size: [120, 190] },
+  ICE:       { titanite: [0.6, 0.9], silicate: [1.0, 1.3], tritium: [1.3, 1.6], energy: [0.6, 0.8], eridium: [1.0, 1.3], size: [110, 180] },
+  GAS_GIANT: { titanite: [0.4, 0.7], silicate: [0.6, 0.9], tritium: [1.5, 1.9], energy: [0.7, 0.9], eridium: [1.2, 1.6], size: [220, 300] },
+  VOLCANIC:  { titanite: [1.3, 1.7], silicate: [0.9, 1.2], tritium: [0.4, 0.7], energy: [1.1, 1.4], eridium: [0.9, 1.2], size: [100, 170] },
+  TOXIC:     { titanite: [1.0, 1.3], silicate: [1.1, 1.4], tritium: [0.7, 1.0], energy: [0.7, 1.0], eridium: [1.1, 1.4], size: [110, 175] },
 };
 
 /** Множитель инсоляции от класса звезды. */
@@ -109,22 +109,22 @@ function buildPlanets(starClass: StarClass, planetCount: number) {
   return types.map((type, index) => {
     const profile = PLANET_PROFILES[type];
     const position = index + 1;
-    /** Ближе к звезде — больше энергии, дальше — больше дейтерия. */
+    /** Ближе к звезде — больше энергии, дальше — больше трития. */
     const orbitEnergy = 1.15 - (position - 1) * 0.08;
-    const orbitDeuterium = 0.85 + (position - 1) * 0.09;
+    const orbitTritium = 0.85 + (position - 1) * 0.09;
 
     return {
       name: `${prefixes[index]} ${ROMAN[index]}`,
       position,
       type,
       size: randomInt(profile.size[0], profile.size[1]),
-      metalRichness: round2(randomBetween(profile.metal[0], profile.metal[1])),
-      crystalRichness: round2(randomBetween(profile.crystal[0], profile.crystal[1])),
-      deuteriumRichness: round2(randomBetween(profile.deuterium[0], profile.deuterium[1]) * orbitDeuterium),
+      titaniteRichness: round2(randomBetween(profile.titanite[0], profile.titanite[1])),
+      silicateRichness: round2(randomBetween(profile.silicate[0], profile.silicate[1])),
+      tritiumRichness: round2(randomBetween(profile.tritium[0], profile.tritium[1]) * orbitTritium),
       energyRichness: round2(
         randomBetween(profile.energy[0], profile.energy[1]) * orbitEnergy * STAR_ENERGY_FACTOR[starClass],
       ),
-      antimatterRichness: round2(randomBetween(profile.antimatter[0], profile.antimatter[1])),
+      eridiumRichness: round2(randomBetween(profile.eridium[0], profile.eridium[1])),
     };
   });
 }

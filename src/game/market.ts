@@ -3,7 +3,7 @@
  * Валюта — криптогривна, товар физически лежит на складе хаба.
  */
 
-const TRADE_RESOURCES = ['METAL', 'CRYSTAL'] as const;
+const TRADE_RESOURCES = ['TITANITE', 'SILICATE'] as const;
 export type TradeResource = (typeof TRADE_RESOURCES)[number];
 
 const ORDER_SIDES = ['BUY', 'SELL'] as const;
@@ -18,27 +18,27 @@ export function isOrderSide(value: unknown): value is OrderSide {
 }
 
 export const RESOURCE_LABELS: Record<TradeResource, string> = {
-  METAL: 'Металл',
-  CRYSTAL: 'Кристаллы',
+  TITANITE: 'Титанит',
+  SILICATE: 'Силикаты',
 };
 
-/** Вместимость личного склада на хабе (общая на металл и кристаллы). */
+/** Вместимость личного склада на хабе (общая на титанит и силикаты). */
 export function storageCapacity(level: number): number {
   if (level <= 0) return 0;
   return Math.round(5000 * Math.pow(1.6, level - 1));
 }
 
 /** Стоимость расширения склада — платится товаром, лежащим на самом складе. */
-export function storageUpgradeCost(targetLevel: number): { metal: number; crystal: number } {
+export function storageUpgradeCost(targetLevel: number): { titanite: number; silicate: number } {
   const scale = Math.pow(2, targetLevel - 2);
   return {
-    metal: Math.round(1000 * scale),
-    crystal: Math.round(500 * scale),
+    titanite: Math.round(1000 * scale),
+    silicate: Math.round(500 * scale),
   };
 }
 
-export function storageUsed(storage: { metal: number; crystal: number }): number {
-  return storage.metal + storage.crystal;
+export function storageUsed(storage: { titanite: number; silicate: number }): number {
+  return storage.titanite + storage.silicate;
 }
 
 /** Максимальные разумные пределы ордера, чтобы нельзя было сломать биржу вводом. */
