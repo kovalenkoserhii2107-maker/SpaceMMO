@@ -14,7 +14,7 @@ import {
 import { economyBonuses, emptyTechLevels, researchCost, researchSeconds } from '../game/techTree.js';
 import { emptyShipCounts, shipUnitSeconds, SHIP_TYPES, type ShipCounts } from '../game/ships.js';
 import { fleetCapacity, planFlight } from '../game/fleets.js';
-import { plunderAmount, resolveBattle } from '../game/combat.js';
+import { emptyCombatTechs, plunderAmount, simulateCombat } from '../game/combat.js';
 import { expeditionSlots, resolveExpedition } from '../game/expeditions.js';
 import { defenseUnitSeconds, emptyDefenseCounts, type DefenseCounts } from '../game/defenses.js';
 
@@ -80,73 +80,78 @@ console.log('\n--- Логистика (реактивный двигатель �
   }
 }
 
-console.log('\n--- Бой: типы урона и слои защиты ---');
+console.log('\n--- Бой: раунды, щиты и разброс исходов ---');
 {
   const fleet = (partial: Partial<ShipCounts>): ShipCounts => ({ ...emptyShipCounts(), ...partial });
   const noDefense = emptyDefenseCounts();
 
   const cases: Array<[string, ShipCounts, ShipCounts, DefenseCounts]> = [
-    [
-      'кинетические крейсера против ионных фрегатов (равная цена)',
-      fleet({ HEAVY_CRUISER: 10 }),
-      fleet({ ION_FRIGATE: 13 }),
-      emptyDefenseCounts(),
-    ],
-    [
-      'ионные фрегаты против брони крейсеров (тот же бой наоборот)',
-      fleet({ ION_FRIGATE: 13 }),
-      fleet({ HEAVY_CRUISER: 10 }),
-      emptyDefenseCounts(),
-    ],
-    [
-      'кинетические крейсера против лазерных турелей со щитами',
-      fleet({ HEAVY_CRUISER: 6 }),
-      fleet({}),
-      { CANNON_TURRET: 0, LASER_TURRET: 12 },
-    ],
-    [
-      'ионные фрегаты против тех же турелей',
-      fleet({ ION_FRIGATE: 8 }),
-      fleet({}),
-      { CANNON_TURRET: 0, LASER_TURRET: 12 },
-    ],
-    [
-      'лазерные истребители против ракетных установок',
-      fleet({ LIGHT_FIGHTER: 20 }),
-      fleet({}),
-      { CANNON_TURRET: 10, LASER_TURRET: 0 },
-    ],
+    ['крейсера против ионных фрегатов (равная цена)', fleet({ HEAVY_CRUISER: 10 }), fleet({ ION_FRIGATE: 13 }), emptyDefenseCounts()],
+    ['фрегаты против крейсеров (тот же бой наоборот)', fleet({ ION_FRIGATE: 13 }), fleet({ HEAVY_CRUISER: 10 }), emptyDefenseCounts()],
+    ['крейсера против лазерных турелей', fleet({ HEAVY_CRUISER: 6 }), fleet({}), { CANNON_TURRET: 0, LASER_TURRET: 12 }],
+    ['фрегаты против тех же турелей', fleet({ ION_FRIGATE: 8 }), fleet({}), { CANNON_TURRET: 0, LASER_TURRET: 12 }],
+    ['рой истребителей против пушечных турелей', fleet({ LIGHT_FIGHTER: 20 }), fleet({}), { CANNON_TURRET: 10, LASER_TURRET: 0 }],
+    ['одинокий крейсер против роя истребителей', fleet({ HEAVY_CRUISER: 1 }), fleet({ LIGHT_FIGHTER: 10 }), emptyDefenseCounts()],
   ];
 
+  // Бой стал случайным, поэтому один прогон ничего не показывает: гоняем серию
+  // и печатаем долю побед и средние потери — по ним и виден баланс.
+  const RUNS = 200;
   for (const [label, attackerShips, defenderShips, defenderDefenses] of cases) {
-    const outcome = resolveBattle(
-      { ships: attackerShips, defenses: noDefense },
-      { ships: defenderShips, defenses: defenderDefenses },
-    );
-    const report = outcome.attackerDamageReport;
+    let attackerWins = 0;
+    let draws = 0;
+    let attackerLoss = 0;
+    let defenderLoss = 0;
+    let debris = 0;
+
+    for (let i = 0; i < RUNS; i += 1) {
+      const outcome = simulateCombat(
+        { ships: attackerShips, defenses: noDefense, techs: emptyCombatTechs() },
+        { ships: defenderShips, defenses: defenderDefenses, techs: emptyCombatTechs() },
+      );
+      if (outcome.winner === 'ATTACKER') attackerWins += 1;
+      if (outcome.winner === 'DRAW') draws += 1;
+      attackerLoss += countLost(outcome.attackerLosses);
+      defenderLoss += countLost(outcome.defenderLosses);
+      debris += outcome.debris.ore + outcome.debris.polymers;
+    }
+
     console.log(
       `${label}:\n` +
-        `    победа — ${outcome.winner === 'ATTACKER' ? 'атакующий' : 'защитник'}, ` +
-        `потери атакующего ${(outcome.attackerLossRatio * 100).toFixed(0)}%, ` +
-        `защитника ${(outcome.defenderLossRatio * 100).toFixed(0)}%\n` +
-        `    урон атакующего (${report.damageMix.map((d) => d.label).join(', ')}): ` +
-        `щиты поглотили ${report.shield}, броня ${report.armor}, по корпусу ${report.hull}`,
+        `    побед атакующего ${((attackerWins / RUNS) * 100).toFixed(0)}%, ` +
+        `ничьих ${((draws / RUNS) * 100).toFixed(0)}%\n` +
+        `    средние потери: атакующий ${(attackerLoss / RUNS).toFixed(1)} юнитов, ` +
+        `защитник ${(defenderLoss / RUNS).toFixed(1)}; обломков ${Math.round(debris / RUNS)}`,
     );
   }
 }
 
-console.log('\n--- Детерминированность боя ---');
-{
-  const attacker = { ships: { ...emptyShipCounts(), HEAVY_CRUISER: 7, LIGHT_FIGHTER: 12 }, defenses: emptyDefenseCounts() };
-  const defender = { ships: { ...emptyShipCounts(), ION_FRIGATE: 9 }, defenses: { CANNON_TURRET: 5, LASER_TURRET: 4 } };
+function countLost(losses: Array<{ lost: number }>): number {
+  return losses.reduce((sum, item) => sum + item.lost, 0);
+}
 
-  const runs = Array.from({ length: 50 }, () => {
-    const outcome = resolveBattle(attacker, defender);
-    return `${outcome.winner}:${outcome.attackerLossRatio}:${outcome.defenderLossRatio}:` +
-      `${outcome.attackerDamageReport.shield}/${outcome.attackerDamageReport.armor}/${outcome.attackerDamageReport.hull}`;
-  });
-  const unique = new Set(runs);
-  console.log(`50 прогонов одного боя дали ${unique.size} уникальных результатов: ${[...unique][0]}`);
+console.log('\n--- Воспроизводимость при заданном зерне ---');
+{
+  const seeded = (seed: number) => {
+    let state = seed >>> 0;
+    return () => {
+      state = (state * 1664525 + 1013904223) >>> 0;
+      return state / 0x100000000;
+    };
+  };
+
+  const attacker = { ships: { ...emptyShipCounts(), HEAVY_CRUISER: 7, LIGHT_FIGHTER: 12 }, defenses: emptyDefenseCounts(), techs: emptyCombatTechs() };
+  const defender = { ships: { ...emptyShipCounts(), ION_FRIGATE: 9 }, defenses: { CANNON_TURRET: 5, LASER_TURRET: 4 }, techs: emptyCombatTechs() };
+
+  const sameSeed = new Set(
+    Array.from({ length: 20 }, () => JSON.stringify(simulateCombat(attacker, defender, seeded(2024)).attackerLosses)),
+  );
+  const freeRoll = new Set(
+    Array.from({ length: 20 }, () => JSON.stringify(simulateCombat(attacker, defender).attackerLosses)),
+  );
+
+  console.log(`одно зерно, 20 прогонов: уникальных исходов ${sameSeed.size}`);
+  console.log(`живые кости, 20 прогонов: уникальных исходов ${freeRoll.size}`);
 }
 
 console.log('\n--- Антиматерия и аномалии ---');

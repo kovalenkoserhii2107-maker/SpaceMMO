@@ -962,13 +962,13 @@
   /** Строка боевого профиля: тип урона и слои защиты — по ней собирают контр-флот. */
   function combatLine(combat) {
     if (!combat) return '';
-    const attack = combat.damage > 0 ? `урон ${combat.damage} (${combat.damageLabel})` : 'без оружия';
-    const layers = [
-      combat.shield > 0 ? `щиты ${combat.shield}` : null,
-      combat.armor > 0 ? `броня ${combat.armor}` : null,
+    const parts = [
+      combat.attack > 0 ? `атака ${combat.attack}` : 'без оружия',
+      combat.shield > 0 ? `щит ${combat.shield}` : null,
       `корпус ${combat.hull}`,
+      combat.note,
     ].filter(Boolean);
-    return `${attack} · ${layers.join(' · ')}`;
+    return parts.join(' · ');
   }
 
   function updateShipCard(card, base, ship, ownedLabel = 'В ангаре') {

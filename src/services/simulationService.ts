@@ -58,6 +58,26 @@ export interface SimulationResult {
   debris: { ore: number; polymers: number };
 }
 
+/**
+ * Зерно из самого состава боя.
+ *
+ * Бой стал случайным, но предпросмотр обязан быть устойчивым: если один и тот же
+ * состав каждый раз дает новый ответ, планировать по нему нельзя. Зерно выводится
+ * из введенных чисел, поэтому повторный запрос повторяет прогон, а любое изменение
+ * состава дает новый бросок.
+ */
+function seedFrom(parts: number[]): () => number {
+  let state = 2166136261 >>> 0;
+  for (const value of parts) {
+    state ^= Math.trunc(value) >>> 0;
+    state = Math.imul(state, 16777619) >>> 0;
+  }
+  return () => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return state / 0x100000000;
+  };
+}
+
 export function simulateBattle(
   attackerShips: ShipCounts,
   defenderShips: ShipCounts,
@@ -67,7 +87,13 @@ export function simulateBattle(
   // Стационарная оборона не летает, поэтому у атакующего ее нет по определению.
   const attacker: SideForces = { ships: attackerShips, defenses: emptyDefenseCounts() };
   const defender: SideForces = { ships: defenderShips, defenses: defenderDefenses };
-  const outcome = resolveBattle(attacker, defender);
+
+  const rng = seedFrom([
+    ...Object.values(attackerShips),
+    ...Object.values(defenderShips),
+    ...Object.values(defenderDefenses),
+  ]);
+  const outcome = resolveBattle(attacker, defender, { rng });
 
   const survivingCapacity = fleetCapacity(outcome.attackerSurvivors);
   const plunder =

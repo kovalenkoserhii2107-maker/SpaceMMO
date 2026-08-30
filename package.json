@@ -23,7 +23,8 @@
     "test:mail": "tsx tests/mail.ts",
     "test:admin": "tsx tests/admin.ts",
     "test:debris": "tsx tests/debris.ts",
-    "test:assets": "tsx tests/assets.ts"
+    "test:assets": "tsx tests/assets.ts",
+    "test:combat": "tsx tests/combat.ts"
   },
   "keywords": [],
   "author": "",

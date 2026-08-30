@@ -325,32 +325,34 @@ async function testCombatClasses() {
   );
 
   check(
-    'у крейсера кинетический урон и броня',
-    byType.HEAVY_CRUISER?.combat?.damageType === 'KINETIC' && byType.HEAVY_CRUISER?.combat?.armor > 0,
+    'крейсер — танк: щит выше залпа истребителя, толстый корпус',
+    byType.HEAVY_CRUISER?.combat?.shield > byType.LIGHT_FIGHTER?.combat?.attack &&
+      byType.HEAVY_CRUISER?.combat?.hull > byType.LIGHT_FIGHTER?.combat?.hull * 5,
     JSON.stringify(byType.HEAVY_CRUISER?.combat),
   );
   check(
-    'у ионного фрегата ионный урон и щиты',
-    byType.ION_FRIGATE?.combat?.damageType === 'ION' && byType.ION_FRIGATE?.combat?.shield > 0,
+    'ионный фрегат пробивает щиты и об этом сказано в карточке',
+    byType.ION_FRIGATE?.combat?.shieldPiercing > 1 && Boolean(byType.ION_FRIGATE?.combat?.note),
     JSON.stringify(byType.ION_FRIGATE?.combat),
   );
   check(
-    'истребитель лазерный и без щитов с броней',
-    byType.LIGHT_FIGHTER?.combat?.damageType === 'LASER' &&
-      byType.LIGHT_FIGHTER?.combat?.shield === 0 &&
-      byType.LIGHT_FIGHTER?.combat?.armor === 0,
+    'истребитель дешев и слаб: малый залп и тонкий корпус',
+    byType.LIGHT_FIGHTER?.combat?.attack > 0 &&
+      byType.LIGHT_FIGHTER?.combat?.hull < byType.HEAVY_CRUISER?.combat?.hull,
     JSON.stringify(byType.LIGHT_FIGHTER?.combat),
   );
   check(
-    'транспорт и зонд без оружия',
-    byType.TRANSPORTER?.combat?.damage === 0 && byType.PROBE?.combat?.damage === 0,
+    'транспорт, зонд и переработчик без оружия',
+    byType.TRANSPORTER?.combat?.attack === 0 &&
+      byType.PROBE?.combat?.attack === 0 &&
+      byType.RECYCLER?.combat?.attack === 0,
   );
 
   const defenses = Object.fromEntries(base.defenseCards.map((d) => [d.type, d]));
   check(
-    'ракетная установка кинетическая, лазерное орудие со щитами',
-    defenses.CANNON_TURRET?.combat?.damageType === 'KINETIC' &&
-      defenses.LASER_TURRET?.combat?.damageType === 'LASER' &&
+    'обе турели вооружены, у лазерной щит и залп сильнее',
+    defenses.CANNON_TURRET?.combat?.attack > 0 &&
+      defenses.LASER_TURRET?.combat?.attack > defenses.CANNON_TURRET?.combat?.attack &&
       defenses.LASER_TURRET?.combat?.shield > 0,
     JSON.stringify(defenses.LASER_TURRET?.combat),
   );

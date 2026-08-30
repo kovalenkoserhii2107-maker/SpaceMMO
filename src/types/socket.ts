@@ -35,13 +35,15 @@ export interface TechnologyCard {
 }
 
 /** Боевой профиль юнита: тип урона и слои защиты. */
+/** Боевой профиль юнита для карточки: атака, щит, корпус. */
 export interface CombatProfileView {
-  damage: number;
-  damageType: string;
-  damageLabel: string;
+  attack: number;
   shield: number;
-  armor: number;
   hull: number;
+  /** Множитель урона по щиту: у обычных юнитов равен единице. */
+  shieldPiercing: number;
+  /** Пояснение к особенности юнита; null — особенностей нет. */
+  note: string | null;
 }
 
 export interface ShipCard {

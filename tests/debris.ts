@@ -9,7 +9,7 @@
  */
 import { prisma } from '../src/db/prisma.js';
 import { DEBRIS_SHARE, debrisFromLosses, resolveBattle } from '../src/game/combat.js';
-import { defenseCost, emptyDefenseCounts } from '../src/game/defenses.js';
+import { emptyDefenseCounts } from '../src/game/defenses.js';
 import { fleetCapacity, validateComposition } from '../src/game/fleets.js';
 import { emptyShipCounts, shipCost, type ShipCounts } from '../src/game/ships.js';
 
@@ -79,13 +79,10 @@ check('доля обломков — 30% стоимости', DEBRIS_SHARE === 0
 }
 
 {
-  const cost = defenseCost('CANNON_TURRET');
-  const debris = debrisFromLosses(fleet({}), fleet({}), { CANNON_TURRET: 6, LASER_TURRET: 0 });
-  check(
-    'разбитая оборона тоже дает обломки',
-    debris.ore === Math.floor(cost.ore * 6 * DEBRIS_SHARE),
-    `${debris.ore}`,
-  );
+  // Оборона больше не дает обломков: разбитые турели остаются на поверхности
+  // планеты, а не выходят на орбиту.
+  const debris = debrisFromLosses(fleet({}), fleet({}));
+  check('разбитая оборона не дает обломков', debris.ore === 0 && debris.polymers === 0);
 }
 
 {
