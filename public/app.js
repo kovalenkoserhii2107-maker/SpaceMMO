@@ -19,6 +19,18 @@
   const $ = (id) => document.getElementById(id);
   const el = {
     dashboard: $('dashboard'),
+    layout: document.querySelector('.layout'),
+    sidebar: $('sidebar'),
+    navToggle: $('nav-toggle'),
+    navScrim: $('nav-scrim'),
+    opsPanel: $('ops-panel'),
+    resourceBar: $('resource-bar'),
+    baseSwitch: $('base-switch'),
+    baseTrigger: $('base-trigger'),
+    baseSwitchName: $('base-switch-name'),
+    baseSwitchCoords: $('base-switch-coords'),
+    syndicateTag: $('syndicate-tag'),
+    adminGroup: $('admin-group'),
     authTabs: document.querySelector('.auth-tabs'),
     authForm: $('auth-form'),
     authEmail: $('auth-email'),
@@ -106,7 +118,6 @@
     cargoPlasma: $('cargo-plasma'),
     cargoPlasmaField: $('cargo-plasma-field'),
     cargoInputs: $('cargo-inputs'),
-    adminTab: $('admin-tab'),
     adminSearch: $('admin-search'),
     adminRows: $('admin-rows'),
     adminDetail: $('admin-detail'),
@@ -454,6 +465,10 @@
     await loadWar();
     await loadPresets();
     await loadMail();
+    // Тег синдиката стоит в шапке и виден на любой вкладке, поэтому состав
+    // подтягивается сразу, а не при первом заходе в раздел синдиката.
+    await loadSyndicate();
+    syncOpsPanel();
   }
 
   /**
@@ -490,6 +505,10 @@
     state.bases = [];
     auth.profile = null;
     auth.account = null;
+    syndicate.data = null;
+    el.syndicateTag.hidden = true;
+    closeBaseMenu();
+    closeNav();
     syncAdminTab();
     cards.buildings.clear();
     cards.technologies.clear();
@@ -563,10 +582,36 @@
 
   /* ---------- Вкладки ---------- */
 
+  /*
+   * Обе карты живут в одной панели: SVG переключаются режимом, а не разделами.
+   * В навигации их два пункта — искать галактику внутри «карты системы» игроку
+   * неоткуда, — поэтому раздел `galaxy` отображается на панель `map`.
+   */
+  const TAB_PANEL = { galaxy: 'map' };
+  /** Разделы, рядом с которыми имеет смысл правая сводка: цель выбирают на карте. */
+  const MAP_TABS = new Set(['map', 'galaxy']);
+
   el.tabs.addEventListener('click', (event) => {
     const button = event.target.closest('.tab');
     if (button) showPanel(button.dataset.tab);
   });
+
+  /** Подсветка активного пункта навигации. */
+  function markActiveTab() {
+    for (const tab of el.tabs.querySelectorAll('.tab')) {
+      tab.classList.toggle('active', tab.dataset.tab === state.activeTab);
+    }
+  }
+
+  /**
+   * Правая колонка появляется только на картах — там же, где выбирают цель.
+   * На вкладке шахт она отбирала бы ширину у карточек, ничего не показывая.
+   */
+  function syncOpsPanel() {
+    const onMap = MAP_TABS.has(state.activeTab);
+    el.opsPanel.hidden = !onMap;
+    el.layout.classList.toggle('with-side', onMap);
+  }
 
   /**
    * Переключение панели. Вынесено из обработчика вкладок, потому что панель
@@ -574,17 +619,22 @@
    */
   function showPanel(name) {
     state.activeTab = name;
+    const panel = TAB_PANEL[name] || name;
 
-    for (const tab of el.tabs.querySelectorAll('.tab')) {
-      tab.classList.toggle('active', tab.dataset.tab === name);
+    markActiveTab();
+    for (const node of document.querySelectorAll('[data-panel]')) {
+      node.hidden = node.dataset.panel !== panel;
     }
-    for (const panel of document.querySelectorAll('[data-panel]')) {
-      panel.hidden = panel.dataset.panel !== name;
-    }
+    syncOpsPanel();
+    closeNav();
 
     if (name === 'map') {
       void loadMap();
       void loadGalaxy();
+    }
+    if (name === 'galaxy') {
+      void loadGalaxy();
+      setMapMode('galaxy');
     }
     if (name === 'market') void loadMarket();
     if (name === 'syndicate') void loadSyndicate();
@@ -625,10 +675,28 @@
     return state.bases.find((base) => base.baseId === state.activeBaseId) || null;
   }
 
+  /**
+   * Координаты базы в привычном виде X:Y:орбита.
+   * Снимок базы координат системы не несет, зато их знает макро-карта, поэтому
+   * система ищется в ней по id. Карта грузится асинхронно — пока ее нет,
+   * показываем имя системы: это тот же адрес, просто словами.
+   */
+  function baseCoords(base) {
+    const system = galaxy.data && galaxy.data.systems.find((item) => item.systemId === base.systemId);
+    return system
+      ? `${system.galaxyX}:${system.galaxyY}:${base.position}`
+      : `${base.systemName} · орбита ${base.position}`;
+  }
+
   /** Список баз перерисовывается только при изменении состава или выбора. */
   let baseListSignature = '';
   function renderBaseList() {
-    const signature = state.bases.map((base) => `${base.baseId}:${base.baseName}`).join('|') + `#${state.activeBaseId}`;
+    // Подпись учитывает и загруженность макро-карты: до нее координаты
+    // подставить неоткуда, и список, отрисованный раньше, так и остался бы
+    // с запасным адресом словами.
+    const signature =
+      state.bases.map((base) => `${base.baseId}:${base.baseName}`).join('|') +
+      `#${state.activeBaseId}#${galaxy.data ? 'xy' : 'names'}`;
     if (signature === baseListSignature) return;
     baseListSignature = signature;
 
@@ -640,10 +708,11 @@
       button.className = base.baseId === state.activeBaseId ? 'active' : '';
       button.textContent = base.baseName;
       const meta = document.createElement('small');
-      meta.textContent = `${base.systemName} · орбита ${base.position}`;
+      meta.textContent = baseCoords(base);
       button.appendChild(meta);
       button.addEventListener('click', () => {
         state.activeBaseId = base.baseId;
+        closeBaseMenu();
         renderBaseList();
         renderActiveBase();
       });
@@ -651,6 +720,58 @@
       el.baseList.appendChild(li);
     }
   }
+
+  /* --- выпадающий список баз в шапке --- */
+  function closeBaseMenu() {
+    el.baseList.hidden = true;
+    el.baseTrigger.setAttribute('aria-expanded', 'false');
+  }
+
+  el.baseTrigger.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const open = el.baseList.hidden;
+    el.baseList.hidden = !open;
+    el.baseTrigger.setAttribute('aria-expanded', String(open));
+  });
+
+  // Клик мимо закрывает список: отдельной кнопки «закрыть» у выпадашки нет.
+  document.addEventListener('click', (event) => {
+    if (!el.baseSwitch.contains(event.target)) closeBaseMenu();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      closeBaseMenu();
+      closeNav();
+    }
+  });
+
+  /*
+   * Реальная высота шапки уходит в CSS-переменную. Строка ресурсов переносится
+   * на узком экране, и липкие колонки должны отступать на столько, сколько
+   * шапка занимает сейчас, а не на число, записанное в стилях однажды:
+   * иначе меню уезжает под нее и первый раздел оказывается не виден.
+   */
+  const topbar = document.querySelector('.topbar');
+  if (topbar && typeof ResizeObserver === 'function') {
+    new ResizeObserver(() => {
+      document.documentElement.style.setProperty('--header-h', `${topbar.offsetHeight}px`);
+    }).observe(topbar);
+  }
+
+  /* --- боковое меню на узком экране --- */
+  function closeNav() {
+    el.sidebar.classList.remove('open');
+    el.navScrim.hidden = true;
+    el.navToggle.setAttribute('aria-expanded', 'false');
+  }
+
+  el.navToggle.addEventListener('click', () => {
+    const open = !el.sidebar.classList.contains('open');
+    el.sidebar.classList.toggle('open', open);
+    el.navScrim.hidden = !open;
+    el.navToggle.setAttribute('aria-expanded', String(open));
+  });
+  el.navScrim.addEventListener('click', () => closeNav());
 
   function renderActiveBase() {
     const base = activeBase();
@@ -680,6 +801,10 @@
     el.resEfficiency.textContent = `${efficiency}%`;
     el.resEfficiency.style.color = efficiency < 100 ? 'var(--warn)' : '';
     el.rateEfficiency.textContent = efficiency < 100 ? 'дефицит энергии' : 'мощность шахт';
+
+    el.baseSwitchName.textContent = base.baseName;
+    el.baseSwitchCoords.textContent = baseCoords(base);
+    el.baseSwitch.classList.toggle('single', state.bases.length < 2);
 
     el.baseName.textContent = base.baseName;
     el.planetMeta.textContent =
@@ -728,8 +853,14 @@
     el.storageText.textContent = `Занято: ${fmt(storage.used)} / ${fmt(storage.capacity)}`;
 
     const overflow = storage.used > storage.capacity;
+    const near = !storage.full && storage.fill >= 0.85;
     el.storage.classList.toggle('full', storage.full);
-    el.storage.classList.toggle('near', !storage.full && storage.fill >= 0.85);
+    el.storage.classList.toggle('near', near);
+
+    // Те же две метки уходят на строку ресурсов: полный склад останавливает
+    // добычу, и узнавать об этом, открыв карточку базы, поздно.
+    el.resourceBar.classList.toggle('full', storage.full);
+    el.resourceBar.classList.toggle('near', near);
 
     // Уязвимый излишек появляется только за порогом 90% вместимости,
     // поэтому на полупустом складе про грабеж молчим — там терять нечего.
@@ -3098,6 +3229,15 @@
     for (const button of el.mapModes.querySelectorAll('.mode')) {
       button.classList.toggle('active', button.dataset.mode === mode);
     }
+
+    // Режим карты меняют и переключателем над холстом, и пунктом навигации:
+    // подсветка в меню должна следовать за тем, что на экране, иначе игрок
+    // видит «карту галактики» на подсвеченном пункте «карта системы».
+    if (MAP_TABS.has(state.activeTab)) {
+      state.activeTab = mode === 'galaxy' ? 'galaxy' : 'map';
+      markActiveTab();
+    }
+
     if (mode === 'galaxy') renderGalaxy();
     updateMapCaption();
   }
@@ -3217,6 +3357,7 @@
     if (!result.ok) return;
     syndicate.data = result.data;
     renderSyndicate();
+    renderSyndicateTag();
     syncBroadcastForm();
   }
 
@@ -3237,6 +3378,13 @@
     await loadSyndicate();
     await loadWar();
     return result.ok;
+  }
+
+  /** Тег синдиката в шапке: у командира без синдиката метки просто нет. */
+  function renderSyndicateTag() {
+    const mine = syndicate.data && syndicate.data.mine;
+    el.syndicateTag.hidden = !mine;
+    if (mine) el.syndicateTag.textContent = `[${mine.tag}]`;
   }
 
   function renderSyndicate() {
@@ -4369,7 +4517,7 @@
    */
   function syncAdminTab() {
     const isAdmin = Boolean(auth.account) && auth.account.role === 'ADMIN';
-    el.adminTab.hidden = !isAdmin;
+    el.adminGroup.hidden = !isAdmin;
     if (isAdmin) return;
 
     // Смена аккаунта не должна оставлять на экране открытый пульт с чужими

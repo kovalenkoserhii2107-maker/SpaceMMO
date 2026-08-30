@@ -8,10 +8,12 @@
 </head>
 <body>
 <!--
-  Спрайт иконок ресурсов. Один инлайновый блок <symbol> вместо семи файлов:
+  Спрайт иконок. Один инлайновый блок <symbol> вместо десятка файлов:
   без лишних запросов, красится через currentColor и масштабируется под кегль.
-  Каждая иконка нарисована на сетке 24×24 и опирается на форму, а не на цвет:
+  Ресурсные иконки нарисованы на сетке 24×24 и опираются на форму, а не на цвет:
   руда — слиток, полимеры — кристалл, плазма — капля, антиматерия — искра.
+  Навигационные — штриховые, одной толщины: в списке разделов важен силуэт,
+  а заливка на 18 пикселях превращает любой значок в пятно.
 -->
 <svg class="icon-sprite" aria-hidden="true" focusable="false">
   <defs>
@@ -45,6 +47,66 @@
     <symbol id="ico-efficiency" viewBox="0 0 24 24">
       <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8" opacity=".45"/>
       <path d="M12 3.5a8.5 8.5 0 0 1 0 17Z" fill="currentColor"/>
+    </symbol>
+
+    <!-- Навигация: штриховые значки разделов -->
+    <symbol id="ico-nav-buildings" viewBox="0 0 24 24">
+      <path d="M3 20h18M6 20V9l5-3.5V20M17 20V12l-6-3.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M8.5 12.5h.01M8.5 16h.01M14 15.5h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="ico-nav-research" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="2.2" fill="currentColor"/>
+      <ellipse cx="12" cy="12" rx="9" ry="4" fill="none" stroke="currentColor" stroke-width="1.6"/>
+      <ellipse cx="12" cy="12" rx="9" ry="4" fill="none" stroke="currentColor" stroke-width="1.6" transform="rotate(60 12 12)"/>
+      <ellipse cx="12" cy="12" rx="9" ry="4" fill="none" stroke="currentColor" stroke-width="1.6" transform="rotate(120 12 12)"/>
+    </symbol>
+    <symbol id="ico-nav-shipyard" viewBox="0 0 24 24">
+      <path d="M12 2.5 18 15l-6-3-6 3 6-12.5Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+      <path d="M6 18h12M8.5 21h7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="ico-nav-defense" viewBox="0 0 24 24">
+      <path d="M12 2.8 19.5 6v6.2c0 4.4-3 7.5-7.5 9-4.5-1.5-7.5-4.6-7.5-9V6L12 2.8Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+      <path d="m8.8 12 2.3 2.4 4.1-4.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="ico-nav-system" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="3.4" fill="currentColor"/>
+      <ellipse cx="12" cy="12" rx="9.2" ry="5" fill="none" stroke="currentColor" stroke-width="1.6" transform="rotate(-22 12 12)"/>
+      <circle cx="19.4" cy="8.4" r="1.6" fill="currentColor"/>
+    </symbol>
+    <symbol id="ico-nav-galaxy" viewBox="0 0 24 24">
+      <path d="M12 4.2c4.3 0 7.8 3.5 7.8 7.8 0 2.6-2.1 4.7-4.7 4.7-1.9 0-3.4-1.5-3.4-3.4 0-1.4 1.1-2.5 2.5-2.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+      <path d="M12 19.8c-4.3 0-7.8-3.5-7.8-7.8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+      <circle cx="12" cy="12" r="1.5" fill="currentColor"/>
+    </symbol>
+    <symbol id="ico-nav-market" viewBox="0 0 24 24">
+      <path d="M4 8h13l-3-3M20 16H7l3 3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="ico-nav-syndicate" viewBox="0 0 24 24">
+      <circle cx="9" cy="9" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/>
+      <circle cx="16.5" cy="10.5" r="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/>
+      <path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5M15.2 14.6c2.9-.3 5.3 1.4 5.3 4.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="ico-nav-war" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.7"/>
+      <path d="m15.6 8.4-2 5.2-5.2 2 2-5.2 5.2-2Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="ico-nav-simulator" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="7.6" fill="none" stroke="currentColor" stroke-width="1.7"/>
+      <path d="M12 1.8v4M12 18.2v4M1.8 12h4M18.2 12h4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+      <circle cx="12" cy="12" r="1.8" fill="currentColor"/>
+    </symbol>
+    <symbol id="ico-nav-admin" viewBox="0 0 24 24">
+      <path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+      <circle cx="9" cy="7" r="2.1" fill="var(--bg)" stroke="currentColor" stroke-width="1.7"/>
+      <circle cx="15.5" cy="12" r="2.1" fill="var(--bg)" stroke="currentColor" stroke-width="1.7"/>
+      <circle cx="8" cy="17" r="2.1" fill="var(--bg)" stroke="currentColor" stroke-width="1.7"/>
+    </symbol>
+    <symbol id="ico-power" viewBox="0 0 24 24">
+      <path d="M12 3v8" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
+      <path d="M7.2 6.6a7.5 7.5 0 1 0 9.6 0" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="ico-chevron" viewBox="0 0 24 24">
+      <path d="m6.5 9.5 5.5 5.5 5.5-5.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
     </symbol>
   </defs>
 </svg>
@@ -119,41 +181,111 @@
 
   <!-- Дашборд -->
   <section id="dashboard" class="screen" hidden>
+    <!--
+      Глобальная шапка. Закреплена наверху: позывной, база и остатки ресурсов
+      нужны на любой вкладке, а не только на той, где их тратят.
+    -->
     <header class="topbar">
-      <div class="brand">
-        <span class="logo">◈</span>
-        <span>Командный центр</span>
+      <div class="top-left">
+        <button type="button" id="nav-toggle" class="nav-toggle" aria-label="Разделы" aria-expanded="false">
+          <span class="burger"></span>
+        </button>
+
+        <div class="identity">
+          <span id="commander-avatar" class="commander-avatar">✦</span>
+          <span class="identity-lines">
+            <span class="identity-name">
+              <b id="user-name">—</b>
+              <span id="syndicate-tag" class="syndicate-tag" hidden></span>
+            </span>
+            <span id="conn-status" class="status offline">офлайн</span>
+          </span>
+        </div>
+
+        <!-- Переключатель баз: имя колонии и ее координаты X:Y:орбита. -->
+        <div class="base-switch" id="base-switch">
+          <button type="button" class="base-trigger" id="base-trigger" aria-haspopup="true" aria-expanded="false">
+            <span class="base-trigger-text">
+              <b id="base-switch-name">—</b>
+              <small id="base-switch-coords">—</small>
+            </span>
+            <svg class="ico chev" aria-hidden="true"><use href="#ico-chevron"/></svg>
+          </button>
+          <ul id="base-list" class="base-list" hidden></ul>
+        </div>
       </div>
+
       <div class="resources" id="resource-bar">
-        <div class="res" title="Руда"><svg class="ico ore" aria-hidden="true"><use href="#ico-ore"/></svg><b id="res-ore">0</b><small id="rate-ore">+0/с</small></div>
-        <div class="res" title="Полимеры"><svg class="ico polymers" aria-hidden="true"><use href="#ico-polymers"/></svg><b id="res-polymers">0</b><small id="rate-polymers">+0/с</small></div>
-        <div class="res" title="Плазма"><svg class="ico plasma" aria-hidden="true"><use href="#ico-plasma"/></svg><b id="res-plasma">0</b><small id="rate-plasma">+0/с</small></div>
+        <div class="res limited" title="Руда"><svg class="ico ore" aria-hidden="true"><use href="#ico-ore"/></svg><b id="res-ore">0</b><small id="rate-ore">+0/с</small></div>
+        <div class="res limited" title="Полимеры"><svg class="ico polymers" aria-hidden="true"><use href="#ico-polymers"/></svg><b id="res-polymers">0</b><small id="rate-polymers">+0/с</small></div>
+        <div class="res limited" title="Плазма"><svg class="ico plasma" aria-hidden="true"><use href="#ico-plasma"/></svg><b id="res-plasma">0</b><small id="rate-plasma">+0/с</small></div>
+        <i class="res-sep" aria-hidden="true"></i>
         <div class="res" title="Антиматерия"><svg class="ico antimatter" aria-hidden="true"><use href="#ico-antimatter"/></svg><b id="res-antimatter">0</b><small id="rate-antimatter">+0/с</small></div>
-        <div class="res" title="Энергия"><svg class="ico energy" aria-hidden="true"><use href="#ico-energy"/></svg><b id="res-energy">0</b><small id="rate-energy">свободно</small></div>
-        <div class="res" title="Эффективность шахт"><svg class="ico efficiency" aria-hidden="true"><use href="#ico-efficiency"/></svg><b id="res-efficiency">100%</b><small id="rate-efficiency">мощность шахт</small></div>
         <div class="res" title="Криптогривна"><svg class="ico credits" aria-hidden="true"><use href="#ico-credits"/></svg><b id="res-credits">0</b><small>криптогривна</small></div>
+        <i class="res-sep" aria-hidden="true"></i>
+        <div class="res res-aux" title="Энергия"><svg class="ico energy" aria-hidden="true"><use href="#ico-energy"/></svg><b id="res-energy">0</b><small id="rate-energy">свободно</small></div>
+        <div class="res res-aux" title="Эффективность шахт"><svg class="ico efficiency" aria-hidden="true"><use href="#ico-efficiency"/></svg><b id="res-efficiency">100%</b><small id="rate-efficiency">мощность шахт</small></div>
       </div>
+
       <div class="user">
-        <button type="button" id="mail-button" class="mail-button" title="Центр связи">
+        <button type="button" id="mail-button" class="icon-button mail-button" title="Центр связи">
           <svg class="ico" role="img" aria-label="Почта"><title>Почта</title><use href="#ico-mail"/></svg>
           <span id="mail-badge" class="mail-badge" hidden>0</span>
         </button>
-        <span id="commander-avatar" class="commander-avatar">✦</span>
-        <span id="user-name">—</span>
-        <span id="conn-status" class="status offline">офлайн</span>
-        <button id="logout" class="ghost" type="button">Выйти</button>
+        <button id="logout" class="icon-button" type="button" title="Выйти из игры">
+          <svg class="ico" role="img" aria-label="Выйти"><title>Выйти</title><use href="#ico-power"/></svg>
+        </button>
       </div>
     </header>
 
-    <main class="layout">
-      <aside class="sidebar">
-        <h2>Мои базы</h2>
-        <ul id="base-list" class="base-list"></ul>
+    <div class="layout">
+      <!-- Затемнение под выехавшим меню: на телефоне тап мимо меню его закрывает. -->
+      <div class="nav-scrim" id="nav-scrim" hidden></div>
+
+      <aside class="sidebar" id="sidebar">
+        <nav class="nav" id="tabs">
+          <div class="nav-group">
+            <h2 class="nav-title">Развитие</h2>
+            <button type="button" class="tab active" data-tab="buildings"><svg class="ico" aria-hidden="true"><use href="#ico-nav-buildings"/></svg><span>Инфраструктура</span></button>
+            <button type="button" class="tab" data-tab="research"><svg class="ico" aria-hidden="true"><use href="#ico-nav-research"/></svg><span>Исследования</span></button>
+          </div>
+
+          <div class="nav-group">
+            <h2 class="nav-title">Армия</h2>
+            <button type="button" class="tab" data-tab="shipyard"><svg class="ico" aria-hidden="true"><use href="#ico-nav-shipyard"/></svg><span>Верфь</span></button>
+            <button type="button" class="tab" data-tab="defense"><svg class="ico" aria-hidden="true"><use href="#ico-nav-defense"/></svg><span>Оборона</span></button>
+          </div>
+
+          <div class="nav-group">
+            <h2 class="nav-title">Командование</h2>
+            <button type="button" class="tab" data-tab="map"><svg class="ico" aria-hidden="true"><use href="#ico-nav-system"/></svg><span>Карта системы</span></button>
+            <button type="button" class="tab" data-tab="galaxy"><svg class="ico" aria-hidden="true"><use href="#ico-nav-galaxy"/></svg><span>Карта галактики</span></button>
+          </div>
+
+          <div class="nav-group">
+            <h2 class="nav-title">Операции</h2>
+            <button type="button" class="tab" data-tab="market"><svg class="ico" aria-hidden="true"><use href="#ico-nav-market"/></svg><span>Хаб и биржа</span></button>
+            <button type="button" class="tab" data-tab="syndicate"><svg class="ico" aria-hidden="true"><use href="#ico-nav-syndicate"/></svg><span>Синдикат</span></button>
+            <button type="button" class="tab" data-tab="war"><svg class="ico" aria-hidden="true"><use href="#ico-nav-war"/></svg><span>Экспедиции и войны</span></button>
+          </div>
+
+          <div class="nav-group">
+            <h2 class="nav-title">Инструменты</h2>
+            <button type="button" class="tab" data-tab="simulator"><svg class="ico" aria-hidden="true"><use href="#ico-nav-simulator"/></svg><span>Боевой симулятор</span></button>
+            <button type="button" class="tab" data-tab="mail"><svg class="ico" aria-hidden="true"><use href="#ico-mail"/></svg><span>Центр связи</span></button>
+          </div>
+
+          <div class="nav-group" id="admin-group" hidden>
+            <h2 class="nav-title">Сервер</h2>
+            <button type="button" class="tab" data-tab="admin" id="admin-tab"><svg class="ico" aria-hidden="true"><use href="#ico-nav-admin"/></svg><span>Управление сервером</span></button>
+          </div>
+        </nav>
       </aside>
 
-      <div class="content">
+      <main class="content">
+        <!-- Сводка активной базы: богатство недр и заполненность склада. -->
         <section class="planet-card">
-          <div>
+          <div class="brief-head">
             <h2 id="base-name">—</h2>
             <p class="muted" id="planet-meta">—</p>
           </div>
@@ -168,35 +300,27 @@
           </div>
         </section>
 
-        <nav class="tabs" id="tabs">
-          <button type="button" class="tab active" data-tab="buildings">Инфраструктура</button>
-          <button type="button" class="tab" data-tab="research">Исследования</button>
-          <button type="button" class="tab" data-tab="shipyard">Верфь</button>
-          <button type="button" class="tab" data-tab="map">Карта системы</button>
-          <button type="button" class="tab" data-tab="market">Хаб и биржа</button>
-          <button type="button" class="tab" data-tab="war">Экспедиции и войны</button>
-          <button type="button" class="tab" data-tab="syndicate">Синдикат</button>
-          <button type="button" class="tab" data-tab="simulator">Симулятор</button>
-          <button type="button" class="tab" data-tab="mail">Центр связи</button>
-          <button type="button" class="tab" data-tab="admin" id="admin-tab" hidden>Управление сервером</button>
-        </nav>
-
         <section data-panel="buildings">
+          <h3 class="panel-title">Инфраструктура</h3>
           <div id="build-job" class="job-banner" hidden></div>
           <div id="buildings" class="cards"></div>
         </section>
 
         <section data-panel="research" hidden>
+          <h3 class="panel-title">Исследования</h3>
           <div id="research-job" class="job-banner" hidden></div>
           <div id="technologies" class="cards"></div>
         </section>
 
         <section data-panel="shipyard" hidden>
+          <h3 class="panel-title">Верфь</h3>
           <div id="fleet" class="fleet"></div>
           <div id="ship-queue" class="queue"></div>
           <div id="ships" class="cards"></div>
+        </section>
 
-          <h3 class="section-title">Стационарная оборона</h3>
+        <section data-panel="defense" hidden>
+          <h3 class="panel-title">Стационарная оборона</h3>
           <div id="defense-summary" class="fleet"></div>
           <div id="defense-queue" class="queue"></div>
           <div id="defenses" class="cards"></div>
@@ -209,72 +333,15 @@
             <span id="map-caption" class="map-caption"></span>
           </div>
 
-          <div class="map-wrap">
-            <div class="map-canvas">
-              <svg id="system-map" viewBox="0 0 860 860" role="img" aria-label="Карта солнечной системы"></svg>
-              <svg id="galaxy-map" viewBox="0 0 900 560" role="img" aria-label="Карта галактики" hidden></svg>
-              <div id="map-tooltip" class="tooltip" hidden></div>
-            </div>
-
-            <aside class="map-side">
-              <h3 class="section-title">Планета</h3>
-              <div id="planet-info" class="planet-info">Наведи курсор или выбери планету на карте.</div>
-
-              <div id="dispatch" class="dispatch" hidden>
-                <h3 class="section-title">Отправка флота</h3>
-
-                <section class="step">
-                  <h4 class="step-head"><span class="step-no">1</span> Состав</h4>
-                  <div class="preset-row">
-                    <label class="field">
-                      <span>Шаблон флота</span>
-                      <select id="preset-select"><option value="">— вручную —</option></select>
-                    </label>
-                    <button type="button" class="ghost" id="preset-manage">Шаблоны</button>
-                  </div>
-                  <div id="fleet-inputs" class="fleet-inputs"></div>
-                  <div class="step-actions">
-                    <button type="button" class="ghost" id="fleet-all">Выбрать все</button>
-                    <button type="button" class="ghost" id="fleet-none">Очистить</button>
-                  </div>
-                </section>
-
-                <section class="step">
-                  <h4 class="step-head"><span class="step-no">2</span> Цель</h4>
-                  <div id="dispatch-target" class="dispatch-target"></div>
-                  <label class="field">
-                    <span>Координаты — система X:Y и орбита</span>
-                    <span class="coord-row">
-                      <input id="coord-input" type="text" placeholder="1:1:3" autocomplete="off">
-                      <button type="button" class="ghost" id="coord-go">Найти</button>
-                    </span>
-                  </label>
-                  <div id="coord-note" class="coord-note"></div>
-                </section>
-
-                <section class="step">
-                  <h4 class="step-head"><span class="step-no">3</span> Миссия</h4>
-                  <label class="field">
-                    <span>Тип миссии</span>
-                    <select id="mission"></select>
-                  </label>
-                  <div id="cargo-inputs" class="fleet-inputs">
-                    <label class="field"><span id="cargo-ore-label"><svg class="ico ore sm" role="img" aria-label="Руда"><title>Руда</title><use href="#ico-ore"/></svg> Руда</span><input id="cargo-ore" type="number" min="0" value="0"></label>
-                    <label class="field"><span id="cargo-polymers-label"><svg class="ico polymers sm" role="img" aria-label="Полимеры"><title>Полимеры</title><use href="#ico-polymers"/></svg> Полимеры</span><input id="cargo-polymers" type="number" min="0" value="0"></label>
-                    <label class="field" id="cargo-plasma-field"><span id="cargo-plasma-label"><svg class="ico plasma sm" role="img" aria-label="Плазма"><title>Плазма</title><use href="#ico-plasma"/></svg> Плазма</span><input id="cargo-plasma" type="number" min="0" value="0"></label>
-                  </div>
-                  <div id="flight-plan" class="flight-plan">Выбери корабли, чтобы увидеть расчет.</div>
-                  <button id="send-fleet" type="button" class="primary">Запуск</button>
-                </section>
-              </div>
-            </aside>
+          <div class="map-canvas">
+            <svg id="system-map" viewBox="0 0 860 860" role="img" aria-label="Карта солнечной системы"></svg>
+            <svg id="galaxy-map" viewBox="0 0 900 560" role="img" aria-label="Карта галактики" hidden></svg>
+            <div id="map-tooltip" class="tooltip" hidden></div>
           </div>
-
-          <h3 class="section-title">Флоты в полете</h3>
-          <div id="fleet-list" class="queue"></div>
         </section>
 
         <section data-panel="market" hidden>
+          <h3 class="panel-title">Хаб и биржа</h3>
           <div class="market-top">
             <div class="hub-card">
               <h3 class="section-title">Торговый склад на хабе</h3>
@@ -316,6 +383,7 @@
         </section>
 
         <section data-panel="war" hidden>
+          <h3 class="panel-title">Экспедиции и войны</h3>
           <h3 class="section-title">Профиль командира</h3>
           <div id="commander-profile" class="hub-card"></div>
 
@@ -334,10 +402,12 @@
         </section>
 
         <section data-panel="syndicate" hidden>
+          <h3 class="panel-title">Синдикат</h3>
           <div id="syndicate-panel"></div>
         </section>
 
         <section data-panel="simulator" hidden>
+          <h3 class="panel-title">Боевой симулятор</h3>
           <div class="sim-grid">
             <div class="hub-card">
               <h3 class="section-title">Атакующий флот</h3>
@@ -374,6 +444,7 @@
         </section>
 
         <section data-panel="mail" hidden>
+          <h3 class="panel-title">Центр связи</h3>
           <div class="mail-layout">
             <div>
               <div class="mail-filters" id="mail-filters"></div>
@@ -403,6 +474,7 @@
         </section>
 
         <section data-panel="admin" hidden>
+          <h3 class="panel-title">Управление сервером</h3>
           <p class="storage-note admin-warning">
             Пульт гейм-мастера. Значения выставляются целиком, а не прибавляются:
             в полях уже стоят текущие числа. Каждое изменение пишется в лог сервера.
@@ -435,7 +507,7 @@
           <div class="sim-actions">
             <button type="button" class="ghost" id="preset-back">← К карте системы</button>
           </div>
-          <h3 class="section-title">Шаблоны флотов</h3>
+          <h3 class="panel-title">Шаблоны флотов</h3>
           <p class="storage-note">Шаблон — это только состав. Наличие кораблей проверяется при отправке, поэтому состав можно сохранить заранее.</p>
           <div id="preset-list" class="queue"></div>
 
@@ -451,8 +523,73 @@
         </section>
 
         <p id="build-message" class="build-message" hidden></p>
-      </div>
-    </main>
+      </main>
+
+      <!--
+        Правая сводка. Видна только на картах: отправлять флот и следить за
+        таймерами имеет смысл там, где выбрана цель, а на вкладке шахт эта
+        колонка только отбирала бы ширину у карточек.
+      -->
+      <aside class="dashboard-side" id="ops-panel" hidden>
+        <section class="side-card">
+          <h3 class="section-title">Планета</h3>
+          <div id="planet-info" class="planet-info">Наведи курсор или выбери планету на карте.</div>
+        </section>
+
+        <section class="side-card dispatch" id="dispatch" hidden>
+          <h3 class="section-title">Отправка флота</h3>
+
+          <section class="step">
+            <h4 class="step-head"><span class="step-no">1</span> Состав</h4>
+            <div class="preset-row">
+              <label class="field">
+                <span>Шаблон флота</span>
+                <select id="preset-select"><option value="">— вручную —</option></select>
+              </label>
+              <button type="button" class="ghost" id="preset-manage">Шаблоны</button>
+            </div>
+            <div id="fleet-inputs" class="fleet-inputs"></div>
+            <div class="step-actions">
+              <button type="button" class="ghost" id="fleet-all">Выбрать все</button>
+              <button type="button" class="ghost" id="fleet-none">Очистить</button>
+            </div>
+          </section>
+
+          <section class="step">
+            <h4 class="step-head"><span class="step-no">2</span> Цель</h4>
+            <div id="dispatch-target" class="dispatch-target"></div>
+            <label class="field">
+              <span>Координаты — система X:Y и орбита</span>
+              <span class="coord-row">
+                <input id="coord-input" type="text" placeholder="1:1:3" autocomplete="off">
+                <button type="button" class="ghost" id="coord-go">Найти</button>
+              </span>
+            </label>
+            <div id="coord-note" class="coord-note"></div>
+          </section>
+
+          <section class="step">
+            <h4 class="step-head"><span class="step-no">3</span> Миссия</h4>
+            <label class="field">
+              <span>Тип миссии</span>
+              <select id="mission"></select>
+            </label>
+            <div id="cargo-inputs" class="fleet-inputs">
+              <label class="field"><span id="cargo-ore-label"><svg class="ico ore sm" role="img" aria-label="Руда"><title>Руда</title><use href="#ico-ore"/></svg> Руда</span><input id="cargo-ore" type="number" min="0" value="0"></label>
+              <label class="field"><span id="cargo-polymers-label"><svg class="ico polymers sm" role="img" aria-label="Полимеры"><title>Полимеры</title><use href="#ico-polymers"/></svg> Полимеры</span><input id="cargo-polymers" type="number" min="0" value="0"></label>
+              <label class="field" id="cargo-plasma-field"><span id="cargo-plasma-label"><svg class="ico plasma sm" role="img" aria-label="Плазма"><title>Плазма</title><use href="#ico-plasma"/></svg> Плазма</span><input id="cargo-plasma" type="number" min="0" value="0"></label>
+            </div>
+            <div id="flight-plan" class="flight-plan">Выбери корабли, чтобы увидеть расчет.</div>
+            <button id="send-fleet" type="button" class="primary">Запуск</button>
+          </section>
+        </section>
+
+        <section class="side-card">
+          <h3 class="section-title">Очередь полетов</h3>
+          <div id="fleet-list" class="queue"></div>
+        </section>
+      </aside>
+    </div>
   </section>
 
   <script src="/socket.io/socket.io.js"></script>

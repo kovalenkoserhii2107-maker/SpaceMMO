@@ -1,12 +1,22 @@
+/*
+ * Палитра: угольно-черный корпус, темно-синие панели, холодный неон акцентом.
+ * Оранжевый (`--warm`) намеренно один на весь интерфейс — им помечено то,
+ * что требует внимания: наведение, активный раздел, непрочитанные письма.
+ * Если красить им еще и обычные элементы, тревожная метка перестанет работать.
+ */
 :root {
-  --bg: #05070f;
-  --panel: rgba(16, 22, 40, 0.86);
-  --panel-2: rgba(24, 32, 56, 0.72);
-  --line: rgba(120, 160, 255, 0.18);
+  --bg: #04060d;
+  --panel: rgba(11, 17, 33, 0.9);
+  --panel-2: rgba(19, 27, 48, 0.72);
+  --line: rgba(120, 160, 255, 0.16);
+  --line-strong: rgba(120, 160, 255, 0.32);
   --text: #dbe4ff;
   --muted: #7f8db5;
   --accent: #4dd2ff;
   --accent-2: #9d7bff;
+  --warm: #ff9f43;
+  /* Высота закрепленной шапки: от нее считаются липкие отступы колонок. */
+  --header-h: 64px;
   --ok: #4ade80;
   --warn: #fbbf24;
   --err: #f87171;
@@ -95,31 +105,96 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   background: transparent;
   border-color: var(--line);
 }
-.ghost:hover { color: var(--text); }
+.ghost:hover { color: var(--text); border-color: var(--warm); }
 
 .muted { color: var(--muted); margin: 0; font-size: 13px; }
 .error { color: var(--err); font-size: 13px; margin: 0; }
 
-/* ---------- Топбар ---------- */
+/* ---------- Глобальная шапка ---------- */
+
+/*
+ * Шапка закреплена: позывной, база и остатки нужны на любой вкладке.
+ * Именно sticky, а не fixed — липкий элемент остается в потоке, и колонкам
+ * ниже не нужен компенсирующий отступ, который пришлось бы держать в двух
+ * местах и синхронизировать при каждой правке высоты.
+ */
 .topbar {
-  display: flex;
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  flex-wrap: wrap;
-  padding: 14px 22px;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
-  backdrop-filter: blur(10px);
+  gap: 18px;
+  min-height: var(--header-h);
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--line-strong);
+  background: linear-gradient(180deg, rgba(9, 14, 28, 0.96), rgba(6, 10, 20, 0.94));
+  backdrop-filter: blur(12px);
 }
 
-.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: 0.6px; }
-.logo { color: var(--accent); font-size: 20px; }
+.top-left { display: flex; align-items: center; gap: 14px; min-width: 0; }
 
-.resources { display: flex; gap: 18px; flex-wrap: wrap; }
+.identity { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.identity-lines { display: grid; gap: 2px; min-width: 0; }
+.identity-name { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+.identity-name b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.syndicate-tag {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid rgba(255, 159, 67, 0.45);
+  border-radius: 6px;
+  color: var(--warm);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+/* Переключатель базы: имя колонии и ее координаты X:Y:орбита. */
+.base-switch { position: relative; }
+.base-trigger {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.base-trigger:hover { border-color: var(--warm); }
+.base-trigger[aria-expanded="true"] { border-color: var(--accent); }
+.base-trigger-text { display: grid; gap: 1px; text-align: left; min-width: 0; }
+.base-trigger-text b { font-size: 13px; white-space: nowrap; }
+.base-trigger-text small { font-size: 11px; color: var(--accent); font-variant-numeric: tabular-nums; }
+.base-trigger .chev { color: var(--muted); transition: transform 0.15s ease; }
+.base-trigger[aria-expanded="true"] .chev { transform: rotate(180deg); }
+/* Одна колония — выбирать не из чего, но адрес показать все равно надо. */
+.base-switch.single .chev { visibility: hidden; }
+
+/* ---------- Ресурсы в шапке ---------- */
+.resources {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
 .res { display: flex; align-items: baseline; gap: 6px; font-variant-numeric: tabular-nums; }
 .res b { font-size: 15px; }
 .res small { color: var(--muted); font-size: 11px; }
+.res-sep { width: 1px; height: 22px; background: var(--line-strong); }
+
+/*
+ * Руда, полимеры и плазма делят один лимит склада: на пороге они желтеют,
+ * на полном складе краснеют. Подсветка висит на строке целиком, а не на
+ * отдельных числах, — переполняется хранилище, а не конкретный ресурс.
+ */
+.resources.near .res.limited b { color: var(--warn); }
+.resources.full .res.limited b { color: var(--err); }
+.resources.full .res.limited { text-shadow: 0 0 12px rgba(248, 113, 113, 0.35); }
+
 .icon-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
 
 /*
@@ -140,20 +215,76 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .ico.plasma { color: var(--plasma); }
 .ico.energy { color: var(--energy); }
 
-.user { display: flex; align-items: center; gap: 10px; font-size: 13px; }
-.status { font-size: 11px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line); }
-.status.online { color: var(--ok); border-color: rgba(74, 222, 128, 0.4); }
-.status.offline { color: var(--err); border-color: rgba(248, 113, 113, 0.4); }
+.user { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.status { font-size: 10px; letter-spacing: 0.6px; text-transform: uppercase; color: var(--muted); }
+.status::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: 1px;
+}
+.status.online { color: var(--ok); }
+.status.offline { color: var(--err); }
 
-/* ---------- Раскладка ---------- */
+/* Круглые кнопки шапки: почта и выход. Подпись только в title — места нет. */
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  width: 38px;
+  height: 38px;
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+}
+.icon-button:hover { color: var(--warm); border-color: var(--warm); }
+.icon-button .ico { width: 20px; height: 20px; vertical-align: 0; }
+
+/* Бургер: три полосы одним элементом через псевдоэлементы. */
+.nav-toggle {
+  display: none;
+  width: 38px;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+}
+.nav-toggle:hover { border-color: var(--accent); }
+.burger, .burger::before, .burger::after {
+  display: block;
+  width: 16px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--text);
+}
+.burger { position: relative; }
+.burger::before, .burger::after { content: ''; position: absolute; left: 0; }
+.burger::before { top: -5px; }
+.burger::after { top: 5px; }
+
+/* ---------- Раскладка: навигация — работа — сводка ---------- */
+
+/*
+ * Три колонки, из которых постоянны две. Правая появляется классом
+ * `with-side` только на картах, и ширина центра пересчитывается сама:
+ * так карточки построек занимают всю страницу, когда сводка не нужна.
+ * `minmax(0, 1fr)` обязателен — без него широкая таблица внутри центра
+ * растягивает колонку и выдавливает страницу за экран.
+ */
 .layout {
   display: grid;
-  grid-template-columns: 240px 1fr;
+  grid-template-columns: 232px minmax(0, 1fr);
   gap: 20px;
   padding: 20px 22px 40px;
   align-items: start;
 }
-@media (max-width: 760px) { .layout { grid-template-columns: 1fr; } }
+.layout.with-side { grid-template-columns: 232px minmax(0, 1fr) 340px; }
 
 .sidebar, .planet-card, .building {
   border: 1px solid var(--line);
@@ -161,30 +292,139 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   background: var(--panel);
 }
 
-.sidebar { padding: 16px; }
-.sidebar h2, .section-title { font-size: 13px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--muted); margin: 0 0 12px; }
+/* Меню прокручивается вместе со страницей до шапки и дальше стоит на месте. */
+.sidebar {
+  padding: 14px 12px;
+  position: sticky;
+  top: calc(var(--header-h) + 16px);
+  max-height: calc(100vh - var(--header-h) - 32px);
+  overflow-y: auto;
+}
+.section-title { font-size: 13px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--muted); margin: 0 0 12px; }
 
-.base-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+/* ---------- Навигация ---------- */
+.nav { display: grid; gap: 16px; }
+.nav-group { display: grid; gap: 2px; }
+.nav-title {
+  margin: 0 0 6px;
+  padding-left: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.6px;
+  color: var(--muted);
+  opacity: 0.75;
+}
+
+.nav .tab {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  text-align: left;
+  font-size: 13px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 10px;
+}
+.nav .tab .ico { width: 18px; height: 18px; vertical-align: 0; opacity: 0.8; }
+.nav .tab:hover { color: var(--text); background: var(--panel-2); border-color: var(--line); }
+.nav .tab:hover .ico { color: var(--warm); opacity: 1; }
+
+/*
+ * Активный раздел: подсвеченный текст и вертикальная риска слева.
+ * Одной заливки мало — на темной панели она читается как «наведение»,
+ * а риска однозначно говорит, где игрок находится.
+ */
+.nav .tab.active {
+  color: var(--accent);
+  background: linear-gradient(90deg, rgba(77, 210, 255, 0.14), transparent 70%);
+  border-color: var(--line-strong);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.nav .tab.active .ico { color: var(--accent); opacity: 1; }
+
+/* ---------- Выпадающий список баз ---------- */
+.base-list {
+  position: absolute;
+  z-index: 45;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 240px;
+  max-height: 60vh;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: rgba(8, 13, 26, 0.97);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+}
 .base-list button {
   width: 100%;
   text-align: left;
-  padding: 10px 12px;
+  padding: 8px 10px;
   color: var(--text);
-  background: var(--panel-2);
-  border-color: var(--line);
+  background: transparent;
+  border-color: transparent;
+  font-size: 13px;
 }
+.base-list button:hover { background: var(--panel-2); border-color: var(--line); }
 .base-list button.active { border-color: var(--accent); color: var(--accent); }
-.base-list small { display: block; color: var(--muted); font-size: 11px; }
+.base-list small { display: block; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 
-.content { display: grid; gap: 20px; }
+/* ---------- Центральная зона ---------- */
+.content { display: grid; gap: 20px; min-width: 0; }
+
+/*
+ * Панели переключаются подменой `hidden`, а не перерисовкой: появление
+ * анимируется входом, потому что смена display заново запускает анимацию.
+ * Уход не анимируется — панель исчезает мгновенно, и догонять ее нечем.
+ */
+.content > [data-panel] { animation: panel-in 0.18s ease both; }
+@keyframes panel-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .content > [data-panel] { animation: none; }
+}
+
+.panel-title { margin: 0 0 14px; font-size: 18px; letter-spacing: 0.4px; }
+
+/* ---------- Правая сводка ---------- */
+.dashboard-side {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+  min-width: 0;
+  position: sticky;
+  top: calc(var(--header-h) + 16px);
+  max-height: calc(100vh - var(--header-h) - 32px);
+  overflow-y: auto;
+}
+.side-card {
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  font-size: 13px;
+}
+.side-card .section-title { margin-bottom: 10px; }
 
 .planet-card {
-  padding: 18px;
+  padding: 16px 18px;
   display: flex;
   justify-content: space-between;
   gap: 18px;
   flex-wrap: wrap;
 }
+.brief-head { min-width: 0; }
 .planet-card h2 { margin: 0 0 4px; font-size: 20px; }
 
 .richness { display: flex; gap: 14px; flex-wrap: wrap; }
@@ -236,25 +476,21 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 /* ---------- Вкладки, таймеры, верфь ---------- */
 .ico.efficiency { color: var(--accent); }
 
-.tabs { display: flex; gap: 8px; flex-wrap: wrap; }
-.tab {
-  padding: 8px 16px;
-  color: var(--muted);
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  font-size: 13px;
-}
-.tab:hover { color: var(--text); }
-.tab.active { color: var(--accent); border-color: var(--accent); }
 
 /*
  * Карточки тянутся на всю высоту строки грида, а кнопка действия прижата к низу
  * (`margin-top: auto` ниже). Иначе при разной длине описаний кнопки в одном ряду
  * оказываются на разной высоте и сетка выглядит разъехавшейся.
  */
+/*
+ * `auto-fit` вместо `auto-fill`: колонок столько, сколько влезает, и они
+ * делят ширину поровну. Верхнюю границу трека сюда ставить нельзя — число
+ * повторов грид считает по максимуму трека, и `minmax(230px, 340px)` дал бы
+ * две широкие колонки там, где помещаются четыре.
+ */
 .cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
   gap: 14px;
   align-items: stretch;
 }
@@ -417,9 +653,6 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .order button { flex: 1; padding: 10px 12px; }
 
 /* ---------- Карта системы и логистика ---------- */
-.map-wrap { display: grid; grid-template-columns: 1fr 300px; gap: 16px; align-items: start; }
-@media (max-width: 900px) { .map-wrap { grid-template-columns: 1fr; } }
-
 /*
  * Фон карты — тайл звездного поля под сильным затемнением.
  *
@@ -606,19 +839,15 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 }
 .pd-cell.wide { grid-column: 1 / -1; }
 .pd-cell .k { font-size: 10px; color: var(--muted); }
-.pd-cell .v { font-size: 12px; color: var(--text); font-variant-numeric: tabular-nums; }
+/*
+ * Значение переносится по любому месту: в ячейку «шахты» идет слитная строка
+ * вида 3/2/1, и достаточно длинного значения хватало, чтобы оно вылезло
+ * за рамку ячейки и наехало на соседнюю.
+ */
+.pd-cell .v { font-size: 12px; color: var(--text); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .pd-cell .k .ico { width: 12px; height: 12px; vertical-align: -1px; }
 
-.map-side, .planet-info { font-size: 13px; }
-.map-side {
-  padding: 16px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: var(--panel);
-  display: grid;
-  gap: 12px;
-}
-.planet-info { color: var(--muted); line-height: 1.6; }
+.planet-info { font-size: 13px; color: var(--muted); line-height: 1.6; }
 .planet-info b { color: var(--text); }
 
 .dispatch { display: grid; gap: 10px; }
@@ -750,7 +979,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   background: var(--panel-2);
   border: 1px solid var(--line);
 }
-.mode:hover { color: var(--text); }
+.mode:hover { color: var(--text); border-color: var(--warm); }
 .mode.active { color: var(--accent); border-color: var(--accent); }
 .map-caption { font-size: 12px; color: var(--muted); }
 .map-caption b { color: var(--text); }
@@ -947,38 +1176,28 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
  * Кнопка почты в шапке. Бейдж висит на углу и не влияет на поток: иначе
  * появление счетчика сдвигало бы соседние элементы шапки при каждом письме.
  */
-.mail-button {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  padding: 0;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--panel-2);
-  color: var(--text);
-  cursor: pointer;
-}
-.mail-button:hover { border-color: var(--accent); color: var(--accent); }
-.mail-button .ico { width: 18px; height: 18px; vertical-align: 0; }
-
+/*
+ * Бейдж непрочитанного. Свечение здесь не украшение: счетчик мелкий и висит
+ * в углу иконки, а шапка темная — без ореола он теряется в общем фоне.
+ */
 .mail-badge {
   position: absolute;
-  top: -6px;
-  right: -6px;
+  top: -5px;
+  right: -5px;
   min-width: 18px;
   height: 18px;
   padding: 0 5px;
   border-radius: 999px;
-  background: var(--err);
-  color: #1b0505;
+  background: var(--warm);
+  color: #23150a;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 800;
   line-height: 18px;
   text-align: center;
+  box-shadow: 0 0 0 2px rgba(6, 10, 20, 0.9), 0 0 12px rgba(255, 159, 67, 0.7);
 }
+/* Пока есть непрочитанное, вся кнопка держит тревожный цвет, а не один бейдж. */
+.mail-button:has(.mail-badge:not([hidden])) { color: var(--warm); border-color: rgba(255, 159, 67, 0.5); }
 
 .mail-layout { display: grid; grid-template-columns: 1fr 320px; gap: 16px; align-items: start; }
 @media (max-width: 900px) { .mail-layout { grid-template-columns: 1fr; } }
@@ -1316,3 +1535,111 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 
 /* Логистика — свой цвет метки: эти письма приходят чаще боевых. */
 .mail-kind.fleet { color: var(--ok); border-color: rgba(74, 222, 128, 0.35); }
+
+/* ---------- Адаптив: от трех колонок к одной ---------- */
+
+/*
+ * Сначала уходит правая сводка — она встает под центральный контент, а не
+ * сжимается: форма отправки флота на 200 пикселях шириной нечитаема.
+ * Меню держится дольше всех: пока оно на экране, разделы видны целиком,
+ * и прятать его в бургер раньше времени — терять единственную карту сайта.
+ */
+@media (max-width: 1024px) {
+  .layout.with-side { grid-template-columns: 232px minmax(0, 1fr); }
+  .dashboard-side {
+    grid-column: 2;
+    position: static;
+    max-height: none;
+    overflow: visible;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    align-items: start;
+  }
+}
+
+/* Ресурсы на среднем экране: служебные показатели уступают место основным. */
+@media (max-width: 1080px) {
+  .res-aux { display: none; }
+  /* Разделитель перед скрытой группой повис бы в конце строки. */
+  .res-sep:last-of-type { display: none; }
+}
+
+/*
+ * Ресурсы перестают помещаться между командиром и кнопками и переезжают
+ * на вторую строку. Места всех трех зон заданы явно: на автоматической
+ * расстановке строка ресурсов забирала бы ячейку кнопок, а те съезжали бы
+ * на третью строку — шапка вырастала бы в треть экрана.
+ */
+@media (max-width: 900px) {
+  .topbar { grid-template-columns: minmax(0, 1fr) auto; row-gap: 10px; }
+  .top-left { grid-area: 1 / 1; }
+  .user { grid-area: 1 / 2; justify-self: end; }
+  .resources { grid-area: 2 / 1 / 3 / -1; justify-content: flex-start; }
+  /*
+   * Разделители групп убираем совсем: строка ресурсов здесь переносится,
+   * и палочка регулярно оказывается последней на строке — вместо границы
+   * между группами она читается как обрыв.
+   */
+  .res-sep { display: none; }
+}
+
+/*
+ * Телефон: меню уезжает за левый край и открывается бургером, правая сводка
+ * встает под контент одной колонкой. Меню именно фиксированное — липкая
+ * колонка внутри грида на узком экране заняла бы весь первый экран.
+ */
+@media (max-width: 768px) {
+  .layout, .layout.with-side { grid-template-columns: minmax(0, 1fr); padding: 16px 14px 32px; }
+  .dashboard-side { grid-column: 1; grid-template-columns: minmax(0, 1fr); }
+
+  .nav-toggle { display: inline-flex; }
+
+  .sidebar {
+    position: fixed;
+    z-index: 60;
+    top: 0;
+    left: 0;
+    width: 264px;
+    max-width: 84vw;
+    height: 100vh;
+    max-height: none;
+    border-radius: 0;
+    border-left: none;
+    background: rgba(7, 11, 22, 0.98);
+    transform: translateX(-102%);
+    transition: transform 0.22s ease;
+  }
+  .sidebar.open { transform: none; }
+
+  .nav-scrim { position: fixed; inset: 0; z-index: 55; background: rgba(2, 4, 10, 0.6); }
+
+  .identity-lines { display: none; }
+  .cards { grid-template-columns: minmax(0, 1fr); }
+  /*
+   * Колонкой — и обязательно без переноса: у блока хранилища `flex-basis: 100%`,
+   * и в колонке с `wrap` он занимает всю высоту, не влезает и уезжает второй
+   * колонкой вправо, растягивая страницу вдвое шире экрана.
+   */
+  .planet-card { flex-direction: column; flex-wrap: nowrap; }
+  .base-list { min-width: 0; width: max(220px, 60vw); }
+}
+
+/*
+ * Шире телефона меню стоит в раскладке само по себе, и затемнение под ним
+ * не нужно: экран, повернутый из портрета в ландшафт с открытым меню,
+ * иначе остался бы под черной пеленой.
+ */
+@media (min-width: 769px) {
+  .nav-scrim { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar { transition: none; }
+}
+
+/* На совсем узком экране остаются только запасы и криптогривна. */
+@media (max-width: 560px) {
+  .topbar { padding: 10px 12px; gap: 10px; }
+  .resources { gap: 12px; }
+  .res small { display: none; }
+  .base-trigger-text b { max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
+}
