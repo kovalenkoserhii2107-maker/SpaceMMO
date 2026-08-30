@@ -13,6 +13,7 @@ const FLEET_MISSIONS = [
   'HUB_DELIVERY',
   'HUB_PICKUP',
   'ATTACK',
+  'DEPLOY',
   'EXPEDITION',
   'HARVEST',
 ] as const;
@@ -22,12 +23,22 @@ export function isFleetMission(value: unknown): value is FleetMission {
   return typeof value === 'string' && (FLEET_MISSIONS as readonly string[]).includes(value);
 }
 
+/**
+ * Рейс в один конец: флот остается на месте назначения и домой не идет.
+ * Пока такая миссия одна, но признак нужен и расчету топлива, и прилету,
+ * поэтому живет здесь, а не проверкой `=== 'DEPLOY'` в трех местах.
+ */
+export function isOneWayMission(mission: FleetMission): boolean {
+  return mission === 'DEPLOY';
+}
+
 export const MISSION_LABELS: Record<FleetMission, string> = {
   TRANSPORT: 'Транспортировка',
   SCAN: 'Разведка',
   HUB_DELIVERY: 'Доставка на хаб',
   HUB_PICKUP: 'Вывоз с хаба',
   ATTACK: 'Атака',
+  DEPLOY: 'Дислокация',
   EXPEDITION: 'Экспедиция',
   HARVEST: 'Переработка',
 };
@@ -124,15 +135,16 @@ export function fleetCapacity(ships: ShipCounts): number {
 }
 
 /**
- * Расход плазмы за весь маршрут (туда и обратно).
- * Зависит от состава флота и времени в пути, как и требует ТЗ.
+ * Расход плазмы за маршрут. `trips` — число концов пути: обычный рейс
+ * возвращается домой и платит за два, дислокация остается на месте и платит
+ * за один.
  */
-function fuelCost(ships: ShipCounts, seconds: number): number {
+function fuelCost(ships: ShipCounts, seconds: number, trips: number): number {
   const perSecond = SHIP_TYPES.reduce(
     (total, type) => total + ships[type] * FLIGHT_PROFILES[type].fuelPerSecond,
     0,
   );
-  const total = perSecond * seconds * 2;
+  const total = perSecond * seconds * trips;
   return total <= 0 ? 0 : Math.max(1, Math.ceil(total));
 }
 
@@ -163,7 +175,10 @@ export function planFlight(
   techs: TechLevels,
   from: { position: number; system: GalaxyPoint },
   to: { position: number; system: GalaxyPoint },
+  options: { oneWay?: boolean } = {},
 ): FlightPlan {
+  // Дислокация не возвращается, поэтому и топливо за обратный путь не берем.
+  const trips = options.oneWay ? 1 : 2;
   const interstellar =
     from.system.galaxyX !== to.system.galaxyX || from.system.galaxyY !== to.system.galaxyY;
 
@@ -176,7 +191,7 @@ export function planFlight(
       speed: Math.round(fleetSpeed(ships, techs)),
       flightSeconds: seconds,
       capacity: fleetCapacity(ships),
-      fuel: fuelCost(ships, seconds),
+      fuel: fuelCost(ships, seconds, trips),
       antimatter: 0,
     };
   }
@@ -190,7 +205,7 @@ export function planFlight(
     flightSeconds: seconds,
     capacity: fleetCapacity(ships),
     fuel: 0,
-    antimatter: jumpAntimatterCost(ships, techs, distance),
+    antimatter: jumpAntimatterCost(ships, techs, distance, trips),
   };
 }
 
@@ -203,13 +218,18 @@ function jumpSeconds(ships: ShipCounts, techs: TechLevels, distance: number): nu
   return Math.max(30, Math.round(raw));
 }
 
-/** Расход антиматерии за весь маршрут (туда и обратно). */
-function jumpAntimatterCost(ships: ShipCounts, techs: TechLevels, distance: number): number {
+/** Расход антиматерии за маршрут; `trips` — как и у плазмы, число концов пути. */
+function jumpAntimatterCost(
+  ships: ShipCounts,
+  techs: TechLevels,
+  distance: number,
+  trips: number,
+): number {
   const perDistance = SHIP_TYPES.reduce(
     (total, type) => total + ships[type] * FLIGHT_PROFILES[type].antimatterPerDistance,
     0,
   );
-  const total = (perDistance * distance * 2) / hyperdriveFactor(techs);
+  const total = (perDistance * distance * trips) / hyperdriveFactor(techs);
   return total <= 0 ? 0 : Math.max(1, Math.ceil(total));
 }
 

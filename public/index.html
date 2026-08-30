@@ -222,25 +222,50 @@
 
               <div id="dispatch" class="dispatch" hidden>
                 <h3 class="section-title">Отправка флота</h3>
-                <label class="field">
-                  <span>Миссия</span>
-                  <select id="mission"></select>
-                </label>
-                <div class="preset-row">
+
+                <section class="step">
+                  <h4 class="step-head"><span class="step-no">1</span> Состав</h4>
+                  <div class="preset-row">
+                    <label class="field">
+                      <span>Шаблон флота</span>
+                      <select id="preset-select"><option value="">— вручную —</option></select>
+                    </label>
+                    <button type="button" class="ghost" id="preset-manage">Шаблоны</button>
+                  </div>
+                  <div id="fleet-inputs" class="fleet-inputs"></div>
+                  <div class="step-actions">
+                    <button type="button" class="ghost" id="fleet-all">Выбрать все</button>
+                    <button type="button" class="ghost" id="fleet-none">Очистить</button>
+                  </div>
+                </section>
+
+                <section class="step">
+                  <h4 class="step-head"><span class="step-no">2</span> Цель</h4>
+                  <div id="dispatch-target" class="dispatch-target"></div>
                   <label class="field">
-                    <span>Шаблон флота</span>
-                    <select id="preset-select"><option value="">— вручную —</option></select>
+                    <span>Координаты — система X:Y и орбита</span>
+                    <span class="coord-row">
+                      <input id="coord-input" type="text" placeholder="1:1:3" autocomplete="off">
+                      <button type="button" class="ghost" id="coord-go">Найти</button>
+                    </span>
                   </label>
-                  <button type="button" class="ghost" id="preset-manage">Шаблоны</button>
-                </div>
-                <div id="fleet-inputs" class="fleet-inputs"></div>
-                <div id="cargo-inputs" class="fleet-inputs">
-                  <label class="field"><span id="cargo-ore-label"><svg class="ico ore sm" role="img" aria-label="Руда"><title>Руда</title><use href="#ico-ore"/></svg> Руда</span><input id="cargo-ore" type="number" min="0" value="0"></label>
-                  <label class="field"><span id="cargo-polymers-label"><svg class="ico polymers sm" role="img" aria-label="Полимеры"><title>Полимеры</title><use href="#ico-polymers"/></svg> Полимеры</span><input id="cargo-polymers" type="number" min="0" value="0"></label>
-                  <label class="field" id="cargo-plasma-field"><span id="cargo-plasma-label"><svg class="ico plasma sm" role="img" aria-label="Плазма"><title>Плазма</title><use href="#ico-plasma"/></svg> Плазма</span><input id="cargo-plasma" type="number" min="0" value="0"></label>
-                </div>
-                <div id="flight-plan" class="flight-plan">Выбери корабли, чтобы увидеть расчет.</div>
-                <button id="send-fleet" type="button" class="primary">Отправить флот</button>
+                  <div id="coord-note" class="coord-note"></div>
+                </section>
+
+                <section class="step">
+                  <h4 class="step-head"><span class="step-no">3</span> Миссия</h4>
+                  <label class="field">
+                    <span>Тип миссии</span>
+                    <select id="mission"></select>
+                  </label>
+                  <div id="cargo-inputs" class="fleet-inputs">
+                    <label class="field"><span id="cargo-ore-label"><svg class="ico ore sm" role="img" aria-label="Руда"><title>Руда</title><use href="#ico-ore"/></svg> Руда</span><input id="cargo-ore" type="number" min="0" value="0"></label>
+                    <label class="field"><span id="cargo-polymers-label"><svg class="ico polymers sm" role="img" aria-label="Полимеры"><title>Полимеры</title><use href="#ico-polymers"/></svg> Полимеры</span><input id="cargo-polymers" type="number" min="0" value="0"></label>
+                    <label class="field" id="cargo-plasma-field"><span id="cargo-plasma-label"><svg class="ico plasma sm" role="img" aria-label="Плазма"><title>Плазма</title><use href="#ico-plasma"/></svg> Плазма</span><input id="cargo-plasma" type="number" min="0" value="0"></label>
+                  </div>
+                  <div id="flight-plan" class="flight-plan">Выбери корабли, чтобы увидеть расчет.</div>
+                  <button id="send-fleet" type="button" class="primary">Запуск</button>
+                </section>
               </div>
             </aside>
           </div>

@@ -4,8 +4,9 @@ import { isBuildingType } from '../game/rules.js';
 import { isTechnologyType } from '../game/techTree.js';
 import { isShipType } from '../game/ships.js';
 import { isDefenseType } from '../game/defenses.js';
-import { isFleetMission, planFlight } from '../game/fleets.js';
+import { isFleetMission, isOneWayMission, planFlight } from '../game/fleets.js';
 import { buildGalaxyMap, buildSystemMap } from '../services/mapService.js';
+import { prisma } from '../db/prisma.js';
 import { currentCommander, requireAuth, requireCommander } from './middleware.js';
 import { amountsOrNull, cargoOrNull, positiveInt, shipCountsOrNull } from './validation.js';
 import type {
@@ -14,6 +15,7 @@ import type {
   FlightPreviewResponse,
   GalaxyResponse,
   MapResponse,
+  PlanetLookupResponse,
   StateResponse,
 } from '../types/api.js';
 
@@ -137,6 +139,46 @@ function readTarget(body: FleetRequestBody): { planetId?: string; hubId?: string
 
 
 
+/**
+ * Поиск планеты по координатам «система X:Y, орбита N».
+ *
+ * Нужен шагу «Цель» в отправке флота: набрать координаты быстрее, чем искать
+ * планету на карте галактики, а для чужих систем карта еще и не открыта.
+ * Отдаем только опознание цели — имя и владельца, — то есть ровно то, что и так
+ * видно на карте системы. Содержимое колонии остается за туманом войны.
+ */
+gameRouter.get('/planets/at', async (req, res: Response<PlanetLookupResponse | ErrorResponse>) => {
+  const x = Number.parseInt(String(req.query['x'] ?? ''), 10);
+  const y = Number.parseInt(String(req.query['y'] ?? ''), 10);
+  const position = Number.parseInt(String(req.query['position'] ?? ''), 10);
+
+  if (!Number.isInteger(x) || !Number.isInteger(y) || !Number.isInteger(position)) {
+    res.status(400).json({ error: 'Координаты задаются целыми числами: X:Y:орбита' });
+    return;
+  }
+
+  const planet = await prisma.planet.findFirst({
+    where: { system: { galaxyX: x, galaxyY: y }, position },
+    include: { system: true, base: { include: { commander: { select: { nickname: true } } } } },
+  });
+  if (!planet) {
+    res.status(404).json({ error: `По координатам ${x}:${y}:${position} планеты нет` });
+    return;
+  }
+
+  res.json({
+    planetId: planet.id,
+    planetName: planet.name,
+    systemId: planet.systemId,
+    systemName: planet.system.name,
+    position: planet.position,
+    galaxyX: planet.system.galaxyX,
+    galaxyY: planet.system.galaxyY,
+    owner: planet.base?.commander.nickname ?? null,
+    isOwn: planet.base?.commanderId === currentCommander(req).id,
+  });
+});
+
 /** Предрасчет маршрута: время, топливо, трюмы. Формулы остаются на сервере. */
 gameRouter.post('/bases/:baseId/fleets/preview', async (req, res: Response<FlightPreviewResponse | ErrorResponse>) => {
   const body = (req.body ?? {}) as FleetRequestBody;
@@ -159,7 +201,15 @@ gameRouter.post('/bases/:baseId/fleets/preview', async (req, res: Response<Fligh
     return;
   }
 
-  res.json(planFlight(ships, commander.techs, { position: base.position, system: base.galaxy }, target));
+  // Миссия влияет на расход: рейс в один конец не платит за обратный путь.
+  // Ее может не быть — тогда считаем обычный рейс туда и обратно.
+  const oneWay = isFleetMission(body.mission) && isOneWayMission(body.mission);
+
+  res.json(
+    planFlight(ships, commander.techs, { position: base.position, system: base.galaxy }, target, {
+      oneWay,
+    }),
+  );
 });
 
 /** Отправить флот с базы на другую планету. */

@@ -58,6 +58,19 @@ export type StateResponse = StateUpdatePayload & {
 };
 
 export type MapResponse = SystemMap;
+
+/** Опознание планеты по координатам: то же, что видно на карте системы. */
+export interface PlanetLookupResponse {
+  planetId: string;
+  planetName: string;
+  systemId: string;
+  systemName: string;
+  position: number;
+  galaxyX: number;
+  galaxyY: number;
+  owner: string | null;
+  isOwn: boolean;
+}
 export type GalaxyResponse = GalaxyMap;
 export type FlightPreviewResponse = FlightPlan;
 export type MarketResponse = MarketView;

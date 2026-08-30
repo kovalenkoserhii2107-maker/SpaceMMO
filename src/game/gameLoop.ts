@@ -36,6 +36,7 @@ import {
   isHubMission,
   planFlight,
   validateCargo,
+  isOneWayMission,
   validateComposition,
   type FleetMission,
 } from './fleets.js';
@@ -521,6 +522,12 @@ class GameLoop {
         return { ok: false, error: 'На этой орбите нет поля обломков' };
       }
 
+      if (mission === 'DEPLOY') {
+        if (!planet.base || planet.base.commanderId !== commanderId) {
+          return { ok: false, error: 'Дислокация возможна только на собственную колонию' };
+        }
+      }
+
       if (mission === 'ATTACK') {
         if (!planet.base) return { ok: false, error: 'Атаковать необитаемую планету бессмысленно' };
         if (planet.base.commanderId === commanderId) {
@@ -569,6 +576,7 @@ class GameLoop {
       commander.techs,
       { position: base.position, system: base.galaxy },
       target_,
+      { oneWay: isOneWayMission(mission) },
     );
 
     // Межзвездный прыжок возможен только с гипердвигателем и идет на антиматерии.
@@ -1048,6 +1056,20 @@ class GameLoop {
         polymers: fleet.cargoPolymers,
         plasma: fleet.cargoPlasma,
       });
+      return;
+    }
+
+    if (fleet.mission === 'DEPLOY' && fleet.targetPlanetId) {
+      const targetBase = await prisma.base.findUnique({ where: { planetId: fleet.targetPlanetId } });
+      // Колонию могли потерять или отдать, пока флот летел: садиться некуда,
+      // и флот разворачивается домой. Топливо за обратный путь при вылете
+      // не бралось — возвращаем даром, это лучше, чем бросить флот на орбите.
+      if (!targetBase || targetBase.commanderId !== fleet.commanderId) {
+        await prisma.fleet.update({ where: { id: fleet.id }, data: { status: 'RETURNING' } });
+        return;
+      }
+
+      await this.landFleet(fleet, targetBase.id);
       return;
     }
 
@@ -1649,17 +1671,26 @@ class GameLoop {
    * посреди операции либо задвоил бы корабли, либо потерял их.
    */
   private async handleReturn(fleet: FleetRow): Promise<void> {
+    await this.landFleet(fleet, fleet.originBaseId);
+  }
+
+  /**
+   * Посадка флота на базу: корабли и груз переходят колонии, запись полета
+   * удаляется. Возврат домой и дислокация отличаются только тем, на какую базу
+   * садится флот, поэтому операция одна.
+   */
+  private async landFleet(fleet: FleetRow, baseId: string): Promise<void> {
     const ships = fleetShips(fleet);
 
-    await this.flushBaseOwner(fleet.originBaseId);
+    await this.flushBaseOwner(baseId);
 
     const operations: Array<Prisma.PrismaPromise<unknown>> = [];
     for (const type of SHIP_TYPES) {
       if (ships[type] <= 0) continue;
       operations.push(
         prisma.ship.upsert({
-          where: { baseId_type: { baseId: fleet.originBaseId, type } },
-          create: { baseId: fleet.originBaseId, type, count: ships[type] },
+          where: { baseId_type: { baseId: baseId, type } },
+          create: { baseId: baseId, type, count: ships[type] },
           update: { count: { increment: ships[type] } },
         }),
       );
@@ -1672,7 +1703,7 @@ class GameLoop {
     ) {
       operations.push(
         prisma.base.update({
-          where: { id: fleet.originBaseId },
+          where: { id: baseId },
           data: {
             ore: { increment: fleet.cargoOre },
             polymers: { increment: fleet.cargoPolymers },
@@ -1686,13 +1717,13 @@ class GameLoop {
 
     await prisma.$transaction(operations);
 
-    this.applyMemoryResources(fleet.originBaseId, {
+    this.applyMemoryResources(baseId, {
       ore: fleet.cargoOre,
       polymers: fleet.cargoPolymers,
       plasma: fleet.cargoPlasma,
       antimatter: fleet.cargoAntimatter,
     });
-    this.applyMemoryShips(fleet.originBaseId, ships);
+    this.applyMemoryShips(baseId, ships);
   }
 
   /** Сбрасывает состояние владельца базы в БД, чтобы транзакция считала от актуальных чисел. */

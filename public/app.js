@@ -78,6 +78,12 @@
     dispatch: $('dispatch'),
     mission: $('mission'),
     fleetInputs: $('fleet-inputs'),
+    fleetAll: $('fleet-all'),
+    fleetNone: $('fleet-none'),
+    dispatchTarget: $('dispatch-target'),
+    coordInput: $('coord-input'),
+    coordGo: $('coord-go'),
+    coordNote: $('coord-note'),
     cargoOre: $('cargo-ore'),
     cargoPolymers: $('cargo-polymers'),
     flightPlan: $('flight-plan'),
@@ -1097,10 +1103,21 @@
     deepOrbit: 334,
   };
 
-  const map = { data: null, selectedId: null, selectedKind: 'PLANET', hoverId: null, plan: null, planTimer: null };
+  const map = {
+    data: null,
+    selectedId: null,
+    selectedKind: 'PLANET',
+    hoverId: null,
+    plan: null,
+    planTimer: null,
+    /** Цель, найденная по координатам: может лежать вне текущей системы. */
+    coordTarget: null,
+  };
 
   const MISSION_OPTIONS = {
     PLANET: [['TRANSPORT', 'Транспортировка'], ['SCAN', 'Разведка зондом'], ['ATTACK', 'Атака']],
+    /* Своя колония: атаковать себя нельзя, зато можно перебросить туда флот. */
+    OWN_PLANET: [['TRANSPORT', 'Транспортировка'], ['DEPLOY', 'Дислокация']],
     HUB: [['HUB_DELIVERY', 'Доставка на хаб'], ['HUB_PICKUP', 'Вывоз с хаба']],
     DEEP_SPACE: [['EXPEDITION', 'Экспедиция']],
   };
@@ -1405,6 +1422,7 @@
   function selectDeepSpace() {
     map.selectedKind = 'DEEP_SPACE';
     map.selectedId = map.data ? map.data.systemId : null;
+    clearCoordTarget();
     renderMap();
     renderPlanetInfo();
   }
@@ -1458,6 +1476,7 @@
   function selectHub(hub) {
     map.selectedKind = 'HUB';
     map.selectedId = hub.hubId;
+    clearCoordTarget();
     renderMap();
     renderPlanetInfo();
   }
@@ -1620,8 +1639,18 @@
   function selectPlanet(planetId) {
     map.selectedKind = 'PLANET';
     map.selectedId = planetId;
+    clearCoordTarget();
     renderMap();
     renderPlanetInfo();
+  }
+
+  /** Клик по карте отменяет цель, набранную координатами: иначе он бы не работал. */
+  function clearCoordTarget() {
+    if (!map.coordTarget) return;
+    map.coordTarget = null;
+    el.coordInput.value = '';
+    el.coordNote.textContent = '';
+    el.coordNote.className = 'coord-note';
   }
 
   function selectedPlanet() {
@@ -1640,12 +1669,16 @@
 
   /** Список миссий зависит от того, что выбрано: планета или хаб. */
   function syncMissionOptions() {
-    const base = MISSION_OPTIONS[map.selectedKind] || MISSION_OPTIONS.PLANET;
+    const target = dispatchTarget();
+    const kind = target ? target.kind : map.selectedKind;
+    const base = target && target.kind === 'PLANET' && target.isOwn
+      ? MISSION_OPTIONS.OWN_PLANET
+      : MISSION_OPTIONS[kind] || MISSION_OPTIONS.PLANET;
     const options = [...base];
 
     // «Переработка» появляется только когда в составе есть переработчик и над
     // планетой действительно висит поле: пустой пункт меню сбивал бы с толку.
-    if (map.selectedKind === 'PLANET') {
+    if (!map.coordTarget && map.selectedKind === 'PLANET') {
       const planet = selectedPlanet();
       const hasDebris = planet && planet.debris && planet.debris.ore + planet.debris.polymers > 0;
       const picked = readComposition();
@@ -1676,7 +1709,8 @@
     if (hubRun) el.cargoPlasma.value = '0';
 
     // Переработчики летят за обломками, а не с грузом: трюмы должны быть пусты.
-    const harvest = el.mission.value === 'HARVEST';
+    // Разведке трюмы тоже ни к чему — зонд везет данные, а не ресурсы.
+    const harvest = el.mission.value === 'HARVEST' || el.mission.value === 'SCAN';
     el.cargoInputs.hidden = harvest;
     if (harvest) {
       el.cargoOre.value = '0';
@@ -1699,6 +1733,7 @@
       if (base) {
         syncMissionOptions();
         renderFleetInputs();
+        renderDispatchTarget();
       }
       return;
     }
@@ -1717,6 +1752,7 @@
       if (base) {
         syncMissionOptions();
         renderFleetInputs();
+        renderDispatchTarget();
       }
       return;
     }
@@ -1729,10 +1765,11 @@
     }
 
     el.planetInfo.innerHTML = planetDetailsHtml(planet, false);
-    el.dispatch.hidden = !base || planet.planetId === base.planetId;
+    el.dispatch.hidden = !base || (!map.coordTarget && planet.planetId === base.planetId);
     if (!el.dispatch.hidden) {
       syncMissionOptions();
       renderFleetInputs();
+      renderDispatchTarget();
     }
   }
 
@@ -1781,13 +1818,81 @@
     map.planTimer = setTimeout(refreshPlan, 250);
   }
 
+  /**
+   * Куда летим. Цель, найденная по координатам, перекрывает выбор на карте:
+   * она может лежать в другой системе, которой на текущей карте просто нет.
+   */
+  function dispatchTarget() {
+    if (map.coordTarget) {
+      return {
+        kind: 'PLANET',
+        request: { targetPlanetId: map.coordTarget.planetId },
+        name: map.coordTarget.planetName,
+        place:
+          `система ${map.coordTarget.systemName} · орбита ${map.coordTarget.position} · ` +
+          `${map.coordTarget.galaxyX}:${map.coordTarget.galaxyY}`,
+        owner: map.coordTarget.owner,
+        isOwn: map.coordTarget.isOwn,
+      };
+    }
+    if (deepSpaceSelected()) {
+      return {
+        kind: 'DEEP_SPACE',
+        request: { targetSystemId: map.data.systemId },
+        name: 'Глубокий космос',
+        place: `система ${map.data.systemName} · 16-я позиция`,
+        owner: null,
+        isOwn: false,
+      };
+    }
+    const hub = selectedHub();
+    if (hub) {
+      return {
+        kind: 'HUB',
+        request: { targetHubId: hub.hubId },
+        name: hub.name,
+        place: `нейтральная станция · орбита ${hub.position}`,
+        owner: null,
+        isOwn: false,
+      };
+    }
+    const planet = selectedPlanet();
+    if (planet) {
+      return {
+        kind: 'PLANET',
+        request: { targetPlanetId: planet.planetId },
+        name: planet.name,
+        place: `система ${map.data.systemName} · орбита ${planet.position}`,
+        owner: planet.owner,
+        isOwn: planet.isOwn,
+      };
+    }
+    return null;
+  }
+
   /** Расчет маршрута считает сервер — клиент только показывает результат. */
   function currentTarget() {
-    if (deepSpaceSelected()) return { targetSystemId: map.data.systemId };
-    const hub = selectedHub();
-    if (hub) return { targetHubId: hub.hubId };
-    const planet = selectedPlanet();
-    return planet ? { targetPlanetId: planet.planetId } : null;
+    const target = dispatchTarget();
+    return target ? target.request : null;
+  }
+
+  /** Шаг «Цель»: что именно выбрано и кому оно принадлежит. */
+  function renderDispatchTarget() {
+    const target = dispatchTarget();
+    if (!target) {
+      el.dispatchTarget.innerHTML = '<span class="muted">Цель не выбрана: кликни планету на карте или введи координаты.</span>';
+      return;
+    }
+    const owner = target.isOwn
+      ? '<span class="own">своя колония</span>'
+      : target.owner
+        ? `владелец: ${escapeHtml(target.owner)}`
+        : target.kind === 'PLANET'
+          ? 'колонии нет'
+          : '';
+    el.dispatchTarget.innerHTML =
+      `<b>${escapeHtml(target.name)}</b><span>${escapeHtml(target.place)}</span>` +
+      (owner ? `<span>${owner}</span>` : '');
   }
 
   async function refreshPlan() {
@@ -1809,7 +1914,8 @@
       const response = await fetch(`/api/bases/${base.baseId}/fleets/preview`, {
         method: 'POST',
         headers: authHeaders(),
-        body: JSON.stringify({ ...target, ships }),
+        // Миссию шлем в расчет: рейс в один конец не платит за обратный путь.
+        body: JSON.stringify({ ...target, ships, mission: el.mission.value }),
       });
       if (!response.ok) {
         map.plan = null;
@@ -1830,13 +1936,17 @@
       const fuelStock = jump ? base.resources.antimatter : base.resources.plasma;
       const fuelName = jump ? 'антиматерии' : 'плазмы';
       const noFuel = fuelAmount > fuelStock;
+      // Дислокация домой не возвращается, и топливо за обратный путь не берется.
+      const oneWay = el.mission.value === 'DEPLOY';
 
       el.flightPlan.innerHTML =
         (jump
           ? `<b>Гиперпрыжок</b> · дистанция <b>${map.plan.distance}</b> ед. по галактике<br>`
           : `дистанция: <b>${map.plan.distance}</b> орбит · скорость <b>${map.plan.speed}</b><br>`) +
-        `время в пути: <b>${fmtTime(map.plan.flightSeconds)}</b> в одну сторону<br>` +
-        `топливо (туда-обратно): <b class="${noFuel ? 'bad' : ''}">${fmtAmount(fuelAmount)}</b> ${fuelName} ` +
+        `время в пути: <b>${fmtTime(map.plan.flightSeconds)}</b>` +
+        (oneWay ? ' — флот остается на месте<br>' : ' в одну сторону<br>') +
+        `топливо (${oneWay ? 'в один конец' : 'туда-обратно'}): ` +
+        `<b class="${noFuel ? 'bad' : ''}">${fmtAmount(fuelAmount)}</b> ${fuelName} ` +
         `(на складе ${fmtAmount(fuelStock)})<br>` +
         `трюмы: <b class="${overload ? 'bad' : ''}">${fmt(cargo)}</b> из ${fmt(map.plan.capacity)}`;
     } catch (error) {
@@ -1904,11 +2014,72 @@
         : '';
       title.textContent = `${fleet.missionLabel}: ${direction}`;
       const meta = document.createElement('span');
-      meta.textContent = `${fleet.composition}${cargo} · прибытие через ${fmtTime(fleet.etaSeconds)}`;
+      // Строка груза содержит иконки-разметку, поэтому только innerHTML:
+      // через textContent теги вывалились бы в интерфейс текстом.
+      meta.innerHTML =
+        `${escapeHtml(fleet.composition)}${cargo} · прибытие через ${fmtTime(fleet.etaSeconds)}`;
       item.append(title, meta);
       el.fleetList.appendChild(item);
     }
   }
+
+  /* Шаг 1: набрать весь доступный флот или очистить состав. */
+  el.fleetAll.addEventListener('click', () => {
+    const base = activeBase();
+    if (!base) return;
+    for (const [type, refs] of Object.entries(fleetInputs)) {
+      refs.input.value = String(base.fleet[type] || 0);
+    }
+    syncMissionOptions();
+    schedulePlan();
+  });
+
+  el.fleetNone.addEventListener('click', () => {
+    for (const refs of Object.values(fleetInputs)) refs.input.value = '0';
+    syncMissionOptions();
+    schedulePlan();
+  });
+
+  /* Шаг 2: цель по координатам «система X:Y, орбита N». */
+  async function lookupCoords() {
+    const raw = el.coordInput.value.trim();
+    const parts = raw.split(/[^0-9-]+/).filter(Boolean);
+    const note = (text, bad) => {
+      el.coordNote.textContent = text;
+      el.coordNote.className = `coord-note${bad ? ' bad' : ''}`;
+    };
+
+    if (parts.length !== 3) {
+      note('Координаты задаются как X:Y:орбита — например 1:1:3', true);
+      return;
+    }
+
+    try {
+      const query = new URLSearchParams({ x: parts[0], y: parts[1], position: parts[2] });
+      const response = await fetch(`/api/planets/at?${query}`, { headers: authHeaders() });
+      const data = await response.json();
+      if (!response.ok) {
+        note(data.error || 'Планета не найдена', true);
+        return;
+      }
+
+      map.coordTarget = data;
+      note(`Цель: ${data.planetName} (${data.systemName})`, false);
+      syncMissionOptions();
+      renderDispatchTarget();
+      schedulePlan();
+    } catch {
+      note('Не удалось проверить координаты', true);
+    }
+  }
+
+  el.coordGo.addEventListener('click', () => void lookupCoords());
+  el.coordInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      void lookupCoords();
+    }
+  });
 
   el.sendFleetButton.addEventListener('click', () => void sendFleet());
   el.mission.addEventListener('change', () => {
