@@ -1055,6 +1055,22 @@
 
   /* ---------- Карта системы ---------- */
 
+  /**
+   * Имя файла биома. Маппинг, а не прямое приведение типа к нижнему регистру:
+   * арт назван по биому («terran», «lava»), а перечисление — по свойству
+   * («OCEANIC», «VOLCANIC»). Совпадать они не обязаны, и подгонять одно под
+   * другое переименованием файлов означало бы ломать присланные ассеты.
+   */
+  const PLANET_ART = {
+    ROCKY: 'rocky',
+    OCEANIC: 'terran',
+    DESERT: 'desert',
+    ICE: 'ice',
+    GAS_GIANT: 'gas_giant',
+    VOLCANIC: 'lava',
+    TOXIC: 'toxic',
+  };
+
   const PLANET_COLORS = {
     ROCKY: '#b08968', OCEANIC: '#4a90d9', DESERT: '#d9a441', ICE: '#8fd0e8',
     GAS_GIANT: '#c08bd9', VOLCANIC: '#d9614a', TOXIC: '#8fbf5a',
@@ -1078,7 +1094,7 @@
     lastOrbit: 300,
     /** Хаб висит на своем кольце между короной звезды и первой орбитой. */
     hubOrbit: 118,
-    deepOrbit: 350,
+    deepOrbit: 334,
   };
 
   const map = { data: null, selectedId: null, selectedKind: 'PLANET', hoverId: null, plan: null, planTimer: null };
@@ -1127,6 +1143,11 @@
    * Хаб и глубокий космос стоят в фиксированных секторах: их положение не зависит
    * от состава системы, поэтому игрок всегда знает, где их искать.
    */
+  /** Насколько свечение выходит за логический радиус тела. */
+  const STAR_SPREAD = 1.9;
+  const DEEP_SPACE_RADIUS = 24;
+  const DEEP_SPACE_SPREAD = 2.4;
+
   const HUB_ANGLE = (-145 * Math.PI) / 180;
   const DEEP_SPACE_ANGLE = (52 * Math.PI) / 180;
 
@@ -1154,31 +1175,51 @@
   }
 
   /**
-   * Круглое тело с картинкой.
+   * Тело на карте: цветной круг-заглушка плюс картинка поверх.
    *
-   * Цветной круг рисуется всегда и работает заглушкой, картинка ложится поверх
-   * с круглой обрезкой. Сломанную ссылку обязательно снимаем: Chrome рисует
-   * на месте не загрузившегося <image> собственную иконку «битой картинки»,
-   * и она перекрывает круг — рассчитывать, что фон просто останется виден, нельзя.
+   * Рендер раздвоен, потому что арт двух разных сортов.
+   *
+   * `solid` — планета: непрозрачный шар на черном квадрате. Ему нужна круглая
+   * обрезка, которая просто срезает углы фона, и никакого смешивания: под
+   * `screen` планета стала бы полупрозрачной и потеряла объем.
+   *
+   * `glow` — звезда и туманность: мягкое свечение, у которого нет края. Жесткий
+   * круг рубил бы корону и рваные края туманности, поэтому обрезки нет вовсе,
+   * а черный фон убирается смешиванием `screen`: черное в нем дает ноль вклада
+   * и растворяется, светлое остается. Картинку такому телу даем крупнее его
+   * логического радиуса — свечению нужно место, чтобы разойтись.
+   *
+   * Сломанную ссылку обязательно снимаем: Chrome рисует на месте не
+   * загрузившегося <image> собственную иконку «битой картинки», и она
+   * перекрывает круг — рассчитывать, что фон просто останется виден, нельзя.
    */
-  function celestialBody(group, cx, cy, radius, fill, opacity, src, clipId) {
+  function celestialBody(group, cx, cy, radius, options) {
+    const { fill, opacity = 1, src, clipId, kind = 'solid', spread = 1 } = options;
+
     group.appendChild(svgEl('circle', {
-      class: 'body', cx, cy, r: radius, fill, opacity,
+      class: `body${kind === 'glow' ? ' glow-body' : ''}`, cx, cy, r: radius, fill, opacity,
     }));
     if (!src) return;
 
-    const clip = svgEl('clipPath', { id: clipId });
-    clip.appendChild(svgEl('circle', { cx, cy, r: radius }));
-    group.appendChild(clip);
+    const glow = kind === 'glow';
+    const half = radius * (glow ? spread : 1);
 
     const image = svgEl('image', {
-      x: cx - radius,
-      y: cy - radius,
-      width: radius * 2,
-      height: radius * 2,
+      class: glow ? 'body-art glow' : 'body-art',
+      x: cx - half,
+      y: cy - half,
+      width: half * 2,
+      height: half * 2,
       preserveAspectRatio: 'xMidYMid slice',
-      'clip-path': `url(#${clipId})`,
     });
+
+    if (!glow) {
+      const clip = svgEl('clipPath', { id: clipId });
+      clip.appendChild(svgEl('circle', { cx, cy, r: radius }));
+      group.appendChild(clip);
+      image.setAttribute('clip-path', `url(#${clipId})`);
+    }
+
     image.addEventListener('error', () => image.remove());
     group.appendChild(image);
     // href ставим после подписки, чтобы не потерять событие ошибки.
@@ -1223,15 +1264,15 @@
         }));
       }
 
-      celestialBody(
-        group, x, y, radius,
-        planet.visibility === 'UNKNOWN' ? '#3a4360' : (PLANET_COLORS[planet.type] || '#7f8db5'),
-        planet.visibility === 'UNKNOWN' ? 0.55 : 1,
-        // Картинка привязана к типу планеты, а не к номеру орбиты: ледяной мир
+      celestialBody(group, x, y, radius, {
+        kind: 'solid',
+        fill: planet.visibility === 'UNKNOWN' ? '#3a4360' : (PLANET_COLORS[planet.type] || '#7f8db5'),
+        opacity: planet.visibility === 'UNKNOWN' ? 0.55 : 1,
+        // Картинка привязана к биому планеты, а не к номеру орбиты: ледяной мир
         // должен выглядеть ледяным в любой системе.
-        `/assets/planets/${planet.type.toLowerCase()}.webp`,
-        `clip-planet-${planet.planetId}`,
-      );
+        src: `/assets/planets/${PLANET_ART[planet.type] || planet.type.toLowerCase()}.webp`,
+        clipId: `clip-planet-${planet.planetId}`,
+      });
 
       if (planet.isOwn) {
         group.appendChild(svgEl('circle', {
@@ -1281,22 +1322,24 @@
       class: hole ? 'hole-core' : 'star-core',
       cx: MAP.center, cy: MAP.center, r: MAP.starRadius + 22,
     }));
-    celestialBody(
-      group, MAP.center, MAP.center, MAP.starRadius,
-      hole ? '#120b1f' : '#ffb347', 1,
-      `/assets/planets/${hole ? 'black_hole' : 'star'}.webp`,
-      'clip-star',
-    );
-
-    const label = svgEl('text', {
-      x: MAP.center, y: MAP.center + MAP.starRadius + 26, class: 'planet-label',
+    celestialBody(group, MAP.center, MAP.center, MAP.starRadius, {
+      kind: 'glow',
+      fill: hole ? '#120b1f' : '#ffb347',
+      src: `/assets/planets/${hole ? 'black_hole' : 'star'}.webp`,
+      spread: STAR_SPREAD,
     });
+
+    // Свечение крупнее логического радиуса, поэтому подпись отодвигаем за его
+    // разлет — иначе название системы тонет в короне.
+    const captionY = MAP.center + MAP.starRadius * STAR_SPREAD + 18;
+
+    const label = svgEl('text', { x: MAP.center, y: captionY, class: 'planet-label' });
     label.textContent = `${map.data.systemName} · ${map.data.starClass}`;
     group.appendChild(label);
 
     if (hole) {
       const anomaly = svgEl('text', {
-        x: MAP.center, y: MAP.center + MAP.starRadius + 42, class: 'planet-label',
+        x: MAP.center, y: captionY + 16, class: 'planet-label',
       });
       anomaly.textContent = 'черная дыра · искажение времени';
       group.appendChild(anomaly);
@@ -1314,14 +1357,19 @@
       class: `planet-dot${map.selectedKind === 'DEEP_SPACE' ? ' selected' : ''}`,
     });
     group.appendChild(svgEl('circle', {
-      class: 'body', cx: x, cy: y, r: 24,
+      class: 'body', cx: x, cy: y, r: DEEP_SPACE_RADIUS,
       fill: 'rgba(157, 123, 255, 0.10)', stroke: 'rgba(157, 123, 255, 0.55)',
       'stroke-width': 1.5, 'stroke-dasharray': '4 4',
     }));
-    celestialBody(group, x, y, 24, 'transparent', 1, '/assets/planets/deep_space.webp', 'clip-deep-space');
+    celestialBody(group, x, y, DEEP_SPACE_RADIUS, {
+      kind: 'glow',
+      fill: 'transparent',
+      src: '/assets/planets/deep_space.webp',
+      spread: DEEP_SPACE_SPREAD,
+    });
 
-    // Подписи наружу по радиусу, как у планет и хаба.
-    const caption = polar(MAP.deepOrbit + 40, DEEP_SPACE_ANGLE);
+    // Подписи наружу по радиусу, как у планет и хаба, но за разлетом туманности.
+    const caption = polar(MAP.deepOrbit + DEEP_SPACE_RADIUS * DEEP_SPACE_SPREAD + 16, DEEP_SPACE_ANGLE);
 
     const label = svgEl('text', { x: caption.x, y: caption.y, class: 'planet-label' });
     label.textContent = 'Глубокий космос';

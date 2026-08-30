@@ -449,6 +449,25 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .map-canvas svg#system-map { max-width: 100%; }
 .map-canvas svg#system-map image { pointer-events: none; }
 
+/*
+ * Два режима отрисовки тел на карте.
+ *
+ * Планета — непрозрачный шар на черном квадрате: обрезается кругом (clip-path
+ * ставится в разметке) и не смешивается с фоном, иначе потеряет объем.
+ *
+ * Звезда и туманность — свечение без края. Их не обрезаем вовсе, а черный фон
+ * убираем режимом screen: черное дает нулевой вклад и растворяется, светлое
+ * остается. Отдельный isolation тут не нужен — смешивание идет с фоном карты,
+ * что и требуется.
+ */
+.body-art.glow {
+  mix-blend-mode: screen;
+  pointer-events: none;
+}
+
+/* Под свечением подложка не нужна: сквозь screen она читалась бы грязным пятном. */
+.glow-body { opacity: 0.35; }
+
 .tooltip {
   position: absolute;
   min-width: 190px;

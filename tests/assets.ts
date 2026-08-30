@@ -27,20 +27,23 @@ function check(name: string, passed: boolean, detail?: string): void {
 
 const ROOT = 'public/assets';
 /**
- * Тела на карте: типы планет плюс центр системы и точка глубокого космоса.
- * Картинка привязана к типу, а не к орбите — ледяной мир должен выглядеть
- * ледяным в любой системе.
+ * Тела на карте: биомы планет плюс центр системы и точка глубокого космоса.
+ *
+ * Имена биомов не совпадают с перечислением `PlanetType`: арт назван по биому
+ * («terran», «lava»), а тип — по свойству («OCEANIC», «VOLCANIC»). Связывает их
+ * маппинг `PLANET_ART` в клиенте, поэтому список здесь дублируется намеренно —
+ * тест сверяет обе стороны и ловит расхождение.
  */
 const PLANET_SLOTS = [
   'star',
   'black_hole',
   'deep_space',
   'rocky',
-  'oceanic',
+  'terran',
   'desert',
   'ice',
   'gas_giant',
-  'volcanic',
+  'lava',
   'toxic',
 ];
 
@@ -147,16 +150,37 @@ check(
   client.includes("'black_hole' : 'star'"),
 );
 check(
-  'картинка планеты берется по ее типу, а не по номеру орбиты',
-  client.includes('planet.type.toLowerCase()'),
+  'картинка планеты берется по биому, а не по номеру орбиты',
+  client.includes('PLANET_ART[planet.type]'),
+);
+
+// Маппинг в клиенте и список слотов должны сходиться: иначе биом молча
+// подменяется заглушкой, и заметить это можно только глазами.
+const mapped = [...client.matchAll(/^\s{4}(?:ROCKY|OCEANIC|DESERT|ICE|GAS_GIANT|VOLCANIC|TOXIC): '([a-z_]+)',/gm)]
+  .map((match) => match[1] as string);
+check(
+  'все биомы из маппинга есть в списке ожидаемых файлов',
+  mapped.length === 7 && mapped.every((name) => PLANET_SLOTS.includes(name)),
+  mapped.join(', '),
+);
+check(
+  'звезда и туманность не обрезаются кругом и смешиваются с фоном',
+  client.includes("kind: 'glow'") && styles.includes('mix-blend-mode: screen'),
+);
+check(
+  'планеты обрезаются кругом и не смешиваются',
+  /if \(!glow\) \{[\s\S]{0,220}clip-path/.test(client),
 );
 check(
   'сломанная картинка тела снимается, иначе браузер рисует свою иконку поверх круга',
   /addEventListener\('error', \(\) => image\.remove\(\)\)/.test(client),
 );
+// Круг-заглушка должен появляться до раннего выхода по отсутствующему src,
+// иначе тело без картинки не нарисуется вовсе.
+const bodyFn = client.slice(client.indexOf('function celestialBody('));
 check(
-  'круг-заглушка рисуется всегда, до картинки',
-  /celestialBody[\s\S]{0,400}class: 'body'/.test(client),
+  'круг-заглушка рисуется до проверки на отсутствующую картинку',
+  bodyFn.indexOf("class: `body") < bodyFn.indexOf('if (!src) return;'),
 );
 check(
   'холст карты квадратный',
