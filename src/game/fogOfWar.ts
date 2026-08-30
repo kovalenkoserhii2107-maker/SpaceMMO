@@ -49,14 +49,68 @@ export function normalizeDefenses(source: Partial<DefenseCounts> | null | undefi
   return defenses;
 }
 
-function normalizeRichness(source: Partial<ScanPayload['richness']> | null | undefined) {
-  return {
-    ore: source?.ore ?? 0,
-    polymers: source?.polymers ?? 0,
-    plasma: source?.plasma ?? 0,
-    energy: source?.energy ?? 0,
-    antimatter: source?.antimatter ?? 0,
+/*
+ * Богатство из снимка.
+ *
+ * Возвращаем null, когда в снимке нет ни одного пригодного числа: раньше такой
+ * снимок превращался в «×0» по всем ресурсам, а это не «неизвестно», а «добывать
+ * нечего» — прямая дезинформация. Пустого богатства у планет не бывает,
+ * поэтому все нули означают именно потерянные данные.
+ */
+function normalizeRichness(
+  source: Partial<ScanPayload['richness']> | null | undefined,
+): ScanPayload['richness'] | null {
+  if (!source) return null;
+
+  const richness = {
+    ore: safeFactor(source.ore),
+    polymers: safeFactor(source.polymers),
+    plasma: safeFactor(source.plasma),
+    energy: safeFactor(source.energy),
+    antimatter: safeFactor(source.antimatter),
   };
+  /*
+   * Смотрим только на добычные коэффициенты. В снимках прошлой номенклатуры
+   * уцелела одна `energy` — по ней снимок выглядел бы годным, а четыре главные
+   * цифры показывались бы как «×0». Нулевого богатства у планет не бывает,
+   * поэтому нули здесь означают потерянные данные, а не бедную планету.
+   */
+  const known = [richness.ore, richness.polymers, richness.plasma, richness.antimatter].some(
+    (value) => value > 0,
+  );
+  return known ? richness : null;
+}
+
+/**
+ * Склад из снимка.
+ *
+ * Единственное поле, которое раньше уезжало к клиенту как есть. Снимок переживает
+ * переименования ресурсов, и в старом лежат ключи прошлой номенклатуры — клиент
+ * получал `undefined` и показывал «не число» вместо цифры склада.
+ */
+function normalizeStock(
+  source: Partial<ScanPayload['resources']> | null | undefined,
+): ScanPayload['resources'] | null {
+  if (!source) return null;
+
+  const stock = {
+    ore: safeAmount(source.ore),
+    polymers: safeAmount(source.polymers),
+    plasma: safeAmount(source.plasma),
+    antimatter: safeAmount(source.antimatter),
+  };
+  const known = [source.ore, source.polymers, source.plasma, source.antimatter].some((value) =>
+    Number.isFinite(value),
+  );
+  return known ? stock : null;
+}
+
+function safeFactor(value: number | undefined): number {
+  return Number.isFinite(value) ? Math.max(0, value as number) : 0;
+}
+
+function safeAmount(value: number | undefined): number {
+  return Number.isFinite(value) ? Math.max(0, value as number) : 0;
 }
 
 function safeCount(value: number | undefined): number {
@@ -178,7 +232,7 @@ export function foreignPlanetView(
     isOwn: false,
     richness: normalizeRichness(scan.data.richness),
     buildings: scan.data.buildings,
-    resources: outdated ? null : scan.data.resources,
+    resources: outdated ? null : normalizeStock(scan.data.resources),
     fleet: outdated ? null : normalizeShips(scan.data.fleet),
     defenses: outdated || !scan.data.defenses ? null : normalizeDefenses(scan.data.defenses),
     scanAgeSeconds: ageSeconds,

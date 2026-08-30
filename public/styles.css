@@ -435,8 +435,21 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .planet-dot { cursor: pointer; transition: filter 0.15s ease; }
 .planet-dot:hover { filter: brightness(1.35); }
 .planet-dot.selected circle.body { stroke: var(--accent); stroke-width: 2.5; }
-.planet-label { font-size: 12px; fill: var(--muted); text-anchor: middle; }
+.planet-label { font-size: 11px; fill: var(--muted); text-anchor: middle; }
+/* Название планеты крупнее статуса под ним: сначала читается имя. */
+.planet-label.name { font-size: 12.5px; fill: var(--text); font-weight: 600; }
 .planet-label.own { fill: var(--accent); }
+.planet-label.hub-label { fill: var(--credits); }
+
+/*
+ * Маркер колонии — точка под подписью вместо кольца вокруг планеты.
+ * Кольцо спорило с артом и занимало место между орбитами.
+ */
+.colony-dot { fill: var(--err); }
+.colony-dot.own { fill: var(--ok); filter: drop-shadow(0 0 4px var(--ok)); }
+
+/* Прозрачная площадка под свечением: у туманности нет края, ловить клик нечем. */
+.hit-area { fill: transparent; }
 .fleet-line { stroke: rgba(157, 123, 255, 0.5); stroke-width: 1.5; stroke-dasharray: 4 4; }
 .fleet-marker { fill: var(--accent-2); }
 .star-core { fill: url(#starGlow); }
@@ -468,21 +481,121 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 /* Под свечением подложка не нужна: сквозь screen она читалась бы грязным пятном. */
 .glow-body { opacity: 0.35; }
 
+/*
+ * Тултип карты. Сам элемент — только позиционирование и линия HUD;
+ * панель рисует .tip-body, потому что линия должна успеть протянуться
+ * раньше, чем появится прямоугольник.
+ */
 .tooltip {
   position: absolute;
-  min-width: 190px;
-  max-width: 260px;
+  width: max-content;
+  max-width: 340px;
+  pointer-events: none;
+  z-index: 5;
+}
+.tooltip .tip-body {
+  display: grid;
+  gap: 5px;
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: rgba(6, 10, 22, 0.96);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
   font-size: 12px;
-  line-height: 1.5;
-  pointer-events: none;
-  z-index: 5;
+  line-height: 1.45;
 }
 .tooltip b { color: var(--accent); }
 .tooltip .unknown { color: var(--warn); }
+
+/* Линия от тела к панели: тянется первой, панель приходит на ее конец. */
+.tooltip.anchored.playing::before {
+  content: '';
+  position: absolute;
+  top: 30px;
+  left: -34px;
+  height: 1px;
+  width: 0;
+  background: linear-gradient(90deg, rgba(77, 210, 255, 0), var(--accent));
+  box-shadow: 0 0 6px rgba(77, 210, 255, 0.8);
+  animation: tip-line 0.16s ease-out forwards;
+}
+.tooltip.anchored.flip.playing::before {
+  left: auto;
+  right: -34px;
+  background: linear-gradient(270deg, rgba(77, 210, 255, 0), var(--accent));
+}
+.tooltip.anchored.playing .tip-body { animation: tip-in 0.26s ease-out 0.16s both; }
+.tooltip.anchored.flip.playing .tip-body { animation-name: tip-in-flip; }
+
+@keyframes tip-line { from { width: 0; } to { width: 34px; } }
+@keyframes tip-in {
+  from { opacity: 0; transform: translateX(-8px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes tip-in-flip {
+  from { opacity: 0; transform: translateX(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Тем, кто просил не анимировать, показываем панель сразу. */
+@media (prefers-reduced-motion: reduce) {
+  .tooltip.anchored.playing::before { animation: none; width: 34px; }
+  .tooltip.anchored.playing .tip-body { animation: none; }
+}
+
+/* Карточка планеты: шапка, принадлежность и сетка характеристик. */
+.pd-head { display: grid; gap: 1px; }
+.pd-head b { font-size: 13px; }
+.pd-head span { color: var(--muted); font-size: 11px; }
+
+.pd-owner { font-size: 12px; color: var(--muted); }
+.pd-owner.own { color: var(--ok); }
+.pd-owner.foe { color: var(--err); }
+.pd-owner b { color: inherit; }
+
+.pd-note { font-size: 11px; color: var(--muted); line-height: 1.5; }
+.pd-note.unknown { color: var(--warn); }
+.pd-note.debris { color: var(--accent-2); }
+
+.pd-section { display: grid; gap: 4px; }
+.pd-section h5 {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+/*
+ * Колонки подбираются автоматически, поэтому одна разметка годится и узкой
+ * панели справа, и широкому тултипу: в первой встанет две колонки, во втором три.
+ */
+.pd-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(62px, 1fr)); gap: 4px; }
+/*
+ * Ширина фиксирована: панель, подобранная по содержимому, получалась узкой,
+ * сетка сворачивалась в две колонки и росла вниз — ровно то, из-за чего
+ * тултип и перестал читаться.
+ */
+.tooltip .tip-body { width: 310px; }
+/* В тултипе интервалы плотнее, чем в панели: высота там дефицит. */
+.tooltip .tip-body { gap: 4px; }
+.tooltip .pd-section { gap: 2px; }
+.tooltip .pd-grid { gap: 3px; }
+.tooltip .pd-cell { padding: 2px 5px; }
+.tooltip .stale-note { color: var(--warn); }
+.tooltip .pd-grid { grid-template-columns: repeat(auto-fit, minmax(52px, 1fr)); }
+.pd-cell {
+  display: grid;
+  gap: 0;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+}
+.pd-cell.wide { grid-column: 1 / -1; }
+.pd-cell .k { font-size: 10px; color: var(--muted); }
+.pd-cell .v { font-size: 12px; color: var(--text); font-variant-numeric: tabular-nums; }
+.pd-cell .k .ico { width: 12px; height: 12px; vertical-align: -1px; }
 
 .map-side, .planet-info { font-size: 13px; }
 .map-side {
@@ -1178,3 +1291,12 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .coord-row button { flex: 0 0 auto; padding: 5px 10px; font-size: 12px; }
 .coord-note { font-size: 12px; color: var(--muted); }
 .coord-note.bad { color: var(--err); }
+
+/*
+ * На узком или сенсорном экране тултип не показываем.
+ * Наведения на тач-устройстве нет, а панель шириной с саму карту закрыла бы
+ * ее целиком — те же данные и так открываются тапом в карточке справа.
+ */
+@media (max-width: 720px), (hover: none) {
+  .tooltip { display: none; }
+}

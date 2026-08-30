@@ -1077,6 +1077,44 @@
     TOXIC: 'toxic',
   };
 
+  /*
+   * Видимый размер планеты по типу.
+   *
+   * Это не только украшение: газовый гигант дает больше всего ресурсов, скалистый
+   * огрызок — меньше всего, и по карте это должно читаться до всякой разведки.
+   * Множитель к базовому радиусу, а не абсолютный размер: геометрия карты
+   * подстраивается под число орбит, и жесткие пиксели ее сломали бы.
+   */
+  const PLANET_SCALE = {
+    GAS_GIANT: 1.45,
+    OCEANIC: 1.1,
+    VOLCANIC: 1.0,
+    ICE: 1.0,
+    DESERT: 0.95,
+    TOXIC: 0.85,
+    ROCKY: 0.75,
+  };
+
+  /*
+   * Насколько картинка крупнее круга обрезки — чтобы черный фон не давал каймы.
+   *
+   * Значения разные, потому что арт нарисован по-разному: у одних планет диск
+   * доходит до края кадра, у других вокруг него остается черное поле, и общий
+   * множитель либо оставил бы кайму, либо срезал планету. Числа сняты с самих
+   * файлов перебором: для каждого арта взято увеличение, при котором по краю
+   * круга остается меньше всего черного. Заменили арт — стоит перемерить.
+   */
+  const PLANET_ZOOM = {
+    terran: 1.2,
+    ice: 1.35,
+    lava: 1.1,
+    desert: 1.2,
+    rocky: 1.2,
+    gas_giant: 1.6,
+    toxic: 1.25,
+  };
+  const PLANET_ZOOM_DEFAULT = 1.15;
+
   const PLANET_COLORS = {
     ROCKY: '#b08968', OCEANIC: '#4a90d9', DESERT: '#d9a441', ICE: '#8fd0e8',
     GAS_GIANT: '#c08bd9', VOLCANIC: '#d9614a', TOXIC: '#8fbf5a',
@@ -1166,6 +1204,8 @@
   const DEEP_SPACE_SPREAD = 2.4;
 
   const HUB_ANGLE = (-145 * Math.PI) / 180;
+  /** Станция мельче планет: она висит в тесном кольце у самой звезды. */
+  const HUB_RADIUS = 20;
   const DEEP_SPACE_ANGLE = (52 * Math.PI) / 180;
 
   function hubPoint() {
@@ -1199,6 +1239,9 @@
    * `solid` — планета: непрозрачный шар на черном квадрате. Ему нужна круглая
    * обрезка, которая просто срезает углы фона, и никакого смешивания: под
    * `screen` планета стала бы полупрозрачной и потеряла объем.
+   * Диск на арте не всегда дотягивается до края кадра, и тогда между ним и
+   * линией обрезки остается черное кольцо. Поэтому картинка дается крупнее
+   * круга (`zoom`): лишнее срезается, а фон уходит за границу целиком.
    *
    * `glow` — звезда и туманность: мягкое свечение, у которого нет края. Жесткий
    * круг рубил бы корону и рваные края туманности, поэтому обрезки нет вовсе,
@@ -1211,7 +1254,7 @@
    * перекрывает круг — рассчитывать, что фон просто останется виден, нельзя.
    */
   function celestialBody(group, cx, cy, radius, options) {
-    const { fill, opacity = 1, src, clipId, kind = 'solid', spread = 1 } = options;
+    const { fill, opacity = 1, src, clipId, kind = 'solid', spread = 1, zoom = 1 } = options;
 
     group.appendChild(svgEl('circle', {
       class: `body${kind === 'glow' ? ' glow-body' : ''}`, cx, cy, r: radius, fill, opacity,
@@ -1219,7 +1262,7 @@
     if (!src) return;
 
     const glow = kind === 'glow';
-    const half = radius * (glow ? spread : 1);
+    const half = radius * (glow ? spread : zoom);
 
     const image = svgEl('image', {
       class: glow ? 'body-art glow' : 'body-art',
@@ -1282,7 +1325,9 @@
         class: `planet-dot${planet.planetId === map.selectedId ? ' selected' : ''}`,
       });
 
-      const radius = planet.visibility === 'UNKNOWN' ? 22 : 28;
+      // Размер зависит от типа, а не от разведанности: величина планеты видна
+      // в телескоп, для этого зонд не нужен. Туман войны гасит ее цветом.
+      const radius = Math.round(26 * (PLANET_SCALE[planet.type] || 1));
 
       // Пунктирное кольцо обломков — под телом планеты, чтобы не перекрывать его.
       if (planet.debris && planet.debris.ore + planet.debris.polymers > 0) {
@@ -1291,44 +1336,48 @@
         }));
       }
 
+      // Картинка привязана к биому планеты, а не к номеру орбиты: ледяной мир
+      // должен выглядеть ледяным в любой системе.
+      const art = PLANET_ART[planet.type] || planet.type.toLowerCase();
+
       celestialBody(group, x, y, radius, {
         kind: 'solid',
         fill: planet.visibility === 'UNKNOWN' ? '#3a4360' : (PLANET_COLORS[planet.type] || '#7f8db5'),
         opacity: planet.visibility === 'UNKNOWN' ? 0.55 : 1,
-        // Картинка привязана к биому планеты, а не к номеру орбиты: ледяной мир
-        // должен выглядеть ледяным в любой системе.
-        src: `/assets/planets/${PLANET_ART[planet.type] || planet.type.toLowerCase()}.webp`,
+        src: `/assets/planets/${art}.webp`,
         clipId: `clip-planet-${planet.planetId}`,
+        zoom: PLANET_ZOOM[art] ?? PLANET_ZOOM_DEFAULT,
       });
 
-      if (planet.isOwn) {
-        group.appendChild(svgEl('circle', {
-          cx: x, cy: y, r: radius + 7, fill: 'none', stroke: 'var(--accent)', 'stroke-width': 1.5,
-        }));
-      } else if (planet.colonized) {
-        group.appendChild(svgEl('circle', {
-          cx: x, cy: y, r: radius + 7, fill: 'none', stroke: 'var(--err)',
-          'stroke-width': 1.2, 'stroke-dasharray': '3 4',
-        }));
-      }
-
-      // Подписи уходят наружу вдоль радиуса: на круговой карте «вниз» у внутренних
-      // орбит упирается прямо в звезду, и текст ложился бы на нее.
-      const caption = polar(orbitRadius(planet.position) + radius + 18, orbitAngle(planet.position));
+      // Подпись строго под телом и по центру: арт остается чистым, а текст
+      // не наезжает на соседей. «Вниз» здесь безопасно — первая орбита (168)
+      // далеко от звезды (радиус 58), и подпись до нее не достает.
+      const labelY = y + radius + 17;
 
       const label = svgEl('text', {
-        x: caption.x, y: caption.y, class: `planet-label${planet.isOwn ? ' own' : ''}`,
+        x, y: labelY, class: `planet-label name${planet.isOwn ? ' own' : ''}`,
       });
       label.textContent = planet.name;
       group.appendChild(label);
 
-      const status = svgEl('text', { x: caption.x, y: caption.y + 16, class: 'planet-label' });
+      const status = svgEl('text', { x, y: labelY + 15, class: 'planet-label' });
       status.textContent = planet.visibility === 'UNKNOWN' ? 'нет данных' :
         planet.colonized ? (planet.isOwn ? 'ваша колония' : `колония: ${planet.owner}`) : 'необитаема';
       group.appendChild(status);
 
-      group.addEventListener('mouseenter', (event) => showTooltip(planet, event));
-      group.addEventListener('mousemove', (event) => positionTooltip(event));
+      /*
+       * Маркер принадлежности — точка под подписью, а не кольцо вокруг планеты.
+       * Кольцо спорило с самим артом и съедало место между орбитами; точка
+       * читается так же однозначно и ничего не перекрывает.
+       */
+      if (planet.colonized) {
+        group.appendChild(svgEl('circle', {
+          class: `colony-dot${planet.isOwn ? ' own' : ''}`,
+          cx: x, cy: labelY + 24, r: 3,
+        }));
+      }
+
+      group.addEventListener('mouseenter', () => showTooltip(planet, x, y, radius));
       group.addEventListener('mouseleave', hideTooltip);
       group.addEventListener('click', () => selectPlanet(planet.planetId));
       svg.appendChild(group);
@@ -1383,10 +1432,11 @@
     const group = svgEl('g', {
       class: `planet-dot${map.selectedKind === 'DEEP_SPACE' ? ' selected' : ''}`,
     });
+    // Пунктирного кольца нет намеренно: у туманности нет края, и рамка вокруг
+    // свечения выглядела чертежом поверх картинки. Кликабельную площадь дает
+    // прозрачный круг под ней.
     group.appendChild(svgEl('circle', {
-      class: 'body', cx: x, cy: y, r: DEEP_SPACE_RADIUS,
-      fill: 'rgba(157, 123, 255, 0.10)', stroke: 'rgba(157, 123, 255, 0.55)',
-      'stroke-width': 1.5, 'stroke-dasharray': '4 4',
+      class: 'hit-area', cx: x, cy: y, r: DEEP_SPACE_RADIUS * DEEP_SPACE_SPREAD * 0.8,
     }));
     celestialBody(group, x, y, DEEP_SPACE_RADIUS, {
       kind: 'glow',
@@ -1395,25 +1445,26 @@
       spread: DEEP_SPACE_SPREAD,
     });
 
-    // Подписи наружу по радиусу, как у планет и хаба, но за разлетом туманности.
-    const caption = polar(MAP.deepOrbit + DEEP_SPACE_RADIUS * DEEP_SPACE_SPREAD + 16, DEEP_SPACE_ANGLE);
+    // Подпись под туманностью, но ниже ее разлета: свечение уходит далеко за
+    // логический радиус, и текст вплотную к нему просто тонул бы в нем.
+    const labelY = y + DEEP_SPACE_RADIUS * DEEP_SPACE_SPREAD * 0.75 + 16;
 
-    const label = svgEl('text', { x: caption.x, y: caption.y, class: 'planet-label' });
+    const label = svgEl('text', { x, y: labelY, class: 'planet-label name' });
     label.textContent = 'Глубокий космос';
     group.appendChild(label);
 
-    const position = svgEl('text', { x: caption.x, y: caption.y + 15, class: 'planet-label' });
+    const position = svgEl('text', { x, y: labelY + 15, class: 'planet-label' });
     position.textContent = 'позиция 16';
     group.appendChild(position);
 
-    group.addEventListener('mouseenter', (event) => {
-      el.mapTooltip.innerHTML =
-        '<b>Глубокий космос</b><br>16-я позиция системы · точка экспедиций<br>' +
-        '<span class="unknown">Что там — неизвестно до прилета.</span>';
-      el.mapTooltip.hidden = false;
-      positionTooltip(event);
+    group.addEventListener('mouseenter', () => {
+      tipContent(
+        '<div class="pd-head"><b>Глубокий космос</b>' +
+        '<span>16-я позиция · точка экспедиций</span></div>' +
+        '<div class="pd-note unknown">Что там — неизвестно до прилета.</div>',
+      );
+      anchorTooltip(x, y, DEEP_SPACE_RADIUS);
     });
-    group.addEventListener('mousemove', (event) => positionTooltip(event));
     group.addEventListener('mouseleave', hideTooltip);
     group.addEventListener('click', () => selectDeepSpace());
     svg.appendChild(group);
@@ -1435,42 +1486,50 @@
     const group = svgEl('g', {
       class: `hub-node${map.selectedKind === 'HUB' && map.selectedId === hub.hubId ? ' selected' : ''}`,
     });
-    group.appendChild(svgEl('rect', {
-      x: x - 20, y: y - 14, width: 40, height: 28, rx: 7,
-      fill: '#2a3350', stroke: 'rgba(126, 231, 135, 0.65)', 'stroke-width': 1.5,
-    }));
-    group.appendChild(svgEl('line', {
-      x1: x - 30, y1: y, x2: x + 30, y2: y, stroke: 'rgba(126, 231, 135, 0.5)', 'stroke-width': 2,
-    }));
+    /*
+     * Станция — светящееся тело, как звезда и туманность: черный фон картинки
+     * растворяется режимом `screen`, обрезки нет. Под картинкой остается
+     * тусклый круг — он же заглушка, пока файла нет.
+     */
+    celestialBody(group, x, y, HUB_RADIUS, {
+      kind: 'glow',
+      fill: 'rgba(126, 231, 135, 0.14)',
+      src: '/assets/planets/hub.webp',
+      spread: 1.6,
+    });
 
-    // Подпись уходит наружу по радиусу: хаб висит близко к звезде, и текст
-    // «под ним» лег бы прямо на корону.
-    //
     // На карте оставлено только название: содержимое склада — длинная строка,
     // которая в тесном центре наезжала на сам хаб. Цифры и так есть в тултипе
     // и в панели справа, и там их можно показать с иконками, чего SVG-текст
     // не умеет в принципе.
-    const caption = polar(MAP.hubOrbit + 36, HUB_ANGLE);
-
-    const label = svgEl('text', { x: caption.x, y: caption.y, class: 'planet-label' });
+    const label = svgEl('text', {
+      x, y: y + HUB_RADIUS + 16, class: 'planet-label name hub-label',
+    });
     label.textContent = hub.name;
     group.appendChild(label);
 
-    group.addEventListener('mouseenter', (event) => showHubTooltip(hub, event));
-    group.addEventListener('mousemove', (event) => positionTooltip(event));
+    group.addEventListener('mouseenter', () => showHubTooltip(hub, x, y));
     group.addEventListener('mouseleave', hideTooltip);
     group.addEventListener('click', () => selectHub(hub));
     svg.appendChild(group);
   }
 
-  function showHubTooltip(hub, event) {
-    el.mapTooltip.innerHTML = hub.storage
-      ? `<b>${hub.name}</b><br>нейтральная торговая станция · орбита ${hub.position}<br>` +
-        `твой склад: ${icon('ore', 'sm')} ${fmt(hub.storage.ore)} · ${icon('polymers', 'sm')} ${fmt(hub.storage.polymers)}<br>` +
-        `занято ${fmt(hub.storage.ore + hub.storage.polymers)} из ${fmt(hub.storage.capacity)}`
-      : `<b>${hub.name}</b><br>нейтральная торговая станция`;
-    el.mapTooltip.hidden = false;
-    positionTooltip(event);
+  function showHubTooltip(hub, x, y) {
+    const head =
+      `<div class="pd-head"><b>${escapeHtml(hub.name)}</b>` +
+      `<span>нейтральная станция · орбита ${hub.position}</span></div>`;
+
+    tipContent(
+      hub.storage
+        ? head +
+          pdSection('твой склад', [
+            pdCell(icon('ore', 'sm'), fmt(hub.storage.ore)),
+            pdCell(icon('polymers', 'sm'), fmt(hub.storage.polymers)),
+            pdCell('занято', `${fmt(hub.storage.ore + hub.storage.polymers)} / ${fmt(hub.storage.capacity)}`, 'wide'),
+          ])
+        : head + '<div class="pd-note">склада на станции пока нет</div>',
+    );
+    anchorTooltip(x, y, HUB_RADIUS);
   }
 
   function selectHub(hub) {
@@ -1528,17 +1587,69 @@
     svg.appendChild(layer);
   }
 
-  function showTooltip(planet, event) {
-    map.hoverId = planet.planetId;
-    el.mapTooltip.innerHTML = planetDetailsHtml(planet, true);
-    el.mapTooltip.hidden = false;
-    positionTooltip(event);
+  /** Длина линии HUD от тела до панели, экранные пиксели. */
+  const TIP_LINE = 34;
+
+  function tipContent(html) {
+    el.mapTooltip.innerHTML = `<div class="tip-body">${html}</div>`;
   }
 
+  function showTooltip(planet, x, y, radius) {
+    map.hoverId = planet.planetId;
+    tipContent(planetDetailsHtml(planet, true));
+    anchorTooltip(x, y, radius);
+  }
+
+  /**
+   * Привязка тултипа к телу на карте системы.
+   *
+   * За курсором панель не следует намеренно: линия HUD должна выходить из самой
+   * планеты, а не из случайной точки под мышью — иначе эффект разваливается,
+   * стоит шевельнуть рукой. Координаты переводим матрицей самого SVG, поэтому
+   * привязка не зависит от того, как карта отмасштабирована под ширину экрана.
+   */
+  function anchorTooltip(svgX, svgY, svgRadius) {
+    const ctm = el.systemMap.getScreenCTM();
+    if (!ctm) return;
+
+    const canvas = el.mapCanvas.getBoundingClientRect();
+    const point = new DOMPoint(svgX, svgY).matrixTransform(ctm);
+    const x = point.x - canvas.left;
+    const y = point.y - canvas.top;
+    const radius = svgRadius * ctm.a;
+
+    const tip = el.mapTooltip;
+    tip.classList.add('anchored');
+    tip.classList.remove('flip');
+    tip.hidden = false;
+
+    // Размеры читаем уже показанной панели: у скрытой они нулевые.
+    let left = x + radius + TIP_LINE;
+    if (left + tip.offsetWidth > canvas.width - 8) {
+      left = x - radius - TIP_LINE - tip.offsetWidth;
+      tip.classList.add('flip');
+    }
+
+    const top = Math.min(
+      Math.max(8, y - 28),
+      Math.max(8, canvas.height - tip.offsetHeight - 8),
+    );
+    tip.style.left = `${Math.max(8, left)}px`;
+    tip.style.top = `${top}px`;
+
+    // Перезапуск анимации: без сброса класса повторное наведение на соседнее
+    // тело показало бы панель без линии.
+    tip.classList.remove('playing');
+    void tip.offsetWidth;
+    tip.classList.add('playing');
+  }
+
+  /** Тултип у курсора — для карты галактики, где привязывать не к чему. */
   function positionTooltip(event) {
     const rect = el.mapCanvas.getBoundingClientRect();
     const left = Math.min(Math.max(8, event.clientX - rect.left + 14), Math.max(8, rect.width - 268));
     const top = Math.min(Math.max(8, event.clientY - rect.top - 20), Math.max(8, rect.height - 150));
+    el.mapTooltip.classList.remove('anchored', 'flip', 'playing');
     el.mapTooltip.style.left = `${left}px`;
     el.mapTooltip.style.top = `${top}px`;
   }
@@ -1546,59 +1657,119 @@
   function hideTooltip() {
     map.hoverId = null;
     el.mapTooltip.hidden = true;
+    el.mapTooltip.classList.remove('playing');
   }
 
-  /** Туман войны: чужая неразведанная планета показывает только астрономию. */
+  /* ---------- Карточка планеты ---------- */
+
+  /** Ячейка сетки: подпись сверху, значение снизу. */
+  function pdCell(key, value, extra = '') {
+    return (
+      `<div class="pd-cell${extra ? ' ' + extra : ''}">` +
+      `<span class="k">${key}</span><span class="v">${value}</span></div>`
+    );
+  }
+
+  function pdSection(title, cells) {
+    if (!cells.length) return '';
+    return `<div class="pd-section"><h5>${title}</h5><div class="pd-grid">${cells.join('')}</div></div>`;
+  }
+
+  /**
+   * Карточка планеты для тултипа и боковой панели.
+   *
+   * Раньше это был длинный столбец строк: в тултипе он растягивался вниз на
+   * пол-карты и переставал читаться. Теперь цифры разложены по сетке — колонки
+   * подбирает CSS, поэтому одна и та же разметка works и в узкой панели справа,
+   * и в широком тултипе.
+   */
   function planetDetailsHtml(planet, short) {
-    const head = `<b>${planet.name}</b><br>орбита ${planet.position} · ${PLANET_TYPES[planet.type] || planet.type} · слотов ${planet.size}`;
+    const type = PLANET_TYPES[planet.type] || planet.type;
+    const head =
+      `<div class="pd-head"><b>${escapeHtml(planet.name)}</b>` +
+      `<span>орбита ${planet.position} · ${escapeHtml(type)} · слотов ${planet.size}</span></div>`;
 
     // Обломки светятся на радарах: их видно и по неразведанной планете,
     // поэтому строка идет до проверки на туман войны.
     const debris = debrisHtml(planet);
 
     if (planet.visibility === 'UNKNOWN') {
-      return `${head}${debris}<br><span class="unknown">Данных нет. Отправь зонд для сканирования.</span>`;
+      return (
+        head + debris +
+        '<div class="pd-note unknown">Данных нет. Отправь зонд для сканирования.</div>'
+      );
     }
 
+    const owner = planet.colonized
+      ? planet.isOwn
+        ? '<div class="pd-owner own">ваша колония</div>'
+        : `<div class="pd-owner foe">владелец: <b>${escapeHtml(planet.owner || 'неизвестен')}</b></div>`
+      : '<div class="pd-owner">колонии нет</div>';
+
     const rich = planet.richness
-      ? `<br>богатство: ${icon('ore', 'sm')} ×${planet.richness.ore} · ` +
-        `${icon('polymers', 'sm')} ×${planet.richness.polymers} · ${icon('plasma', 'sm')} ×${planet.richness.plasma} · ` +
-        `${icon('antimatter', 'sm')} ×${planet.richness.antimatter}`
+      ? pdSection('богатство', [
+          pdCell(icon('ore', 'sm'), `×${planet.richness.ore}`),
+          pdCell(icon('polymers', 'sm'), `×${planet.richness.polymers}`),
+          pdCell(icon('plasma', 'sm'), `×${planet.richness.plasma}`),
+          pdCell(icon('antimatter', 'sm'), `×${planet.richness.antimatter}`),
+        ])
       : '';
-    const owner = planet.colonized ? `<br>владелец: <b>${planet.owner || 'неизвестен'}</b>` : '<br>колонии нет';
-    const buildings = planet.buildings
-      ? `<br>шахты: ${planet.buildings.ORE_MINE}/${planet.buildings.POLYMER_PLANT}/${planet.buildings.PLASMA_REACTOR}` +
-        ` · лаб ${planet.buildings.SCIENCE_CENTER} · верфь ${planet.buildings.SHIPYARD}`
+
+    // В тултипе постройки не показываем: это самая статичная часть карточки,
+    // а высота панели при наведении — дефицит. Полный разбор ждет в панели справа.
+    const buildings = planet.buildings && !short
+      ? pdSection('постройки', [
+          pdCell('шахты', `${planet.buildings.ORE_MINE}/${planet.buildings.POLYMER_PLANT}/${planet.buildings.PLASMA_REACTOR}`),
+          pdCell('лаб', planet.buildings.SCIENCE_CENTER),
+          pdCell('верфь', planet.buildings.SHIPYARD),
+          pdCell('склад', planet.buildings.STORAGE),
+        ])
       : '';
+
     // Флот и склад меняются быстро: после суток сервер их уже не отдает,
     // и показывать нечего — вместо цифр честные «???».
     const unknown = '<span class="unknown-value">???</span>';
-    const resources = planet.colonized
-      ? planet.resources
-        ? `<br>склад: ${icon('ore', 'sm')} ${fmt(planet.resources.ore)} · ` +
-          `${icon('polymers', 'sm')} ${fmt(planet.resources.polymers)} · ${icon('plasma', 'sm')} ${fmt(planet.resources.plasma)}`
-        : planet.staleHidden
-          ? `<br>склад: ${unknown}`
-          : ''
-      : '';
-    const fleet = planet.colonized
-      ? planet.fleet
-        ? `<br>флот: зонды ${planet.fleet.PROBE} · транспорты ${planet.fleet.TRANSPORTER} · ` +
-          `истребители ${planet.fleet.LIGHT_FIGHTER} · крейсера ${planet.fleet.HEAVY_CRUISER} · ` +
-          `фрегаты ${planet.fleet.ION_FRIGATE}`
-        : planet.staleHidden
-          ? `<br>флот: ${unknown}`
-          : ''
-      : '';
-    const defenses = planet.defenses
-      ? `<br>оборона: ракеты ${planet.defenses.CANNON_TURRET} · лазеры ${planet.defenses.LASER_TURRET}`
-      : planet.colonized && planet.staleHidden
-        ? `<br>оборона: ${unknown}`
-        : '';
-    const age = planet.visibility === 'SCANNED' ? scanAgeHtml(planet) : '';
-    const hint = short ? '' : '<br>';
 
-    return head + debris + owner + rich + buildings + resources + fleet + defenses + age + hint;
+    /*
+     * Устаревший снимок прячет склад, флот и оборону разом. Раньше на это уходило
+     * три блока с одинаковым «???» — почти двести пикселей, повторяющих то,
+     * что и так написано строкой о возрасте разведки. Теперь строка одна.
+     */
+    const hidden = planet.colonized && planet.staleHidden;
+
+    const resources = planet.colonized && planet.resources
+      ? pdSection('склад', [
+          pdCell(icon('ore', 'sm'), fmt(planet.resources.ore)),
+          pdCell(icon('polymers', 'sm'), fmt(planet.resources.polymers)),
+          pdCell(icon('plasma', 'sm'), fmt(planet.resources.plasma)),
+        ])
+      : '';
+
+    const fleet = planet.colonized && planet.fleet
+      ? pdSection('флот', [
+          pdCell('зонды', planet.fleet.PROBE),
+          pdCell('трансп', planet.fleet.TRANSPORTER),
+          pdCell('истреб', planet.fleet.LIGHT_FIGHTER),
+          pdCell('крейс', planet.fleet.HEAVY_CRUISER),
+          pdCell('фрегат', planet.fleet.ION_FRIGATE),
+        ])
+      : '';
+
+    const defenses = planet.defenses
+      ? pdSection('оборона', [
+          pdCell('пушки', planet.defenses.CANNON_TURRET),
+          pdCell('лазеры', planet.defenses.LASER_TURRET),
+        ])
+      : '';
+
+    const stale = hidden
+      ? `<div class="pd-note stale-note">склад, флот и оборона скрыты: ${unknown}</div>`
+      : '';
+
+    const age = planet.visibility === 'SCANNED' ? `<div class="pd-note">${scanAgeHtml(planet)}</div>` : '';
+    const more = short && planet.buildings ? '<div class="pd-note">постройки — в панели справа</div>' : '';
+
+    return head + owner + debris + rich + buildings + resources + fleet + defenses + stale + age + more;
   }
 
   /** Поле обломков на орбите. Туман войны его не скрывает — гонка честная. */
@@ -1606,8 +1777,8 @@
     const debris = planet.debris;
     if (!debris || debris.ore + debris.polymers <= 0) return '';
     return (
-      `<br><span class="debris">обломки: ${icon('ore', 'sm')} ${fmt(debris.ore)} · ` +
-      `${icon('polymers', 'sm')} ${fmt(debris.polymers)}</span>`
+      `<div class="pd-note debris">обломки: ${icon('ore', 'sm')} ${fmt(debris.ore)} · ` +
+      `${icon('polymers', 'sm')} ${fmt(debris.polymers)}</div>`
     );
   }
 
@@ -1628,12 +1799,12 @@
     const badge = `<span class="freshness ${mark.css}">${age}</span>`;
 
     if (planet.freshness === 'OUTDATED') {
-      return `<br>${badge}<br><span class="scan-hidden">Данные устарели: флот и склад скрыты. Отправь зонд заново.</span>`;
+      return `${badge}<br><span class="scan-hidden">Данные устарели: флот и склад скрыты. Отправь зонд заново.</span>`;
     }
     if (planet.freshness === 'STALE') {
-      return `<br>${badge}<br><span class="scan-warning">Данные могут быть неточны.</span>`;
+      return `${badge}<br><span class="scan-warning">Данные могут быть неточны.</span>`;
     }
-    return `<br>${badge}`;
+    return badge;
   }
 
   function selectPlanet(planetId) {
@@ -2702,14 +2873,20 @@
 
   function showSystemTooltip(system, event) {
     const blackHole = system.anomaly === 'BLACK_HOLE';
-    el.mapTooltip.innerHTML =
-      `<b>${system.name}</b><br>координаты ${system.galaxyX}:${system.galaxyY} · планет ${system.planetCount}<br>` +
+    tipContent(
+      `<div class="pd-head"><b>${escapeHtml(system.name)}</b>` +
+      `<span>${system.galaxyX}:${system.galaxyY} · планет ${system.planetCount}</span></div>` +
       (blackHole
-        ? '<span class="unknown">Черная дыра: искажение времени</span><br>' +
-          'синтез антиматерии +50%, стройка и наука на 30% дольше<br>'
-        : `звезда класса ${system.starClass}<br>`) +
-      (system.hasOwnColony ? 'здесь ваша колония<br>' : system.colonized ? 'система заселена<br>' : 'колоний нет<br>') +
-      (system.scannedPlanets > 0 ? `разведано планет: ${system.scannedPlanets}` : 'разведданных нет');
+        ? '<div class="pd-note unknown">Черная дыра: искажение времени — синтез антиматерии +50%, ' +
+          'стройка и наука на 30% дольше</div>'
+        : `<div class="pd-note">звезда класса ${escapeHtml(system.starClass)}</div>`) +
+      (system.hasOwnColony
+        ? '<div class="pd-owner own">здесь ваша колония</div>'
+        : system.colonized
+          ? '<div class="pd-owner foe">система заселена</div>'
+          : '<div class="pd-owner">колоний нет</div>') +
+      `<div class="pd-note">${system.scannedPlanets > 0 ? `разведано планет: ${system.scannedPlanets}` : 'разведданных нет'}</div>`,
+    );
     el.mapTooltip.hidden = false;
     positionTooltip(event);
   }
