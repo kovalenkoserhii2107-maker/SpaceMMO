@@ -59,6 +59,8 @@ import {
 import { plunderAmount, resolveBattle, type SideForces } from './combat.js';
 import { checkArchitect, checkPirateBane } from '../services/achievementService.js';
 import { canAttack } from '../services/warService.js';
+import { countUnread, deliver, type OutgoingMessage } from '../services/mailService.js';
+import { buildBattleMail, buildExpeditionMail, buildSpyMail } from '../services/reportMail.js';
 import {
   buildSeconds,
   emptyLevels,
@@ -1050,6 +1052,23 @@ class GameLoop {
           : []),
         prisma.fleet.update({ where: { id: fleet.id }, data: { status: 'RETURNING' } }),
       ]);
+
+      // Снимок на карте стареет и через сутки прячет цифры, а письмо остается
+      // как зафиксированный момент — по нему видно, что было на планете тогда.
+      if (payload) {
+        const planet = await prisma.planet.findUnique({
+          where: { id: planetId },
+          select: { name: true, system: { select: { name: true } } },
+        });
+        await this.notify(
+          buildSpyMail({
+            commanderId: fleet.commanderId,
+            planetName: planet?.name ?? 'неизвестной планеты',
+            systemName: planet?.system.name ?? '—',
+            payload,
+          }),
+        );
+      }
       return;
     }
 
@@ -1144,6 +1163,18 @@ class GameLoop {
 
     await checkPirateBane(fleet.commanderId, result.outcome).catch((error: unknown) =>
       console.error('[achievements] проверка «Грозы пиратов» не удалась:', error),
+    );
+
+    const system = await prisma.solarSystem.findUnique({
+      where: { id: systemId },
+      select: { name: true },
+    });
+    await this.notify(
+      buildExpeditionMail({
+        commanderId: fleet.commanderId,
+        systemName: system?.name ?? 'неизвестной системы',
+        result,
+      }),
     );
   }
 
@@ -1314,11 +1345,62 @@ class GameLoop {
         },
       });
 
-      return { outcome, plunder, defenderBaseId };
+      return {
+        outcome,
+        plunder,
+        defenderBaseId,
+        attackerName: attackerProfile.nickname,
+        defenderName: defenderProfile.nickname,
+      };
     });
 
     // Приводим состояние защитника в памяти к тому, что записал бой.
     this.applyBattleToMemory(result.defenderBaseId, result.outcome, result.plunder);
+
+    // Обе стороны получают свой экземпляр отчета: один и тот же бой, но с их
+    // точки зрения — иначе защитник читал бы письмо про «свои» трофеи.
+    await this.notify(
+      buildBattleMail({
+        attackerId: fleet.commanderId,
+        defenderId,
+        attackerName: result.attackerName,
+        defenderName: result.defenderName,
+        planetName: planet.name,
+        outcome: result.outcome,
+        plunder: result.plunder,
+      }),
+    );
+  }
+
+  /** Обновить бейдж непрочитанного у конкретного командира. */
+  pushUnread(commanderId: string): void {
+    if (!this.io) return;
+    void countUnread(commanderId)
+      .then((unread) => this.io?.to(roomForCommander(commanderId)).emit('mail:unread', { unread }))
+      .catch((error: unknown) => console.error('[mail] не удалось обновить счетчик', error));
+  }
+
+  /**
+   * Доставка писем и обновление счетчика в шапке.
+   *
+   * Бейдж шлем отдельным событием, а не в общем снимке состояния: письма приходят
+   * и офлайн-игрокам, а `state:update` уходит только тем, кто держит сокет.
+   * Сбой доставки не должен ронять тик, поэтому ошибки логируются, а не всплывают.
+   */
+  private async notify(messages: OutgoingMessage[]): Promise<void> {
+    if (messages.length === 0) return;
+
+    try {
+      const recipients = await deliver(messages);
+      if (!this.io) return;
+
+      for (const commanderId of recipients) {
+        const unread = await countUnread(commanderId);
+        this.io.to(roomForCommander(commanderId)).emit('mail:unread', { unread });
+      }
+    } catch (error: unknown) {
+      console.error('[mail] не удалось доставить письма', error);
+    }
   }
 
   /** Синхронизация памяти защитника после боя: потери и грабеж уже в БД. */

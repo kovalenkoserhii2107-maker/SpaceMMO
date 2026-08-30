@@ -12,6 +12,7 @@ import { marketRouter } from './routes/market.js';
 import { warRouter } from './routes/war.js';
 import { syndicateRouter } from './routes/syndicate.js';
 import { commanderRouter } from './routes/commander.js';
+import { mailRouter } from './routes/mail.js';
 import { verifyToken } from './services/authService.js';
 import { ensureAchievements } from './services/achievementService.js';
 import { warnIfInsecureSecret } from './config/auth.js';
@@ -37,6 +38,7 @@ app.use('/api/market', marketRouter);
 app.use('/api/war', warRouter);
 app.use('/api/syndicates', syndicateRouter);
 app.use('/api/commander', commanderRouter);
+app.use('/api/mail', mailRouter);
 app.use('/api', gameRouter);
 
 const httpServer = createServer(app);

@@ -747,3 +747,115 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .scan-warning { color: var(--warn); font-size: 12px; }
 .scan-hidden { color: var(--err); font-size: 12px; }
 .unknown-value { color: var(--err); letter-spacing: 1px; }
+
+
+/* ---------- Центр связи ---------- */
+
+/*
+ * Кнопка почты в шапке. Бейдж висит на углу и не влияет на поток: иначе
+ * появление счетчика сдвигало бы соседние элементы шапки при каждом письме.
+ */
+.mail-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+}
+.mail-button:hover { border-color: var(--accent); color: var(--accent); }
+.mail-button .ico { width: 18px; height: 18px; vertical-align: 0; }
+
+.mail-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--err);
+  color: #1b0505;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+
+.mail-layout { display: grid; grid-template-columns: 1fr 320px; gap: 16px; align-items: start; }
+@media (max-width: 900px) { .mail-layout { grid-template-columns: 1fr; } }
+
+.mail-filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.mail-filter {
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.mail-filter.active { color: var(--accent); border-color: var(--accent); }
+.mail-filter .count {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--err);
+  color: #1b0505;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/*
+ * Письмо в списке. Селекторы идут через `.queue`, потому что общий стиль
+ * элемента очереди (`.queue .queue-item`) раскладывает содержимое в строку —
+ * письму нужны блоки друг под другом, и специфичности должны совпасть.
+ * Непрочитанное выделено полосой слева: видно, не вчитываясь в список.
+ */
+.queue .mail-item { display: grid; gap: 6px; border-left: 3px solid transparent; }
+.queue .mail-item.unread { border-left-color: var(--accent); background: var(--panel-2); }
+.queue .mail-item .mail-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: baseline;
+}
+.queue .mail-item .mail-subject { color: var(--text); font-weight: 600; }
+.queue .mail-item.unread .mail-subject { color: var(--accent); }
+.queue .mail-item .mail-meta { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.queue .mail-item .mail-from { font-size: 12px; color: var(--muted); }
+.queue .mail-item .mail-body { font-size: 13px; color: var(--text); white-space: pre-wrap; }
+.queue .mail-item .mail-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.queue .mail-item .mail-actions button { padding: 5px 10px; font-size: 12px; }
+
+.mail-kind {
+  display: inline-block;
+  padding: 1px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.mail-kind.battle_report { color: var(--err); border-color: rgba(248, 113, 113, 0.35); }
+.mail-kind.spy_report { color: var(--accent); border-color: rgba(77, 210, 255, 0.35); }
+.mail-kind.expedition { color: var(--accent-2); border-color: rgba(157, 123, 255, 0.35); }
+.mail-kind.syndicate { color: var(--ok); border-color: rgba(74, 222, 128, 0.35); }
+
+.mail-compose textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+.mail-compose .primary, .mail-compose .ghost { width: 100%; }

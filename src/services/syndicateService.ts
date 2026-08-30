@@ -6,6 +6,7 @@
  * (`requireRole`), чтобы нельзя было случайно открыть действие всем подряд.
  */
 import { prisma } from '../db/prisma.js';
+import { deliver } from './mailService.js';
 import { gameLoop } from '../game/gameLoop.js';
 import type { SyndicateRole } from '../generated/prisma/enums.js';
 
@@ -540,4 +541,47 @@ async function syncCredits(commanderId: string): Promise<void> {
     select: { credits: true },
   });
   if (commander) gameLoop.syncCredits(commanderId, commander.credits);
+}
+
+/**
+ * Рассылка по синдикату.
+ *
+ * Право на общую рассылку есть у лидера и офицеров — тот же круг, что разбирает
+ * заявки: это объявление, а не изменение состава. Автор получает копию своего
+ * письма, чтобы в ящике осталась история отправленного.
+ */
+export async function broadcast(
+  commanderId: string,
+  subject: string,
+  body: string,
+): Promise<{ ok: true; message: string; recipients: string[] } | { ok: false; error: string; status: number }> {
+  const access = await requireRole(commanderId, ['LEADER', 'OFFICER']);
+  if (!access.ok) return access;
+
+  const syndicate = await prisma.syndicate.findUnique({
+    where: { id: access.syndicateId },
+    select: { name: true, tag: true, members: { select: { id: true } } },
+  });
+  if (!syndicate) return { ok: false, error: 'Синдикат не найден', status: 404 };
+
+  const author = await prisma.commander.findUniqueOrThrow({
+    where: { id: commanderId },
+    select: { nickname: true },
+  });
+
+  const recipients = await deliver(
+    syndicate.members.map((member) => ({
+      recipientId: member.id,
+      senderId: commanderId,
+      type: 'SYNDICATE' as const,
+      subject: `[${syndicate.tag}] ${subject}`,
+      body: `${body}\n\n— ${author.nickname}, синдикат «${syndicate.name}»`,
+    })),
+  );
+
+  return {
+    ok: true,
+    message: `Рассылка ушла участникам: ${syndicate.members.length}`,
+    recipients,
+  };
 }

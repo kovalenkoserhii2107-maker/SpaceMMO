@@ -211,6 +211,10 @@
       <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8" opacity=".55"/>
       <path d="M9 16.5V9.8c0-1.8 1.2-3 2.9-3 1.5 0 2.6.9 2.9 2.3M7.6 11.6h8.8M7.6 14.1h8.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
     </symbol>
+    <symbol id="ico-mail" viewBox="0 0 24 24">
+      <rect x="3" y="5.5" width="18" height="13" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/>
+      <path d="m4 7.5 8 6 8-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
     <symbol id="ico-efficiency" viewBox="0 0 24 24">
       <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8" opacity=".45"/>
       <path d="M12 3.5a8.5 8.5 0 0 1 0 17Z" fill="currentColor"/>
@@ -303,6 +307,10 @@
         <div class="res" title="Криптогривна"><svg class="ico credits" aria-hidden="true"><use href="#ico-credits"/></svg><b id="res-credits">0</b><small>криптогривна</small></div>
       </div>
       <div class="user">
+        <button type="button" id="mail-button" class="mail-button" title="Центр связи">
+          <svg class="ico" role="img" aria-label="Почта"><title>Почта</title><use href="#ico-mail"/></svg>
+          <span id="mail-badge" class="mail-badge" hidden>0</span>
+        </button>
         <span id="commander-avatar" class="commander-avatar">✦</span>
         <span id="user-name">—</span>
         <span id="conn-status" class="status offline">офлайн</span>
@@ -342,6 +350,7 @@
           <button type="button" class="tab" data-tab="war">Экспедиции и войны</button>
           <button type="button" class="tab" data-tab="syndicate">Синдикат</button>
           <button type="button" class="tab" data-tab="simulator">Симулятор</button>
+          <button type="button" class="tab" data-tab="mail">Центр связи</button>
         </nav>
 
         <section data-panel="buildings">
@@ -509,6 +518,35 @@
           </div>
 
           <div id="sim-result" class="battles"></div>
+        </section>
+
+        <section data-panel="mail" hidden>
+          <div class="mail-layout">
+            <div>
+              <div class="mail-filters" id="mail-filters"></div>
+              <div class="sim-actions">
+                <button type="button" class="ghost" id="mail-read-all">Прочитать все</button>
+                <span class="storage-note" id="mail-summary"></span>
+              </div>
+              <div id="mail-list" class="queue"></div>
+            </div>
+
+            <aside class="hub-card mail-compose">
+              <h3 class="section-title">Новое письмо</h3>
+              <label class="field"><span>Позывной получателя</span><input id="mail-to" type="text" maxlength="24" placeholder="Адмирал"></label>
+              <label class="field"><span>Тема</span><input id="mail-subject" type="text" maxlength="120"></label>
+              <label class="field"><span>Текст</span><textarea id="mail-body" rows="5" maxlength="4000"></textarea></label>
+              <button type="button" class="primary" id="mail-send">Отправить</button>
+
+              <div id="mail-broadcast" hidden>
+                <h3 class="section-title">Рассылка по синдикату</h3>
+                <p class="storage-note">Письмо уйдет всему составу. Доступно лидеру и офицерам.</p>
+                <label class="field"><span>Тема</span><input id="broadcast-subject" type="text" maxlength="120"></label>
+                <label class="field"><span>Текст</span><textarea id="broadcast-body" rows="4" maxlength="4000"></textarea></label>
+                <button type="button" class="ghost" id="broadcast-send">Разослать составу</button>
+              </div>
+            </aside>
+          </div>
         </section>
 
         <!-- Управление шаблонами флотов -->

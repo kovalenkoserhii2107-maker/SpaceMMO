@@ -7,6 +7,7 @@ import type { FlightPlan } from '../game/fleets.js';
 import type { EspionageTarget } from '../services/mapService.js';
 import type { FleetTemplateView } from '../services/fleetTemplateService.js';
 import type { SimulationResult } from '../services/simulationService.js';
+import type { MailboxView } from '../services/mailService.js';
 import type { CommanderProfile } from '../services/commanderService.js';
 import type { MarketView } from '../services/marketService.js';
 import type { DiplomacyView } from '../services/warService.js';
@@ -69,3 +70,6 @@ export interface FleetTemplatesResponse {
 export interface EspionageResponse {
   targets: EspionageTarget[];
 }
+
+/** Почтовый ящик командира. */
+export type MailboxResponse = MailboxView;

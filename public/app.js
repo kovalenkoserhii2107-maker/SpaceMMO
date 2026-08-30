@@ -99,6 +99,20 @@
     cargoSilicateLabel: $('cargo-silicate-label'),
     cargoTritium: $('cargo-tritium'),
     cargoTritiumField: $('cargo-tritium-field'),
+    mailButton: $('mail-button'),
+    mailBadge: $('mail-badge'),
+    mailFilters: $('mail-filters'),
+    mailList: $('mail-list'),
+    mailSummary: $('mail-summary'),
+    mailReadAll: $('mail-read-all'),
+    mailTo: $('mail-to'),
+    mailSubject: $('mail-subject'),
+    mailBody: $('mail-body'),
+    mailSend: $('mail-send'),
+    mailBroadcast: $('mail-broadcast'),
+    broadcastSubject: $('broadcast-subject'),
+    broadcastBody: $('broadcast-body'),
+    broadcastSend: $('broadcast-send'),
     presetSelect: $('preset-select'),
     presetManage: $('preset-manage'),
     presetList: $('preset-list'),
@@ -409,6 +423,7 @@
     await loadMarket();
     await loadWar();
     await loadPresets();
+    await loadMail();
   }
 
   /**
@@ -494,6 +509,13 @@
     socket.on('disconnect', () => setConnection(false));
     socket.on('connect_error', () => setConnection(false));
     socket.on('state:update', (payload) => applyState(payload));
+
+    // Бейдж приходит пушем в момент доставки: опрашивать ящик ради счетчика
+    // незачем, а письмо может прийти в любой момент — хоть от боя, хоть от игрока.
+    socket.on('mail:unread', (payload) => {
+      setUnread(payload.unread);
+      if (state.activeTab === 'mail') void loadMail();
+    });
   }
 
   function setConnection(online) {
@@ -537,6 +559,11 @@
       void loadEspionageTargets();
     }
     if (name === 'presets') void loadPresets();
+    if (name === 'mail') {
+      void loadMail();
+      if (!syndicate.data) void loadSyndicate();
+      else syncBroadcastForm();
+    }
   }
 
   /* ---------- Рендер ---------- */
@@ -2371,6 +2398,17 @@
     if (!result.ok) return;
     syndicate.data = result.data;
     renderSyndicate();
+    syncBroadcastForm();
+  }
+
+  /**
+   * Форма рассылки видна только тем, кто вправе ее отправить.
+   * Право проверяет и сервер, но прятать заведомо запрещенную кнопку честнее,
+   * чем показывать ее и отвечать отказом.
+   */
+  function syncBroadcastForm() {
+    const mine = syndicate.data && syndicate.data.mine;
+    el.mailBroadcast.hidden = !mine || (mine.role !== 'LEADER' && mine.role !== 'OFFICER');
   }
 
   /** Отправка действия синдиката с последующим обновлением панели. */
@@ -3028,7 +3066,206 @@
     if (base) writeCounts(sim.attacker, base.fleet);
   });
 
+
+  /* ---------- Центр связи ---------- */
+
+  const MAIL_FILTERS = [
+    { key: '', label: 'Все' },
+    { key: 'PLAYER', label: 'Игроки' },
+    { key: 'SYNDICATE', label: 'Синдикат' },
+    { key: 'BATTLE_REPORT', label: 'Бои' },
+    { key: 'SPY_REPORT', label: 'Разведка' },
+    { key: 'EXPEDITION', label: 'Экспедиции' },
+  ];
+
+  const MAIL_KIND_LABELS = {
+    PLAYER: 'личное',
+    SYNDICATE: 'синдикат',
+    BATTLE_REPORT: 'бой',
+    SPY_REPORT: 'разведка',
+    EXPEDITION: 'экспедиция',
+  };
+
+  const mail = { filter: '', data: null, expanded: new Set() };
+
+  async function loadMail() {
+    const query = mail.filter ? `?type=${mail.filter}` : '';
+    try {
+      const response = await fetch(`/api/mail${query}`, { headers: authHeaders() });
+      if (!response.ok) return;
+      mail.data = await response.json();
+    } catch (error) {
+      return;
+    }
+    renderMailFilters();
+    renderMailList();
+    setUnread(mail.data.unread);
+  }
+
+  /**
+   * Бейдж непрочитанного. Значение приходит и от сокета, и после загрузки ящика,
+   * поэтому отрисовка вынесена отдельно от самого ящика.
+   */
+  function setUnread(unread) {
+    const value = Math.max(0, Number(unread) || 0);
+    el.mailBadge.hidden = value === 0;
+    el.mailBadge.textContent = value > 99 ? '99+' : String(value);
+  }
+
+  function renderMailFilters() {
+    const counts = (mail.data && mail.data.unreadByType) || {};
+    el.mailFilters.innerHTML = '';
+
+    for (const item of MAIL_FILTERS) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = `mail-filter${mail.filter === item.key ? ' active' : ''}`;
+      const unread = item.key ? counts[item.key] || 0 : mail.data ? mail.data.unread : 0;
+      button.innerHTML = unread > 0 ? `${item.label}<span class="count">${unread}</span>` : item.label;
+      button.addEventListener('click', () => {
+        mail.filter = item.key;
+        void loadMail();
+      });
+      el.mailFilters.appendChild(button);
+    }
+  }
+
+  function renderMailList() {
+    el.mailList.innerHTML = '';
+    const messages = (mail.data && mail.data.messages) || [];
+    el.mailSummary.textContent = mail.data
+      ? `Писем в ящике: ${mail.data.total}, непрочитанных: ${mail.data.unread}`
+      : '';
+
+    if (!messages.length) {
+      const empty = document.createElement('div');
+      empty.className = 'queue-item';
+      empty.textContent = 'Писем нет';
+      el.mailList.appendChild(empty);
+      return;
+    }
+
+    for (const message of messages) {
+      const item = document.createElement('div');
+      item.className = `queue-item mail-item${message.isRead ? '' : ' unread'}`;
+
+      const head = document.createElement('div');
+      head.className = 'mail-head';
+      head.innerHTML =
+        `<span class="mail-subject">${escapeHtml(message.subject)}</span>` +
+        `<span class="mail-meta">${new Date(message.createdAt).toLocaleString('ru-RU')}</span>`;
+
+      const from = document.createElement('div');
+      from.className = 'mail-from';
+      from.innerHTML =
+        `<span class="mail-kind ${message.type.toLowerCase()}">${MAIL_KIND_LABELS[message.type] || message.type}</span> ` +
+        `от ${message.from ? escapeHtml(message.from) : 'Центра связи'}`;
+
+      item.append(head, from);
+
+      // Тело письма разворачивается по клику: длинные боевые отчеты иначе
+      // превращают ящик в простыню, по которой ничего не найти.
+      const open = mail.expanded.has(message.id);
+      if (open) {
+        const body = document.createElement('div');
+        body.className = 'mail-body';
+        body.textContent = message.body;
+        item.appendChild(body);
+      }
+
+      const actions = document.createElement('div');
+      actions.className = 'mail-actions';
+
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'ghost';
+      toggle.textContent = open ? 'Свернуть' : 'Читать';
+      toggle.addEventListener('click', () => void openMessage(message));
+
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'ghost';
+      remove.textContent = 'Удалить';
+      remove.addEventListener('click', async () => {
+        if (await send(`/api/mail/${message.id}`, undefined, 'DELETE')) {
+          mail.expanded.delete(message.id);
+          await loadMail();
+        }
+      });
+
+      if (message.from) {
+        const reply = document.createElement('button');
+        reply.type = 'button';
+        reply.className = 'ghost';
+        reply.textContent = 'Ответить';
+        reply.addEventListener('click', () => {
+          el.mailTo.value = message.from;
+          el.mailSubject.value = message.subject.startsWith('Re: ')
+            ? message.subject
+            : `Re: ${message.subject}`;
+          el.mailBody.focus();
+        });
+        actions.appendChild(reply);
+      }
+
+      actions.append(toggle, remove);
+      item.appendChild(actions);
+      el.mailList.appendChild(item);
+    }
+  }
+
+  /** Открытие письма помечает его прочитанным — отдельной кнопки для этого не нужно. */
+  async function openMessage(message) {
+    if (mail.expanded.has(message.id)) {
+      mail.expanded.delete(message.id);
+      renderMailList();
+      return;
+    }
+
+    mail.expanded.add(message.id);
+    if (!message.isRead) {
+      await fetch(`/api/mail/${message.id}/read`, { method: 'POST', headers: authHeaders() }).catch(() => {});
+      await loadMail();
+      return;
+    }
+    renderMailList();
+  }
+
+  function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, (char) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+  }
+
+  el.mailButton.addEventListener('click', () => showPanel('mail'));
+  el.mailReadAll.addEventListener('click', async () => {
+    if (await send('/api/mail/read-all', {})) await loadMail();
+  });
+  el.mailSend.addEventListener('click', async () => {
+    const ok = await send('/api/mail', {
+      to: el.mailTo.value.trim(),
+      subject: el.mailSubject.value.trim(),
+      body: el.mailBody.value.trim(),
+    });
+    if (ok) {
+      el.mailSubject.value = '';
+      el.mailBody.value = '';
+      await loadMail();
+    }
+  });
+  el.broadcastSend.addEventListener('click', async () => {
+    const ok = await send('/api/syndicates/broadcast', {
+      subject: el.broadcastSubject.value.trim(),
+      body: el.broadcastBody.value.trim(),
+    });
+    if (ok) {
+      el.broadcastSubject.value = '';
+      el.broadcastBody.value = '';
+      await loadMail();
+    }
+  });
+
   /* ---------- Старт ---------- */
+
 
   el.logout.addEventListener('click', () => logout());
 

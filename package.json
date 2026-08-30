@@ -18,7 +18,8 @@
     "test:stand": "tsx src/scripts/testStand.ts",
     "test:cleanup": "tsx src/scripts/cleanupTestAccounts.ts",
     "test:storage": "tsx tests/storage.ts",
-    "test:commander": "tsx tests/commander.ts"
+    "test:commander": "tsx tests/commander.ts",
+    "test:mail": "tsx tests/mail.ts"
   },
   "keywords": [],
   "author": "",

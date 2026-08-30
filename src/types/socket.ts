@@ -244,6 +244,8 @@ export interface StateUpdatePayload {
 export interface ServerToClientEvents {
   'session:ready': (payload: { commanderId: string; nickname: string }) => void;
   'state:update': (payload: StateUpdatePayload) => void;
+  /** Счетчик непрочитанных писем: приходит в момент доставки, а не по опросу. */
+  'mail:unread': (payload: { unread: number }) => void;
 }
 
 /**

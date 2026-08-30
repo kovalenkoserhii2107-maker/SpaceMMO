@@ -215,6 +215,44 @@ check(
   JSON.stringify(officerKicksLeaderTry.data),
 );
 
+/* ---------- Рассылка по синдикату ---------- */
+
+{
+  const memberBroadcast = await api('POST', '/api/syndicates/broadcast',
+    { subject: 'Самоуправство', body: 'Всем срочно' }, member.token);
+  check('рядовой участник не может делать рассылку', memberBroadcast.status === 403,
+    JSON.stringify(memberBroadcast.data));
+
+  const emptySubject = await api('POST', '/api/syndicates/broadcast',
+    { subject: '  ', body: 'текст' }, leader.token);
+  check('рассылка без темы отклонена', emptySubject.status === 400);
+
+  const sent = await api('POST', '/api/syndicates/broadcast',
+    { subject: 'Общий сбор', body: 'Собираемся у хаба в 20:00.' }, leader.token);
+  check('лидер разослал письмо составу', sent.status === 200, JSON.stringify(sent.data));
+
+  // Рассылка уходит всем участникам, включая самого автора: в ящике должна
+  // остаться история отправленного.
+  const boxes = await Promise.all(
+    [leader.token, member.token, officer.token].map((token) =>
+      api('GET', '/api/mail?type=SYNDICATE', undefined, token)),
+  );
+  check('письмо дошло каждому участнику',
+    boxes.every((box) => (box.data.messages || []).length > 0),
+    boxes.map((b) => (b.data.messages || []).length).join('/'));
+  check('в теме рассылки стоит тег синдиката',
+    boxes[0].data.messages[0].subject.includes('[') && boxes[0].data.messages[0].subject.includes('Общий сбор'),
+    boxes[0].data.messages[0].subject);
+  check('подпись автора добавлена к тексту',
+    boxes[1].data.messages[0].body.includes('синдикат'),
+    boxes[1].data.messages[0].body.slice(-60));
+
+  const officerBroadcast = await api('POST', '/api/syndicates/broadcast',
+    { subject: 'От офицера', body: 'Проверка связи' }, officer.token);
+  check('офицер тоже может рассылать', officerBroadcast.status === 200,
+    JSON.stringify(officerBroadcast.data));
+}
+
 /* ---------- Передача лидерства ---------- */
 const memberTransfer = await api('POST', `/api/syndicates/members/${member.id}/role`, { role: 'LEADER' }, member.token);
 check('рядовой участник не может передать лидерство', memberTransfer.status === 403, `HTTP ${memberTransfer.status}`);

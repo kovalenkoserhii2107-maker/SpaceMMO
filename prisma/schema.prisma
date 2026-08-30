@@ -77,6 +77,8 @@ model Commander {
   researchJob      ResearchJob?
   fleets           Fleet[]
   fleetTemplates   FleetTemplate[]
+  inbox            Message[]              @relation("MessageRecipient")
+  sentMessages     Message[]              @relation("MessageSender")
   scans            PlanetScan[]
   hubStorages      HubStorage[]
   orders           MarketOrder[]
@@ -570,6 +572,42 @@ model Fleet {
   @@index([status, returnsAt])
   @@index([commanderId])
   @@map("fleets")
+}
+
+/// Письмо в центре связи: и личная переписка, и системные отчеты.
+model Message {
+  id String @id @default(cuid())
+
+  /// Отправитель. null — системное письмо от «Центра связи».
+  senderId    String?
+  recipientId String
+
+  type    MessageType
+  subject String
+  body    String
+  /// Структурные данные отчета: состав сторон, потери, добыча.
+  payload Json?
+
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  sender    Commander? @relation("MessageSender", fields: [senderId], references: [id], onDelete: SetNull)
+  recipient Commander  @relation("MessageRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+
+  /// Ящик открывается «сначала новые», непрочитанные считаются отдельным запросом.
+  @@index([recipientId, createdAt])
+  @@index([recipientId, isRead])
+  @@map("messages")
+}
+
+enum MessageType {
+  /// Личное письмо от другого командира.
+  PLAYER
+  /// Рассылка лидера по синдикату.
+  SYNDICATE
+  BATTLE_REPORT
+  SPY_REPORT
+  EXPEDITION
 }
 
 /// Сохраненный состав флота: пресет для быстрой отправки.

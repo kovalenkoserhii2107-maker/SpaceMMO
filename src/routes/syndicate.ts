@@ -1,6 +1,9 @@
 import { Router, type Response } from 'express';
+import { gameLoop } from '../game/gameLoop.js';
+import { validateBody, validateSubject } from '../services/mailService.js';
 import {
   applyToSyndicate,
+  broadcast,
   createSyndicate,
   disbandSyndicate,
   donate,
@@ -79,6 +82,28 @@ syndicateRouter.post('/members/:commanderId/role', async (req, res: Response<Act
 
   const result = await setRole(currentCommander(req).id, req.params.commanderId, role);
   res.status(result.ok ? 200 : result.status).json(result.ok ? result : { error: result.error });
+});
+
+/** Рассылка по синдикату: одно письмо всему составу. */
+syndicateRouter.post('/broadcast', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const body = (req.body ?? {}) as { subject?: unknown; body?: unknown };
+
+  const subject = validateSubject(body.subject);
+  const text = validateBody(body.body);
+  if (!subject) {
+    res.status(400).json({ error: 'Тема: от 1 до 120 символов' });
+    return;
+  }
+  if (!text) {
+    res.status(400).json({ error: 'Текст рассылки: от 1 до 4000 символов' });
+    return;
+  }
+
+  const result = await broadcast(currentCommander(req).id, subject, text);
+  if (result.ok) for (const id of result.recipients) gameLoop.pushUnread(id);
+  res.status(result.ok ? 200 : result.status).json(
+    result.ok ? { ok: true, message: result.message } : { error: result.error },
+  );
 });
 
 /** Пожертвование в общий банк. */
