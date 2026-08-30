@@ -32,7 +32,7 @@ import {
   type ShipCounts,
   type ShipType,
 } from './ships.js';
-import type { TechLevels } from './techTree.js';
+import { emptyTechLevels, type TechLevels } from './techTree.js';
 
 export type Rng = () => number;
 
@@ -47,6 +47,34 @@ export const DEBRIS_SHARE = 0.3;
 
 /** Шанс, что разбитая оборона будет восстановлена после боя. */
 export const DEFENCE_RECOVERY_CHANCE = 0.7;
+
+/**
+ * Скорострел: сколько выстрелов юнит успевает сделать по мелкой цели.
+ *
+ * Без него тяжелый корабль математически невыгоден: он бьет раз в раунд по одной
+ * цели, поэтому рой дешевых истребителей всегда эффективнее по стоимости.
+ * Скорострел это чинит — после каждого попадания стрелок продолжает огонь
+ * с вероятностью (N−1)/N, то есть в среднем делает N выстрелов по такой цели.
+ *
+ * Матрица односторонняя: крейсер выкашивает истребителей, но истребитель
+ * по крейсеру стреляет ровно раз.
+ */
+const RAPID_FIRE: Partial<Record<string, Partial<Record<string, number>>>> = {
+  HEAVY_CRUISER: { LIGHT_FIGHTER: 10, PROBE: 5, TRANSPORTER: 5 },
+  ION_FRIGATE: { LASER_TURRET: 8, PROBE: 5, TRANSPORTER: 5 },
+  LIGHT_FIGHTER: { CANNON_TURRET: 3 },
+};
+
+/**
+ * Предохранитель на серию выстрелов. При N = 10 средняя очередь — десять
+ * выстрелов, но теоретически она не ограничена: обрываем заведомо недостижимой
+ * для нормального боя длиной, чтобы неудачная серия бросков не подвесила тик.
+ */
+const MAX_RAPID_FIRE_SHOTS = 100;
+
+export function rapidFireAgainst(shooter: string, target: string): number {
+  return RAPID_FIRE[shooter]?.[target] ?? 1;
+}
 
 /**
  * Боевой профиль юнита.
@@ -102,9 +130,9 @@ export function defenseStats(type: DefenseType): UnitStats {
 /**
  * Множители характеристик от изученных технологий.
  *
- * Сейчас на бой влияет только «Энергетика»: она усиливает щиты. Отдельных
- * боевых веток (оружие, броня) в дереве еще нет, поэтому их множители равны
- * единице — хук готов, значения появятся вместе с технологиями.
+ * Каждая боевая ветка дает +10% к своей характеристике за уровень и применяется
+ * ко всему, что стоит на стороне: и к кораблям, и к обороне. «Энергетика» на бой
+ * не влияет — за щиты отвечает щитовая технология, и дублировать роли незачем.
  */
 export interface CombatBonuses {
   attack: number;
@@ -112,13 +140,15 @@ export interface CombatBonuses {
   hull: number;
 }
 
-const SHIELD_BONUS_PER_LEVEL = 0.02;
+/** Прирост характеристики за уровень боевой технологии. */
+export const COMBAT_TECH_BONUS_PER_LEVEL = 0.1;
 
 export function combatBonuses(techs: TechLevels): CombatBonuses {
+  const step = COMBAT_TECH_BONUS_PER_LEVEL;
   return {
-    attack: 1,
-    shield: 1 + Math.max(0, techs.ENERGY_TECH) * SHIELD_BONUS_PER_LEVEL,
-    hull: 1,
+    attack: 1 + Math.max(0, techs.WEAPONS_TECH) * step,
+    shield: 1 + Math.max(0, techs.SHIELDS_TECH) * step,
+    hull: 1 + Math.max(0, techs.ARMOR_TECH) * step,
   };
 }
 
@@ -258,6 +288,44 @@ export interface Absorption {
   hull: number;
 }
 
+/**
+ * Залп одной стороны за раунд.
+ *
+ * Цели берутся из состава на начало раунда и в течение раунда из пула не
+ * убираются: обе стороны стреляют одновременно, и подбитый юнит еще успевает
+ * ответить. Побочный эффект — выстрел может уйти в уже уничтоженную цель.
+ * Это не баг, а естественный ограничитель скорострела: длинная очередь по рою
+ * частично тратится впустую, и тяжелый корабль не выкашивает флот подчистую.
+ */
+function openFire(
+  shooters: Combatant[],
+  targets: Combatant[],
+  tally: Absorption,
+  rng: Rng,
+): number {
+  if (targets.length === 0) return 0;
+  let damage = 0;
+
+  for (const shooter of shooters) {
+    if (shooter.attack <= 0) continue;
+
+    for (let shot = 0; shot < MAX_RAPID_FIRE_SHOTS; shot += 1) {
+      const target = targets[Math.floor(rng() * targets.length)];
+      if (!target) break;
+
+      fire(shooter, target, tally);
+      damage += shooter.attack;
+
+      // Продолжение очереди зависит от того, по кому пришелся выстрел:
+      // очередь по истребителям длинная, по крейсеру — один выстрел.
+      const rapid = rapidFireAgainst(shooter.type, target.type);
+      if (rapid <= 1 || rng() >= (rapid - 1) / rapid) break;
+    }
+  }
+
+  return damage;
+}
+
 function alive(units: Combatant[]): Combatant[] {
   return units.filter((unit) => unit.hull > 0);
 }
@@ -304,23 +372,8 @@ export function simulateCombat(
     const attackerSalvo = [...attackerUnits];
     const defenderSalvo = [...defenderUnits];
 
-    let attackerDamage = 0;
-    for (const shooter of attackerSalvo) {
-      if (shooter.attack <= 0 || defenderUnits.length === 0) continue;
-      const target = defenderUnits[Math.floor(rng() * defenderUnits.length)];
-      if (!target) continue;
-      fire(shooter, target, attackerAbsorption);
-      attackerDamage += shooter.attack;
-    }
-
-    let defenderDamage = 0;
-    for (const shooter of defenderSalvo) {
-      if (shooter.attack <= 0 || attackerUnits.length === 0) continue;
-      const target = attackerUnits[Math.floor(rng() * attackerUnits.length)];
-      if (!target) continue;
-      fire(shooter, target, defenderAbsorption);
-      defenderDamage += shooter.attack;
-    }
+    const attackerDamage = openFire(attackerSalvo, defenderUnits, attackerAbsorption, rng);
+    const defenderDamage = openFire(defenderSalvo, attackerUnits, defenderAbsorption, rng);
 
     attackerUnits = alive(attackerUnits);
     defenderUnits = alive(defenderUnits);
@@ -655,17 +708,12 @@ export function resolveBattle(
   };
 }
 
-/** Нулевые технологии: у пиратов и в предпросмотре бонусов нет. */
+/**
+ * Нулевые технологии: у пиратов и в предпросмотре бонусов нет.
+ * Список берем из дерева, чтобы новая технология не забылась здесь.
+ */
 export function emptyCombatTechs(): TechLevels {
-  return {
-    ENERGY_TECH: 0,
-    COMPUTING_TECH: 0,
-    MINING_TECH: 0,
-    COMBUSTION_DRIVE: 0,
-    HYPERSPACE_PHYSICS: 0,
-    HYPERDRIVE: 0,
-    ASTROPHYSICS: 0,
-  };
+  return emptyTechLevels();
 }
 
 function toReport(absorption: Absorption, firepower: number): AbsorptionReport {

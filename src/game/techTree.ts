@@ -13,6 +13,9 @@ import {
 export const TECHNOLOGY_TYPES = [
   'ENERGY_TECH',
   'COMPUTING_TECH',
+  'WEAPONS_TECH',
+  'SHIELDS_TECH',
+  'ARMOR_TECH',
   'MINING_TECH',
   'COMBUSTION_DRIVE',
   'HYPERSPACE_PHYSICS',
@@ -32,6 +35,9 @@ export function emptyTechLevels(): TechLevels {
   return {
     ENERGY_TECH: 0,
     COMPUTING_TECH: 0,
+    WEAPONS_TECH: 0,
+    SHIELDS_TECH: 0,
+    ARMOR_TECH: 0,
     MINING_TECH: 0,
     COMBUSTION_DRIVE: 0,
     HYPERSPACE_PHYSICS: 0,
@@ -57,7 +63,9 @@ interface TechDefinition {
 const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
   ENERGY_TECH: {
     label: 'Энергетика',
-    description: '+2% к выработке энергии базы за уровень. Открывает путь к остальным технологиям.',
+    description:
+      '+2% к выработке энергии базы за уровень. Открывает путь к остальным технологиям. ' +
+      'На бой не влияет: щиты усиливает щитовая технология.',
     cost: { ore: 0, polymers: 200, plasma: 100, factor: 2.0 },
     baseSeconds: 90,
     timeFactor: 1.8,
@@ -72,6 +80,33 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
     timeFactor: 1.8,
     labLevel: 1,
     requires: {},
+  },
+  WEAPONS_TECH: {
+    label: 'Оружейная технология',
+    description: '+10% к атаке всех кораблей и обороны за уровень.',
+    cost: { ore: 800, polymers: 200, plasma: 0, factor: 2.0 },
+    baseSeconds: 120,
+    timeFactor: 1.8,
+    labLevel: 2,
+    requires: { ENERGY_TECH: 1 },
+  },
+  SHIELDS_TECH: {
+    label: 'Щитовая технология',
+    description: '+10% к щитам всех кораблей и обороны за уровень.',
+    cost: { ore: 200, polymers: 600, plasma: 0, factor: 2.0 },
+    baseSeconds: 150,
+    timeFactor: 1.8,
+    labLevel: 3,
+    requires: { ENERGY_TECH: 3 },
+  },
+  ARMOR_TECH: {
+    label: 'Бронебойная технология',
+    description: '+10% к корпусу всех кораблей и обороны за уровень.',
+    cost: { ore: 1000, polymers: 0, plasma: 0, factor: 2.0 },
+    baseSeconds: 100,
+    timeFactor: 1.75,
+    labLevel: 2,
+    requires: { ENERGY_TECH: 2 },
   },
   MINING_TECH: {
     label: 'Горное дело',

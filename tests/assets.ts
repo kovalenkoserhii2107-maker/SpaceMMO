@@ -47,6 +47,13 @@ const PLANET_SLOTS = [
   'toxic',
 ];
 
+/*
+ * Черновики, оставшиеся от прошлых поставок арта: типов с такими именами нет и
+ * не планируется. Держим их списком, чтобы эвристика опечаток срабатывала на
+ * действительно новых файлах, а не на этих двух при каждом новом типе.
+ */
+const KNOWN_DRAFTS = new Set(['automation.webp', 'plasma_technology.webp']);
+
 const GROUPS: Array<{ folder: string; kind: string; types: readonly string[] }> = [
   { folder: 'buildings', kind: 'постройки', types: BUILDING_TYPES },
   { folder: 'ships', kind: 'корабли', types: SHIP_TYPES },
@@ -74,7 +81,7 @@ for (const group of GROUPS) {
    * в имени, и картинка молча подменяется заглушкой. Если все слоты заполнены,
    * лишний файл — просто забытый черновик, и ронять из-за него прогон незачем.
    */
-  const orphans = files.filter((file) => !expected.has(file));
+  const orphans = files.filter((file) => !expected.has(file) && !KNOWN_DRAFTS.has(file));
   check(
     `${group.kind}: имена совпадают с типами`,
     orphans.length === 0 || absent.length === 0,

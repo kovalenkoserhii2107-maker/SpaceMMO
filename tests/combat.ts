@@ -15,6 +15,7 @@ import {
   MAX_ROUNDS,
   combatBonuses,
   debrisFromLosses,
+  rapidFireAgainst,
   defenseStats,
   emptyCombatTechs,
   hasWeapons,
@@ -23,7 +24,7 @@ import {
   type CombatSide,
   type Rng,
 } from '../src/game/combat.js';
-import { emptyDefenseCounts, type DefenseCounts } from '../src/game/defenses.js';
+import { defenseCost, emptyDefenseCounts, type DefenseCounts } from '../src/game/defenses.js';
 import { emptyShipCounts, shipCost, SHIP_TYPES, type ShipCounts } from '../src/game/ships.js';
 import { emptyTechLevels } from '../src/game/techTree.js';
 
@@ -152,32 +153,129 @@ console.log('\n=== 2. Раунды, щиты и цели ===');
 }
 
 {
-  const withTech: CombatSide = {
-    ships: fleet({ HEAVY_CRUISER: 1 }),
-    defenses: emptyDefenseCounts(),
-    techs: { ...emptyTechLevels(), ENERGY_TECH: 10 },
-  };
-  const bonuses = combatBonuses(withTech.techs);
+  const bonuses = combatBonuses({
+    ...emptyTechLevels(),
+    WEAPONS_TECH: 5,
+    SHIELDS_TECH: 3,
+    ARMOR_TECH: 10,
+  });
   check(
-    '«Энергетика» усиливает щиты перед боем',
-    bonuses.shield > 1 && bonuses.attack === 1,
-    `щит ×${bonuses.shield.toFixed(2)}`,
+    'каждая боевая ветка дает +10% своей характеристике за уровень',
+    Math.abs(bonuses.attack - 1.5) < 1e-9 &&
+      Math.abs(bonuses.shield - 1.3) < 1e-9 &&
+      Math.abs(bonuses.hull - 2.0) < 1e-9,
+    `атака ×${bonuses.attack.toFixed(2)}, щит ×${bonuses.shield.toFixed(2)}, корпус ×${bonuses.hull.toFixed(2)}`,
   );
 
-  // Слабый залп, который в упор пробивал бы щит, с бонусом гасится целиком.
-  // Восемь истребителей (120 урона) пробивают щит фрегата (80), но с изученной
-  // «Энергетикой» щит вырастает и большая часть залпа гаснет в нем.
-  const plain = simulateCombat(side({ LIGHT_FIGHTER: 8 }), side({ ION_FRIGATE: 1 }), seeded(3));
-  const boosted = simulateCombat(
-    side({ LIGHT_FIGHTER: 8 }),
-    { ships: fleet({ ION_FRIGATE: 1 }), defenses: emptyDefenseCounts(), techs: { ...emptyTechLevels(), ENERGY_TECH: 20 } },
-    seeded(3),
+  // «Энергетика» осталась экономической технологией и пререквизитом:
+  // за щиты теперь отвечает щитовая ветка, дублировать роли незачем.
+  const energyOnly = combatBonuses({ ...emptyTechLevels(), ENERGY_TECH: 20 });
+  check(
+    '«Энергетика» на бой больше не влияет',
+    energyOnly.attack === 1 && energyOnly.shield === 1 && energyOnly.hull === 1,
+    `щит ×${energyOnly.shield}`,
+  );
+
+  const plainSide = side({ LIGHT_FIGHTER: 8 });
+  const target = (techs: Partial<Record<string, number>>): CombatSide => ({
+    ships: fleet({ ION_FRIGATE: 1 }),
+    defenses: emptyDefenseCounts(),
+    techs: { ...emptyTechLevels(), ...techs } as CombatSide['techs'],
+  });
+
+  const bare = simulateCombat(plainSide, target({}), seeded(3));
+  const shielded = simulateCombat(plainSide, target({ SHIELDS_TECH: 5 }), seeded(3));
+  check(
+    'щитовая технология уменьшает урон по корпусу',
+    bare.absorption.attacker.hull > 0 &&
+      shielded.absorption.attacker.hull < bare.absorption.attacker.hull,
+    `без техов ${Math.round(bare.absorption.attacker.hull)}, с техами ${Math.round(shielded.absorption.attacker.hull)}`,
+  );
+
+  const armored = simulateCombat(plainSide, target({ ARMOR_TECH: 10 }), seeded(3));
+  check(
+    'бронебойная технология поднимает корпус: цель выживает дольше',
+    armored.defenderSurvivorShips.ION_FRIGATE >= bare.defenderSurvivorShips.ION_FRIGATE,
+  );
+
+  const weakGun = simulateCombat(side({ LIGHT_FIGHTER: 4 }), side({ HEAVY_CRUISER: 1 }), seeded(4));
+  const strongGun = simulateCombat(
+    { ships: fleet({ LIGHT_FIGHTER: 4 }), defenses: emptyDefenseCounts(), techs: { ...emptyTechLevels(), WEAPONS_TECH: 10 } },
+    side({ HEAVY_CRUISER: 1 }),
+    seeded(4),
   );
   check(
-    'с изученной «Энергетикой» до корпуса доходит заметно меньше',
-    plain.absorption.attacker.hull > 0 &&
-      boosted.absorption.attacker.hull < plain.absorption.attacker.hull,
-    `без техов ${Math.round(plain.absorption.attacker.hull)}, с техами ${Math.round(boosted.absorption.attacker.hull)}`,
+    'оружейная технология усиливает залп',
+    strongGun.absorption.attacker.hull > weakGun.absorption.attacker.hull,
+    `без техов ${Math.round(weakGun.absorption.attacker.hull)}, с техами ${Math.round(strongGun.absorption.attacker.hull)}`,
+  );
+
+  // Бонусы должны доставать и до обороны, а не только до кораблей.
+  const bareTurrets = simulateCombat(
+    side({ HEAVY_CRUISER: 6 }),
+    { ships: emptyShipCounts(), defenses: turrets({ LASER_TURRET: 8 }), techs: emptyTechLevels() },
+    seeded(6),
+  );
+  const toughTurrets = simulateCombat(
+    side({ HEAVY_CRUISER: 6 }),
+    { ships: emptyShipCounts(), defenses: turrets({ LASER_TURRET: 8 }), techs: { ...emptyTechLevels(), ARMOR_TECH: 10, SHIELDS_TECH: 10 } },
+    seeded(6),
+  );
+  check(
+    'боевые технологии усиливают и оборону',
+    toughTurrets.defenderSurvivorDefenses.LASER_TURRET > bareTurrets.defenderSurvivorDefenses.LASER_TURRET,
+    `без техов уцелело ${bareTurrets.defenderSurvivorDefenses.LASER_TURRET}, с техами ${toughTurrets.defenderSurvivorDefenses.LASER_TURRET}`,
+  );
+}
+
+/* ------------------------- 2b. Скорострел ------------------------- */
+
+console.log('\n=== 2b. Скорострел ===');
+
+{
+  check(
+    'матрица односторонняя: крейсер косит истребителей, обратно — нет',
+    rapidFireAgainst('HEAVY_CRUISER', 'LIGHT_FIGHTER') === 10 &&
+      rapidFireAgainst('LIGHT_FIGHTER', 'HEAVY_CRUISER') === 1,
+  );
+  check(
+    'фрегат заточен под лазерные турели, истребитель — под пушечные',
+    rapidFireAgainst('ION_FRIGATE', 'LASER_TURRET') === 8 &&
+      rapidFireAgainst('LIGHT_FIGHTER', 'CANNON_TURRET') === 3,
+  );
+  check(
+    'по мелочи у крейсера и фрегата средний скорострел',
+    rapidFireAgainst('HEAVY_CRUISER', 'PROBE') === 5 &&
+      rapidFireAgainst('ION_FRIGATE', 'TRANSPORTER') === 5,
+  );
+  check(
+    'у обороны и безоружных скорострела нет',
+    rapidFireAgainst('LASER_TURRET', 'LIGHT_FIGHTER') === 1 &&
+      rapidFireAgainst('TRANSPORTER', 'PROBE') === 1,
+  );
+
+  // Средняя длина очереди должна сходиться с N: проверяем по серии, а не по одному бою.
+  let killedWithRapid = 0;
+  let killedWithout = 0;
+  for (let seed = 0; seed < 100; seed += 1) {
+    // Один крейсер против роя: очередь по истребителям длинная.
+    killedWithRapid += 20 - simulateCombat(
+      side({ HEAVY_CRUISER: 1 }), side({ LIGHT_FIGHTER: 20 }), seeded(seed),
+    ).defenderSurvivorShips.LIGHT_FIGHTER;
+    // Тот же крейсер против фрегатов: скорострела нет, бьет раз в раунд.
+    killedWithout += 20 - simulateCombat(
+      side({ HEAVY_CRUISER: 1 }), side({ ION_FRIGATE: 20 }), seeded(seed),
+    ).defenderSurvivorShips.ION_FRIGATE;
+  }
+  check(
+    'со скорострелом крейсер убивает кратно больше целей за бой',
+    killedWithRapid / 100 > (killedWithout / 100) * 3,
+    `по истребителям ${(killedWithRapid / 100).toFixed(1)} за бой, по фрегатам ${(killedWithout / 100).toFixed(1)}`,
+  );
+  check(
+    'без скорострела не больше одной цели за раунд',
+    killedWithout / 100 <= MAX_ROUNDS,
+    `${(killedWithout / 100).toFixed(1)} целей`,
   );
 }
 
@@ -186,35 +284,43 @@ console.log('\n=== 2. Раунды, щиты и цели ===');
 console.log('\n=== 3. Сценарии ===');
 
 {
-  // «Один крейсер против 10 истребителей».
-  const result = simulateCombat(side({ HEAVY_CRUISER: 1 }), side({ LIGHT_FIGHTER: 10 }), seeded(42));
-  const killed = 10 - result.defenderSurvivorShips.LIGHT_FIGHTER;
-
   /*
-   * Щит держит раунд, но снимается выстрел за выстрелом: одиночный залп
-   * истребителя в него утыкается, а десять подряд — продавливают. Поэтому рой
-   * все-таки грызет крейсер, просто медленно и теряя по кораблю за раунд.
-   * Ровно этот расклад и делает осмысленным вопрос про скорострел.
+   * «Один крейсер против роя» при равной стоимости.
+   *
+   * Крейсер стоит как четыре истребителя. До скорострела он бил раз в раунд,
+   * и рой продавливал его щит числом; теперь очередь по истребителям снимает
+   * их пачкой, и тяжелый корабль наконец отрабатывает свою цену.
    */
+  const parity = 4;
+  let wins = 0;
+  for (let seed = 0; seed < 50; seed += 1) {
+    const run = simulateCombat(side({ HEAVY_CRUISER: 1 }), side({ LIGHT_FIGHTER: parity }), seeded(seed));
+    if (run.winner === 'ATTACKER') wins += 1;
+  }
   check(
-    'крейсер против роя: щит гасит по 50 за раунд, остальное идет в корпус',
-    result.absorption.defender.hull === 375 && result.absorption.defender.shield === 300,
-    `в корпус ${result.absorption.defender.hull}, в щит ${result.absorption.defender.shield}`,
+    'крейсер уверенно бьет равный по стоимости рой',
+    wins === 50,
+    `побед ${wins} из 50 против ${parity} истребителей`,
   );
+
+  const showcase = simulateCombat(side({ HEAVY_CRUISER: 1 }), side({ LIGHT_FIGHTER: parity }), seeded(42));
   check(
-    'крейсер выживает, но едва: корпус почти снят',
-    result.attackerSurvivors.HEAVY_CRUISER === 1,
-    `осталось корпуса ${shipStats('HEAVY_CRUISER').hull - result.absorption.defender.hull} из ${shipStats('HEAVY_CRUISER').hull}`,
+    'крейсер выходит из такого боя целым',
+    showcase.attackerSurvivors.HEAVY_CRUISER === 1 &&
+      showcase.defenderSurvivorShips.LIGHT_FIGHTER === 0,
+    `сбито ${parity - showcase.defenderSurvivorShips.LIGHT_FIGHTER}, раундов ${showcase.rounds.length}`,
   );
+
+  // И даже троекратный перевес роя больше не спасает: это и есть смысл скорострела.
+  let heavyWins = 0;
+  for (let seed = 0; seed < 50; seed += 1) {
+    const run = simulateCombat(side({ HEAVY_CRUISER: 1 }), side({ LIGHT_FIGHTER: parity * 3 }), seeded(seed));
+    if (run.winner === 'ATTACKER') heavyWins += 1;
+  }
   check(
-    'крейсер бьет по одной цели за раунд — за шесть раундов не больше шести',
-    killed <= MAX_ROUNDS && killed > 0,
-    `сбито ${killed} из 10 за ${result.rounds.length} раундов`,
-  );
-  check(
-    'рой выживает, бой кончается ничьей',
-    result.winner === 'DRAW' && result.defenderSurvivorShips.LIGHT_FIGHTER > 0,
-    `${result.winner}, истребителей осталось ${result.defenderSurvivorShips.LIGHT_FIGHTER}`,
+    'скорострел переворачивает бой против втрое большего роя',
+    heavyWins >= 45,
+    `побед ${heavyWins} из 50 против ${parity * 3} истребителей`,
   );
 }
 
@@ -339,6 +445,87 @@ console.log('\n=== 5. Случайность и воспроизводимост
     'двадцать тысяч юнитов считаются за разумное время',
     elapsed < 5000 && heavy.rounds.length > 0,
     `${elapsed} мс`,
+  );
+}
+
+/* ------------------------- 6. Скорострел против обороны ------------------------- */
+
+console.log('\n=== 6. Баланс: скорострел против обороны ===');
+
+{
+  /*
+   * Скорострел усилил флот, и главный риск — что оборона перестала иметь смысл.
+   * Проверяем это по стоимости: сколько ресурсов флота нужно, чтобы снять
+   * оборону на известную сумму. Ниже двукратного перевеса оборона обязана
+   * держаться, иначе строить ее незачем.
+   */
+  const RUNS = 60;
+
+  const shipPrice = (type: keyof ShipCounts): number => {
+    const cost = shipCost(type);
+    return cost.ore + cost.polymers + cost.plasma;
+  };
+  const defencePrice = (type: keyof DefenseCounts): number => {
+    const cost = defenseCost(type);
+    return cost.ore + cost.polymers + cost.plasma;
+  };
+
+  const winRate = (ships: Partial<ShipCounts>, defence: Partial<DefenseCounts>): number => {
+    let wins = 0;
+    for (let seed = 0; seed < RUNS; seed += 1) {
+      const run = simulateCombat(side(ships), { ships: fleet({}), defenses: turrets(defence), techs: emptyCombatTechs() }, seeded(seed));
+      if (run.winner === 'ATTACKER') wins += 1;
+    }
+    return wins / RUNS;
+  };
+
+  const defence = { LASER_TURRET: 12 };
+  const defenceCost = defencePrice('LASER_TURRET') * 12;
+
+  const equal = Math.floor(defenceCost / shipPrice('HEAVY_CRUISER'));
+  const double = Math.floor((defenceCost * 2) / shipPrice('HEAVY_CRUISER'));
+  const quadruple = Math.floor((defenceCost * 4) / shipPrice('HEAVY_CRUISER'));
+
+  const atEqual = winRate({ HEAVY_CRUISER: equal }, defence);
+  const atDouble = winRate({ HEAVY_CRUISER: double }, defence);
+  const atQuadruple = winRate({ HEAVY_CRUISER: quadruple }, defence);
+
+  check(
+    'равный по стоимости флот оборону не берет',
+    atEqual === 0,
+    `${equal} крейсеров против 12 турелей: побед ${(atEqual * 100).toFixed(0)}%`,
+  );
+  check(
+    'двукратного перевеса тоже мало',
+    atDouble < 0.5,
+    `${double} крейсеров (×2): побед ${(atDouble * 100).toFixed(0)}%`,
+  );
+  check(
+    'четырехкратный перевес оборону снимает',
+    atQuadruple > 0.9,
+    `${quadruple} крейсеров (×4): побед ${(atQuadruple * 100).toFixed(0)}%`,
+  );
+
+  // Скорострел не должен делать оборону бесплатной добычей и для мелочи.
+  const swarmCost = defencePrice('CANNON_TURRET') * 20;
+  const swarm = Math.floor((swarmCost * 2) / shipPrice('LIGHT_FIGHTER'));
+  check(
+    'рой истребителей не сносит пушечные турели вдвое меньшей стоимости',
+    winRate({ LIGHT_FIGHTER: swarm }, { CANNON_TURRET: 20 }) < 0.5,
+    `${swarm} истребителей (×2): побед ${(winRate({ LIGHT_FIGHTER: swarm }, { CANNON_TURRET: 20 }) * 100).toFixed(0)}%`,
+  );
+
+  // Зато специализация работает: фрегат со скорострелом 8 берет лазерные турели
+  // там, где крейсер того же бюджета буксует.
+  const budget = defenceCost * 3;
+  const frigates = Math.floor(budget / shipPrice('ION_FRIGATE'));
+  const cruisers = Math.floor(budget / shipPrice('HEAVY_CRUISER'));
+  const byFrigates = winRate({ ION_FRIGATE: frigates }, defence);
+  const byCruisers = winRate({ HEAVY_CRUISER: cruisers }, defence);
+  check(
+    'при равном бюджете фрегаты снимают лазерные турели лучше крейсеров',
+    byFrigates > byCruisers,
+    `фрегаты ${(byFrigates * 100).toFixed(0)}% против крейсеров ${(byCruisers * 100).toFixed(0)}%`,
   );
 }
 
