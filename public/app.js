@@ -902,12 +902,17 @@
       // значит сплющить весь рабочий диапазон в левую четверть.
       const fill = Math.max(4, Math.min(100, (value / 2) * 100));
 
+      // Ячейки — прямые потомки строки, но раскладывает их сетка списка
+      // (`.rich-row { display: contents }`): только так название, полоса,
+      // множитель и оценка стоят в общих колонках. Своя сетка у каждой
+      // строки давала бы столько же столбцов, сколько строк.
       const item = document.createElement('div');
       item.className = `rich-row ${tier.tone}`;
       item.innerHTML =
         `<span class="rich-name">${icon(row.icon)} ${row.label}</span>` +
         `<span class="rich-bar"><i style="width:${fill.toFixed(1)}%"></i></span>` +
-        `<span class="rich-value"><b>×${value}</b> ${tier.label}</span>`;
+        `<span class="rich-value">×${value}</span>` +
+        `<span class="rich-tier">${tier.label}</span>`;
       el.richness.appendChild(item);
     }
   }

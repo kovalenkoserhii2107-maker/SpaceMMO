@@ -426,27 +426,31 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
  * Три колонки: адрес и склад, гарнизон, недра. Каждая читается сверху вниз
  * и не длиннее пары сотен пикселей — полоса на всю ширину панели заставляла
  * вести глазом от заголовка слева до числа справа через пустое поле.
+ *
+ * Середина заметно шире краев: в ней два списка друг под другом, и высоту
+ * карточки задает именно она. Крайние колонки — короткий текст и пять строк
+ * шкалы, им лишняя ширина только удлиняет полосы.
  */
 .planet-card {
-  padding: 16px 20px;
+  padding: 14px 20px;
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 1.05fr);
-  gap: 18px 22px;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.42fr) minmax(0, 0.9fr);
+  gap: 16px 20px;
   align-items: start;
 }
-.colony-col { display: grid; gap: 14px; align-content: start; min-width: 0; }
+.colony-col { display: grid; gap: 12px; align-content: start; min-width: 0; }
 /* Колонки разделены линией, а не только отступом: блоки внутри тоже с отступами. */
-.colony-col + .colony-col { padding-left: 22px; border-left: 1px solid var(--line); }
+.colony-col + .colony-col { padding-left: 20px; border-left: 1px solid var(--line); }
 
-.colony-ident { display: flex; align-items: center; gap: 14px; min-width: 0; }
-.colony-art { flex: none; width: 84px; }
+.colony-ident { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.colony-art { flex: none; width: 68px; }
 /* Портрет планеты круглый: у арта черный фон, и в квадрате он спорил бы с панелью. */
 .colony-art .art { border-radius: 50%; aspect-ratio: 1 / 1; border-color: var(--line-strong); }
 
 .colony-head { min-width: 0; }
-.planet-card h2 { margin: 0 0 4px; font-size: 19px; }
+.planet-card h2 { margin: 0 0 3px; font-size: 18px; }
 
-.colony-block { display: grid; gap: 8px; min-width: 0; }
+.colony-block { display: grid; gap: 6px; min-width: 0; }
 .colony-sub {
   display: flex;
   align-items: center;
@@ -465,57 +469,67 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
  * которое не с чем сравнить. Теперь у каждой строки название, полоса
  * с единицей посередине и словесная оценка: «бедно» понятно без справочника.
  */
-.richness { display: grid; gap: 6px; }
-.rich-row {
+/*
+ * Колонки задает список, а строки объявлены `display: contents` — ячейки
+ * попадают прямо в его сетку. Иначе каждая строка была бы своей сеткой:
+ * «Руда» и «Антиматерия» дают разную ширину названия, и полосы начинались
+ * бы на разной высоте с разным отступом — сравнить их взглядом невозможно.
+ */
+.richness {
   display: grid;
-  grid-template-columns: minmax(0, auto) minmax(24px, 1fr) minmax(0, auto);
+  grid-template-columns: auto minmax(46px, 1fr) auto auto;
   align-items: center;
-  gap: 10px;
-  font-size: 12px;
+  gap: 5px 9px;
+  font-size: 11.5px;
 }
+.rich-row { display: contents; }
 .rich-name { display: flex; align-items: center; gap: 6px; color: var(--muted); }
 .rich-name .ico { width: 18px; height: 18px; vertical-align: 0; }
 .rich-bar { height: 6px; border-radius: 999px; background: rgba(120, 160, 255, 0.14); overflow: hidden; }
 .rich-bar > i { display: block; height: 100%; border-radius: 999px; background: currentColor; }
-.rich-value { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
-.rich-value b { color: var(--text); margin-right: 4px; }
+.rich-value { color: var(--text); text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.rich-tier { color: var(--muted); }
 
-/* Оценка цветом: от красного к бирюзовому — та же шкала, что у хранилища. */
+/*
+ * Оценка цветом: от красного к бирюзовому — та же шкала, что у хранилища.
+ * Цвет наследуется сквозь `display: contents` и достается и полосе
+ * (через `currentColor`), и множителю.
+ */
 .rich-row.poor { color: var(--err); }
 .rich-row.low { color: var(--warn); }
 .rich-row.mid { color: var(--muted); }
 .rich-row.high { color: var(--accent); }
 .rich-row.top { color: var(--ok); }
-.rich-row.poor .rich-value b, .rich-row.low .rich-value b { color: currentColor; }
-.rich-row.high .rich-value b, .rich-row.top .rich-value b { color: currentColor; }
+.rich-row:not(.mid) .rich-value { color: currentColor; }
 
 /* ---------- Гарнизон базы ---------- */
 
 /*
- * Список, а не облако плашек: в колонке шириной с треть панели плашки все
- * равно встают по одной в ряд, но с рваным правым краем и без выравнивания
- * счетчиков. Строкой они читаются как ведомость.
+ * Плашки по ширине содержимого, а не по единой сетке. Одной колонкой шесть
+ * классов давали триста пикселей высоты — паспорт выходил выше ряда карточек
+ * под ним. Ровная сетка тоже не годится: трек приходится мерить по самой
+ * длинной подписи («Пушечные турели»), и либо она переносится в две строки,
+ * либо «Зонды» получают вдвое больше места, чем им нужно.
  */
-.garrison { display: grid; gap: 5px; }
+.garrison { display: flex; flex-wrap: wrap; gap: 5px; }
 .garrison-unit {
-  display: grid;
-  grid-template-columns: auto minmax(28px, auto) minmax(0, 1fr);
+  display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 4px 10px 4px 4px;
+  gap: 8px;
+  padding: 3px 11px 3px 3px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--panel-2);
 }
-.garrison-unit b { font-size: 14px; text-align: right; font-variant-numeric: tabular-nums; }
-.garrison-unit small { font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
-.garrison-empty { margin: 0; font-size: 12px; color: var(--muted); }
+.garrison-unit b { font-size: 13px; font-variant-numeric: tabular-nums; }
+.garrison-unit small { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.garrison-empty { grid-column: 1 / -1; margin: 0; font-size: 12px; color: var(--muted); }
 
 /* Круглая миниатюра юнита: тот же арт, что на карточке постройки. */
 .art.art-chip {
   flex: none;
-  width: 34px;
-  height: 34px;
+  width: 28px;
+  height: 28px;
   aspect-ratio: 1 / 1;
   border-radius: 50%;
   border-width: 1px;
@@ -1754,7 +1768,8 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
     border-left: none;
     border-top: 1px solid var(--line);
   }
-  .richness { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 6px 22px; }
+  /* Две пары колонок в ряд: недра встали под остальным паспортом и им просторно. */
+  .richness { grid-template-columns: repeat(2, auto minmax(46px, 1fr) auto auto); gap: 6px 10px; }
 }
 
 @media (max-width: 900px) {
@@ -1827,7 +1842,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   .cards { grid-template-columns: minmax(0, 1fr); }
 
   .colony-art { width: 68px; }
-  .rich-row { grid-template-columns: minmax(0, auto) minmax(20px, 1fr) minmax(0, auto); gap: 8px; }
+  .richness { grid-template-columns: auto minmax(40px, 1fr) auto auto; gap: 5px 8px; }
   .roster-unit { gap: 10px; }
   .art.art-tile { width: 64px; height: 64px; }
   .base-list { min-width: 0; width: max(220px, 60vw); }
