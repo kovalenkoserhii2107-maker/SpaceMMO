@@ -48,7 +48,7 @@ const SHIPS: Record<ShipType, ShipDefinition> = {
   PROBE: {
     label: 'Зонд-разведчик',
     description: 'Дешевый разведывательный дрон. Без оружия и защиты.',
-    cost: { titanite: 60, silicate: 20, tritium: 10 },
+    cost: { ore: 60, polymers: 20, plasma: 10 },
     baseSeconds: 20,
     shipyardLevel: 1,
     requires: { COMPUTING_TECH: 1 },
@@ -56,7 +56,7 @@ const SHIPS: Record<ShipType, ShipDefinition> = {
   TRANSPORTER: {
     label: 'Малый транспорт',
     description: 'Грузовое судно. Без оружия, только корпус.',
-    cost: { titanite: 200, silicate: 60, tritium: 20 },
+    cost: { ore: 200, polymers: 60, plasma: 20 },
     baseSeconds: 60,
     shipyardLevel: 2,
     requires: { COMBUSTION_DRIVE: 1 },
@@ -64,7 +64,7 @@ const SHIPS: Record<ShipType, ShipDefinition> = {
   LIGHT_FIGHTER: {
     label: 'Легкий истребитель',
     description: 'Лазерный урон, только корпус. Дешев и универсален.',
-    cost: { titanite: 300, silicate: 100, tritium: 0 },
+    cost: { ore: 300, polymers: 100, plasma: 0 },
     baseSeconds: 45,
     shipyardLevel: 2,
     requires: { COMBUSTION_DRIVE: 1 },
@@ -72,7 +72,7 @@ const SHIPS: Record<ShipType, ShipDefinition> = {
   HEAVY_CRUISER: {
     label: 'Тяжелый крейсер',
     description: 'Кинетический урон и толстая броня. Ломает броню, вязнет в щитах.',
-    cost: { titanite: 1200, silicate: 400, tritium: 100 },
+    cost: { ore: 1200, polymers: 400, plasma: 100 },
     baseSeconds: 180,
     shipyardLevel: 3,
     requires: { COMBUSTION_DRIVE: 2 },
@@ -80,7 +80,7 @@ const SHIPS: Record<ShipType, ShipDefinition> = {
   ION_FRIGATE: {
     label: 'Ионный фрегат',
     description: 'Ионный урон и сильные щиты. Разбирает щиты, буксует против брони.',
-    cost: { titanite: 500, silicate: 600, tritium: 150 },
+    cost: { ore: 500, polymers: 600, plasma: 150 },
     baseSeconds: 150,
     shipyardLevel: 4,
     requires: { HYPERSPACE_PHYSICS: 1 },
@@ -89,7 +89,7 @@ const SHIPS: Record<ShipType, ShipDefinition> = {
     label: 'Переработчик',
     description:
       'Сборщик обломков. Без оружия, медленный и прожорливый, зато трюм больше, чем у десяти транспортов.',
-    cost: { titanite: 8000, silicate: 4000, tritium: 2000 },
+    cost: { ore: 8000, polymers: 4000, plasma: 2000 },
     baseSeconds: 300,
     shipyardLevel: 4,
     // Тяжелый корпус под гигантский трюм требует развитой тяги.

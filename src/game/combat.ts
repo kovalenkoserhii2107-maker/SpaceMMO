@@ -79,7 +79,7 @@ const SHIP_COMBAT: Record<ShipType, CombatProfile> = {
 };
 
 const DEFENSE_COMBAT: Record<DefenseType, CombatProfile> = {
-  ROCKET_LAUNCHER: { damage: 12, damageType: 'KINETIC', shield: 0, armor: 0, hull: 80 },
+  CANNON_TURRET: { damage: 12, damageType: 'KINETIC', shield: 0, armor: 0, hull: 80 },
   LASER_TURRET: { damage: 25, damageType: 'LASER', shield: 80, armor: 0, hull: 70 },
 };
 
@@ -90,8 +90,8 @@ const RAID_SHARE = 0.9;
  * Какая часть стоимости уничтоженной техники остается на орбите обломками.
  *
  * Обломки образуют обе стороны: сгоревший флот нападавшего висит над планетой
- * ровно так же, как разбитая оборона защитника. Тритий в обломках не остается —
- * топливо и реагент сгорают в бою, поэтому поле состоит из титанита и силикатов.
+ * ровно так же, как разбитая оборона защитника. Плазма в обломках не остается —
+ * топливо и реагент сгорают в бою, поэтому поле состоит из руды и полимеров.
  */
 export const DEBRIS_SHARE = 0.3;
 
@@ -153,10 +153,10 @@ export interface BattleOutcome {
   debris: DebrisAmount;
 }
 
-/** Обломки на орбите. Только титанит и силикаты: тритий в бою сгорает. */
+/** Обломки на орбите. Только руда и полимеры: плазма в бою сгорает. */
 export interface DebrisAmount {
-  titanite: number;
-  silicate: number;
+  ore: number;
+  polymers: number;
 }
 
 /** Есть ли во флоте хоть один вооруженный корабль. */
@@ -382,27 +382,27 @@ export function debrisFromLosses(
   defenderShipLosses: ShipCounts,
   defenderDefenseLosses: DefenseCounts,
 ): DebrisAmount {
-  let titanite = 0;
-  let silicate = 0;
+  let ore = 0;
+  let polymers = 0;
 
   for (const type of SHIP_TYPES) {
     const lost = attackerShipLosses[type] + defenderShipLosses[type];
     if (lost <= 0) continue;
     const cost = shipCost(type);
-    titanite += cost.titanite * lost;
-    silicate += cost.silicate * lost;
+    ore += cost.ore * lost;
+    polymers += cost.polymers * lost;
   }
   for (const type of DEFENSE_TYPES) {
     const lost = defenderDefenseLosses[type];
     if (lost <= 0) continue;
     const cost = defenseCost(type);
-    titanite += cost.titanite * lost;
-    silicate += cost.silicate * lost;
+    ore += cost.ore * lost;
+    polymers += cost.polymers * lost;
   }
 
   return {
-    titanite: Math.floor(titanite * DEBRIS_SHARE),
-    silicate: Math.floor(silicate * DEBRIS_SHARE),
+    ore: Math.floor(ore * DEBRIS_SHARE),
+    polymers: Math.floor(polymers * DEBRIS_SHARE),
   };
 }
 
@@ -420,12 +420,12 @@ function defenseLossCounts(before: DefenseCounts, after: DefenseCounts): Defense
 
 /** Что удалось вывезти и почему именно столько — основа отчета для агрессора. */
 export interface PlunderResult {
-  titanite: number;
-  silicate: number;
-  tritium: number;
+  ore: number;
+  polymers: number;
+  plasma: number;
   /** Вместимость хранилища защитника. */
   storageCapacity: number;
-  /** Сколько всего лежало на складе (титанит + силикаты + тритий). */
+  /** Сколько всего лежало на складе (руда + полимеры + плазма). */
   stored: number;
   /** Несгораемый объем: 90% вместимости, но не больше того, что реально лежит. */
   protectedAmount: number;
@@ -449,18 +449,18 @@ export interface PlunderResult {
  * Половина склада больше не выносится: полупустая база не теряет ничего,
  * и заполненность склада становится осмысленным риском.
  *
- * Вывозятся все три ресурса: тритий занимает трюмы наравне с титанитом
- * и силикатами, поэтому и грабится наравне с ними.
+ * Вывозятся все три ресурса: плазма занимает трюмы наравне с рудой
+ * и полимерами, поэтому и грабится наравне с ними.
  */
 export function plunderAmount(
-  stock: { titanite: number; silicate: number; tritium: number },
+  stock: { ore: number; polymers: number; plasma: number },
   storageCapacity: number,
   cargoCapacity: number,
 ): PlunderResult {
-  const titanite = Math.max(0, stock.titanite);
-  const silicate = Math.max(0, stock.silicate);
-  const tritium = Math.max(0, stock.tritium);
-  const stored = titanite + silicate + tritium;
+  const ore = Math.max(0, stock.ore);
+  const polymers = Math.max(0, stock.polymers);
+  const plasma = Math.max(0, stock.plasma);
+  const stored = ore + polymers + plasma;
 
   const protectedAmount = Math.min(stored, Math.max(0, storageCapacity) * PROTECTED_STORAGE_SHARE);
   const surplus = Math.max(0, stored - protectedAmount);
@@ -468,29 +468,29 @@ export function plunderAmount(
   // Доля каждого ресурса, которая уходит агрессору: излишек «размазан» по складу
   // пропорционально, поэтому пропорцию считаем один раз и применяем ко всем типам.
   const share = stored > 0 ? (RAID_SHARE * surplus) / stored : 0;
-  const availableTitanite = Math.floor(titanite * share);
-  const availableSilicate = Math.floor(silicate * share);
-  const availableTritium = Math.floor(tritium * share);
-  const takeable = availableTitanite + availableSilicate + availableTritium;
+  const availableOre = Math.floor(ore * share);
+  const availablePolymers = Math.floor(polymers * share);
+  const availablePlasma = Math.floor(plasma * share);
+  const takeable = availableOre + availablePolymers + availablePlasma;
 
-  // Трюмы забиваются по порядку: сперва титанит, затем силикаты, потом тритий.
+  // Трюмы забиваются по порядку: сперва руда, затем полимеры, потом плазма.
   let room = Math.max(0, cargoCapacity);
-  const takenTitanite = Math.min(availableTitanite, room);
-  room -= takenTitanite;
-  const takenSilicate = Math.min(availableSilicate, room);
-  room -= takenSilicate;
-  const takenTritium = Math.min(availableTritium, room);
+  const takenOre = Math.min(availableOre, room);
+  room -= takenOre;
+  const takenPolymers = Math.min(availablePolymers, room);
+  room -= takenPolymers;
+  const takenPlasma = Math.min(availablePlasma, room);
 
   return {
-    titanite: takenTitanite,
-    silicate: takenSilicate,
-    tritium: takenTritium,
+    ore: takenOre,
+    polymers: takenPolymers,
+    plasma: takenPlasma,
     storageCapacity,
     stored,
     protectedAmount,
     surplus,
     takeable,
-    cargoLimited: takenTitanite + takenSilicate + takenTritium < takeable,
+    cargoLimited: takenOre + takenPolymers + takenPlasma < takeable,
   };
 }
 

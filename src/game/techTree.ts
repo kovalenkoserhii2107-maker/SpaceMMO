@@ -58,7 +58,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
   ENERGY_TECH: {
     label: 'Энергетика',
     description: '+2% к выработке энергии базы за уровень. Открывает путь к остальным технологиям.',
-    cost: { titanite: 0, silicate: 200, tritium: 100, factor: 2.0 },
+    cost: { ore: 0, polymers: 200, plasma: 100, factor: 2.0 },
     baseSeconds: 90,
     timeFactor: 1.8,
     labLevel: 1,
@@ -67,7 +67,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
   COMPUTING_TECH: {
     label: 'Вычислительная техника',
     description: '-3% к времени исследований за уровень. Нужна для постройки зондов.',
-    cost: { titanite: 0, silicate: 100, tritium: 75, factor: 2.0 },
+    cost: { ore: 0, polymers: 100, plasma: 75, factor: 2.0 },
     baseSeconds: 60,
     timeFactor: 1.8,
     labLevel: 1,
@@ -76,7 +76,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
   MINING_TECH: {
     label: 'Горное дело',
     description: '+2% к добыче всех шахт за уровень.',
-    cost: { titanite: 200, silicate: 100, tritium: 0, factor: 1.8 },
+    cost: { ore: 200, polymers: 100, plasma: 0, factor: 1.8 },
     baseSeconds: 75,
     timeFactor: 1.7,
     labLevel: 2,
@@ -85,7 +85,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
   COMBUSTION_DRIVE: {
     label: 'Реактивный двигатель',
     description: 'Открывает постройку транспортников и легких истребителей.',
-    cost: { titanite: 100, silicate: 0, tritium: 60, factor: 1.9 },
+    cost: { ore: 100, polymers: 0, plasma: 60, factor: 1.9 },
     baseSeconds: 80,
     timeFactor: 1.7,
     labLevel: 2,
@@ -93,8 +93,8 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
   },
   HYPERSPACE_PHYSICS: {
     label: 'Гиперпространственная физика',
-    description: 'Открывает постройку синтезатора эридия.',
-    cost: { titanite: 800, silicate: 1200, tritium: 600, factor: 2.1 },
+    description: 'Открывает постройку синтезатора антиматерии.',
+    cost: { ore: 800, polymers: 1200, plasma: 600, factor: 2.1 },
     baseSeconds: 240,
     timeFactor: 1.8,
     labLevel: 3,
@@ -105,7 +105,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
     description:
       'Открывает экспедиции в глубокий космос. Уровень задает число одновременных ' +
       'экспедиций (1 → 1, 4 → 2, 9 → 3), увеличивает находки и помогает уходить от засад.',
-    cost: { titanite: 400, silicate: 800, tritium: 400, factor: 1.9 },
+    cost: { ore: 400, polymers: 800, plasma: 400, factor: 1.9 },
     baseSeconds: 180,
     timeFactor: 1.75,
     labLevel: 2,
@@ -114,9 +114,9 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
   HYPERDRIVE: {
     label: 'Гипердвигатель',
     description:
-      'Открывает межзвездные прыжки на эридия. Каждый уровень ускоряет прыжок ' +
+      'Открывает межзвездные прыжки на антиматерии. Каждый уровень ускоряет прыжок ' +
       'и снижает расход топлива.',
-    cost: { titanite: 1500, silicate: 1000, tritium: 900, factor: 2.0 },
+    cost: { ore: 1500, polymers: 1000, plasma: 900, factor: 2.0 },
     baseSeconds: 300,
     timeFactor: 1.8,
     labLevel: 3,
@@ -136,9 +136,9 @@ export function researchCost(tech: TechnologyType, targetLevel: number): Resourc
   const { cost } = TECHNOLOGIES[tech];
   const scale = Math.pow(cost.factor, targetLevel - 1);
   return {
-    titanite: Math.floor(cost.titanite * scale),
-    silicate: Math.floor(cost.silicate * scale),
-    tritium: Math.floor(cost.tritium * scale),
+    ore: Math.floor(cost.ore * scale),
+    polymers: Math.floor(cost.polymers * scale),
+    plasma: Math.floor(cost.plasma * scale),
   };
 }
 
@@ -179,11 +179,11 @@ export function missingTechRequirements(
   const definition = TECHNOLOGIES[tech];
   const missing: Requirement[] = [];
 
-  if (levels.RESEARCH_LAB < definition.labLevel) {
+  if (levels.SCIENCE_CENTER < definition.labLevel) {
     missing.push({
       kind: 'building',
-      key: 'RESEARCH_LAB',
-      label: 'Исследовательская лаборатория',
+      key: 'SCIENCE_CENTER',
+      label: 'Научный центр',
       level: definition.labLevel,
     });
   }

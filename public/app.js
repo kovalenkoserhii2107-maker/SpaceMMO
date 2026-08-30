@@ -61,14 +61,14 @@
     shipQueue: $('ship-queue'),
     ships: $('ships'),
     buildMessage: $('build-message'),
-    resTitanite: $('res-titanite'),
-    resSilicate: $('res-silicate'),
-    resTritium: $('res-tritium'),
+    resOre: $('res-ore'),
+    resPolymers: $('res-polymers'),
+    resPlasma: $('res-plasma'),
     resEnergy: $('res-energy'),
     resEfficiency: $('res-efficiency'),
-    rateTitanite: $('rate-titanite'),
-    rateSilicate: $('rate-silicate'),
-    rateTritium: $('rate-tritium'),
+    rateOre: $('rate-ore'),
+    ratePolymers: $('rate-polymers'),
+    ratePlasma: $('rate-plasma'),
     rateEnergy: $('rate-energy'),
     rateEfficiency: $('rate-efficiency'),
     systemMap: $('system-map'),
@@ -78,8 +78,8 @@
     dispatch: $('dispatch'),
     mission: $('mission'),
     fleetInputs: $('fleet-inputs'),
-    cargoTitanite: $('cargo-titanite'),
-    cargoSilicate: $('cargo-silicate'),
+    cargoOre: $('cargo-ore'),
+    cargoPolymers: $('cargo-polymers'),
     flightPlan: $('flight-plan'),
     sendFleetButton: $('send-fleet'),
     fleetList: $('fleet-list'),
@@ -95,10 +95,10 @@
     orderBook: $('order-book'),
     myOrders: $('my-orders'),
     tradeLog: $('trade-log'),
-    cargoTitaniteLabel: $('cargo-titanite-label'),
-    cargoSilicateLabel: $('cargo-silicate-label'),
-    cargoTritium: $('cargo-tritium'),
-    cargoTritiumField: $('cargo-tritium-field'),
+    cargoOreLabel: $('cargo-ore-label'),
+    cargoPolymersLabel: $('cargo-polymers-label'),
+    cargoPlasma: $('cargo-plasma'),
+    cargoPlasmaField: $('cargo-plasma-field'),
     cargoInputs: $('cargo-inputs'),
     adminTab: $('admin-tab'),
     adminSearch: $('admin-search'),
@@ -131,9 +131,9 @@
     simDefenses: $('sim-defenses'),
     simEspionage: $('sim-espionage'),
     simEspionageNote: $('sim-espionage-note'),
-    simStockTitanite: $('sim-stock-titanite'),
-    simStockSilicate: $('sim-stock-silicate'),
-    simStockTritium: $('sim-stock-tritium'),
+    simStockOre: $('sim-stock-ore'),
+    simStockPolymers: $('sim-stock-polymers'),
+    simStockPlasma: $('sim-stock-plasma'),
     simStockStorage: $('sim-stock-storage'),
     simRun: $('sim-run'),
     simReset: $('sim-reset'),
@@ -146,8 +146,8 @@
     battles: $('battles'),
     expeditionSlots: $('expedition-slots'),
     expeditions: $('expeditions'),
-    resEridium: $('res-eridium'),
-    rateEridium: $('rate-eridium'),
+    resAntimatter: $('res-antimatter'),
+    rateAntimatter: $('rate-antimatter'),
     galaxyMap: $('galaxy-map'),
     mapModes: document.querySelector('.map-modes'),
     mapCaption: $('map-caption'),
@@ -179,10 +179,10 @@
    * в title: цифра без названия читается быстрее, но остается доступной.
    */
   const RESOURCE_NAMES = {
-    titanite: 'Титанит',
-    silicate: 'Силикаты',
-    tritium: 'Тритий',
-    eridium: 'Эридий',
+    ore: 'Руда',
+    polymers: 'Полимеры',
+    plasma: 'Плазма',
+    antimatter: 'Антиматерия',
     energy: 'Энергия',
     credits: 'Криптогривна',
     efficiency: 'Эффективность шахт',
@@ -198,15 +198,33 @@
 
   /**
    * Крупная иллюстрация объекта: постройка, оборона или корабль.
-   * Идентификатор символа — это тип объекта в нижнем регистре, поэтому новый
-   * класс достаточно нарисовать в спрайте, отдельной таблицы соответствий нет.
+   *
+   * Путь собирается из типа в нижнем регистре, отдельной таблицы соответствий
+   * нет — достаточно положить файл с правильным именем в нужную папку.
+   * Пока картинки нет, карточка показывает заглушку: `onerror` помечает блок
+   * классом, и верстка от отсутствия файла не разъезжается.
    */
-  function artNode(type, label) {
+  const ART_FOLDERS = { building: 'buildings', ship: 'ships', defense: 'defense' };
+
+  function artNode(type, label, kind) {
+    const slug = type.toLowerCase();
     const wrap = document.createElement('div');
-    wrap.className = `art ${type.toLowerCase()}`;
-    wrap.innerHTML =
-      `<svg viewBox="0 0 64 64" role="img" aria-label="${label}">` +
-      `<title>${label}</title><use href="#art-${type.toLowerCase()}"/></svg>`;
+    wrap.className = `art ${slug}`;
+
+    const image = document.createElement('img');
+    image.alt = label;
+    // Без lazy: карточки создаются в скрытой панели, и отложенная загрузка
+    // не стартует до ее показа — заглушка тогда не появляется вовсе.
+    // Картинок десятки и они мелкие, экономить тут нечего.
+    image.addEventListener('error', () => {
+      wrap.classList.add('art-missing');
+      wrap.dataset.placeholder = label.slice(0, 2).toUpperCase();
+      image.remove();
+    });
+
+    wrap.appendChild(image);
+    // src ставим после подписки и вставки: так событие ошибки точно не потеряется.
+    image.src = `/assets/${ART_FOLDERS[kind] || 'buildings'}/${slug}.webp`;
     return wrap;
   }
 
@@ -219,7 +237,7 @@
 
   const fmt = (value) => Math.floor(value).toLocaleString('ru-RU');
   const fmtRate = (value) => `+${value.toFixed(2)}/с`;
-  /** Эридий копится долями, поэтому мелкие значения показываем точнее. */
+  /** Антиматерия копится долями, поэтому мелкие значения показываем точнее. */
   const fmtAmount = (value) => (value > 0 && value < 10 ? value.toFixed(2) : fmt(value));
 
   function fmtTime(seconds) {
@@ -632,24 +650,24 @@
     const base = activeBase();
     if (!base) return;
 
-    el.resTitanite.textContent = fmt(base.resources.titanite);
-    el.resSilicate.textContent = fmt(base.resources.silicate);
-    el.resTritium.textContent = fmt(base.resources.tritium);
+    el.resOre.textContent = fmt(base.resources.ore);
+    el.resPolymers.textContent = fmt(base.resources.polymers);
+    el.resPlasma.textContent = fmt(base.resources.plasma);
     el.resEnergy.textContent = fmt(base.energy.available);
 
     // На полном складе шахты стоят: показывать их проектную скорость —
     // значит спорить с надписью «добыча остановлена» прямо над ней.
     const mining = base.storage && base.storage.full ? 0 : null;
     for (const [node, rate] of [
-      [el.rateTitanite, base.productionPerSecond.titanite],
-      [el.rateSilicate, base.productionPerSecond.silicate],
-      [el.rateTritium, base.productionPerSecond.tritium],
+      [el.rateOre, base.productionPerSecond.ore],
+      [el.ratePolymers, base.productionPerSecond.polymers],
+      [el.ratePlasma, base.productionPerSecond.plasma],
     ]) {
       node.textContent = mining === null ? fmtRate(rate) : 'склад полон';
       node.style.color = mining === null ? '' : 'var(--err)';
     }
-    el.resEridium.textContent = fmt(base.resources.eridium);
-    el.rateEridium.textContent = `+${base.productionPerSecond.eridium.toFixed(3)}/с`;
+    el.resAntimatter.textContent = fmt(base.resources.antimatter);
+    el.rateAntimatter.textContent = `+${base.productionPerSecond.antimatter.toFixed(3)}/с`;
     el.rateEnergy.textContent = `из ${fmt(base.energy.output)}`;
 
     const efficiency = Math.round(base.energy.efficiency * 100);
@@ -664,11 +682,11 @@
       (base.anomaly === 'BLACK_HOLE' ? ' · черная дыра: искажение времени' : '');
 
     el.richness.innerHTML = `
-      <div title="Титанит">${icon('titanite')}<b>×${base.richness.titanite}</b></div>
-      <div title="Силикаты">${icon('silicate')}<b>×${base.richness.silicate}</b></div>
-      <div title="Тритий">${icon('tritium')}<b>×${base.richness.tritium}</b></div>
+      <div title="Руда">${icon('ore')}<b>×${base.richness.ore}</b></div>
+      <div title="Полимеры">${icon('polymers')}<b>×${base.richness.polymers}</b></div>
+      <div title="Плазма">${icon('plasma')}<b>×${base.richness.plasma}</b></div>
       <div title="Инсоляция">${icon('energy')}<b>×${base.richness.energy}</b></div>
-      <div title="Эридий">${icon('eridium')}<b>×${base.richness.eridium}</b></div>`;
+      <div title="Антиматерия">${icon('antimatter')}<b>×${base.richness.antimatter}</b></div>`;
 
     renderStorage(base.storage);
 
@@ -755,7 +773,7 @@
 
       for (const building of base.buildings) {
         cards.buildings.set(building.type, createActionCard(el.buildings, building.label, '', () =>
-          send(`/api/bases/${base.baseId}/build`, { type: building.type }), building.type));
+          send(`/api/bases/${base.baseId}/build`, { type: building.type }), building.type, 'building'));
       }
       for (const tech of base.technologies) {
         cards.technologies.set(tech.tech, createActionCard(el.technologies, tech.label, tech.description, () =>
@@ -783,7 +801,7 @@
     }
   }
 
-  function createCardShell(container, title, description, type) {
+  function createCardShell(container, title, description, type, kind) {
     const article = document.createElement('article');
     article.className = 'card';
 
@@ -792,7 +810,7 @@
     // не зависит от размера иллюстрации и не ломается на узких экранах.
     const header = document.createElement('header');
     header.className = 'card-cover';
-    if (type) header.appendChild(artNode(type, title));
+    if (type) header.appendChild(artNode(type, title, kind));
 
     const titles = document.createElement('div');
     titles.className = 'card-titles';
@@ -810,10 +828,10 @@
 
     const cost = document.createElement('div');
     cost.className = 'cost';
-    const costTitanite = document.createElement('span');
-    const costSilicate = document.createElement('span');
-    const costTritium = document.createElement('span');
-    cost.append(costTitanite, costSilicate, costTritium);
+    const costOre = document.createElement('span');
+    const costPolymers = document.createElement('span');
+    const costPlasma = document.createElement('span');
+    cost.append(costOre, costPolymers, costPlasma);
 
     const combat = document.createElement('div');
     combat.className = 'combat-line';
@@ -827,11 +845,11 @@
     article.append(header, desc, combat, cost, time, reqs);
     container.appendChild(article);
 
-    return { article, level, costTitanite, costSilicate, costTritium, combat, time, reqs };
+    return { article, level, costOre, costPolymers, costPlasma, combat, time, reqs };
   }
 
-  function createActionCard(container, title, description, onClick, type) {
-    const shell = createCardShell(container, title, description, type);
+  function createActionCard(container, title, description, onClick, type, kind) {
+    const shell = createCardShell(container, title, description, type, kind);
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'primary';
@@ -841,7 +859,7 @@
   }
 
   function createShipCard(container, ship, baseId) {
-    const shell = createCardShell(container, ship.label, ship.description, ship.type);
+    const shell = createCardShell(container, ship.label, ship.description, ship.type, 'ship');
 
     const order = document.createElement('div');
     order.className = 'order';
@@ -863,7 +881,7 @@
   }
 
   function createDefenseCard(container, item, baseId) {
-    const shell = createCardShell(container, item.label, item.description, item.type);
+    const shell = createCardShell(container, item.label, item.description, item.type, 'defense');
 
     const order = document.createElement('div');
     order.className = 'order';
@@ -885,9 +903,9 @@
   }
 
   function fillCost(card, cost, resources) {
-    setCostPart(card.costTitanite, 'titanite', cost.titanite, resources.titanite);
-    setCostPart(card.costSilicate, 'silicate', cost.silicate, resources.silicate);
-    setCostPart(card.costTritium, 'tritium', cost.tritium, resources.tritium);
+    setCostPart(card.costOre, 'ore', cost.ore, resources.ore);
+    setCostPart(card.costPolymers, 'polymers', cost.polymers, resources.polymers);
+    setCostPart(card.costPlasma, 'plasma', cost.plasma, resources.plasma);
   }
 
   function setCostPart(node, resource, amount, stock) {
@@ -1111,7 +1129,7 @@
 
       // Пунктирное кольцо обломков рисуем первым, чтобы кольцо владельца
       // легло поверх и не потерялось на планетах со своей колонией.
-      if (planet.debris && planet.debris.titanite + planet.debris.silicate > 0) {
+      if (planet.debris && planet.debris.ore + planet.debris.polymers > 0) {
         group.appendChild(svgEl('circle', {
           class: 'debris-ring', cx: x, cy: y, r: radius + 12,
         }));
@@ -1215,7 +1233,7 @@
 
     const storage = svgEl('text', { x, y: y + 30, class: 'planet-label' });
     storage.textContent = hub.storage
-      ? `склад: ${icon('titanite', 'sm')} ${fmt(hub.storage.titanite)} · ${icon('silicate', 'sm')} ${fmt(hub.storage.silicate)}`
+      ? `склад: ${icon('ore', 'sm')} ${fmt(hub.storage.ore)} · ${icon('polymers', 'sm')} ${fmt(hub.storage.polymers)}`
       : 'склад пуст';
     group.appendChild(storage);
 
@@ -1229,8 +1247,8 @@
   function showHubTooltip(hub, event) {
     el.mapTooltip.innerHTML = hub.storage
       ? `<b>${hub.name}</b><br>нейтральная торговая станция · орбита ${hub.position}<br>` +
-        `твой склад: ${icon('titanite', 'sm')} ${fmt(hub.storage.titanite)} · ${icon('silicate', 'sm')} ${fmt(hub.storage.silicate)}<br>` +
-        `занято ${fmt(hub.storage.titanite + hub.storage.silicate)} из ${fmt(hub.storage.capacity)}`
+        `твой склад: ${icon('ore', 'sm')} ${fmt(hub.storage.ore)} · ${icon('polymers', 'sm')} ${fmt(hub.storage.polymers)}<br>` +
+        `занято ${fmt(hub.storage.ore + hub.storage.polymers)} из ${fmt(hub.storage.capacity)}`
       : `<b>${hub.name}</b><br>нейтральная торговая станция`;
     el.mapTooltip.hidden = false;
     positionTooltip(event);
@@ -1318,22 +1336,22 @@
     }
 
     const rich = planet.richness
-      ? `<br>богатство: ${icon('titanite', 'sm')} ×${planet.richness.titanite} · ` +
-        `${icon('silicate', 'sm')} ×${planet.richness.silicate} · ${icon('tritium', 'sm')} ×${planet.richness.tritium} · ` +
-        `${icon('eridium', 'sm')} ×${planet.richness.eridium}`
+      ? `<br>богатство: ${icon('ore', 'sm')} ×${planet.richness.ore} · ` +
+        `${icon('polymers', 'sm')} ×${planet.richness.polymers} · ${icon('plasma', 'sm')} ×${planet.richness.plasma} · ` +
+        `${icon('antimatter', 'sm')} ×${planet.richness.antimatter}`
       : '';
     const owner = planet.colonized ? `<br>владелец: <b>${planet.owner || 'неизвестен'}</b>` : '<br>колонии нет';
     const buildings = planet.buildings
-      ? `<br>шахты: ${planet.buildings.TITANITE_MINE}/${planet.buildings.SILICATE_MINE}/${planet.buildings.TRITIUM_MINE}` +
-        ` · лаб ${planet.buildings.RESEARCH_LAB} · верфь ${planet.buildings.SHIPYARD}`
+      ? `<br>шахты: ${planet.buildings.ORE_MINE}/${planet.buildings.POLYMER_PLANT}/${planet.buildings.PLASMA_REACTOR}` +
+        ` · лаб ${planet.buildings.SCIENCE_CENTER} · верфь ${planet.buildings.SHIPYARD}`
       : '';
     // Флот и склад меняются быстро: после суток сервер их уже не отдает,
     // и показывать нечего — вместо цифр честные «???».
     const unknown = '<span class="unknown-value">???</span>';
     const resources = planet.colonized
       ? planet.resources
-        ? `<br>склад: ${icon('titanite', 'sm')} ${fmt(planet.resources.titanite)} · ` +
-          `${icon('silicate', 'sm')} ${fmt(planet.resources.silicate)} · ${icon('tritium', 'sm')} ${fmt(planet.resources.tritium)}`
+        ? `<br>склад: ${icon('ore', 'sm')} ${fmt(planet.resources.ore)} · ` +
+          `${icon('polymers', 'sm')} ${fmt(planet.resources.polymers)} · ${icon('plasma', 'sm')} ${fmt(planet.resources.plasma)}`
         : planet.staleHidden
           ? `<br>склад: ${unknown}`
           : ''
@@ -1348,7 +1366,7 @@
           : ''
       : '';
     const defenses = planet.defenses
-      ? `<br>оборона: ракеты ${planet.defenses.ROCKET_LAUNCHER} · лазеры ${planet.defenses.LASER_TURRET}`
+      ? `<br>оборона: ракеты ${planet.defenses.CANNON_TURRET} · лазеры ${planet.defenses.LASER_TURRET}`
       : planet.colonized && planet.staleHidden
         ? `<br>оборона: ${unknown}`
         : '';
@@ -1361,10 +1379,10 @@
   /** Поле обломков на орбите. Туман войны его не скрывает — гонка честная. */
   function debrisHtml(planet) {
     const debris = planet.debris;
-    if (!debris || debris.titanite + debris.silicate <= 0) return '';
+    if (!debris || debris.ore + debris.polymers <= 0) return '';
     return (
-      `<br><span class="debris">обломки: ${icon('titanite', 'sm')} ${fmt(debris.titanite)} · ` +
-      `${icon('silicate', 'sm')} ${fmt(debris.silicate)}</span>`
+      `<br><span class="debris">обломки: ${icon('ore', 'sm')} ${fmt(debris.ore)} · ` +
+      `${icon('polymers', 'sm')} ${fmt(debris.polymers)}</span>`
     );
   }
 
@@ -1423,7 +1441,7 @@
     // планетой действительно висит поле: пустой пункт меню сбивал бы с толку.
     if (map.selectedKind === 'PLANET') {
       const planet = selectedPlanet();
-      const hasDebris = planet && planet.debris && planet.debris.titanite + planet.debris.silicate > 0;
+      const hasDebris = planet && planet.debris && planet.debris.ore + planet.debris.polymers > 0;
       const picked = readComposition();
       if (hasDebris && picked.RECYCLER > 0) options.push(['HARVEST', 'Переработка обломков']);
     }
@@ -1443,21 +1461,21 @@
 
     const pickup = el.mission.value === 'HUB_PICKUP';
     // Подпись перерисовывается вместе с иконкой: textContent стер бы SVG из разметки.
-    el.cargoTitaniteLabel.innerHTML = `${icon('titanite', 'sm')} ${pickup ? 'Забрать титанита' : 'Титанит'}`;
-    el.cargoSilicateLabel.innerHTML = `${icon('silicate', 'sm')} ${pickup ? 'Забрать силикатов' : 'Силикаты'}`;
+    el.cargoOreLabel.innerHTML = `${icon('ore', 'sm')} ${pickup ? 'Забрать руды' : 'Руда'}`;
+    el.cargoPolymersLabel.innerHTML = `${icon('polymers', 'sm')} ${pickup ? 'Забрать полимеров' : 'Полимеры'}`;
 
-    // Хаб торгует только титанитом и силикатами, тритий туда не возят.
+    // Хаб торгует только рудой и полимерами, плазму туда не возят.
     const hubRun = pickup || el.mission.value === 'HUB_DELIVERY';
-    el.cargoTritiumField.hidden = hubRun;
-    if (hubRun) el.cargoTritium.value = '0';
+    el.cargoPlasmaField.hidden = hubRun;
+    if (hubRun) el.cargoPlasma.value = '0';
 
     // Переработчики летят за обломками, а не с грузом: трюмы должны быть пусты.
     const harvest = el.mission.value === 'HARVEST';
     el.cargoInputs.hidden = harvest;
     if (harvest) {
-      el.cargoTitanite.value = '0';
-      el.cargoSilicate.value = '0';
-      el.cargoTritium.value = '0';
+      el.cargoOre.value = '0';
+      el.cargoPolymers.value = '0';
+      el.cargoPlasma.value = '0';
     }
   }
 
@@ -1484,9 +1502,9 @@
     if (hub) {
       el.planetInfo.innerHTML = hub.storage
         ? `<b>${hub.name}</b><br>нейтральная торговая станция · орбита ${hub.position}<br>` +
-          `твой склад: ${icon('titanite', 'sm')} <b>${fmt(hub.storage.titanite)}</b> · ` +
-          `${icon('silicate', 'sm')} <b>${fmt(hub.storage.silicate)}</b><br>` +
-          `занято ${fmt(hub.storage.titanite + hub.storage.silicate)} из ${fmt(hub.storage.capacity)} ` +
+          `твой склад: ${icon('ore', 'sm')} <b>${fmt(hub.storage.ore)}</b> · ` +
+          `${icon('polymers', 'sm')} <b>${fmt(hub.storage.polymers)}</b><br>` +
+          `занято ${fmt(hub.storage.ore + hub.storage.polymers)} из ${fmt(hub.storage.capacity)} ` +
           `(свободно ${fmt(hub.storage.free)})`
         : `<b>${hub.name}</b><br>нейтральная торговая станция`;
       el.dispatch.hidden = !base;
@@ -1595,16 +1613,16 @@
       map.plan = await response.json();
 
       const cargo =
-        Number(el.cargoTitanite.value || 0) +
-        Number(el.cargoSilicate.value || 0) +
-        Number(el.cargoTritium.value || 0);
+        Number(el.cargoOre.value || 0) +
+        Number(el.cargoPolymers.value || 0) +
+        Number(el.cargoPlasma.value || 0);
       const overload = cargo > map.plan.capacity;
       const jump = map.plan.kind === 'INTERSTELLAR';
 
-      // Внутри системы жжем тритий, между системами — эридий.
-      const fuelAmount = jump ? map.plan.eridium : map.plan.fuel;
-      const fuelStock = jump ? base.resources.eridium : base.resources.tritium;
-      const fuelName = jump ? 'эридия' : 'трития';
+      // Внутри системы жжем плазма, между системами — антиматерия.
+      const fuelAmount = jump ? map.plan.antimatter : map.plan.fuel;
+      const fuelStock = jump ? base.resources.antimatter : base.resources.plasma;
+      const fuelName = jump ? 'антиматерии' : 'плазмы';
       const noFuel = fuelAmount > fuelStock;
 
       el.flightPlan.innerHTML =
@@ -1626,9 +1644,9 @@
     if (!base || !target) return;
 
     const amounts = {
-      titanite: Number(el.cargoTitanite.value) || 0,
-      silicate: Number(el.cargoSilicate.value) || 0,
-      tritium: Number(el.cargoTritium.value) || 0,
+      ore: Number(el.cargoOre.value) || 0,
+      polymers: Number(el.cargoPolymers.value) || 0,
+      plasma: Number(el.cargoPlasma.value) || 0,
     };
     const pickup = el.mission.value === 'HUB_PICKUP';
 
@@ -1636,16 +1654,16 @@
       ...target,
       mission: el.mission.value,
       ships: readComposition(),
-      cargo: pickup ? { titanite: 0, silicate: 0, tritium: 0 } : amounts,
-      pickup: pickup ? { titanite: amounts.titanite, silicate: amounts.silicate } : { titanite: 0, silicate: 0 },
+      cargo: pickup ? { ore: 0, polymers: 0, plasma: 0 } : amounts,
+      pickup: pickup ? { ore: amounts.ore, polymers: amounts.polymers } : { ore: 0, polymers: 0 },
     });
 
     // Сбрасываем форму, чтобы повторный клик не отправил тот же флот дважды.
     if (ok) {
       for (const refs of Object.values(fleetInputs)) refs.input.value = '0';
-      el.cargoTitanite.value = '0';
-      el.cargoSilicate.value = '0';
-      el.cargoTritium.value = '0';
+      el.cargoOre.value = '0';
+      el.cargoPolymers.value = '0';
+      el.cargoPlasma.value = '0';
       el.presetSelect.value = '';
       map.plan = null;
       el.flightPlan.textContent = 'Выбери корабли, чтобы увидеть расчет.';
@@ -1673,10 +1691,10 @@
       const direction = fleet.status === 'OUTBOUND'
         ? `${fleet.originPlanetName} → ${fleet.targetName}`
         : `${fleet.targetName} → ${fleet.originPlanetName} (возврат)`;
-      const cargo = fleet.cargo.titanite + fleet.cargo.silicate > 0
-        ? `, груз ${icon('titanite', 'sm')} ${fmt(fleet.cargo.titanite)} · ` +
-          `${icon('silicate', 'sm')} ${fmt(fleet.cargo.silicate)}` +
-          (fleet.cargo.tritium > 0 ? ` · ${icon('tritium', 'sm')} ${fmt(fleet.cargo.tritium)}` : '')
+      const cargo = fleet.cargo.ore + fleet.cargo.polymers > 0
+        ? `, груз ${icon('ore', 'sm')} ${fmt(fleet.cargo.ore)} · ` +
+          `${icon('polymers', 'sm')} ${fmt(fleet.cargo.polymers)}` +
+          (fleet.cargo.plasma > 0 ? ` · ${icon('plasma', 'sm')} ${fmt(fleet.cargo.plasma)}` : '')
         : '';
       title.textContent = `${fleet.missionLabel}: ${direction}`;
       const meta = document.createElement('span');
@@ -1691,17 +1709,17 @@
     syncMissionOptions();
     schedulePlan();
   });
-  el.cargoTitanite.addEventListener('input', schedulePlan);
-  el.cargoSilicate.addEventListener('input', schedulePlan);
-  el.cargoTritium.addEventListener('input', schedulePlan);
+  el.cargoOre.addEventListener('input', schedulePlan);
+  el.cargoPolymers.addEventListener('input', schedulePlan);
+  el.cargoPlasma.addEventListener('input', schedulePlan);
 
 
   /* ---------- Хаб и биржа ---------- */
 
   const market = { data: null, timer: null };
-  const RESOURCE_LABELS = { TITANITE: 'Титанит', SILICATE: 'Силикаты' };
+  const RESOURCE_LABELS = { ORE: 'Руда', POLYMERS: 'Полимеры' };
   /** Биржа оперирует enum-ключами, иконки — именами ресурсов. */
-  const RESOURCE_ICONS = { TITANITE: 'titanite', SILICATE: 'silicate' };
+  const RESOURCE_ICONS = { ORE: 'ore', POLYMERS: 'polymers' };
 
   async function loadMarket() {
     try {
@@ -1732,21 +1750,21 @@
 
     el.hubStorage.innerHTML =
       `<b>${market.data.hub.name}</b><br>` +
-      `${icon('titanite', 'sm')} <b>${fmt(storage.titanite)}</b> · ${icon('silicate', 'sm')} <b>${fmt(storage.silicate)}</b><br>` +
-      `занято ${fmt(storage.titanite + storage.silicate)} из <b>${fmt(storage.capacity)}</b> ` +
+      `${icon('ore', 'sm')} <b>${fmt(storage.ore)}</b> · ${icon('polymers', 'sm')} <b>${fmt(storage.polymers)}</b><br>` +
+      `занято ${fmt(storage.ore + storage.polymers)} из <b>${fmt(storage.capacity)}</b> ` +
       `(свободно ${fmt(storage.free)})<br>` +
       `уровень склада: <b>${storage.level}</b><br>` +
-      `расширение до ур. ${storage.nextLevel}: ${icon('titanite', 'sm')} ${fmt(storage.upgradeCost.titanite)} + ` +
-      `${icon('silicate', 'sm')} ${fmt(storage.upgradeCost.silicate)} со склада хаба → ${fmt(storage.nextCapacity)}`;
+      `расширение до ур. ${storage.nextLevel}: ${icon('ore', 'sm')} ${fmt(storage.upgradeCost.ore)} + ` +
+      `${icon('polymers', 'sm')} ${fmt(storage.upgradeCost.polymers)} со склада хаба → ${fmt(storage.nextCapacity)}`;
 
     el.upgradeStorage.disabled =
-      storage.titanite < storage.upgradeCost.titanite || storage.silicate < storage.upgradeCost.silicate;
+      storage.ore < storage.upgradeCost.ore || storage.polymers < storage.upgradeCost.polymers;
   }
 
   function renderOrderBook() {
     el.orderBook.innerHTML = '';
 
-    for (const resource of ['TITANITE', 'SILICATE']) {
+    for (const resource of ['ORE', 'POLYMERS']) {
       const side = document.createElement('div');
       side.className = 'book-side';
 
@@ -1921,7 +1939,7 @@
 
     if (el.orderSide.value === 'SELL') {
       const available = storage
-        ? (el.orderResource.value === 'TITANITE' ? storage.titanite : storage.silicate)
+        ? (el.orderResource.value === 'ORE' ? storage.ore : storage.polymers)
         : 0;
       el.orderHint.innerHTML =
         `Продажа заблокирует <b>${fmt(quantity)}</b> со склада хаба (там ${fmt(available)}).<br>` +
@@ -1947,7 +1965,7 @@
 
   /* ---------- Оборона, бои, дипломатия ---------- */
 
-  const DEFENSE_LABELS = { ROCKET_LAUNCHER: 'Ракетные установки', LASER_TURRET: 'Лазерные орудия' };
+  const DEFENSE_LABELS = { CANNON_TURRET: 'Пушечные турели', LASER_TURRET: 'Лазерные турели' };
   const war = { data: null };
 
   async function loadWar() {
@@ -2103,13 +2121,13 @@
 
       const plunder = document.createElement('div');
       plunder.className = 'line';
-      const looted = battle.plunder.titanite + battle.plunder.silicate + battle.plunder.tritium > 0;
+      const looted = battle.plunder.ore + battle.plunder.polymers + battle.plunder.plasma > 0;
       plunder.innerHTML = looted
         ? 'награблено: ' +
           [
-            [battle.plunder.titanite, 'titanite'],
-            [battle.plunder.silicate, 'silicate'],
-            [battle.plunder.tritium, 'tritium'],
+            [battle.plunder.ore, 'ore'],
+            [battle.plunder.polymers, 'polymers'],
+            [battle.plunder.plasma, 'plasma'],
           ]
             .filter(([amount]) => amount > 0)
             .map(([amount, res]) => `${icon(res, 'sm')} <b>${fmt(amount)}</b>`)
@@ -2123,11 +2141,11 @@
       // Обломки образуют обе стороны, поэтому строка одинакова для всех.
       const debris = document.createElement('div');
       debris.className = 'line';
-      const debrisTotal = battle.debris ? battle.debris.titanite + battle.debris.silicate : 0;
+      const debrisTotal = battle.debris ? battle.debris.ore + battle.debris.polymers : 0;
       debris.innerHTML =
         debrisTotal > 0
-          ? `на орбите осело обломков: ${icon('titanite', 'sm')} <b>${fmt(battle.debris.titanite)}</b> · ` +
-            `${icon('silicate', 'sm')} <b>${fmt(battle.debris.silicate)}</b> — их можно собрать переработчиком`
+          ? `на орбите осело обломков: ${icon('ore', 'sm')} <b>${fmt(battle.debris.ore)}</b> · ` +
+            `${icon('polymers', 'sm')} <b>${fmt(battle.debris.polymers)}</b> — их можно собрать переработчиком`
           : 'обломков не осталось';
 
       const when = document.createElement('div');
@@ -2311,7 +2329,7 @@
       `<b>${system.name}</b><br>координаты ${system.galaxyX}:${system.galaxyY} · планет ${system.planetCount}<br>` +
       (blackHole
         ? '<span class="unknown">Черная дыра: искажение времени</span><br>' +
-          'синтез эридия +50%, стройка и наука на 30% дольше<br>'
+          'синтез антиматерии +50%, стройка и наука на 30% дольше<br>'
         : `звезда класса ${system.starClass}<br>`) +
       (system.hasOwnColony ? 'здесь ваша колония<br>' : system.colonized ? 'система заселена<br>' : 'колоний нет<br>') +
       (system.scannedPlanets > 0 ? `разведано планет: ${system.scannedPlanets}` : 'разведданных нет');
@@ -2435,14 +2453,14 @@
 
       card.append(header, summary);
 
-      const loot = report.loot.titanite + report.loot.silicate + report.loot.eridium;
+      const loot = report.loot.ore + report.loot.polymers + report.loot.antimatter;
       if (loot > 0) {
         const line = document.createElement('div');
         line.className = 'line';
         const parts = [];
-        if (report.loot.titanite) parts.push(`${icon('titanite', 'sm')} ${fmt(report.loot.titanite)}`);
-        if (report.loot.silicate) parts.push(`${icon('silicate', 'sm')} ${fmt(report.loot.silicate)}`);
-        if (report.loot.eridium) parts.push(`${icon('eridium', 'sm')} ${fmtAmount(report.loot.eridium)}`);
+        if (report.loot.ore) parts.push(`${icon('ore', 'sm')} ${fmt(report.loot.ore)}`);
+        if (report.loot.polymers) parts.push(`${icon('polymers', 'sm')} ${fmt(report.loot.polymers)}`);
+        if (report.loot.antimatter) parts.push(`${icon('antimatter', 'sm')} ${fmtAmount(report.loot.antimatter)}`);
         line.innerHTML = `добыча: <b>${parts.join(', ')}</b>`;
         card.appendChild(line);
       }
@@ -2940,7 +2958,7 @@
 
   const sim = { attacker: {}, defender: {}, defenses: {}, targets: [] };
 
-  const DEFENSE_SIM_LABELS = { ROCKET_LAUNCHER: 'Ракетные установки', LASER_TURRET: 'Лазерные орудия' };
+  const DEFENSE_SIM_LABELS = { CANNON_TURRET: 'Пушечные турели', LASER_TURRET: 'Лазерные турели' };
 
   function buildCountInputs(container, labels, store) {
     if (container.childElementCount > 0) return;
@@ -3011,9 +3029,9 @@
 
     writeCounts(sim.defender, target.ships);
     writeCounts(sim.defenses, target.defenses);
-    el.simStockTitanite.value = String(target.stock.titanite);
-    el.simStockSilicate.value = String(target.stock.silicate);
-    el.simStockTritium.value = String(target.stock.tritium);
+    el.simStockOre.value = String(target.stock.ore);
+    el.simStockPolymers.value = String(target.stock.polymers);
+    el.simStockPlasma.value = String(target.stock.plasma);
     el.simStockStorage.value = String(target.stock.storageLevel);
 
     // Возраст снимка — часть ответа: по суточным данным планировать нельзя.
@@ -3032,9 +3050,9 @@
         ships: readCounts(sim.defender),
         defenses: readCounts(sim.defenses),
         stock: {
-          titanite: Math.max(0, Math.floor(Number(el.simStockTitanite.value) || 0)),
-          silicate: Math.max(0, Math.floor(Number(el.simStockSilicate.value) || 0)),
-          tritium: Math.max(0, Math.floor(Number(el.simStockTritium.value) || 0)),
+          ore: Math.max(0, Math.floor(Number(el.simStockOre.value) || 0)),
+          polymers: Math.max(0, Math.floor(Number(el.simStockPolymers.value) || 0)),
+          plasma: Math.max(0, Math.floor(Number(el.simStockPlasma.value) || 0)),
           storageLevel: Math.max(0, Math.floor(Number(el.simStockStorage.value) || 0)),
         },
       },
@@ -3094,11 +3112,11 @@
 
     if (result.plunder) {
       const loot = result.plunder;
-      const total = loot.titanite + loot.silicate + loot.tritium;
+      const total = loot.ore + loot.polymers + loot.plasma;
       card.appendChild(line(
-        `добыча: ${icon('titanite', 'sm')} <b>${fmt(loot.titanite)}</b> · ` +
-        `${icon('silicate', 'sm')} <b>${fmt(loot.silicate)}</b> · ` +
-        `${icon('tritium', 'sm')} <b>${fmt(loot.tritium)}</b> (всего ${fmt(total)})<br>` +
+        `добыча: ${icon('ore', 'sm')} <b>${fmt(loot.ore)}</b> · ` +
+        `${icon('polymers', 'sm')} <b>${fmt(loot.polymers)}</b> · ` +
+        `${icon('plasma', 'sm')} <b>${fmt(loot.plasma)}</b> (всего ${fmt(total)})<br>` +
         `хранилище защитника прячет <b>${fmt(loot.protectedAmount)}</b>, ` +
         `уязвимый излишек <b>${fmt(loot.surplus)}</b>` +
         (loot.cargoLimited
@@ -3109,11 +3127,11 @@
       card.appendChild(line('добыча: склад защитника не задан — заполни его, чтобы увидеть трофеи'));
     }
 
-    const debrisTotal = result.debris.titanite + result.debris.silicate;
+    const debrisTotal = result.debris.ore + result.debris.polymers;
     card.appendChild(line(
       debrisTotal > 0
-        ? `обломки после боя: ${icon('titanite', 'sm')} <b>${fmt(result.debris.titanite)}</b> · ` +
-          `${icon('silicate', 'sm')} <b>${fmt(result.debris.silicate)}</b> — включая наши потери, ` +
+        ? `обломки после боя: ${icon('ore', 'sm')} <b>${fmt(result.debris.ore)}</b> · ` +
+          `${icon('polymers', 'sm')} <b>${fmt(result.debris.polymers)}</b> — включая наши потери, ` +
           'их соберет тот, чей переработчик долетит первым'
         : 'обломков после такого боя не останется',
     ));
@@ -3135,9 +3153,9 @@
     writeCounts(sim.attacker, {});
     writeCounts(sim.defender, {});
     writeCounts(sim.defenses, {});
-    el.simStockTitanite.value = '0';
-    el.simStockSilicate.value = '0';
-    el.simStockTritium.value = '0';
+    el.simStockOre.value = '0';
+    el.simStockPolymers.value = '0';
+    el.simStockPlasma.value = '0';
     el.simStockStorage.value = '0';
     el.simEspionage.value = '';
     el.simEspionageNote.hidden = true;
@@ -3352,10 +3370,10 @@
   const admin = { schema: null, list: [], selected: null, detail: null, searchTimer: null };
 
   const ADMIN_RESOURCE_LABELS = {
-    titanite: 'Титанит',
-    silicate: 'Силикаты',
-    tritium: 'Тритий',
-    eridium: 'Эридий',
+    ore: 'Руда',
+    polymers: 'Полимеры',
+    plasma: 'Плазма',
+    antimatter: 'Антиматерия',
   };
 
   /**
@@ -3552,7 +3570,7 @@
       note.textContent =
         'Склады на хабах: ' +
         detail.hubStorages
-          .map((s) => `${s.hubName} — ${fmt(s.titanite)} Ti / ${fmt(s.silicate)} Si (ур. ${s.level})`)
+          .map((s) => `${s.hubName} — ${fmt(s.ore)} Ti / ${fmt(s.polymers)} Si (ур. ${s.level})`)
           .join('; ');
       el.adminDetail.appendChild(note);
     }

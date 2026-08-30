@@ -20,11 +20,11 @@ export function describeLosses(losses: UnitLoss[]): string {
   return real.map((item) => `${item.label} −${item.lost} из ${item.before}`).join(', ');
 }
 
-function describeLoot(loot: { titanite: number; silicate: number; tritium: number }): string {
+function describeLoot(loot: { ore: number; polymers: number; plasma: number }): string {
   const parts = [
-    loot.titanite > 0 ? `${loot.titanite} титанита` : null,
-    loot.silicate > 0 ? `${loot.silicate} силикатов` : null,
-    loot.tritium > 0 ? `${loot.tritium} трития` : null,
+    loot.ore > 0 ? `${loot.ore} руды` : null,
+    loot.polymers > 0 ? `${loot.polymers} полимеров` : null,
+    loot.plasma > 0 ? `${loot.plasma} плазмы` : null,
   ].filter(Boolean);
   return parts.length > 0 ? parts.join(', ') : 'ничего';
 }
@@ -56,9 +56,9 @@ export function buildBattleMail(input: BattleMailInput): OutgoingMessage[] {
     attackerDamageReport: outcome.attackerDamageReport,
     defenderDamageReport: outcome.defenderDamageReport,
     plunder: {
-      titanite: plunder.titanite,
-      silicate: plunder.silicate,
-      tritium: plunder.tritium,
+      ore: plunder.ore,
+      polymers: plunder.polymers,
+      plasma: plunder.plasma,
       protectedAmount: Math.round(plunder.protectedAmount),
       surplus: Math.round(plunder.surplus),
       cargoLimited: plunder.cargoLimited,
@@ -68,9 +68,9 @@ export function buildBattleMail(input: BattleMailInput): OutgoingMessage[] {
 
   // Обломки образуют обе стороны, поэтому строка одинаковая в обоих письмах.
   const debrisLine =
-    outcome.debris.titanite + outcome.debris.silicate > 0
-      ? `\nНа орбите осталось обломков: ${outcome.debris.titanite} титанита, ` +
-        `${outcome.debris.silicate} силикатов.`
+    outcome.debris.ore + outcome.debris.polymers > 0
+      ? `\nНа орбите осталось обломков: ${outcome.debris.ore} руды, ` +
+        `${outcome.debris.polymers} полимеров.`
       : '';
 
   const attackerBody =
@@ -121,11 +121,11 @@ export interface ExpeditionMailInput {
 export function buildExpeditionMail(input: ExpeditionMailInput): OutgoingMessage[] {
   const { result, systemName } = input;
   const loot = describeLoot({
-    titanite: result.loot.titanite,
-    silicate: result.loot.silicate,
-    tritium: 0,
+    ore: result.loot.ore,
+    polymers: result.loot.polymers,
+    plasma: 0,
   });
-  const eridium = result.loot.eridium > 0 ? `, эридий ${result.loot.eridium}` : '';
+  const antimatter = result.loot.antimatter > 0 ? `, антиматерия ${result.loot.antimatter}` : '';
 
   // Потери экспедиции знает только бой с пиратами: в тихом вылете терять нечего.
   const losses = result.battle ? result.battle.attackerLosses : [];
@@ -133,7 +133,7 @@ export function buildExpeditionMail(input: ExpeditionMailInput): OutgoingMessage
   const body =
     `Экспедиция в глубокий космос системы ${systemName}.\n` +
     `${result.summary}\n` +
-    `Добыча: ${loot}${eridium}.\n` +
+    `Добыча: ${loot}${antimatter}.\n` +
     `Потери: ${describeLosses(losses)}.`;
 
   return [
@@ -198,13 +198,13 @@ export function buildSpyMail(input: SpyMailInput): OutgoingMessage[] {
       `истребители ${fleet.LIGHT_FIGHTER}, крейсера ${fleet.HEAVY_CRUISER}, фрегаты ${fleet.ION_FRIGATE}.`
     : 'Флот на орбите: данных нет.';
   const defenseLine = defenses
-    ? `Оборона: ракетных установок ${defenses.ROCKET_LAUNCHER}, лазерных орудий ${defenses.LASER_TURRET}.`
+    ? `Оборона: ракетных установок ${defenses.CANNON_TURRET}, лазерных орудий ${defenses.LASER_TURRET}.`
     : 'Оборона: данных нет.';
   const stockLine = stock
-    ? `Склад: ${stock.titanite} титанита, ${stock.silicate} силикатов, ${stock.tritium} трития.`
+    ? `Склад: ${stock.ore} руды, ${stock.polymers} полимеров, ${stock.plasma} плазмы.`
     : 'Склад: данных нет.';
   const buildLine = buildings
-    ? `Инфраструктура: шахты ${buildings.TITANITE_MINE}/${buildings.SILICATE_MINE}/${buildings.TRITIUM_MINE}, ` +
+    ? `Инфраструктура: шахты ${buildings.ORE_MINE}/${buildings.POLYMER_PLANT}/${buildings.PLASMA_REACTOR}, ` +
       `верфь ${buildings.SHIPYARD}, хранилище ${buildings.STORAGE}.`
     : 'Инфраструктура: данных нет.';
 
@@ -231,8 +231,8 @@ export interface HarvestMailInput {
   planetName: string;
   systemName: string;
   capacity: number;
-  titanite: number;
-  silicate: number;
+  ore: number;
+  polymers: number;
 }
 
 /**
@@ -242,7 +242,7 @@ export interface HarvestMailInput {
  * Об этом надо сказать прямо, иначе исчезнувшие обломки выглядят как баг.
  */
 export function buildHarvestMail(input: HarvestMailInput): OutgoingMessage[] {
-  const total = input.titanite + input.silicate;
+  const total = input.ore + input.polymers;
   const empty = total <= 0;
 
   const body = empty
@@ -250,7 +250,7 @@ export function buildHarvestMail(input: HarvestMailInput): OutgoingMessage[] {
       'но поле обломков оказалось пустым — его успели собрать раньше. Флот возвращается ни с чем.'
     : `Переработчики собрали поле обломков на орбите ${input.planetName} ` +
       `(система ${input.systemName}).\n` +
-      `Поднято: ${input.titanite} титанита, ${input.silicate} силикатов.\n` +
+      `Поднято: ${input.ore} руды, ${input.polymers} полимеров.\n` +
       `Трюмы: занято ${total} из ${input.capacity}.`;
 
   return [
@@ -264,8 +264,8 @@ export function buildHarvestMail(input: HarvestMailInput): OutgoingMessage[] {
       payload: {
         planetName: input.planetName,
         systemName: input.systemName,
-        titanite: input.titanite,
-        silicate: input.silicate,
+        ore: input.ore,
+        polymers: input.polymers,
         capacity: input.capacity,
       },
     },

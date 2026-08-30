@@ -78,7 +78,7 @@ export interface AdminBaseView {
   name: string;
   planetName: string;
   systemName: string;
-  resources: { titanite: number; silicate: number; tritium: number; eridium: number };
+  resources: { ore: number; polymers: number; plasma: number; antimatter: number };
   buildings: Record<BuildingType, number>;
   ships: Record<ShipType, number>;
   defenses: Record<DefenseType, number>;
@@ -92,7 +92,7 @@ export interface CommanderDetail {
   credits: number;
   technologies: Record<TechnologyType, number>;
   bases: AdminBaseView[];
-  hubStorages: Array<{ hubId: string; hubName: string; titanite: number; silicate: number; level: number }>;
+  hubStorages: Array<{ hubId: string; hubName: string; ore: number; polymers: number; level: number }>;
   fleetsInFlight: number;
 }
 
@@ -137,8 +137,8 @@ export async function getCommanderDetail(commanderId: string): Promise<Commander
     hubStorages: row.hubStorages.map((storage) => ({
       hubId: storage.hubId,
       hubName: storage.hub.name,
-      titanite: storage.titanite,
-      silicate: storage.silicate,
+      ore: storage.ore,
+      polymers: storage.polymers,
       level: storage.level,
     })),
     bases: row.bases.map((base) => {
@@ -156,19 +156,19 @@ export async function getCommanderDetail(commanderId: string): Promise<Commander
         planetName: base.planet.name,
         systemName: base.planet.system.name,
         resources: {
-          titanite: base.titanite,
-          silicate: base.silicate,
-          tritium: base.tritium,
-          eridium: base.eridium,
+          ore: base.ore,
+          polymers: base.polymers,
+          plasma: base.plasma,
+          antimatter: base.antimatter,
         },
         buildings: {
-          TITANITE_MINE: base.titaniteMineLevel,
-          SILICATE_MINE: base.silicateMineLevel,
-          TRITIUM_MINE: base.tritiumMineLevel,
-          SOLAR_PLANT: base.solarPlantLevel,
-          RESEARCH_LAB: base.researchLabLevel,
+          ORE_MINE: base.oreMineLevel,
+          POLYMER_PLANT: base.polymerPlantLevel,
+          PLASMA_REACTOR: base.plasmaReactorLevel,
+          POWER_PLANT: base.powerPlantLevel,
+          SCIENCE_CENTER: base.scienceCenterLevel,
           SHIPYARD: base.shipyardLevel,
-          ERIDIUM_SYNTH: base.eridiumSynthLevel,
+          ANTIMATTER_FACTORY: base.antimatterFactoryLevel,
           STORAGE: base.storageLevel,
         },
         ships,
@@ -185,7 +185,7 @@ export interface AdminPatch {
   technologies?: Partial<Record<TechnologyType, number>>;
   bases?: Array<{
     baseId: string;
-    resources?: Partial<Record<'titanite' | 'silicate' | 'tritium' | 'eridium', number>>;
+    resources?: Partial<Record<'ore' | 'polymers' | 'plasma' | 'antimatter', number>>;
     buildings?: Partial<Record<BuildingType, number>>;
     ships?: Partial<Record<ShipType, number>>;
     defenses?: Partial<Record<DefenseType, number>>;
@@ -193,13 +193,13 @@ export interface AdminPatch {
 }
 
 const BUILDING_COLUMNS: Record<BuildingType, string> = {
-  TITANITE_MINE: 'titaniteMineLevel',
-  SILICATE_MINE: 'silicateMineLevel',
-  TRITIUM_MINE: 'tritiumMineLevel',
-  SOLAR_PLANT: 'solarPlantLevel',
-  RESEARCH_LAB: 'researchLabLevel',
+  ORE_MINE: 'oreMineLevel',
+  POLYMER_PLANT: 'polymerPlantLevel',
+  PLASMA_REACTOR: 'plasmaReactorLevel',
+  POWER_PLANT: 'powerPlantLevel',
+  SCIENCE_CENTER: 'scienceCenterLevel',
   SHIPYARD: 'shipyardLevel',
-  ERIDIUM_SYNTH: 'eridiumSynthLevel',
+  ANTIMATTER_FACTORY: 'antimatterFactoryLevel',
   STORAGE: 'storageLevel',
 };
 
@@ -234,10 +234,10 @@ export function parsePatch(input: unknown): AdminPatch | null {
 
       if (entry['resources'] !== undefined) {
         const resources = readAmounts(entry['resources'], (key) =>
-          ['titanite', 'silicate', 'tritium', 'eridium'].includes(key),
+          ['ore', 'polymers', 'plasma', 'antimatter'].includes(key),
         );
         if (!resources) return null;
-        base.resources = resources as Partial<Record<'titanite' | 'silicate' | 'tritium' | 'eridium', number>>;
+        base.resources = resources as Partial<Record<'ore' | 'polymers' | 'plasma' | 'antimatter', number>>;
       }
       if (entry['buildings'] !== undefined) {
         const buildings = readLevels(entry['buildings'], isBuildingType);
@@ -412,6 +412,6 @@ export function adminSchema() {
     technologies: TECHNOLOGY_TYPES,
     ships: SHIP_TYPES,
     defenses: DEFENSE_TYPES,
-    resources: ['titanite', 'silicate', 'tritium', 'eridium'] as const,
+    resources: ['ore', 'polymers', 'plasma', 'antimatter'] as const,
   };
 }

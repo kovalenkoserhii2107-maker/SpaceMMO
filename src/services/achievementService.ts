@@ -74,13 +74,13 @@ export async function checkArchitect(commanderId: string, baseId: string): Promi
   if (!base || base.commanderId !== commanderId) return false;
 
   const levels: Record<string, number> = {
-    TITANITE_MINE: base.titaniteMineLevel,
-    SILICATE_MINE: base.silicateMineLevel,
-    TRITIUM_MINE: base.tritiumMineLevel,
-    SOLAR_PLANT: base.solarPlantLevel,
-    RESEARCH_LAB: base.researchLabLevel,
+    ORE_MINE: base.oreMineLevel,
+    POLYMER_PLANT: base.polymerPlantLevel,
+    PLASMA_REACTOR: base.plasmaReactorLevel,
+    POWER_PLANT: base.powerPlantLevel,
+    SCIENCE_CENTER: base.scienceCenterLevel,
     SHIPYARD: base.shipyardLevel,
-    ERIDIUM_SYNTH: base.eridiumSynthLevel,
+    ANTIMATTER_FACTORY: base.antimatterFactoryLevel,
     STORAGE: base.storageLevel,
   };
 

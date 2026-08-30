@@ -20,9 +20,9 @@ import type { ShipCounts } from '../game/ships.js';
 
 /** Склад защитника: без него нельзя оценить, ради чего вообще лететь. */
 export interface SimulationStock {
-  titanite: number;
-  silicate: number;
-  tritium: number;
+  ore: number;
+  polymers: number;
+  plasma: number;
   storageLevel: number;
 }
 
@@ -40,9 +40,9 @@ export interface SimulationResult {
   defenderDamageReport: AbsorptionReport;
   /** Сколько увезут уцелевшие трюмы, если склад защитника задан. */
   plunder: {
-    titanite: number;
-    silicate: number;
-    tritium: number;
+    ore: number;
+    polymers: number;
+    plasma: number;
     protectedAmount: number;
     surplus: number;
     takeable: number;
@@ -55,7 +55,7 @@ export interface SimulationResult {
    * Часть из них — потери самого атакующего, поэтому цифра полезна обеим
    * сторонам: она показывает, что оставит после себя вылет.
    */
-  debris: { titanite: number; silicate: number };
+  debris: { ore: number; polymers: number };
 }
 
 export function simulateBattle(
@@ -89,9 +89,9 @@ export function simulateBattle(
     defenderDamageReport: outcome.defenderDamageReport,
     plunder: plunder
       ? {
-          titanite: plunder.titanite,
-          silicate: plunder.silicate,
-          tritium: plunder.tritium,
+          ore: plunder.ore,
+          polymers: plunder.polymers,
+          plasma: plunder.plasma,
           protectedAmount: Math.round(plunder.protectedAmount),
           surplus: Math.round(plunder.surplus),
           takeable: plunder.takeable,

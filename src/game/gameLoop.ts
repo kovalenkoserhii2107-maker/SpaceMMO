@@ -231,13 +231,13 @@ class GameLoop {
       for (const item of base.defenses) defenses[item.type] = item.count;
 
       const levels = emptyLevels();
-      levels.TITANITE_MINE = base.titaniteMineLevel;
-      levels.SILICATE_MINE = base.silicateMineLevel;
-      levels.TRITIUM_MINE = base.tritiumMineLevel;
-      levels.SOLAR_PLANT = base.solarPlantLevel;
-      levels.RESEARCH_LAB = base.researchLabLevel;
+      levels.ORE_MINE = base.oreMineLevel;
+      levels.POLYMER_PLANT = base.polymerPlantLevel;
+      levels.PLASMA_REACTOR = base.plasmaReactorLevel;
+      levels.POWER_PLANT = base.powerPlantLevel;
+      levels.SCIENCE_CENTER = base.scienceCenterLevel;
       levels.SHIPYARD = base.shipyardLevel;
-      levels.ERIDIUM_SYNTH = base.eridiumSynthLevel;
+      levels.ANTIMATTER_FACTORY = base.antimatterFactoryLevel;
       levels.STORAGE = base.storageLevel;
 
       commander.bases.set(base.id, {
@@ -254,17 +254,17 @@ class GameLoop {
         galaxy: { galaxyX: base.planet.system.galaxyX, galaxyY: base.planet.system.galaxyY },
         anomaly: base.planet.system.anomaly,
         richness: {
-          titanite: base.planet.titaniteRichness,
-          silicate: base.planet.silicateRichness,
-          tritium: base.planet.tritiumRichness,
+          ore: base.planet.oreRichness,
+          polymers: base.planet.polymersRichness,
+          plasma: base.planet.plasmaRichness,
           energy: base.planet.energyRichness,
-          eridium: base.planet.eridiumRichness,
+          antimatter: base.planet.antimatterRichness,
         },
         resources: {
-          titanite: safeAmount(base.titanite),
-          silicate: safeAmount(base.silicate),
-          tritium: safeAmount(base.tritium),
-          eridium: safeAmount(base.eridium),
+          ore: safeAmount(base.ore),
+          polymers: safeAmount(base.polymers),
+          plasma: safeAmount(base.plasma),
+          antimatter: safeAmount(base.antimatter),
         },
         levels,
         buildJob: base.buildJob
@@ -376,7 +376,7 @@ class GameLoop {
     const seconds = researchSeconds(
       tech,
       targetLevel,
-      base.levels.RESEARCH_LAB,
+      base.levels.SCIENCE_CENTER,
       commander.techs,
       systemModifiers(base.anomaly),
     );
@@ -435,7 +435,7 @@ class GameLoop {
 
   /**
    * Отправка флота. Проверки состава, груза и топлива — только здесь;
-   * корабли, груз и тритий списываются с базы отправления сразу.
+   * корабли, груз и плазма списываются с базы отправления сразу.
    */
   async sendFleet(
     commanderId: string,
@@ -443,8 +443,8 @@ class GameLoop {
     target: { planetId?: string; hubId?: string; systemId?: string },
     mission: FleetMission,
     ships: ShipCounts,
-    cargo: { titanite: number; silicate: number; tritium: number },
-    pickup: { titanite: number; silicate: number } = { titanite: 0, silicate: 0 },
+    cargo: { ore: number; polymers: number; plasma: number },
+    pickup: { ore: number; polymers: number } = { ore: 0, polymers: 0 },
   ): Promise<ActionResult> {
     const commander = await this.getCommander(commanderId);
     const base = commander?.bases.get(baseId);
@@ -517,7 +517,7 @@ class GameLoop {
 
       // Обломки висят на орбите сами по себе: колония и дипломатия не важны,
       // собирать можно и над чужой планетой, и над пустой.
-      if (mission === 'HARVEST' && planet.debrisTitanite <= 0 && planet.debrisSilicate <= 0) {
+      if (mission === 'HARVEST' && planet.debrisOre <= 0 && planet.debrisPolymers <= 0) {
         return { ok: false, error: 'На этой орбите нет поля обломков' };
       }
 
@@ -541,23 +541,23 @@ class GameLoop {
     }
 
     // Груз берем только для рейсов, которые что-то везут туда.
-    // Хаб торгует лишь титанитом и силикатами, поэтому тритий туда не грузим.
-    const empty = { titanite: 0, silicate: 0, tritium: 0 };
+    // Хаб торгует лишь рудой и полимерами, поэтому плазму туда не грузим.
+    const empty = { ore: 0, polymers: 0, plasma: 0 };
     const outboundCargo =
       mission === 'HUB_PICKUP'
         ? empty
         : mission === 'HUB_DELIVERY'
-        ? { ...cargo, tritium: 0 }
+        ? { ...cargo, plasma: 0 }
         : cargo;
     const cargoError = validateCargo(ships, outboundCargo);
     if (cargoError) return { ok: false, error: cargoError };
-    if (outboundCargo.titanite > base.resources.titanite || outboundCargo.silicate > base.resources.silicate) {
+    if (outboundCargo.ore > base.resources.ore || outboundCargo.polymers > base.resources.polymers) {
       return { ok: false, error: 'Недостаточно ресурсов для загрузки' };
     }
 
-    const request = mission === 'HUB_PICKUP' ? pickup : { titanite: 0, silicate: 0 };
+    const request = mission === 'HUB_PICKUP' ? pickup : { ore: 0, polymers: 0 };
     if (mission === 'HUB_PICKUP') {
-      const requested = request.titanite + request.silicate;
+      const requested = request.ore + request.polymers;
       if (requested <= 0) return { ok: false, error: 'Укажи, сколько товара вывезти с хаба' };
       if (requested > fleetCapacity(ships)) {
         return { ok: false, error: `Трюмы вмещают ${fleetCapacity(ships)}, а запрошено ${requested}` };
@@ -571,28 +571,28 @@ class GameLoop {
       target_,
     );
 
-    // Межзвездный прыжок возможен только с гипердвигателем и идет на эридии.
+    // Межзвездный прыжок возможен только с гипердвигателем и идет на антиматерии.
     if (plan.kind === 'INTERSTELLAR') {
       if (!canJump(commander.techs)) {
         return { ok: false, error: 'Для межзвездного прыжка нужен «Гипердвигатель»' };
       }
-      if (base.resources.eridium < plan.eridium) {
+      if (base.resources.antimatter < plan.antimatter) {
         return {
           ok: false,
-          error: `Не хватает эридия: нужно ${plan.eridium}, на базе ${Math.floor(base.resources.eridium)}`,
+          error: `Не хватает антиматерии: нужно ${plan.antimatter}, на базе ${Math.floor(base.resources.antimatter)}`,
         };
       }
     }
 
-    // Тритий уходит и в баки, и в трюмы — проверяем сумму, иначе флот
+    // Плазма уходит и в баки, и в трюмы — проверяем сумму, иначе флот
     // улетал бы на топливе, которое сам же и увез грузом.
-    const tritiumNeeded = (plan.kind === 'INTERSTELLAR' ? 0 : plan.fuel) + outboundCargo.tritium;
-    if (base.resources.tritium < tritiumNeeded) {
+    const plasmaNeeded = (plan.kind === 'INTERSTELLAR' ? 0 : plan.fuel) + outboundCargo.plasma;
+    if (base.resources.plasma < plasmaNeeded) {
       return {
         ok: false,
         error:
-          `Не хватает трития: нужно ${tritiumNeeded}` +
-          (outboundCargo.tritium > 0 ? ` (топливо ${plan.fuel} + груз ${outboundCargo.tritium})` : ''),
+          `Не хватает плазмы: нужно ${plasmaNeeded}` +
+          (outboundCargo.plasma > 0 ? ` (топливо ${plan.fuel} + груз ${outboundCargo.plasma})` : ''),
       };
     }
 
@@ -600,10 +600,10 @@ class GameLoop {
     const arrivesAt = now + plan.flightSeconds * 1000;
     const returnsAt = arrivesAt + plan.flightSeconds * 1000;
 
-    base.resources.titanite -= outboundCargo.titanite;
-    base.resources.silicate -= outboundCargo.silicate;
-    base.resources.tritium -= plan.fuel + outboundCargo.tritium;
-    base.resources.eridium -= plan.eridium;
+    base.resources.ore -= outboundCargo.ore;
+    base.resources.polymers -= outboundCargo.polymers;
+    base.resources.plasma -= plan.fuel + outboundCargo.plasma;
+    base.resources.antimatter -= plan.antimatter;
     for (const type of SHIP_TYPES) base.ships[type] -= ships[type];
     base.dirty = true;
     base.jobsDirty = true;
@@ -624,13 +624,13 @@ class GameLoop {
         heavyCruisers: ships.HEAVY_CRUISER,
         ionFrigates: ships.ION_FRIGATE,
         recyclers: ships.RECYCLER,
-        cargoTitanite: outboundCargo.titanite,
-        cargoSilicate: outboundCargo.silicate,
-        cargoTritium: outboundCargo.tritium,
-        pickupTitanite: request.titanite,
-        pickupSilicate: request.silicate,
+        cargoOre: outboundCargo.ore,
+        cargoPolymers: outboundCargo.polymers,
+        cargoPlasma: outboundCargo.plasma,
+        pickupOre: request.ore,
+        pickupPolymers: request.polymers,
         fuelSpent: plan.fuel,
-        eridiumSpent: plan.eridium,
+        antimatterSpent: plan.antimatter,
         interstellar: plan.kind === 'INTERSTELLAR',
         distance: plan.distance,
         speed: plan.speed,
@@ -651,9 +651,9 @@ class GameLoop {
           ? `Экспедиция стартовала: ${fleetSize(ships)} кораблей, до точки ${plan.flightSeconds} с`
           : plan.kind === 'INTERSTELLAR'
           ? `Гиперпрыжок: ${fleetSize(ships)} кораблей, в пути ${plan.flightSeconds} с, ` +
-            `сожжено ${plan.eridium} эридия`
+            `сожжено ${plan.antimatter} антиматерии`
           : `Флот вылетел: ${fleetSize(ships)} кораблей, в пути ${plan.flightSeconds} с, ` +
-            `сожжено ${plan.fuel} трития`,
+            `сожжено ${plan.fuel} плазмы`,
     };
   }
 
@@ -1033,20 +1033,20 @@ class GameLoop {
         prisma.base.update({
           where: { id: targetBase.id },
           data: {
-            titanite: { increment: fleet.cargoTitanite },
-            silicate: { increment: fleet.cargoSilicate },
-            tritium: { increment: fleet.cargoTritium },
+            ore: { increment: fleet.cargoOre },
+            polymers: { increment: fleet.cargoPolymers },
+            plasma: { increment: fleet.cargoPlasma },
           },
         }),
         prisma.fleet.update({
           where: { id: fleet.id },
-          data: { status: 'RETURNING', cargoTitanite: 0, cargoSilicate: 0, cargoTritium: 0 },
+          data: { status: 'RETURNING', cargoOre: 0, cargoPolymers: 0, cargoPlasma: 0 },
         }),
       ]);
       this.applyMemoryResources(targetBase.id, {
-        titanite: fleet.cargoTitanite,
-        silicate: fleet.cargoSilicate,
-        tritium: fleet.cargoTritium,
+        ore: fleet.cargoOre,
+        polymers: fleet.cargoPolymers,
+        plasma: fleet.cargoPlasma,
       });
       return;
     }
@@ -1125,36 +1125,36 @@ class GameLoop {
    */
   private async harvestDebris(fleet: FleetRow, planetId: string): Promise<void> {
     const capacity = fleetCapacity(fleetShips(fleet));
-    let takenTitanite = 0;
-    let takenSilicate = 0;
+    let takenOre = 0;
+    let takenPolymers = 0;
 
     for (let attempt = 0; attempt < HARVEST_RETRIES; attempt += 1) {
       const planet = await prisma.planet.findUnique({
         where: { id: planetId },
-        select: { debrisTitanite: true, debrisSilicate: true },
+        select: { debrisOre: true, debrisPolymers: true },
       });
       if (!planet) break;
 
-      // Трюмы делятся между титанитом и силикатом: сперва титанит, остаток — силикат.
-      const titanite = Math.floor(Math.min(planet.debrisTitanite, capacity));
-      const silicate = Math.floor(Math.min(planet.debrisSilicate, Math.max(0, capacity - titanite)));
-      if (titanite <= 0 && silicate <= 0) break;
+      // Трюмы делятся между рудой и полимерыом: сперва руда, остаток — полимеры.
+      const ore = Math.floor(Math.min(planet.debrisOre, capacity));
+      const polymers = Math.floor(Math.min(planet.debrisPolymers, Math.max(0, capacity - ore)));
+      if (ore <= 0 && polymers <= 0) break;
 
       const { count } = await prisma.planet.updateMany({
         where: {
           id: planetId,
-          debrisTitanite: { gte: titanite },
-          debrisSilicate: { gte: silicate },
+          debrisOre: { gte: ore },
+          debrisPolymers: { gte: polymers },
         },
         data: {
-          debrisTitanite: { decrement: titanite },
-          debrisSilicate: { decrement: silicate },
+          debrisOre: { decrement: ore },
+          debrisPolymers: { decrement: polymers },
         },
       });
 
       if (count > 0) {
-        takenTitanite = titanite;
-        takenSilicate = silicate;
+        takenOre = ore;
+        takenPolymers = polymers;
         break;
       }
       // Поле увели из-под носа между чтением и списанием — пробуем по остатку.
@@ -1164,8 +1164,8 @@ class GameLoop {
       where: { id: fleet.id },
       data: {
         status: 'RETURNING',
-        cargoTitanite: { increment: takenTitanite },
-        cargoSilicate: { increment: takenSilicate },
+        cargoOre: { increment: takenOre },
+        cargoPolymers: { increment: takenPolymers },
       },
     });
 
@@ -1179,8 +1179,8 @@ class GameLoop {
         planetName: planet?.name ?? 'неизвестной планеты',
         systemName: planet?.system.name ?? '—',
         capacity,
-        titanite: takenTitanite,
-        silicate: takenSilicate,
+        ore: takenOre,
+        polymers: takenPolymers,
       }),
     );
   }
@@ -1204,10 +1204,10 @@ class GameLoop {
     const result = resolveExpedition(ships, fleetCapacity(ships), techs);
 
     const survivorCount = SHIP_TYPES.reduce((total, type) => total + result.survivors[type], 0);
-    // Титанит и силикаты занимают трюмы, эридий едет в баках.
+    // Руда и полимеры занимают трюмы, антиматерия едет в баках.
     const holdLimit = fleetCapacity(result.survivors);
-    const titanite = Math.min(result.loot.titanite, holdLimit);
-    const silicate = Math.min(result.loot.silicate, Math.max(0, holdLimit - titanite));
+    const ore = Math.min(result.loot.ore, holdLimit);
+    const polymers = Math.min(result.loot.polymers, Math.max(0, holdLimit - ore));
 
     await prisma.$transaction(async (tx) => {
       if (survivorCount > 0) {
@@ -1221,9 +1221,9 @@ class GameLoop {
             heavyCruisers: result.survivors.HEAVY_CRUISER,
             ionFrigates: result.survivors.ION_FRIGATE,
             recyclers: result.survivors.RECYCLER,
-            cargoTitanite: titanite,
-            cargoSilicate: silicate,
-            cargoEridium: result.loot.eridium,
+            cargoOre: ore,
+            cargoPolymers: polymers,
+            cargoAntimatter: result.loot.antimatter,
           },
         });
       } else {
@@ -1235,9 +1235,9 @@ class GameLoop {
           commanderId: fleet.commanderId,
           systemId,
           outcome: result.outcome,
-          lootTitanite: titanite,
-          lootSilicate: silicate,
-          lootEridium: result.loot.eridium,
+          lootOre: ore,
+          lootPolymers: polymers,
+          lootAntimatter: result.loot.antimatter,
           summary: result.summary,
           data: toJson({
             sent: ships,
@@ -1322,7 +1322,7 @@ class GameLoop {
       // Грабеж: только победивший атакующий, только уязвимый излишек склада
       // и только в пределах трюмов уцелевших кораблей.
       const plunder = plunderAmount(
-        { titanite: base.titanite, silicate: base.silicate, tritium: base.tritium },
+        { ore: base.ore, polymers: base.polymers, plasma: base.plasma },
         storageCapacityForLevel(base.storageLevel),
         outcome.winner === 'ATTACKER' ? fleetCapacity(outcome.attackerSurvivors) : 0,
       );
@@ -1345,23 +1345,23 @@ class GameLoop {
 
       // Обломки оседают в той же транзакции, что и потери: поле обломков —
       // прямое следствие боя, и половинчатого результата тут быть не должно.
-      if (outcome.debris.titanite > 0 || outcome.debris.silicate > 0) {
+      if (outcome.debris.ore > 0 || outcome.debris.polymers > 0) {
         await tx.planet.update({
           where: { id: planetId },
           data: {
-            debrisTitanite: { increment: outcome.debris.titanite },
-            debrisSilicate: { increment: outcome.debris.silicate },
+            debrisOre: { increment: outcome.debris.ore },
+            debrisPolymers: { increment: outcome.debris.polymers },
           },
         });
       }
 
-      if (plunder.titanite > 0 || plunder.silicate > 0 || plunder.tritium > 0) {
+      if (plunder.ore > 0 || plunder.polymers > 0 || plunder.plasma > 0) {
         await tx.base.update({
           where: { id: defenderBaseId },
           data: {
-            titanite: { decrement: plunder.titanite },
-            silicate: { decrement: plunder.silicate },
-            tritium: { decrement: plunder.tritium },
+            ore: { decrement: plunder.ore },
+            polymers: { decrement: plunder.polymers },
+            plasma: { decrement: plunder.plasma },
           },
         });
       }
@@ -1382,9 +1382,9 @@ class GameLoop {
             heavyCruisers: outcome.attackerSurvivors.HEAVY_CRUISER,
             ionFrigates: outcome.attackerSurvivors.ION_FRIGATE,
             recyclers: outcome.attackerSurvivors.RECYCLER,
-            cargoTitanite: plunder.titanite,
-            cargoSilicate: plunder.silicate,
-            cargoTritium: plunder.tritium,
+            cargoOre: plunder.ore,
+            cargoPolymers: plunder.polymers,
+            cargoPlasma: plunder.plasma,
           },
         });
       } else {
@@ -1419,9 +1419,9 @@ class GameLoop {
           defenderId,
           planetId,
           winner: outcome.winner,
-          plunderTitanite: plunder.titanite,
-          plunderSilicate: plunder.silicate,
-          plunderTritium: plunder.tritium,
+          plunderOre: plunder.ore,
+          plunderPolymers: plunder.polymers,
+          plunderPlasma: plunder.plasma,
           data: toJson({
             planetName: planet.name,
             attackerName: attackerProfile.nickname,
@@ -1555,16 +1555,16 @@ class GameLoop {
   private applyBattleToMemory(
     baseId: string,
     outcome: ReturnType<typeof resolveBattle>,
-    plunder: { titanite: number; silicate: number; tritium: number },
+    plunder: { ore: number; polymers: number; plasma: number },
   ): void {
     const base = this.findLoadedBase(baseId);
     if (!base) return;
 
     for (const type of SHIP_TYPES) base.ships[type] = outcome.defenderSurvivorShips[type];
     for (const type of DEFENSE_TYPES) base.defenses[type] = outcome.defenderSurvivorDefenses[type];
-    base.resources.titanite = Math.max(0, base.resources.titanite - plunder.titanite);
-    base.resources.silicate = Math.max(0, base.resources.silicate - plunder.silicate);
-    base.resources.tritium = Math.max(0, base.resources.tritium - plunder.tritium);
+    base.resources.ore = Math.max(0, base.resources.ore - plunder.ore);
+    base.resources.polymers = Math.max(0, base.resources.polymers - plunder.polymers);
+    base.resources.plasma = Math.max(0, base.resources.plasma - plunder.plasma);
     base.dirty = true;
     base.jobsDirty = true;
   }
@@ -1583,13 +1583,13 @@ class GameLoop {
 
       const capacity = storageCapacity(storage.level);
       const free = Math.max(0, capacity - storageUsed(storage));
-      const titanite = Math.min(fleet.cargoTitanite, free);
-      const silicate = Math.min(fleet.cargoSilicate, Math.max(0, free - titanite));
+      const ore = Math.min(fleet.cargoOre, free);
+      const polymers = Math.min(fleet.cargoPolymers, Math.max(0, free - ore));
 
-      if (titanite > 0 || silicate > 0) {
+      if (ore > 0 || polymers > 0) {
         await tx.hubStorage.update({
           where: { id: storage.id },
-          data: { titanite: { increment: titanite }, silicate: { increment: silicate } },
+          data: { ore: { increment: ore }, polymers: { increment: polymers } },
         });
       }
 
@@ -1597,8 +1597,8 @@ class GameLoop {
         where: { id: fleet.id },
         data: {
           status: 'RETURNING',
-          cargoTitanite: fleet.cargoTitanite - titanite,
-          cargoSilicate: fleet.cargoSilicate - silicate,
+          cargoOre: fleet.cargoOre - ore,
+          cargoPolymers: fleet.cargoPolymers - polymers,
         },
       });
     });
@@ -1613,16 +1613,16 @@ class GameLoop {
         where: { commanderId_hubId: { commanderId: fleet.commanderId, hubId } },
       });
 
-      const titanite = storage ? Math.min(fleet.pickupTitanite, storage.titanite, capacity) : 0;
-      const silicate = storage
-        ? Math.min(fleet.pickupSilicate, storage.silicate, Math.max(0, capacity - titanite))
+      const ore = storage ? Math.min(fleet.pickupOre, storage.ore, capacity) : 0;
+      const polymers = storage
+        ? Math.min(fleet.pickupPolymers, storage.polymers, Math.max(0, capacity - ore))
         : 0;
 
-      if (storage && (titanite > 0 || silicate > 0)) {
+      if (storage && (ore > 0 || polymers > 0)) {
         // Условное списание: параллельная сделка на бирже могла увести товар.
         const taken = await tx.hubStorage.updateMany({
-          where: { id: storage.id, titanite: { gte: titanite }, silicate: { gte: silicate } },
-          data: { titanite: { decrement: titanite }, silicate: { decrement: silicate } },
+          where: { id: storage.id, ore: { gte: ore }, polymers: { gte: polymers } },
+          data: { ore: { decrement: ore }, polymers: { decrement: polymers } },
         });
         if (taken.count === 0) {
           await tx.fleet.update({ where: { id: fleet.id }, data: { status: 'RETURNING' } });
@@ -1632,7 +1632,7 @@ class GameLoop {
 
       await tx.fleet.update({
         where: { id: fleet.id },
-        data: { status: 'RETURNING', cargoTitanite: titanite, cargoSilicate: silicate },
+        data: { status: 'RETURNING', cargoOre: ore, cargoPolymers: polymers },
       });
     });
   }
@@ -1659,19 +1659,19 @@ class GameLoop {
       );
     }
     if (
-      fleet.cargoTitanite > 0 ||
-      fleet.cargoSilicate > 0 ||
-      fleet.cargoTritium > 0 ||
-      fleet.cargoEridium > 0
+      fleet.cargoOre > 0 ||
+      fleet.cargoPolymers > 0 ||
+      fleet.cargoPlasma > 0 ||
+      fleet.cargoAntimatter > 0
     ) {
       operations.push(
         prisma.base.update({
           where: { id: fleet.originBaseId },
           data: {
-            titanite: { increment: fleet.cargoTitanite },
-            silicate: { increment: fleet.cargoSilicate },
-            tritium: { increment: fleet.cargoTritium },
-            eridium: { increment: fleet.cargoEridium },
+            ore: { increment: fleet.cargoOre },
+            polymers: { increment: fleet.cargoPolymers },
+            plasma: { increment: fleet.cargoPlasma },
+            antimatter: { increment: fleet.cargoAntimatter },
           },
         }),
       );
@@ -1681,10 +1681,10 @@ class GameLoop {
     await prisma.$transaction(operations);
 
     this.applyMemoryResources(fleet.originBaseId, {
-      titanite: fleet.cargoTitanite,
-      silicate: fleet.cargoSilicate,
-      tritium: fleet.cargoTritium,
-      eridium: fleet.cargoEridium,
+      ore: fleet.cargoOre,
+      polymers: fleet.cargoPolymers,
+      plasma: fleet.cargoPlasma,
+      antimatter: fleet.cargoAntimatter,
     });
     this.applyMemoryShips(fleet.originBaseId, ships);
   }
@@ -1702,20 +1702,20 @@ class GameLoop {
   /** Отражает уже зачисленный в БД приход в состоянии базы, если она в памяти. */
   private applyMemoryResources(
     baseId: string,
-    amounts: { titanite?: number; silicate?: number; tritium?: number; eridium?: number },
+    amounts: { ore?: number; polymers?: number; plasma?: number; antimatter?: number },
   ): void {
-    const titanite = amounts.titanite ?? 0;
-    const silicate = amounts.silicate ?? 0;
-    const tritium = amounts.tritium ?? 0;
-    const eridium = amounts.eridium ?? 0;
-    if (titanite <= 0 && silicate <= 0 && tritium <= 0 && eridium <= 0) return;
+    const ore = amounts.ore ?? 0;
+    const polymers = amounts.polymers ?? 0;
+    const plasma = amounts.plasma ?? 0;
+    const antimatter = amounts.antimatter ?? 0;
+    if (ore <= 0 && polymers <= 0 && plasma <= 0 && antimatter <= 0) return;
 
     const base = this.findLoadedBase(baseId);
     if (!base) return;
-    base.resources.titanite += titanite;
-    base.resources.silicate += silicate;
-    base.resources.tritium += tritium;
-    base.resources.eridium += eridium;
+    base.resources.ore += ore;
+    base.resources.polymers += polymers;
+    base.resources.plasma += plasma;
+    base.resources.antimatter += antimatter;
     base.dirty = true;
   }
 
@@ -1743,11 +1743,11 @@ class GameLoop {
     if (!planet) return null;
 
     const richness = {
-      titanite: planet.titaniteRichness,
-      silicate: planet.silicateRichness,
-      tritium: planet.tritiumRichness,
+      ore: planet.oreRichness,
+      polymers: planet.polymersRichness,
+      plasma: planet.plasmaRichness,
       energy: planet.energyRichness,
-      eridium: planet.eridiumRichness,
+      antimatter: planet.antimatterRichness,
     };
 
     let payload: ScanPayload = {
@@ -1765,22 +1765,22 @@ class GameLoop {
       const levels = live
         ? { ...live.levels }
         : {
-            TITANITE_MINE: planet.base.titaniteMineLevel,
-            SILICATE_MINE: planet.base.silicateMineLevel,
-            TRITIUM_MINE: planet.base.tritiumMineLevel,
-            SOLAR_PLANT: planet.base.solarPlantLevel,
-            RESEARCH_LAB: planet.base.researchLabLevel,
+            ORE_MINE: planet.base.oreMineLevel,
+            POLYMER_PLANT: planet.base.polymerPlantLevel,
+            PLASMA_REACTOR: planet.base.plasmaReactorLevel,
+            POWER_PLANT: planet.base.powerPlantLevel,
+            SCIENCE_CENTER: planet.base.scienceCenterLevel,
             SHIPYARD: planet.base.shipyardLevel,
-            ERIDIUM_SYNTH: planet.base.eridiumSynthLevel,
+            ANTIMATTER_FACTORY: planet.base.antimatterFactoryLevel,
             STORAGE: planet.base.storageLevel,
           };
       const resources = live
         ? { ...live.resources }
         : {
-            titanite: planet.base.titanite,
-            silicate: planet.base.silicate,
-            tritium: planet.base.tritium,
-            eridium: planet.base.eridium,
+            ore: planet.base.ore,
+            polymers: planet.base.polymers,
+            plasma: planet.base.plasma,
+            antimatter: planet.base.antimatter,
           };
       const fleet = live ? { ...live.ships } : emptyShipCounts();
       if (!live) {
@@ -1800,10 +1800,10 @@ class GameLoop {
         richness,
         buildings: levels,
         resources: {
-          titanite: Math.round(resources.titanite),
-          silicate: Math.round(resources.silicate),
-          tritium: Math.round(resources.tritium),
-          eridium: Math.round(resources.eridium),
+          ore: Math.round(resources.ore),
+          polymers: Math.round(resources.polymers),
+          plasma: Math.round(resources.plasma),
+          antimatter: Math.round(resources.antimatter),
         },
         fleet,
         defenses,
@@ -1847,17 +1847,17 @@ class GameLoop {
         prisma.base.update({
           where: { id: base.id },
           data: {
-            titanite: base.resources.titanite,
-            silicate: base.resources.silicate,
-            tritium: base.resources.tritium,
-            eridium: base.resources.eridium,
-            titaniteMineLevel: base.levels.TITANITE_MINE,
-            silicateMineLevel: base.levels.SILICATE_MINE,
-            tritiumMineLevel: base.levels.TRITIUM_MINE,
-            solarPlantLevel: base.levels.SOLAR_PLANT,
-            researchLabLevel: base.levels.RESEARCH_LAB,
+            ore: base.resources.ore,
+            polymers: base.resources.polymers,
+            plasma: base.resources.plasma,
+            antimatter: base.resources.antimatter,
+            oreMineLevel: base.levels.ORE_MINE,
+            polymerPlantLevel: base.levels.POLYMER_PLANT,
+            plasmaReactorLevel: base.levels.PLASMA_REACTOR,
+            powerPlantLevel: base.levels.POWER_PLANT,
+            scienceCenterLevel: base.levels.SCIENCE_CENTER,
             shipyardLevel: base.levels.SHIPYARD,
-            eridiumSynthLevel: base.levels.ERIDIUM_SYNTH,
+            antimatterFactoryLevel: base.levels.ANTIMATTER_FACTORY,
             storageLevel: base.levels.STORAGE,
             lastTickAt: new Date(base.lastTickAt),
           },
@@ -2055,12 +2055,12 @@ function toFleetRuntime(row: FleetRow): FleetRuntimeState {
       RECYCLER: row.recyclers,
     },
     cargo: {
-      titanite: row.cargoTitanite,
-      silicate: row.cargoSilicate,
-      tritium: row.cargoTritium,
-      eridium: row.cargoEridium,
+      ore: row.cargoOre,
+      polymers: row.cargoPolymers,
+      plasma: row.cargoPlasma,
+      antimatter: row.cargoAntimatter,
     },
-    pickup: { titanite: row.pickupTitanite, silicate: row.pickupSilicate },
+    pickup: { ore: row.pickupOre, polymers: row.pickupPolymers },
     fuelSpent: row.fuelSpent,
     distance: row.distance,
     speed: row.speed,

@@ -53,7 +53,7 @@ console.log('\n=== 1. Системные отчеты ===');
     { ships: fleet({ LIGHT_FIGHTER: 2 }), defenses: emptyDefenseCounts() },
   );
   const plunder = plunderAmount(
-    { titanite: 12000, silicate: 8000, tritium: 0 },
+    { ore: 12000, polymers: 8000, plasma: 0 },
     storageCapacityForLevel(1),
     100000,
   );
@@ -102,7 +102,7 @@ console.log('\n=== 1. Системные отчеты ===');
     { ships: fleet({ LIGHT_FIGHTER: 1 }), defenses: emptyDefenseCounts() },
     { ships: fleet({ HEAVY_CRUISER: 30 }), defenses: emptyDefenseCounts() },
   );
-  const plunder = plunderAmount({ titanite: 12000, silicate: 8000, tritium: 0 }, 10000, 0);
+  const plunder = plunderAmount({ ore: 12000, polymers: 8000, plasma: 0 }, 10000, 0);
   const mail = buildBattleMail({
     attackerId: 'atk',
     defenderId: 'def',
@@ -125,11 +125,11 @@ console.log('\n=== 1. Системные отчеты ===');
     systemName: 'Сич',
     result: {
       outcome: 'RESOURCES',
-      loot: { titanite: 2000, silicate: 0, eridium: 0 },
+      loot: { ore: 2000, polymers: 0, antimatter: 0 },
       pirates: null,
       battle: null,
       survivors: fleet({ TRANSPORTER: 2 }),
-      summary: 'Заброшенный груз: подняли на борт 2000 титанита.',
+      summary: 'Заброшенный груз: подняли на борт 2000 руды.',
     },
   });
 
@@ -137,7 +137,7 @@ console.log('\n=== 1. Системные отчеты ===');
   check(
     'в письме экспедиции есть система, итог и добыча',
     mail[0]!.body.includes('Сич') &&
-      mail[0]!.body.includes('2000 титанита') &&
+      mail[0]!.body.includes('2000 руды') &&
       mail[0]!.body.includes('без потерь'),
   );
 }
@@ -146,20 +146,20 @@ console.log('\n=== 1. Системные отчеты ===');
   const payload: ScanPayload = {
     owner: 'Противник',
     colonized: true,
-    richness: { titanite: 1, silicate: 1, tritium: 1, energy: 1, eridium: 1 },
+    richness: { ore: 1, polymers: 1, plasma: 1, energy: 1, antimatter: 1 },
     buildings: {
-      TITANITE_MINE: 12,
-      SILICATE_MINE: 8,
-      TRITIUM_MINE: 6,
-      SOLAR_PLANT: 14,
-      RESEARCH_LAB: 4,
+      ORE_MINE: 12,
+      POLYMER_PLANT: 8,
+      PLASMA_REACTOR: 6,
+      POWER_PLANT: 14,
+      SCIENCE_CENTER: 4,
       SHIPYARD: 5,
-      ERIDIUM_SYNTH: 1,
+      ANTIMATTER_FACTORY: 1,
       STORAGE: 3,
     },
-    resources: { titanite: 5000, silicate: 3000, tritium: 1000, eridium: 10 },
+    resources: { ore: 5000, polymers: 3000, plasma: 1000, antimatter: 10 },
     fleet: fleet({ HEAVY_CRUISER: 20 }),
-    defenses: { ROCKET_LAUNCHER: 10, LASER_TURRET: 5 },
+    defenses: { CANNON_TURRET: 10, LASER_TURRET: 5 },
   };
 
   const mail = buildSpyMail({
@@ -171,7 +171,7 @@ console.log('\n=== 1. Системные отчеты ===');
   check('разведка дает одно письмо', mail.length === 1 && mail[0]!.type === 'SPY_REPORT');
   check(
     'в отчете разведки есть склад, флот и оборона',
-    mail[0]!.body.includes('5000 титанита') &&
+    mail[0]!.body.includes('5000 руды') &&
       mail[0]!.body.includes('крейсера 20') &&
       mail[0]!.body.includes('ракетных установок 10'),
   );

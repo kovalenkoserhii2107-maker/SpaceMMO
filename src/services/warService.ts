@@ -13,7 +13,7 @@ export interface ExpeditionReportView {
   outcome: string;
   systemName: string;
   summary: string;
-  loot: { titanite: number; silicate: number; eridium: number };
+  loot: { ore: number; polymers: number; antimatter: number };
   losses: Array<{ label: string; lost: number; before: number }>;
   pirates: { LIGHT_FIGHTER: number; TRANSPORTER: number } | null;
   createdAt: number;
@@ -55,11 +55,11 @@ export interface DiplomacyView {
     planetName: string;
     attackerName: string;
     defenderName: string;
-    plunder: { titanite: number; silicate: number; tritium: number };
+    plunder: { ore: number; polymers: number; plasma: number };
     /** Почему увезли именно столько: что спрятало хранилище защитника. */
     storageDefense: StorageDefenseReport | null;
     /** Сколько обломков осело на орбите после боя. */
-    debris: { titanite: number; silicate: number } | null;
+    debris: { ore: number; polymers: number } | null;
     myLosses: Array<{ label: string; lost: number; before: number }>;
     enemyLosses: Array<{ label: string; lost: number; before: number }>;
     attackerPower: number;
@@ -108,9 +108,9 @@ interface BattleData {
   defenderLosses: Array<{ label: string; lost: number; before: number }>;
   attackerDamageReport?: DamageReport;
   defenderDamageReport?: DamageReport;
-  plunder: { titanite: number; silicate: number; tritium: number };
+  plunder: { ore: number; polymers: number; plasma: number };
   storageDefense?: StorageDefenseReport;
-  debris?: { titanite: number; silicate: number };
+  debris?: { ore: number; polymers: number };
 }
 
 export async function getDiplomacy(commanderId: string): Promise<DiplomacyView> {
@@ -202,9 +202,9 @@ export async function getDiplomacy(commanderId: string): Promise<DiplomacyView> 
         systemName: report.system.name,
         summary: report.summary,
         loot: {
-          titanite: report.lootTitanite,
-          silicate: report.lootSilicate,
-          eridium: report.lootEridium,
+          ore: report.lootOre,
+          polymers: report.lootPolymers,
+          antimatter: report.lootAntimatter,
         },
         losses: (data.losses ?? []).filter((item) => item.lost > 0),
         pirates: data.pirates ?? null,
@@ -242,9 +242,9 @@ export async function getDiplomacy(commanderId: string): Promise<DiplomacyView> 
         attackerName: data.attackerName,
         defenderName: data.defenderName,
         plunder: {
-          titanite: report.plunderTitanite,
-          silicate: report.plunderSilicate,
-          tritium: report.plunderTritium,
+          ore: report.plunderOre,
+          polymers: report.plunderPolymers,
+          plasma: report.plunderPlasma,
         },
         storageDefense: data.storageDefense ?? null,
         debris: data.debris ?? null,

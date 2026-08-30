@@ -1,6 +1,6 @@
 /**
  * Инструменты командира: боевой симулятор, шаблоны флотов и старение разведданных.
- * Плюс логистика трития — он теперь возится в трюмах, а не только жжется как топливо.
+ * Плюс логистика плазмы — она теперь возится в трюмах, а не только жжется как топливо.
  *
  * Чистые формулы проверяются прямо на игровых модулях, симулятор и шаблоны —
  * по живому API: у них есть и валидация, и права доступа.
@@ -36,35 +36,35 @@ function fleet(partial: Partial<ShipCounts>): ShipCounts {
   return { ...emptyShipCounts(), ...partial };
 }
 
-/* ------------------------- 1. Тритий в трюмах ------------------------- */
+/* ------------------------- 1. Плазма в трюмах ------------------------- */
 
-console.log('\n=== 1. Тритий возится в трюмах ===');
+console.log('\n=== 1. Плазма возится в трюмах ===');
 
 {
   const ships = fleet({ TRANSPORTER: 1 });
   const capacity = fleetCapacity(ships);
 
   check(
-    'тритий занимает трюм наравне с титанитом и силикатами',
-    validateCargo(ships, { titanite: 0, silicate: 0, tritium: capacity }) === null,
+    'плазма занимает трюм наравне с рудой и полимерами',
+    validateCargo(ships, { ore: 0, polymers: 0, plasma: capacity }) === null,
     `трюм ${capacity}`,
   );
   check(
-    'перегруз одним тритием отклоняется',
-    validateCargo(ships, { titanite: 0, silicate: 0, tritium: capacity + 1 }) !== null,
+    'перегруз одним плазмой отклоняется',
+    validateCargo(ships, { ore: 0, polymers: 0, plasma: capacity + 1 }) !== null,
   );
   check(
     'три ресурса делят один трюм, а не три отдельных',
     validateCargo(ships, {
-      titanite: capacity / 2,
-      silicate: capacity / 2,
-      tritium: 1,
+      ore: capacity / 2,
+      polymers: capacity / 2,
+      plasma: 1,
     }) !== null,
     'половина + половина + 1 уже перегруз',
   );
   check(
-    'отрицательный тритий отклоняется',
-    validateCargo(ships, { titanite: 0, silicate: 0, tritium: -1 }) !== null,
+    'отрицательный плазма отклоняется',
+    validateCargo(ships, { ore: 0, polymers: 0, plasma: -1 }) !== null,
   );
 }
 
@@ -89,20 +89,20 @@ check(
   const payload: ScanPayload = {
     owner: 'Противник',
     colonized: true,
-    richness: { titanite: 1, silicate: 1, tritium: 1, energy: 1, eridium: 1 },
+    richness: { ore: 1, polymers: 1, plasma: 1, energy: 1, antimatter: 1 },
     buildings: {
-      TITANITE_MINE: 12,
-      SILICATE_MINE: 8,
-      TRITIUM_MINE: 6,
-      SOLAR_PLANT: 14,
-      RESEARCH_LAB: 4,
+      ORE_MINE: 12,
+      POLYMER_PLANT: 8,
+      PLASMA_REACTOR: 6,
+      POWER_PLANT: 14,
+      SCIENCE_CENTER: 4,
       SHIPYARD: 5,
-      ERIDIUM_SYNTH: 1,
+      ANTIMATTER_FACTORY: 1,
       STORAGE: 3,
     },
-    resources: { titanite: 5000, silicate: 3000, tritium: 1000, eridium: 10 },
+    resources: { ore: 5000, polymers: 3000, plasma: 1000, antimatter: 10 },
     fleet: fleet({ HEAVY_CRUISER: 20 }),
-    defenses: { ROCKET_LAUNCHER: 10, LASER_TURRET: 5 },
+    defenses: { CANNON_TURRET: 10, LASER_TURRET: 5 },
   };
   const facts = { planetId: 'p1', name: 'Цель', position: 3, type: 'ROCKY', size: 150 };
   const now = Date.now();
@@ -129,8 +129,8 @@ check(
   );
   check(
     'уровни построек остаются: здания за сутки не разбирают',
-    outdated.buildings !== null && outdated.buildings.TITANITE_MINE === 12,
-    `шахта ур.${outdated.buildings?.TITANITE_MINE}`,
+    outdated.buildings !== null && outdated.buildings.ORE_MINE === 12,
+    `шахта ур.${outdated.buildings?.ORE_MINE}`,
   );
   check(
     'владелец и богатство планеты остаются известны',
@@ -143,7 +143,7 @@ check(
   const legacy = {
     owner: 'Ветеран',
     colonized: true,
-    richness: { titanite: 1, silicate: 1, tritium: 1 },
+    richness: { ore: 1, polymers: 1, plasma: 1 },
     buildings: null,
     resources: null,
     fleet: { PROBE: 1, TRANSPORTER: 2, LIGHT_FIGHTER: 3 },
@@ -162,7 +162,7 @@ check(
   );
   check(
     'богатство старого снимка тоже дополняется',
-    view.richness?.eridium === 0 && view.richness?.energy === 0,
+    view.richness?.antimatter === 0 && view.richness?.energy === 0,
   );
 }
 
@@ -283,7 +283,7 @@ if (!token) {
       defender: {
         ships: { LIGHT_FIGHTER: 1 },
         defenses: {},
-        stock: { titanite: 12000, silicate: 8000, tritium: 0, storageLevel: 1 },
+        stock: { ore: 12000, polymers: 8000, plasma: 0, storageLevel: 1 },
       },
     },
     token,

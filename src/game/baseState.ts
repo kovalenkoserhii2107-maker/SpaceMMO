@@ -106,8 +106,8 @@ export interface FleetRuntimeState {
   targetHubId: string | null;
   targetName: string;
   ships: ShipCounts;
-  cargo: { titanite: number; silicate: number; tritium: number; eridium: number };
-  pickup: { titanite: number; silicate: number };
+  cargo: { ore: number; polymers: number; plasma: number; antimatter: number };
+  pickup: { ore: number; polymers: number };
   fuelSpent: number;
   distance: number;
   speed: number;
@@ -180,8 +180,8 @@ export interface CommanderRuntimeState {
  * начисление обрезается по остатку свободного места.
  *
  * Обрезается ровно та доля, которая не влезла, и одинаково для всех трех
- * ресурсов — иначе на полном складе титанит вытеснял бы тритий просто потому,
- * что его добывают быстрее. Эридий под лимит не попадает.
+ * ресурсов — иначе на полном складе руда вытесняла бы плазму просто потому,
+ * что его добывают быстрее. Антиматерия под лимит не попадает.
  */
 export function accrue(state: BaseRuntimeState, techs: TechLevels, seconds: number): void {
   if (!Number.isFinite(seconds) || seconds <= 0) return;
@@ -194,15 +194,15 @@ export function accrue(state: BaseRuntimeState, techs: TechLevels, seconds: numb
     systemModifiers(state.anomaly),
   );
 
-  const mined = (perSecond.titanite + perSecond.silicate + perSecond.tritium) * seconds;
+  const mined = (perSecond.ore + perSecond.polymers + perSecond.plasma) * seconds;
   const free = Math.max(0, storageCapacity(state.levels) - storedTotal(state.resources));
   const fit = mined > free ? free / mined : 1;
 
   const next: BaseStock = {
-    titanite: state.resources.titanite + perSecond.titanite * seconds * fit,
-    silicate: state.resources.silicate + perSecond.silicate * seconds * fit,
-    tritium: state.resources.tritium + perSecond.tritium * seconds * fit,
-    eridium: state.resources.eridium + perSecond.eridium * seconds,
+    ore: state.resources.ore + perSecond.ore * seconds * fit,
+    polymers: state.resources.polymers + perSecond.polymers * seconds * fit,
+    plasma: state.resources.plasma + perSecond.plasma * seconds * fit,
+    antimatter: state.resources.antimatter + perSecond.antimatter * seconds,
   };
 
   if (Object.values(next).some((value) => !Number.isFinite(value))) {
@@ -240,10 +240,10 @@ export function toSnapshot(state: BaseRuntimeState, commander: CommanderRuntimeS
     size: state.size,
     richness: { ...state.richness },
     resources: {
-      titanite: round(state.resources.titanite),
-      silicate: round(state.resources.silicate),
-      tritium: round(state.resources.tritium),
-      eridium: Math.round(state.resources.eridium * 1000) / 1000,
+      ore: round(state.resources.ore),
+      polymers: round(state.resources.polymers),
+      plasma: round(state.resources.plasma),
+      antimatter: Math.round(state.resources.antimatter * 1000) / 1000,
     },
     productionPerSecond: roundAll(
       productionPerSecond(state.levels, state.richness, bonuses, defenseDrain, modifiers),
@@ -373,7 +373,7 @@ function technologyCard(
     seconds: researchSeconds(
       tech,
       nextLevel,
-      state.levels.RESEARCH_LAB,
+      state.levels.SCIENCE_CENTER,
       commander.techs,
       systemModifiers(state.anomaly),
     ),
@@ -456,9 +456,9 @@ function round(value: number): number {
 
 function roundAll(amounts: BaseStock): BaseStock {
   return {
-    titanite: Math.round(amounts.titanite * 1000) / 1000,
-    silicate: Math.round(amounts.silicate * 1000) / 1000,
-    tritium: Math.round(amounts.tritium * 1000) / 1000,
-    eridium: Math.round(amounts.eridium * 100000) / 100000,
+    ore: Math.round(amounts.ore * 1000) / 1000,
+    polymers: Math.round(amounts.polymers * 1000) / 1000,
+    plasma: Math.round(amounts.plasma * 1000) / 1000,
+    antimatter: Math.round(amounts.antimatter * 100000) / 100000,
   };
 }

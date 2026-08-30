@@ -30,7 +30,7 @@ function check(name: string, passed: boolean, detail?: string): void {
 }
 
 const techs = emptyTechLevels();
-const richness = { titanite: 1, silicate: 1, tritium: 1, energy: 1, eridium: 1 };
+const richness = { ore: 1, polymers: 1, plasma: 1, energy: 1, antimatter: 1 };
 
 /** Минимальная база: accrue трогает только уровни, богатство, оборону и склад. */
 function makeBase(levels: Partial<BuildingLevels>, stock: Partial<BaseRuntimeState['resources']>) {
@@ -41,17 +41,17 @@ function makeBase(levels: Partial<BuildingLevels>, stock: Partial<BaseRuntimeSta
     anomaly: 'NONE',
     defenses: emptyDefenseCounts(),
     ships: emptyShipCounts(),
-    resources: { titanite: 0, silicate: 0, tritium: 0, eridium: 0, ...stock },
+    resources: { ore: 0, polymers: 0, plasma: 0, antimatter: 0, ...stock },
     dirty: false,
   } as unknown as BaseRuntimeState;
 }
 
 /** Развитая колония: шахты качают быстрее, чем влезает в маленький склад. */
 const MINES: Partial<BuildingLevels> = {
-  TITANITE_MINE: 10,
-  SILICATE_MINE: 10,
-  TRITIUM_MINE: 8,
-  SOLAR_PLANT: 14,
+  ORE_MINE: 10,
+  POLYMER_PLANT: 10,
+  PLASMA_REACTOR: 8,
+  POWER_PLANT: 14,
 };
 
 const DAY = 24 * 3600;
@@ -86,7 +86,7 @@ check(
 console.log('\n=== 2. Добыча упирается в потолок ===');
 
 {
-  const base = makeBase({ ...MINES, STORAGE: 1 }, { titanite: 500, silicate: 300, tritium: 100 });
+  const base = makeBase({ ...MINES, STORAGE: 1 }, { ore: 500, polymers: 300, plasma: 100 });
   const capacity = storageCapacityForLevel(1);
   accrue(base, techs, WEEK);
   const used = storedTotal(base.resources);
@@ -101,7 +101,7 @@ console.log('\n=== 2. Добыча упирается в потолок ===');
 {
   // Тот же потолок, но набранный шагами: Game Loop дробит офлайн на отрезки
   // по завершенным стройкам, и каждый отрезок проходит через accrue отдельно.
-  const base = makeBase({ ...MINES, STORAGE: 1 }, { titanite: 500, silicate: 300, tritium: 100 });
+  const base = makeBase({ ...MINES, STORAGE: 1 }, { ore: 500, polymers: 300, plasma: 100 });
   for (let i = 0; i < 7; i += 1) accrue(base, techs, DAY);
   const used = storedTotal(base.resources);
 
@@ -113,58 +113,58 @@ console.log('\n=== 2. Добыча упирается в потолок ===');
 }
 
 {
-  const base = makeBase({ ...MINES, STORAGE: 1 }, { titanite: 6000, silicate: 4000, tritium: 0 });
+  const base = makeBase({ ...MINES, STORAGE: 1 }, { ore: 6000, polymers: 4000, plasma: 0 });
   const before = { ...base.resources };
   accrue(base, techs, DAY);
 
   check(
     'на полном складе добыча полностью остановлена',
-    base.resources.titanite === before.titanite &&
-      base.resources.silicate === before.silicate &&
-      base.resources.tritium === before.tritium,
-    `титанит ${base.resources.titanite}`,
+    base.resources.ore === before.ore &&
+      base.resources.polymers === before.polymers &&
+      base.resources.plasma === before.plasma,
+    `руда ${base.resources.ore}`,
   );
 }
 
 {
   // Переполнить склад может возвратный рейс или отмена ордера — добыча при этом
   // стоит, но уже лежащие сверх лимита ресурсы никуда не пропадают.
-  const base = makeBase({ ...MINES, STORAGE: 1 }, { titanite: 20000, silicate: 8000, tritium: 0 });
+  const base = makeBase({ ...MINES, STORAGE: 1 }, { ore: 20000, polymers: 8000, plasma: 0 });
   accrue(base, techs, DAY);
 
   check(
     'переполненный склад не растет и не усыхает',
-    base.resources.titanite === 20000 && base.resources.silicate === 8000,
-    `${base.resources.titanite} / ${base.resources.silicate}`,
+    base.resources.ore === 20000 && base.resources.polymers === 8000,
+    `${base.resources.ore} / ${base.resources.polymers}`,
   );
 }
 
 {
-  const base = makeBase({ ...MINES, STORAGE: 1 }, { titanite: 500, silicate: 300, tritium: 100 });
+  const base = makeBase({ ...MINES, STORAGE: 1 }, { ore: 500, polymers: 300, plasma: 100 });
   const perSecond = productionPerSecond(base.levels, richness, undefined, 0);
 
   // Минута добычи заведомо влезает в свободное место, поэтому обрезать нечего
   // и начисление должно совпасть с формулой до последнего знака.
   const seconds = 60;
-  const mined = (perSecond.titanite + perSecond.silicate + perSecond.tritium) * seconds;
+  const mined = (perSecond.ore + perSecond.polymers + perSecond.plasma) * seconds;
   const free = storageCapacityForLevel(1) - storedTotal(base.resources);
   accrue(base, techs, seconds);
 
-  const expectedTitanite = 500 + perSecond.titanite * seconds;
+  const expectedOre = 500 + perSecond.ore * seconds;
   check(
     'пока место есть, добыча идет в полную силу',
-    mined < free && Math.abs(base.resources.titanite - expectedTitanite) < 0.000001,
-    `${base.resources.titanite.toFixed(2)} против ${expectedTitanite.toFixed(2)} (добыто ${Math.round(mined)} при свободных ${Math.round(free)})`,
+    mined < free && Math.abs(base.resources.ore - expectedOre) < 0.000001,
+    `${base.resources.ore.toFixed(2)} против ${expectedOre.toFixed(2)} (добыто ${Math.round(mined)} при свободных ${Math.round(free)})`,
   );
 }
 
 {
-  // Обрезка одинаковой долей: иначе быстрый титанит вытеснил бы тритий.
-  const base = makeBase({ ...MINES, STORAGE: 1 }, { titanite: 0, silicate: 0, tritium: 0 });
+  // Обрезка одинаковой долей: иначе быстрый руда вытеснил бы плазма.
+  const base = makeBase({ ...MINES, STORAGE: 1 }, { ore: 0, polymers: 0, plasma: 0 });
   const perSecond = productionPerSecond(base.levels, richness, undefined, 0);
-  const mix = perSecond.titanite / perSecond.tritium;
+  const mix = perSecond.ore / perSecond.plasma;
   accrue(base, techs, WEEK);
-  const gotMix = base.resources.titanite / base.resources.tritium;
+  const gotMix = base.resources.ore / base.resources.plasma;
 
   check(
     'обрезка сохраняет пропорцию между ресурсами',
@@ -175,20 +175,20 @@ console.log('\n=== 2. Добыча упирается в потолок ===');
 
 {
   const base = makeBase(
-    { ...MINES, ERIDIUM_SYNTH: 4, RESEARCH_LAB: 3, STORAGE: 1 },
-    { titanite: 6000, silicate: 4000, tritium: 0, eridium: 0 },
+    { ...MINES, ANTIMATTER_FACTORY: 4, SCIENCE_CENTER: 3, STORAGE: 1 },
+    { ore: 6000, polymers: 4000, plasma: 0, antimatter: 0 },
   );
   accrue(base, techs, DAY);
 
   check(
-    'эридий копится и на полном складе',
-    base.resources.eridium > 0,
-    `${base.resources.eridium.toFixed(3)}`,
+    'антиматерия копится и на полном складе',
+    base.resources.antimatter > 0,
+    `${base.resources.antimatter.toFixed(3)}`,
   );
 }
 
 {
-  const base = makeBase({ ...MINES }, { titanite: 500, silicate: 300, tritium: 100 });
+  const base = makeBase({ ...MINES }, { ore: 500, polymers: 300, plasma: 100 });
   accrue(base, techs, WEEK);
 
   check(
@@ -206,128 +206,128 @@ const CAPACITY = storageCapacityForLevel(1);
 const HOLDS = 1_000_000;
 
 {
-  const loot = plunderAmount({ titanite: 3000, silicate: 2000, tritium: 0 }, CAPACITY, HOLDS);
+  const loot = plunderAmount({ ore: 3000, polymers: 2000, plasma: 0 }, CAPACITY, HOLDS);
   check(
     'полупустой склад не теряет ничего',
-    loot.titanite === 0 && loot.silicate === 0 && loot.surplus === 0,
+    loot.ore === 0 && loot.polymers === 0 && loot.surplus === 0,
     `защищено ${loot.protectedAmount}`,
   );
 }
 
 {
-  const loot = plunderAmount({ titanite: 5400, silicate: 3600, tritium: 0 }, CAPACITY, HOLDS);
+  const loot = plunderAmount({ ore: 5400, polymers: 3600, plasma: 0 }, CAPACITY, HOLDS);
   check(
     'ровно на границе 90% вместимости грабить нечего',
-    loot.titanite === 0 && loot.silicate === 0,
+    loot.ore === 0 && loot.polymers === 0,
     `лежало ${loot.stored}, излишек ${loot.surplus}`,
   );
 }
 
 {
-  const loot = plunderAmount({ titanite: 6000, silicate: 4000, tritium: 0 }, CAPACITY, HOLDS);
+  const loot = plunderAmount({ ore: 6000, polymers: 4000, plasma: 0 }, CAPACITY, HOLDS);
   check(
     'полный склад отдает 90% от последних 10% вместимости',
-    loot.surplus === 1000 && loot.titanite === 540 && loot.silicate === 360,
-    `излишек ${loot.surplus} → ${loot.titanite} Ti + ${loot.silicate} Si`,
+    loot.surplus === 1000 && loot.ore === 540 && loot.polymers === 360,
+    `излишек ${loot.surplus} → ${loot.ore} Ti + ${loot.polymers} Si`,
   );
 }
 
 {
-  const loot = plunderAmount({ titanite: 12000, silicate: 8000, tritium: 0 }, CAPACITY, HOLDS);
+  const loot = plunderAmount({ ore: 12000, polymers: 8000, plasma: 0 }, CAPACITY, HOLDS);
   check(
     'переполненный склад отдает 90% всего излишка',
-    loot.surplus === 11000 && loot.titanite + loot.silicate === 9900,
-    `излишек ${loot.surplus} → ${loot.titanite + loot.silicate}`,
+    loot.surplus === 11000 && loot.ore + loot.polymers === 9900,
+    `излишек ${loot.surplus} → ${loot.ore + loot.polymers}`,
   );
   check(
     'вывоз пропорционален долям ресурсов на складе',
-    loot.titanite === 5940 && loot.silicate === 3960,
-    `${loot.titanite} Ti + ${loot.silicate} Si при складе 12000/8000`,
+    loot.ore === 5940 && loot.polymers === 3960,
+    `${loot.ore} Ti + ${loot.polymers} Si при складе 12000/8000`,
   );
 }
 
 {
-  const loot = plunderAmount({ titanite: 0, silicate: 20000, tritium: 0 }, CAPACITY, HOLDS);
+  const loot = plunderAmount({ ore: 0, polymers: 20000, plasma: 0 }, CAPACITY, HOLDS);
   check(
-    'склад из одних силикатов отдает только силикаты',
-    loot.titanite === 0 && loot.silicate === 9900,
-    `${loot.silicate} Si`,
+    'склад из одних полимеров отдает только полимеры',
+    loot.ore === 0 && loot.polymers === 9900,
+    `${loot.polymers} Si`,
   );
 }
 
 {
-  // Тритий занимает место в хранилище и вывозится наравне с остальными:
+  // Плазма занимает место в хранилище и вывозится наравне с остальными:
   // трюмы транспортов принимают его как обычный груз.
-  const loot = plunderAmount({ titanite: 5000, silicate: 0, tritium: 5000 }, CAPACITY, HOLDS);
+  const loot = plunderAmount({ ore: 5000, polymers: 0, plasma: 5000 }, CAPACITY, HOLDS);
   check(
-    'тритий считается в лимите склада',
+    'плазма считается в лимите склада',
     loot.stored === 10000 && loot.surplus === 1000,
     `лежало ${loot.stored}, излишек ${loot.surplus}`,
   );
   check(
-    'тритий вывозится наравне с титанитом и силикатами',
-    loot.titanite === 450 && loot.tritium === 450 && loot.silicate === 0,
-    `${loot.titanite} Ti + ${loot.tritium} Tr`,
+    'плазма вывозится наравне с рудой и полимерами',
+    loot.ore === 450 && loot.plasma === 450 && loot.polymers === 0,
+    `${loot.ore} Ti + ${loot.plasma} Tr`,
   );
   check(
     'суммарно увезли 90% излишка',
-    loot.titanite + loot.silicate + loot.tritium === 900,
-    `${loot.titanite + loot.silicate + loot.tritium} из излишка ${loot.surplus}`,
+    loot.ore + loot.polymers + loot.plasma === 900,
+    `${loot.ore + loot.polymers + loot.plasma} из излишка ${loot.surplus}`,
   );
 }
 
 {
-  // Трюмы забиваются по порядку, поэтому при нехватке места тритий грузят
+  // Трюмы забиваются по порядку, поэтому при нехватке места плазма грузят
   // последним — но склад защитника теряет ровно то, что уехало.
-  const loot = plunderAmount({ titanite: 6000, silicate: 6000, tritium: 8000 }, CAPACITY, 900);
+  const loot = plunderAmount({ ore: 6000, polymers: 6000, plasma: 8000 }, CAPACITY, 900);
   check(
-    'при нехватке трюмов тритий грузится последним',
-    loot.titanite === 900 && loot.silicate === 0 && loot.tritium === 0 && loot.cargoLimited,
-    `${loot.titanite} Ti + ${loot.silicate} Si + ${loot.tritium} Tr при трюмах 900`,
+    'при нехватке трюмов плазма грузится последним',
+    loot.ore === 900 && loot.polymers === 0 && loot.plasma === 0 && loot.cargoLimited,
+    `${loot.ore} Ti + ${loot.polymers} Si + ${loot.plasma} Tr при трюмах 900`,
   );
 }
 
 {
-  const loot = plunderAmount({ titanite: 0, silicate: 0, tritium: 20000 }, CAPACITY, HOLDS);
+  const loot = plunderAmount({ ore: 0, polymers: 0, plasma: 20000 }, CAPACITY, HOLDS);
   check(
-    'склад из одного трития отдает тритий',
-    loot.tritium === 9900 && loot.titanite === 0,
-    `${loot.tritium} Tr`,
+    'склад из одного плазмы отдает плазма',
+    loot.plasma === 9900 && loot.ore === 0,
+    `${loot.plasma} Tr`,
   );
 }
 
 {
-  const loot = plunderAmount({ titanite: 12000, silicate: 8000, tritium: 0 }, CAPACITY, 1000);
+  const loot = plunderAmount({ ore: 12000, polymers: 8000, plasma: 0 }, CAPACITY, 1000);
   check(
     'трюмы уцелевших жестко ограничивают вывоз',
-    loot.titanite + loot.silicate === 1000 && loot.cargoLimited,
-    `увезли ${loot.titanite + loot.silicate} из ${loot.takeable}`,
+    loot.ore + loot.polymers === 1000 && loot.cargoLimited,
+    `увезли ${loot.ore + loot.polymers} из ${loot.takeable}`,
   );
 }
 
 {
-  const loot = plunderAmount({ titanite: 12000, silicate: 8000, tritium: 0 }, CAPACITY, 0);
+  const loot = plunderAmount({ ore: 12000, polymers: 8000, plasma: 0 }, CAPACITY, 0);
   check(
     'без уцелевших трюмов не увозится ничего',
-    loot.titanite === 0 && loot.silicate === 0 && loot.cargoLimited,
+    loot.ore === 0 && loot.polymers === 0 && loot.cargoLimited,
     `могли взять ${loot.takeable}`,
   );
 }
 
 {
-  const big = plunderAmount({ titanite: 12000, silicate: 8000, tritium: 0 }, storageCapacityForLevel(3), HOLDS);
+  const big = plunderAmount({ ore: 12000, polymers: 8000, plasma: 0 }, storageCapacityForLevel(3), HOLDS);
   check(
     'хранилище побольше прячет больше',
-    big.protectedAmount === 20000 && big.titanite + big.silicate === 0,
+    big.protectedAmount === 20000 && big.ore + big.polymers === 0,
     `вместимость 22500 защитила всё (${big.protectedAmount})`,
   );
 }
 
 {
-  const loot = plunderAmount({ titanite: -5, silicate: 0, tritium: 0 }, CAPACITY, HOLDS);
+  const loot = plunderAmount({ ore: -5, polymers: 0, plasma: 0 }, CAPACITY, HOLDS);
   check(
     'отрицательный склад не создает добычу из воздуха',
-    loot.titanite === 0 && loot.silicate === 0 && loot.stored === 0,
+    loot.ore === 0 && loot.polymers === 0 && loot.stored === 0,
   );
 }
 
@@ -371,9 +371,9 @@ if (registered.status !== 200 && registered.status !== 201) {
       `${base.storage.capacity} против ${expected}`,
     );
     check(
-      'занятый объем равен сумме титанита, силикатов и трития',
+      'занятый объем равен сумме руды, полимеров и плазмы',
       Math.abs(
-        base.storage.used - (base.resources.titanite + base.resources.silicate + base.resources.tritium),
+        base.storage.used - (base.resources.ore + base.resources.polymers + base.resources.plasma),
       ) < 1,
       `занято ${base.storage.used}`,
     );

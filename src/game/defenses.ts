@@ -6,7 +6,7 @@ import { NEUTRAL_MODIFIERS, type BuildingLevels, type ResourceAmounts, type Syst
 import type { Requirement, TechLevels, TechnologyType } from './techTree.js';
 import { techLabel } from './techTree.js';
 
-export const DEFENSE_TYPES = ['ROCKET_LAUNCHER', 'LASER_TURRET'] as const;
+export const DEFENSE_TYPES = ['CANNON_TURRET', 'LASER_TURRET'] as const;
 export type DefenseType = (typeof DEFENSE_TYPES)[number];
 export type DefenseCounts = Record<DefenseType, number>;
 
@@ -15,7 +15,7 @@ export function isDefenseType(value: unknown): value is DefenseType {
 }
 
 export function emptyDefenseCounts(): DefenseCounts {
-  return { ROCKET_LAUNCHER: 0, LASER_TURRET: 0 };
+  return { CANNON_TURRET: 0, LASER_TURRET: 0 };
 }
 
 interface DefenseDefinition {
@@ -30,19 +30,19 @@ interface DefenseDefinition {
 }
 
 const DEFENSES: Record<DefenseType, DefenseDefinition> = {
-  ROCKET_LAUNCHER: {
-    label: 'Ракетная установка',
+  CANNON_TURRET: {
+    label: 'Пушечная турель',
     description: 'Дешевый заслон против легких кораблей.',
-    cost: { titanite: 200, silicate: 0, tritium: 0 },
+    cost: { ore: 200, polymers: 0, plasma: 0 },
     baseSeconds: 20,
     energyDrain: 0.5,
     shipyardLevel: 1,
     requires: {},
   },
   LASER_TURRET: {
-    label: 'Лазерное орудие',
+    label: 'Лазерная турель',
     description: 'Мощная турель, требует энергетики.',
-    cost: { titanite: 300, silicate: 150, tritium: 0 },
+    cost: { ore: 300, polymers: 150, plasma: 0 },
     baseSeconds: 35,
     energyDrain: 1.2,
     shipyardLevel: 2,

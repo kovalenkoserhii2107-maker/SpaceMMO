@@ -53,8 +53,8 @@ await prisma.commander.updateMany({
 for (const commander of [admiral, pilot]) {
   await prisma.hubStorage.upsert({
     where: { commanderId_hubId: { commanderId: commander.id, hubId: hub.id } },
-    create: { commanderId: commander.id, hubId: hub.id, titanite: 20000, silicate: 20000, level: 8 },
-    update: { titanite: 20000, silicate: 20000, level: 8 },
+    create: { commanderId: commander.id, hubId: hub.id, ore: 20000, polymers: 20000, level: 8 },
+    update: { ore: 20000, polymers: 20000, level: 8 },
   });
 }
 

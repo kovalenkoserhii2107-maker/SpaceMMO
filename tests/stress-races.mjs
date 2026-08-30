@@ -33,9 +33,9 @@ const check = (name, ok, detail) => { results.push({ name, ok }); console.log(`$
 
 /* Частичные конкурентные сделки: 8 запросов по 30 единиц на ордер из 100. */
 async function partialRace() {
-  await api('POST', '/api/market/orders', ids.pilotToken, { side: 'SELL', resource: 'TITANITE', quantity: 100, pricePerUnit: 2 });
+  await api('POST', '/api/market/orders', ids.pilotToken, { side: 'SELL', resource: 'ORE', quantity: 100, pricePerUnit: 2 });
   const book = await market(ids.admiralToken);
-  const order = book.book.TITANITE.sell.filter((o) => !o.mine).sort((a, b) => b.createdAt - a.createdAt)[0];
+  const order = book.book.ORE.sell.filter((o) => !o.mine).sort((a, b) => b.createdAt - a.createdAt)[0];
   if (!order) return check('частичная гонка: ордер создан', false);
 
   const b1 = await market(ids.admiralToken), b2 = await market(ids.pilotToken);
@@ -44,10 +44,10 @@ async function partialRace() {
   const ok = attempts.filter((a) => a.status === 200).length;
 
   const a1 = await market(ids.admiralToken), a2 = await market(ids.pilotToken);
-  const got = a1.storage.titanite - b1.storage.titanite;
+  const got = a1.storage.ore - b1.storage.ore;
   const paid = b1.credits - a1.credits;
   const earned = a2.credits - b2.credits;
-  const left = (await market(ids.admiralToken)).book.TITANITE.sell.find((o) => o.id === order.id);
+  const left = (await market(ids.admiralToken)).book.ORE.sell.find((o) => o.id === order.id);
   const remaining = left ? left.remaining : 0;
 
   check('частичная гонка: товар не создается из воздуха', got + remaining === 100,
@@ -60,10 +60,10 @@ async function partialRace() {
 
 /* Двойная отмена одного ордера: залог должен вернуться ровно один раз. */
 async function cancelRace() {
-  const created = await api('POST', '/api/market/orders', ids.pilotToken, { side: 'SELL', resource: 'SILICATE', quantity: 500, pricePerUnit: 2 });
+  const created = await api('POST', '/api/market/orders', ids.pilotToken, { side: 'SELL', resource: 'POLYMERS', quantity: 500, pricePerUnit: 2 });
   if (created.status !== 200) return check('гонка отмены: ордер создан', false, JSON.stringify(created.data));
 
-  const mine = (await market(ids.pilotToken)).myOrders.find((o) => o.resource === 'SILICATE');
+  const mine = (await market(ids.pilotToken)).myOrders.find((o) => o.resource === 'POLYMERS');
   const before = await market(ids.pilotToken);
 
   const attempts = await Promise.all(Array.from({ length: 6 }, () =>
@@ -72,8 +72,8 @@ async function cancelRace() {
 
   const after = await market(ids.pilotToken);
   check('гонка отмены: залог вернулся ровно один раз',
-    after.storage.silicate - before.storage.silicate === 500 && ok === 1,
-    `успешных отмен ${ok}, силикаты ${before.storage.silicate} -> ${after.storage.silicate}`);
+    after.storage.polymers - before.storage.polymers === 500 && ok === 1,
+    `успешных отмен ${ok}, полимеры ${before.storage.polymers} -> ${after.storage.polymers}`);
 }
 
 /* Двойная покупка на грани баланса: два ордера, каждый почти на весь баланс. */
@@ -83,8 +83,8 @@ async function creditEdge() {
   if (budget < 10) return check('граница баланса: пропущено (нет денег)', true, `баланс ${budget}`);
 
   const attempts = await Promise.all([
-    api('POST', '/api/market/orders', ids.pilotToken, { side: 'BUY', resource: 'TITANITE', quantity: budget, pricePerUnit: 1 }),
-    api('POST', '/api/market/orders', ids.pilotToken, { side: 'BUY', resource: 'TITANITE', quantity: budget, pricePerUnit: 1 }),
+    api('POST', '/api/market/orders', ids.pilotToken, { side: 'BUY', resource: 'ORE', quantity: budget, pricePerUnit: 1 }),
+    api('POST', '/api/market/orders', ids.pilotToken, { side: 'BUY', resource: 'ORE', quantity: budget, pricePerUnit: 1 }),
   ]);
   const ok = attempts.filter((a) => a.status === 200).length;
   const after = await market(ids.pilotToken);

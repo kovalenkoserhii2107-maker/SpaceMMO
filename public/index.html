@@ -11,205 +11,23 @@
   Спрайт иконок ресурсов. Один инлайновый блок <symbol> вместо семи файлов:
   без лишних запросов, красится через currentColor и масштабируется под кегль.
   Каждая иконка нарисована на сетке 24×24 и опирается на форму, а не на цвет:
-  титанит — слиток, силикат — кристалл, тритий — капля, эридий — искра.
--->
-<!--
-  Спрайт иллюстраций построек, обороны и кораблей.
-  Отдельно от ресурсных иконок: тут сетка 64×64 и другая логика отрисовки —
-  тонкий контур currentColor плюс акцентное ядро цвета --art-accent, который
-  задается снаружи на элементе .art. Внутрь <use> обычные CSS-селекторы
-  не достают, а пользовательские свойства и currentColor наследуются.
+  руда — слиток, полимеры — кристалл, плазма — капля, антиматерия — искра.
 -->
 <svg class="icon-sprite" aria-hidden="true" focusable="false">
   <defs>
-    <symbol id="art-titanite_mine" viewBox="0 0 64 64">
-      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M8 54h48"/>
-        <path d="M32 14 18 46h28L32 14Z"/>
-        <path d="M24 32h16"/>
-        <path d="M32 14v-5"/>
-      </g>
-      <circle cx="32" cy="8" r="3.5" fill="var(--art-accent)"/>
-      <path d="M22 46h20l3 8H19l3-8Z" fill="var(--art-accent)" opacity=".35"/>
-    </symbol>
-
-    <symbol id="art-silicate_mine" viewBox="0 0 64 64">
-      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M8 54h48"/>
-        <path d="M16 54 22 34l8-6 8 6 6 20"/>
-        <path d="M22 34h20"/>
-      </g>
-      <path d="M30 10 38 22l-6 12-6-12 4-12Z" fill="var(--art-accent)" opacity=".8"/>
-      <path d="M42 18 48 26l-4 8-4-8 2-8Z" fill="var(--art-accent)" opacity=".45"/>
-    </symbol>
-
-    <symbol id="art-tritium_mine" viewBox="0 0 64 64">
-      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M8 54h48"/>
-        <rect x="16" y="20" width="20" height="34" rx="6"/>
-        <path d="M36 28h8a6 6 0 0 1 6 6v20"/>
-        <path d="M16 34h20"/>
-        <path d="M22 20v-6h8v6"/>
-      </g>
-      <path d="M26 38c3 3.4 4.5 5.8 4.5 7.6a4.5 4.5 0 0 1-9 0c0-1.8 1.5-4.2 4.5-7.6Z" fill="var(--art-accent)"/>
-    </symbol>
-
-    <symbol id="art-eridium_synth" viewBox="0 0 64 64">
-      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M8 54h48"/>
-        <path d="M20 54V40M44 54V40"/>
-        <ellipse cx="32" cy="30" rx="20" ry="9"/>
-        <ellipse cx="32" cy="30" rx="20" ry="9" transform="rotate(60 32 30)"/>
-      </g>
-      <path d="m32 20 2.6 8.4L43 31l-8.4 2.6L32 42l-2.6-8.4L21 31l8.4-2.6L32 20Z" fill="var(--art-accent)"/>
-    </symbol>
-
-    <symbol id="art-solar_plant" viewBox="0 0 64 64">
-      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M8 54h48"/>
-        <path d="M32 54v-8"/>
-        <path d="M12 46h40l-6-18H18l-6 18Z"/>
-        <path d="M20 28 16 46M32 28v18M44 28l4 18M15 37h34"/>
-      </g>
-      <circle cx="50" cy="14" r="6" fill="var(--art-accent)"/>
-      <g stroke="var(--art-accent)" stroke-width="2" stroke-linecap="round" opacity=".7">
-        <path d="M50 2v3M50 23v3M39 14h3M58 14h3M42 6l2 2M56 20l2 2"/>
-      </g>
-    </symbol>
-
-    <symbol id="art-research_lab" viewBox="0 0 64 64">
-      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M8 54h48"/>
-        <path d="M14 54V34a18 18 0 0 1 36 0v20"/>
-        <path d="M14 40h36"/>
-        <ellipse cx="32" cy="34" rx="15" ry="6"/>
-        <ellipse cx="32" cy="34" rx="15" ry="6" transform="rotate(55 32 34)"/>
-      </g>
-      <circle cx="32" cy="34" r="4" fill="var(--art-accent)"/>
-    </symbol>
-
-    <symbol id="art-shipyard" viewBox="0 0 64 64">
-      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M8 54h48"/>
-        <path d="M12 54V16h40v38"/>
-        <path d="M12 16h40M12 28h40"/>
-        <path d="M32 28v6"/>
-        <path d="M24 54v-4M40 54v-4"/>
-      </g>
-      <path d="M22 50V44l10-8 10 8v6H22Z" fill="var(--art-accent)" opacity=".85"/>
-      <circle cx="32" cy="35" r="2.5" fill="var(--art-accent)"/>
-    </symbol>
-
-    <symbol id="art-storage" viewBox="0 0 64 64">
-      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M8 54h48"/>
-        <rect x="12" y="22" width="16" height="32" rx="4"/>
-        <rect x="34" y="14" width="18" height="40" rx="4"/>
-        <path d="M12 32h16M34 26h18"/>
-      </g>
-      <rect x="15" y="41" width="10" height="10" rx="2" fill="var(--art-accent)"/>
-      <rect x="37" y="35" width="12" height="16" rx="2" fill="var(--art-accent)" opacity=".55"/>
-    </symbol>
-
-    <symbol id="art-rocket_launcher" viewBox="0 0 64 64">
-      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M8 54h48"/>
-        <path d="M18 54v-8h28v8"/>
-        <g transform="rotate(-28 31 34)">
-          <rect x="16" y="25" width="28" height="18" rx="3"/>
-          <path d="M16 31h28M16 37h28"/>
-        </g>
-      </g>
-      <g transform="rotate(-28 31 34)" fill="var(--art-accent)">
-        <circle cx="43" cy="28" r="2.1"/>
-        <circle cx="43" cy="34" r="2.1"/>
-        <circle cx="43" cy="40" r="2.1"/>
-      </g>
-    </symbol>
-
-    <symbol id="art-laser_turret" viewBox="0 0 64 64">
-      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M8 54h48"/>
-        <path d="M16 54v-8h32v8"/>
-        <path d="M22 46a10 10 0 0 1 20 0"/>
-        <path d="m36 39 10-10"/>
-        <path d="m32 35 8 8"/>
-      </g>
-      <circle cx="31" cy="44" r="3" fill="var(--art-accent)"/>
-      <path d="m47 28 9-9" stroke="var(--art-accent)" stroke-width="3" stroke-linecap="round" fill="none"/>
-    </symbol>
-
-    <symbol id="art-probe" viewBox="0 0 64 64">
-      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="26" y="26" width="12" height="18" rx="2"/>
-        <path d="M26 30H12v10h14M38 30h14v10H38"/>
-        <path d="M17 30v10M47 30v10"/>
-        <path d="M32 26v-6"/>
-        <path d="M24 20a8.5 8.5 0 0 1 16 0"/>
-      </g>
-      <circle cx="32" cy="19" r="2.6" fill="var(--art-accent)"/>
-    </symbol>
-
-    <symbol id="art-transporter" viewBox="0 0 64 64">
-      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M14 22h28l8 10-8 10H14a4 4 0 0 1-4-4V26a4 4 0 0 1 4-4Z"/>
-        <path d="M24 22v20M34 22v20"/>
-        <path d="M50 32h6"/>
-      </g>
-      <rect x="14" y="26" width="6" height="12" rx="1.5" fill="var(--art-accent)"/>
-    </symbol>
-
-    <symbol id="art-light_fighter" viewBox="0 0 64 64">
-      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M52 32 22 20v24l30-12Z"/>
-        <path d="M22 26 8 18v28l14-8"/>
-      </g>
-      <circle cx="42" cy="32" r="3" fill="var(--art-accent)"/>
-    </symbol>
-
-    <symbol id="art-heavy_cruiser" viewBox="0 0 64 64">
-      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M56 32 20 18H10l6 14-6 14h10l36-14Z"/>
-        <path d="M22 24h16M22 40h16"/>
-      </g>
-      <rect x="28" y="28" width="16" height="8" rx="2" fill="var(--art-accent)"/>
-    </symbol>
-
-    <symbol id="art-recycler" viewBox="0 0 64 64">
-      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M14 22h26l8 10-8 10H14a4 4 0 0 1-4-4V26a4 4 0 0 1 4-4Z"/>
-        <path d="M22 22v20M32 22v20"/>
-        <path d="M10 30H4M10 34H4"/>
-        <path d="M44 20a10 10 0 0 1 0 24"/>
-      </g>
-      <path d="M16 26h4v12h-4zM26 26h4v12h-4zM36 27h4v10h-4z" fill="var(--art-accent)" opacity=".7"/>
-    </symbol>
-    <symbol id="art-ion_frigate" viewBox="0 0 64 64">
-      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M54 32 24 20v24l30-12Z"/>
-        <path d="M18 18a18 18 0 0 0 0 28"/>
-        <path d="M12 14a26 26 0 0 0 0 36"/>
-      </g>
-      <circle cx="40" cy="32" r="3.5" fill="var(--art-accent)"/>
-    </symbol>
-  </defs>
-</svg>
-
-<svg class="icon-sprite" aria-hidden="true" focusable="false">
-  <defs>
-    <symbol id="ico-titanite" viewBox="0 0 24 24">
+    <symbol id="ico-ore" viewBox="0 0 24 24">
       <path d="M4 9.5 12 5l8 4.5-8 4.5-8-4.5Z" fill="currentColor" opacity=".55"/>
       <path d="M4 9.5v5L12 19l8-4.5v-5l-8 4.5-8-4.5Z" fill="currentColor"/>
     </symbol>
-    <symbol id="ico-silicate" viewBox="0 0 24 24">
+    <symbol id="ico-polymers" viewBox="0 0 24 24">
       <path d="M12 2.5 19 9l-7 12.5L5 9l7-6.5Z" fill="currentColor" opacity=".55"/>
       <path d="M12 2.5 19 9h-4l-3-6.5ZM12 2.5 5 9h4l3-6.5ZM9 9h6l-3 12.5L9 9Z" fill="currentColor"/>
     </symbol>
-    <symbol id="ico-tritium" viewBox="0 0 24 24">
+    <symbol id="ico-plasma" viewBox="0 0 24 24">
       <path d="M12 2.5c4.2 4.6 6.3 8 6.3 10.7A6.3 6.3 0 0 1 12 19.5a6.3 6.3 0 0 1-6.3-6.3C5.7 10.5 7.8 7.1 12 2.5Z" fill="currentColor" opacity=".45"/>
       <circle cx="12" cy="13.2" r="3.1" fill="currentColor"/>
     </symbol>
-    <symbol id="ico-eridium" viewBox="0 0 24 24">
+    <symbol id="ico-antimatter" viewBox="0 0 24 24">
       <path d="M12 2.5 13.9 9 20.5 12 13.9 15 12 21.5 10.1 15 3.5 12 10.1 9 12 2.5Z" fill="currentColor"/>
       <circle cx="12" cy="12" r="1.9" fill="var(--bg)"/>
     </symbol>
@@ -307,10 +125,10 @@
         <span>Командный центр</span>
       </div>
       <div class="resources" id="resource-bar">
-        <div class="res" title="Титанит"><svg class="ico titanite" aria-hidden="true"><use href="#ico-titanite"/></svg><b id="res-titanite">0</b><small id="rate-titanite">+0/с</small></div>
-        <div class="res" title="Силикаты"><svg class="ico silicate" aria-hidden="true"><use href="#ico-silicate"/></svg><b id="res-silicate">0</b><small id="rate-silicate">+0/с</small></div>
-        <div class="res" title="Тритий"><svg class="ico tritium" aria-hidden="true"><use href="#ico-tritium"/></svg><b id="res-tritium">0</b><small id="rate-tritium">+0/с</small></div>
-        <div class="res" title="Эридий"><svg class="ico eridium" aria-hidden="true"><use href="#ico-eridium"/></svg><b id="res-eridium">0</b><small id="rate-eridium">+0/с</small></div>
+        <div class="res" title="Руда"><svg class="ico ore" aria-hidden="true"><use href="#ico-ore"/></svg><b id="res-ore">0</b><small id="rate-ore">+0/с</small></div>
+        <div class="res" title="Полимеры"><svg class="ico polymers" aria-hidden="true"><use href="#ico-polymers"/></svg><b id="res-polymers">0</b><small id="rate-polymers">+0/с</small></div>
+        <div class="res" title="Плазма"><svg class="ico plasma" aria-hidden="true"><use href="#ico-plasma"/></svg><b id="res-plasma">0</b><small id="rate-plasma">+0/с</small></div>
+        <div class="res" title="Антиматерия"><svg class="ico antimatter" aria-hidden="true"><use href="#ico-antimatter"/></svg><b id="res-antimatter">0</b><small id="rate-antimatter">+0/с</small></div>
         <div class="res" title="Энергия"><svg class="ico energy" aria-hidden="true"><use href="#ico-energy"/></svg><b id="res-energy">0</b><small id="rate-energy">свободно</small></div>
         <div class="res" title="Эффективность шахт"><svg class="ico efficiency" aria-hidden="true"><use href="#ico-efficiency"/></svg><b id="res-efficiency">100%</b><small id="rate-efficiency">мощность шахт</small></div>
         <div class="res" title="Криптогривна"><svg class="ico credits" aria-hidden="true"><use href="#ico-credits"/></svg><b id="res-credits">0</b><small>криптогривна</small></div>
@@ -417,9 +235,9 @@
                 </div>
                 <div id="fleet-inputs" class="fleet-inputs"></div>
                 <div id="cargo-inputs" class="fleet-inputs">
-                  <label class="field"><span id="cargo-titanite-label"><svg class="ico titanite sm" role="img" aria-label="Титанит"><title>Титанит</title><use href="#ico-titanite"/></svg> Титанит</span><input id="cargo-titanite" type="number" min="0" value="0"></label>
-                  <label class="field"><span id="cargo-silicate-label"><svg class="ico silicate sm" role="img" aria-label="Силикаты"><title>Силикаты</title><use href="#ico-silicate"/></svg> Силикаты</span><input id="cargo-silicate" type="number" min="0" value="0"></label>
-                  <label class="field" id="cargo-tritium-field"><span id="cargo-tritium-label"><svg class="ico tritium sm" role="img" aria-label="Тритий"><title>Тритий</title><use href="#ico-tritium"/></svg> Тритий</span><input id="cargo-tritium" type="number" min="0" value="0"></label>
+                  <label class="field"><span id="cargo-ore-label"><svg class="ico ore sm" role="img" aria-label="Руда"><title>Руда</title><use href="#ico-ore"/></svg> Руда</span><input id="cargo-ore" type="number" min="0" value="0"></label>
+                  <label class="field"><span id="cargo-polymers-label"><svg class="ico polymers sm" role="img" aria-label="Полимеры"><title>Полимеры</title><use href="#ico-polymers"/></svg> Полимеры</span><input id="cargo-polymers" type="number" min="0" value="0"></label>
+                  <label class="field" id="cargo-plasma-field"><span id="cargo-plasma-label"><svg class="ico plasma sm" role="img" aria-label="Плазма"><title>Плазма</title><use href="#ico-plasma"/></svg> Плазма</span><input id="cargo-plasma" type="number" min="0" value="0"></label>
                 </div>
                 <div id="flight-plan" class="flight-plan">Выбери корабли, чтобы увидеть расчет.</div>
                 <button id="send-fleet" type="button" class="primary">Отправить флот</button>
@@ -450,8 +268,8 @@
                 </label>
                 <label class="field"><span>Ресурс</span>
                   <select id="order-resource">
-                    <option value="TITANITE">Титанит</option>
-                    <option value="SILICATE">Силикаты</option>
+                    <option value="ORE">Руда</option>
+                    <option value="POLYMERS">Полимеры</option>
                   </select>
                 </label>
                 <label class="field"><span>Объем</span><input id="order-quantity" type="number" min="1" value="100"></label>
@@ -513,9 +331,9 @@
               <div id="sim-defenses" class="fleet-inputs"></div>
               <h4 class="sim-subtitle">Склад защитника (для расчета добычи)</h4>
               <div class="fleet-inputs">
-                <label class="field"><span><svg class="ico titanite sm" role="img" aria-label="Титанит"><title>Титанит</title><use href="#ico-titanite"/></svg> Титанит</span><input id="sim-stock-titanite" type="number" min="0" value="0"></label>
-                <label class="field"><span><svg class="ico silicate sm" role="img" aria-label="Силикаты"><title>Силикаты</title><use href="#ico-silicate"/></svg> Силикаты</span><input id="sim-stock-silicate" type="number" min="0" value="0"></label>
-                <label class="field"><span><svg class="ico tritium sm" role="img" aria-label="Тритий"><title>Тритий</title><use href="#ico-tritium"/></svg> Тритий</span><input id="sim-stock-tritium" type="number" min="0" value="0"></label>
+                <label class="field"><span><svg class="ico ore sm" role="img" aria-label="Руда"><title>Руда</title><use href="#ico-ore"/></svg> Руда</span><input id="sim-stock-ore" type="number" min="0" value="0"></label>
+                <label class="field"><span><svg class="ico polymers sm" role="img" aria-label="Полимеры"><title>Полимеры</title><use href="#ico-polymers"/></svg> Полимеры</span><input id="sim-stock-polymers" type="number" min="0" value="0"></label>
+                <label class="field"><span><svg class="ico plasma sm" role="img" aria-label="Плазма"><title>Плазма</title><use href="#ico-plasma"/></svg> Плазма</span><input id="sim-stock-plasma" type="number" min="0" value="0"></label>
                 <label class="field"><span>Ур. хранилища</span><input id="sim-stock-storage" type="number" min="0" value="0"></label>
               </div>
             </div>

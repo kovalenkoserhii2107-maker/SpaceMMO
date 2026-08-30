@@ -51,11 +51,11 @@ export function normalizeDefenses(source: Partial<DefenseCounts> | null | undefi
 
 function normalizeRichness(source: Partial<ScanPayload['richness']> | null | undefined) {
   return {
-    titanite: source?.titanite ?? 0,
-    silicate: source?.silicate ?? 0,
-    tritium: source?.tritium ?? 0,
+    ore: source?.ore ?? 0,
+    polymers: source?.polymers ?? 0,
+    plasma: source?.plasma ?? 0,
     energy: source?.energy ?? 0,
-    eridium: source?.eridium ?? 0,
+    antimatter: source?.antimatter ?? 0,
   };
 }
 
@@ -67,9 +67,9 @@ function safeCount(value: number | undefined): number {
 export interface ScanPayload {
   owner: string | null;
   colonized: boolean;
-  richness: { titanite: number; silicate: number; tritium: number; energy: number; eridium: number };
+  richness: { ore: number; polymers: number; plasma: number; energy: number; antimatter: number };
   buildings: BuildingLevels | null;
-  resources: { titanite: number; silicate: number; tritium: number; eridium: number } | null;
+  resources: { ore: number; polymers: number; plasma: number; antimatter: number } | null;
   fleet: ShipCounts | null;
   /** Стационарная оборона колонии. У снимков, снятых до Этапа 12, поля нет. */
   defenses?: DefenseCounts | null;
@@ -92,7 +92,7 @@ export interface PlanetView {
   fleet: ShipCounts | null;
   defenses: DefenseCounts | null;
   /** Поле обломков на орбите: видно всем, туман войны его не скрывает. */
-  debris: { titanite: number; silicate: number };
+  debris: { ore: number; polymers: number };
   /** Возраст данных разведки в секундах. */
   scanAgeSeconds: number | null;
   /** Свежесть разведданных; null — планета не разведана. */
@@ -117,7 +117,7 @@ interface PlanetFacts {
   position: number;
   type: string;
   size: number;
-  debris: { titanite: number; silicate: number };
+  debris: { ore: number; polymers: number };
 }
 
 /** Своя планета: видно всё и в реальном времени. */

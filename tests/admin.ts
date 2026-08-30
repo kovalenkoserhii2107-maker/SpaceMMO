@@ -145,7 +145,7 @@ if (!adminToken || !playerToken || onboarded?.status !== 200) {
       bases: [
         {
           baseId: base.baseId,
-          resources: { titanite: 99000, tritium: 4000 },
+          resources: { ore: 99000, plasma: 4000 },
           buildings: { SHIPYARD: 9 },
           ships: { HEAVY_CRUISER: 12 },
           defenses: { LASER_TURRET: 5 },
@@ -162,12 +162,12 @@ if (!adminToken || !playerToken || onboarded?.status !== 200) {
   check('технология выставлена', (after.data['technologies'] as any).MINING_TECH === 7);
   check(
     'ресурсы, здания, корабли и оборона выставлены',
-    afterBase.resources.titanite === 99000 &&
-      afterBase.resources.tritium === 4000 &&
+    afterBase.resources.ore === 99000 &&
+      afterBase.resources.plasma === 4000 &&
       afterBase.buildings.SHIPYARD === 9 &&
       afterBase.ships.HEAVY_CRUISER === 12 &&
       afterBase.defenses.LASER_TURRET === 5,
-    JSON.stringify({ res: afterBase.resources.titanite, ship: afterBase.ships.HEAVY_CRUISER }),
+    JSON.stringify({ res: afterBase.resources.ore, ship: afterBase.ships.HEAVY_CRUISER }),
   );
 
   /* ------------------------- 3. Синхронизация с тиком ------------------------- */
@@ -179,7 +179,7 @@ if (!adminToken || !playerToken || onboarded?.status !== 200) {
   const forced = await api(
     'PATCH',
     `/api/admin/commanders/${victimId}`,
-    { bases: [{ baseId: base.baseId, resources: { titanite: 777000 } }] },
+    { bases: [{ baseId: base.baseId, resources: { ore: 777000 } }] },
     adminToken,
   );
   check('правка онлайн-игрока принята', forced.status === 200);
@@ -187,15 +187,15 @@ if (!adminToken || !playerToken || onboarded?.status !== 200) {
   const immediately = await api('GET', '/api/state', undefined, playerToken);
   check(
     'игрок сразу видит новое значение',
-    Math.round((immediately.data['bases'] as any[])[0].resources.titanite) === 777000,
-    `${Math.round((immediately.data['bases'] as any[])[0].resources.titanite)}`,
+    Math.round((immediately.data['bases'] as any[])[0].resources.ore) === 777000,
+    `${Math.round((immediately.data['bases'] as any[])[0].resources.ore)}`,
   );
 
   // Тик пишет состояние в БД пачкой раз в несколько секунд: если бы выгрузки
   // из памяти не было, здесь всплыло бы старое значение.
   await new Promise((resolve) => setTimeout(resolve, 13000));
   const afterTicks = await api('GET', `/api/admin/commanders/${victimId}`, undefined, adminToken);
-  const value = Math.round((afterTicks.data['bases'] as any[])[0].resources.titanite);
+  const value = Math.round((afterTicks.data['bases'] as any[])[0].resources.ore);
   check(
     'через десяток тиков выданное не затерто',
     value >= 777000,
@@ -207,7 +207,7 @@ if (!adminToken || !playerToken || onboarded?.status !== 200) {
   console.log('\n=== 4. Валидация ===');
 
   const cases: Array<[string, unknown]> = [
-    ['отрицательные ресурсы', { bases: [{ baseId: base.baseId, resources: { titanite: -5 } }] }],
+    ['отрицательные ресурсы', { bases: [{ baseId: base.baseId, resources: { ore: -5 } }] }],
     ['дробные корабли', { bases: [{ baseId: base.baseId, ships: { HEAVY_CRUISER: 1.5 } }] }],
     ['неизвестный тип корабля', { bases: [{ baseId: base.baseId, ships: { DEATH_STAR: 1 } }] }],
     ['неизвестное здание', { bases: [{ baseId: base.baseId, buildings: { CASINO: 1 } }] }],
@@ -219,7 +219,7 @@ if (!adminToken || !playerToken || onboarded?.status !== 200) {
     ['Infinity (доезжает как null)', { credits: Number.MAX_VALUE * 2 }],
     ['null', { credits: null }],
     ['пустая строка', { credits: '' }],
-    ['пустой массив', { bases: [{ baseId: base.baseId, resources: { titanite: [] } }] }],
+    ['пустой массив', { bases: [{ baseId: base.baseId, resources: { ore: [] } }] }],
     ['NaN-строка', { bases: [{ baseId: base.baseId, ships: { HEAVY_CRUISER: 'abc' } }] }],
   ];
 
@@ -231,7 +231,7 @@ if (!adminToken || !playerToken || onboarded?.status !== 200) {
   const foreignBase = await api(
     'PATCH',
     `/api/admin/commanders/${victimId}`,
-    { bases: [{ baseId: 'not-his-base', resources: { titanite: 1 } }] },
+    { bases: [{ baseId: 'not-his-base', resources: { ore: 1 } }] },
     adminToken,
   );
   check(

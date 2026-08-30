@@ -4,69 +4,69 @@
  */
 
 export const BUILDING_TYPES = [
-  'TITANITE_MINE',
-  'SILICATE_MINE',
-  'TRITIUM_MINE',
-  'SOLAR_PLANT',
-  'RESEARCH_LAB',
+  'ORE_MINE',
+  'POLYMER_PLANT',
+  'PLASMA_REACTOR',
+  'POWER_PLANT',
+  'SCIENCE_CENTER',
   'SHIPYARD',
-  'ERIDIUM_SYNTH',
+  'ANTIMATTER_FACTORY',
   'STORAGE',
 ] as const;
 
 export type BuildingType = (typeof BUILDING_TYPES)[number];
 
 /** Постройки, которые дают ресурсы. */
-type MineType = 'TITANITE_MINE' | 'SILICATE_MINE' | 'TRITIUM_MINE' | 'ERIDIUM_SYNTH';
+type MineType = 'ORE_MINE' | 'POLYMER_PLANT' | 'PLASMA_REACTOR' | 'ANTIMATTER_FACTORY';
 
 export function isBuildingType(value: unknown): value is BuildingType {
   return typeof value === 'string' && (BUILDING_TYPES as readonly string[]).includes(value);
 }
 
 export interface ResourceAmounts {
-  titanite: number;
-  silicate: number;
-  tritium: number;
+  ore: number;
+  polymers: number;
+  plasma: number;
 }
 
 /**
- * Склад базы. Эридий хранится отдельно от базовой тройки: он не возится
- * в трюмах, не торгуется на бирже и нужен только как топливо гиперпрыжков.
+ * Склад базы. Антиматерия хранится отдельно от базовой тройки: она не возится
+ * в трюмах, не торгуется на бирже и нужна только как топливо гиперпрыжков.
  */
 export interface BaseStock extends ResourceAmounts {
-  eridium: number;
+  antimatter: number;
 }
 
 export type BuildingLevels = Record<BuildingType, number>;
 
 /** Коэффициенты богатства планеты — множители добычи. */
 export interface PlanetRichness {
-  titanite: number;
-  silicate: number;
-  tritium: number;
+  ore: number;
+  polymers: number;
+  plasma: number;
   energy: number;
-  eridium: number;
+  antimatter: number;
 }
 
 /**
  * Модификаторы системы. У черной дыры «Искажение времени»:
- * синтез эридия идет быстрее, а стройка и исследования — медленнее.
+ * синтез антиматерии идет быстрее, а стройка и исследования — медленнее.
  */
 export interface SystemModifiers {
-  eridiumMultiplier: number;
+  antimatterMultiplier: number;
   buildTimeMultiplier: number;
   researchTimeMultiplier: number;
 }
 
 export const NEUTRAL_MODIFIERS: SystemModifiers = {
-  eridiumMultiplier: 1,
+  antimatterMultiplier: 1,
   buildTimeMultiplier: 1,
   researchTimeMultiplier: 1,
 };
 
 /** Эффект «Искажение времени» в системе с черной дырой. */
 export const BLACK_HOLE_MODIFIERS: SystemModifiers = {
-  eridiumMultiplier: 1.5,
+  antimatterMultiplier: 1.5,
   buildTimeMultiplier: 1.3,
   researchTimeMultiplier: 1.3,
 };
@@ -90,67 +90,67 @@ const BASE_ENERGY_OUTPUT = 20;
 
 /** Базовая добыча ресурсов в секунду на 1 уровне при коэффициенте 1.0. */
 const BASE_YIELD_PER_SECOND: Record<MineType, number> = {
-  TITANITE_MINE: 0.8,
-  SILICATE_MINE: 0.5,
-  TRITIUM_MINE: 0.25,
-  // Эридий синтезируется на порядки медленнее: это топливо для прыжков,
+  ORE_MINE: 0.8,
+  POLYMER_PLANT: 0.5,
+  PLASMA_REACTOR: 0.25,
+  // Антиматерия синтезируется на порядки медленнее: это топливо для прыжков,
   // а не сырье для стройки.
-  ERIDIUM_SYNTH: 0.02,
+  ANTIMATTER_FACTORY: 0.02,
 };
 
 /** Базовые стоимости постройки 1 уровня и множитель роста цены. */
 const COSTS: Record<BuildingType, ResourceAmounts & { factor: number }> = {
-  TITANITE_MINE: { titanite: 60, silicate: 15, tritium: 0, factor: 1.5 },
-  SILICATE_MINE: { titanite: 48, silicate: 24, tritium: 0, factor: 1.6 },
-  TRITIUM_MINE: { titanite: 225, silicate: 75, tritium: 0, factor: 1.5 },
-  SOLAR_PLANT: { titanite: 75, silicate: 30, tritium: 0, factor: 1.5 },
-  RESEARCH_LAB: { titanite: 200, silicate: 400, tritium: 100, factor: 2.0 },
-  SHIPYARD: { titanite: 400, silicate: 200, tritium: 100, factor: 2.0 },
-  ERIDIUM_SYNTH: { titanite: 2000, silicate: 1500, tritium: 800, factor: 2.2 },
-  STORAGE: { titanite: 500, silicate: 250, tritium: 0, factor: 1.6 },
+  ORE_MINE: { ore: 60, polymers: 15, plasma: 0, factor: 1.5 },
+  POLYMER_PLANT: { ore: 48, polymers: 24, plasma: 0, factor: 1.6 },
+  PLASMA_REACTOR: { ore: 225, polymers: 75, plasma: 0, factor: 1.5 },
+  POWER_PLANT: { ore: 75, polymers: 30, plasma: 0, factor: 1.5 },
+  SCIENCE_CENTER: { ore: 200, polymers: 400, plasma: 100, factor: 2.0 },
+  SHIPYARD: { ore: 400, polymers: 200, plasma: 100, factor: 2.0 },
+  ANTIMATTER_FACTORY: { ore: 2000, polymers: 1500, plasma: 800, factor: 2.2 },
+  STORAGE: { ore: 500, polymers: 250, plasma: 0, factor: 1.6 },
 };
 
 /** Потребление энергии постройками. Солнечная станция энергию не тратит. */
 const ENERGY_DRAIN: Record<BuildingType, number> = {
-  TITANITE_MINE: 1.0,
-  SILICATE_MINE: 1.0,
-  TRITIUM_MINE: 1.4,
-  SOLAR_PLANT: 0,
-  RESEARCH_LAB: 1.2,
+  ORE_MINE: 1.0,
+  POLYMER_PLANT: 1.0,
+  PLASMA_REACTOR: 1.4,
+  POWER_PLANT: 0,
+  SCIENCE_CENTER: 1.2,
   SHIPYARD: 1.5,
-  // Синтезатор — самый прожорливый объект базы.
-  ERIDIUM_SYNTH: 8,
+  // Фабрика антиматерии — самый прожорливый объект базы.
+  ANTIMATTER_FACTORY: 8,
   // Климат-контроль ангаров: хранилище почти не ест энергию.
   STORAGE: 0.3,
 };
 
 /** Требования к уровню других построек. */
 const BUILDING_REQUIREMENTS: Partial<Record<BuildingType, Partial<Record<BuildingType, number>>>> = {
-  SHIPYARD: { TITANITE_MINE: 2 },
-  RESEARCH_LAB: { TITANITE_MINE: 2 },
-  ERIDIUM_SYNTH: { RESEARCH_LAB: 3, SOLAR_PLANT: 5 },
+  SHIPYARD: { ORE_MINE: 2 },
+  SCIENCE_CENTER: { ORE_MINE: 2 },
+  ANTIMATTER_FACTORY: { SCIENCE_CENTER: 3, POWER_PLANT: 5 },
 };
 
 export const BUILDING_LABELS: Record<BuildingType, string> = {
-  TITANITE_MINE: 'Шахта титанита',
-  SILICATE_MINE: 'Силикатный рудник',
-  TRITIUM_MINE: 'Синтезатор трития',
-  SOLAR_PLANT: 'Солнечная электростанция',
-  RESEARCH_LAB: 'Исследовательская лаборатория',
+  ORE_MINE: 'Рудная шахта',
+  POLYMER_PLANT: 'Полимерный завод',
+  PLASMA_REACTOR: 'Плазменный реактор',
+  POWER_PLANT: 'Энергетическая станция',
+  SCIENCE_CENTER: 'Научный центр',
   SHIPYARD: 'Верфь',
-  ERIDIUM_SYNTH: 'Синтезатор эридия',
-  STORAGE: 'Комплексное хранилище',
+  ANTIMATTER_FACTORY: 'Фабрика антиматерии',
+  STORAGE: 'Склад ресурсов',
 };
 
 export function emptyLevels(): BuildingLevels {
   return {
-    TITANITE_MINE: 0,
-    SILICATE_MINE: 0,
-    TRITIUM_MINE: 0,
-    SOLAR_PLANT: 0,
-    RESEARCH_LAB: 0,
+    ORE_MINE: 0,
+    POLYMER_PLANT: 0,
+    PLASMA_REACTOR: 0,
+    POWER_PLANT: 0,
+    SCIENCE_CENTER: 0,
     SHIPYARD: 0,
-    ERIDIUM_SYNTH: 0,
+    ANTIMATTER_FACTORY: 0,
     STORAGE: 0,
   };
 }
@@ -160,9 +160,9 @@ export function upgradeCost(type: BuildingType, targetLevel: number): ResourceAm
   const cost = COSTS[type];
   const scale = Math.pow(cost.factor, targetLevel - 1);
   return {
-    titanite: Math.floor(cost.titanite * scale),
-    silicate: Math.floor(cost.silicate * scale),
-    tritium: Math.floor(cost.tritium * scale),
+    ore: Math.floor(cost.ore * scale),
+    polymers: Math.floor(cost.polymers * scale),
+    plasma: Math.floor(cost.plasma * scale),
   };
 }
 
@@ -176,7 +176,7 @@ export function buildSeconds(
   modifiers: SystemModifiers = NEUTRAL_MODIFIERS,
 ): number {
   const cost = upgradeCost(type, targetLevel);
-  const total = cost.titanite + cost.silicate + cost.tritium;
+  const total = cost.ore + cost.polymers + cost.plasma;
   return Math.max(5, Math.round((total / 10) * modifiers.buildTimeMultiplier));
 }
 
@@ -202,9 +202,9 @@ export function energyOutput(
   bonuses: EconomyBonuses = NEUTRAL_BONUSES,
 ): number {
   const solar =
-    levels.SOLAR_PLANT <= 0
+    levels.POWER_PLANT <= 0
       ? 0
-      : 2 * levels.SOLAR_PLANT * Math.pow(1.1, levels.SOLAR_PLANT) * richness.energy;
+      : 2 * levels.POWER_PLANT * Math.pow(1.1, levels.POWER_PLANT) * richness.energy;
   return (BASE_ENERGY_OUTPUT + solar) * bonuses.energy;
 }
 
@@ -251,13 +251,13 @@ export function productionPerSecond(
 ): BaseStock {
   const efficiency = energyEfficiency(levels, richness, bonuses, defenseDrain);
   return {
-    titanite: mineOutput('TITANITE_MINE', levels, richness.titanite, bonuses) * efficiency,
-    silicate: mineOutput('SILICATE_MINE', levels, richness.silicate, bonuses) * efficiency,
-    tritium: mineOutput('TRITIUM_MINE', levels, richness.tritium, bonuses) * efficiency,
-    eridium:
-      mineOutput('ERIDIUM_SYNTH', levels, richness.eridium, bonuses) *
+    ore: mineOutput('ORE_MINE', levels, richness.ore, bonuses) * efficiency,
+    polymers: mineOutput('POLYMER_PLANT', levels, richness.polymers, bonuses) * efficiency,
+    plasma: mineOutput('PLASMA_REACTOR', levels, richness.plasma, bonuses) * efficiency,
+    antimatter:
+      mineOutput('ANTIMATTER_FACTORY', levels, richness.antimatter, bonuses) *
       efficiency *
-      modifiers.eridiumMultiplier,
+      modifiers.antimatterMultiplier,
   };
 }
 
@@ -269,8 +269,8 @@ function mineOutput(
 ): number {
   const level = levels[type];
   if (level <= 0) return 0;
-  // «Горное дело» ускоряет обычные шахты, но не синтез эридия.
-  const techBonus = type === 'ERIDIUM_SYNTH' ? 1 : bonuses.mining;
+  // «Горное дело» ускоряет обычные шахты, но не синтез антиматерии.
+  const techBonus = type === 'ANTIMATTER_FACTORY' ? 1 : bonuses.mining;
   return BASE_YIELD_PER_SECOND[type] * level * Math.pow(1.1, level) * richness * techBonus;
 }
 
@@ -279,8 +279,8 @@ function mineOutput(
 /**
  * Вместимость склада базы.
  *
- * Лимит общий на титанит, силикаты и тритий: базы копят «тоннаж», а не три
- * независимых кучи. Эридий под лимит не попадает — он хранится в отдельных
+ * Лимит общий на руду, полимеры и плазму: базы копят «тоннаж», а не три
+ * независимых кучи. Антиматерия под лимит не попадает — она хранится в отдельных
  * магнитных ловушках и в трюмах не возится.
  *
  * Уровень 0 — колониальный резерв без постройки: небольшой запас, чтобы новая
@@ -303,9 +303,9 @@ export function storageCapacity(levels: BuildingLevels): number {
   return storageCapacityForLevel(levels.STORAGE);
 }
 
-/** Сколько «тоннажа» занято: эридий в лимит не входит. */
+/** Сколько «тоннажа» занято: антиматерия в лимит не входит. */
 export function storedTotal(stock: ResourceAmounts): number {
-  return Math.max(0, stock.titanite) + Math.max(0, stock.silicate) + Math.max(0, stock.tritium);
+  return Math.max(0, stock.ore) + Math.max(0, stock.polymers) + Math.max(0, stock.plasma);
 }
 
 export interface StorageState {
@@ -345,19 +345,19 @@ export function storageState(stock: ResourceAmounts, capacity: number): StorageS
 }
 
 export function hasEnoughResources(stock: ResourceAmounts, cost: ResourceAmounts): boolean {
-  return stock.titanite >= cost.titanite && stock.silicate >= cost.silicate && stock.tritium >= cost.tritium;
+  return stock.ore >= cost.ore && stock.polymers >= cost.polymers && stock.plasma >= cost.plasma;
 }
 
 export function subtractResources(stock: ResourceAmounts, cost: ResourceAmounts): void {
-  stock.titanite -= cost.titanite;
-  stock.silicate -= cost.silicate;
-  stock.tritium -= cost.tritium;
+  stock.ore -= cost.ore;
+  stock.polymers -= cost.polymers;
+  stock.plasma -= cost.plasma;
 }
 
 export function multiplyResources(cost: ResourceAmounts, factor: number): ResourceAmounts {
   return {
-    titanite: cost.titanite * factor,
-    silicate: cost.silicate * factor,
-    tritium: cost.tritium * factor,
+    ore: cost.ore * factor,
+    polymers: cost.polymers * factor,
+    plasma: cost.plasma * factor,
   };
 }

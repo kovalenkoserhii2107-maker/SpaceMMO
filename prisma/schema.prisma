@@ -273,19 +273,19 @@ model Planet {
   size     Int
 
   /// Коэффициенты богатства (множители базовой добычи).
-  titaniteRichness Float
-  silicateRichness Float
-  tritiumRichness  Float
+  oreRichness        Float
+  polymersRichness   Float
+  plasmaRichness     Float
   /// Коэффициент инсоляции — множитель выработки солнечных электростанций.
-  energyRichness   Float
+  energyRichness     Float
   /// Насыщенность экзотическими частицами — множитель синтеза антиматерии.
-  eridiumRichness  Float @default(1)
+  antimatterRichness Float @default(1)
 
   /// Поле обломков на орбите: остатки уничтоженных флотов и обороны.
   /// Хранится на планете, а не отдельной таблицей: поле есть у каждой орбиты
   /// и живет ровно столько же, сколько сама планета.
-  debrisTitanite Float @default(0)
-  debrisSilicate Float @default(0)
+  debrisOre      Float @default(0)
+  debrisPolymers Float @default(0)
 
   system        SolarSystem    @relation(fields: [systemId], references: [id], onDelete: Cascade)
   base          Base?
@@ -307,26 +307,26 @@ model Base {
   planetId    String @unique
 
   /// Склад ресурсов (дробные значения — начисление идет каждую секунду).
-  titanite Float @default(500)
-  silicate Float @default(300)
-  tritium  Float @default(100)
-  /// Эридий — топливо межзвездных прыжков.
-  eridium  Float @default(0)
+  ore        Float @default(500)
+  polymers   Float @default(300)
+  plasma     Float @default(100)
+  /// Антиматерия — топливо межзвездных прыжков.
+  antimatter Float @default(0)
 
   /// Уровни инфраструктуры добычи и энергетики (Этап 1).
-  titaniteMineLevel Int @default(0)
-  silicateMineLevel Int @default(0)
-  tritiumMineLevel  Int @default(0)
-  solarPlantLevel   Int @default(0)
+  oreMineLevel       Int @default(0)
+  polymerPlantLevel  Int @default(0)
+  plasmaReactorLevel Int @default(0)
+  powerPlantLevel    Int @default(0)
 
   /// Инфраструктура Этапа 2.
-  researchLabLevel Int @default(0)
-  shipyardLevel    Int @default(0)
+  scienceCenterLevel Int @default(0)
+  shipyardLevel      Int @default(0)
 
   /// Инфраструктура Этапа 6.
-  eridiumSynthLevel Int @default(0)
+  antimatterFactoryLevel Int @default(0)
 
-  /// Комплексное хранилище: общий лимит склада на титанит, силикат и тритий.
+  /// Склад ресурсов: общий лимит на руду, полимеры и плазму.
   storageLevel Int @default(0)
 
   /// Время последнего начисления ресурсов тиком (для догона офлайн-периода).
@@ -442,9 +442,9 @@ model BattleReport {
   planetId   String
   winner     BattleWinner
 
-  plunderTitanite Float @default(0)
-  plunderSilicate Float @default(0)
-  plunderTritium  Float @default(0)
+  plunderOre      Float @default(0)
+  plunderPolymers Float @default(0)
+  plunderPlasma   Float @default(0)
 
   data      Json
   createdAt DateTime @default(now())
@@ -466,9 +466,9 @@ model ExpeditionReport {
   outcome     ExpeditionOutcome
 
   /// Найденное за вылет.
-  lootTitanite Float @default(0)
-  lootSilicate Float @default(0)
-  lootEridium  Float @default(0)
+  lootOre        Float @default(0)
+  lootPolymers   Float @default(0)
+  lootAntimatter Float @default(0)
 
   /// Человекочитаемый итог и подробности события.
   summary   String
@@ -497,7 +497,7 @@ model WarDeclaration {
 }
 
 enum DefenseType {
-  ROCKET_LAUNCHER
+  CANNON_TURRET
   LASER_TURRET
 }
 
@@ -551,26 +551,26 @@ model Fleet {
   ionFrigates   Int @default(0)
   recyclers     Int @default(0)
 
-  /// Груз на борту: титанит, силикат и тритий занимают трюмы.
-  cargoTitanite Float @default(0)
-  cargoSilicate Float @default(0)
-  cargoTritium  Float @default(0)
-  /// Эридий, найденный в экспедиции, едет домой в баках и трюмы не занимает.
-  cargoEridium  Float @default(0)
+  /// Груз на борту: руда, полимеры и плазма занимают трюмы.
+  cargoOre        Float @default(0)
+  cargoPolymers   Float @default(0)
+  cargoPlasma     Float @default(0)
+  /// Антиматерия, найденная в экспедиции, едет домой в баках и трюмы не занимает.
+  cargoAntimatter Float @default(0)
 
   /// Сколько запрошено к вывозу с хаба (для миссии HUB_PICKUP).
-  pickupTitanite Float @default(0)
-  pickupSilicate Float @default(0)
+  pickupOre      Float @default(0)
+  pickupPolymers Float @default(0)
 
-  /// Сожженный тритий за весь маршрут (списан при отправке).
-  fuelSpent    Float
-  /// Сожженный эридий — только для межзвездных прыжков.
-  eridiumSpent Float   @default(0)
+  /// Сожженная плазма за весь маршрут (списана при отправке).
+  fuelSpent       Float
+  /// Сожженная антиматерия — только для межзвездных прыжков.
+  antimatterSpent Float   @default(0)
   /// Прыжок между системами, а не полет внутри одной.
-  interstellar Boolean @default(false)
+  interstellar    Boolean @default(false)
   /// Расстояние в орбитах и скорость флота — для отображения.
-  distance     Int
-  speed        Float
+  distance        Int
+  speed           Float
 
   departedAt DateTime
   arrivesAt  DateTime
@@ -688,8 +688,8 @@ model HubStorage {
   commanderId String
   hubId       String
 
-  titanite Float @default(0)
-  silicate Float @default(0)
+  ore      Float @default(0)
+  polymers Float @default(0)
   /// Уровень склада определяет вместимость.
   level    Int   @default(1)
 
@@ -751,8 +751,8 @@ enum OrderSide {
 }
 
 enum TradeResource {
-  TITANITE
-  SILICATE
+  ORE
+  POLYMERS
 }
 
 enum FleetMission {
@@ -779,13 +779,13 @@ enum FleetStatus {
 }
 
 enum BuildingType {
-  TITANITE_MINE
-  SILICATE_MINE
-  TRITIUM_MINE
-  SOLAR_PLANT
-  RESEARCH_LAB
+  ORE_MINE
+  POLYMER_PLANT
+  PLASMA_REACTOR
+  POWER_PLANT
+  SCIENCE_CENTER
   SHIPYARD
-  ERIDIUM_SYNTH
+  ANTIMATTER_FACTORY
   STORAGE
 }
 

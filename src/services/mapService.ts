@@ -66,8 +66,8 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
       type: planet.type,
       size: planet.size,
       debris: {
-        titanite: Math.floor(planet.debrisTitanite),
-        silicate: Math.floor(planet.debrisSilicate),
+        ore: Math.floor(planet.debrisOre),
+        polymers: Math.floor(planet.debrisPolymers),
       },
     };
 
@@ -78,36 +78,36 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
         owner: planet.base?.commander.nickname ?? null,
         colonized: true,
         richness: {
-          titanite: planet.titaniteRichness,
-          silicate: planet.silicateRichness,
-          tritium: planet.tritiumRichness,
+          ore: planet.oreRichness,
+          polymers: planet.polymersRichness,
+          plasma: planet.plasmaRichness,
           energy: planet.energyRichness,
-          eridium: planet.eridiumRichness,
+          antimatter: planet.antimatterRichness,
         },
         buildings: live
           ? { ...live.levels }
           : {
-              TITANITE_MINE: ownBase.titaniteMineLevel,
-              SILICATE_MINE: ownBase.silicateMineLevel,
-              TRITIUM_MINE: ownBase.tritiumMineLevel,
-              SOLAR_PLANT: ownBase.solarPlantLevel,
-              RESEARCH_LAB: ownBase.researchLabLevel,
+              ORE_MINE: ownBase.oreMineLevel,
+              POLYMER_PLANT: ownBase.polymerPlantLevel,
+              PLASMA_REACTOR: ownBase.plasmaReactorLevel,
+              POWER_PLANT: ownBase.powerPlantLevel,
+              SCIENCE_CENTER: ownBase.scienceCenterLevel,
               SHIPYARD: ownBase.shipyardLevel,
-              ERIDIUM_SYNTH: ownBase.eridiumSynthLevel,
+              ANTIMATTER_FACTORY: ownBase.antimatterFactoryLevel,
               STORAGE: ownBase.storageLevel,
             },
         resources: live
           ? {
-              titanite: Math.round(live.resources.titanite),
-              silicate: Math.round(live.resources.silicate),
-              tritium: Math.round(live.resources.tritium),
-              eridium: Math.round(live.resources.eridium),
+              ore: Math.round(live.resources.ore),
+              polymers: Math.round(live.resources.polymers),
+              plasma: Math.round(live.resources.plasma),
+              antimatter: Math.round(live.resources.antimatter),
             }
           : {
-              titanite: Math.round(ownBase.titanite),
-              silicate: Math.round(ownBase.silicate),
-              tritium: Math.round(ownBase.tritium),
-              eridium: Math.round(ownBase.eridium),
+              ore: Math.round(ownBase.ore),
+              polymers: Math.round(ownBase.polymers),
+              plasma: Math.round(ownBase.plasma),
+              antimatter: Math.round(ownBase.antimatter),
             },
         fleet: live ? { ...live.ships } : shipsFromRows(ownBase.ships),
         defenses: live ? { ...live.defenses } : defensesFromRows(ownBase.defenses),
@@ -132,8 +132,8 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
         position: hub.position,
         storage: storage
           ? {
-              titanite: Math.round(storage.titanite),
-              silicate: Math.round(storage.silicate),
+              ore: Math.round(storage.ore),
+              polymers: Math.round(storage.polymers),
               level: storage.level,
               capacity: storageCapacity(storage.level),
               free: Math.max(0, storageCapacity(storage.level) - storageUsed(storage)),
@@ -246,9 +246,9 @@ export async function listEspionageTargets(commanderId: string): Promise<Espiona
       defenses: normalizeDefenses(data.defenses),
       hasDefenseData: Boolean(data.defenses),
       stock: {
-        titanite: data.resources?.titanite ?? 0,
-        silicate: data.resources?.silicate ?? 0,
-        tritium: data.resources?.tritium ?? 0,
+        ore: data.resources?.ore ?? 0,
+        polymers: data.resources?.polymers ?? 0,
+        plasma: data.resources?.plasma ?? 0,
         storageLevel: data.buildings?.STORAGE ?? 0,
       },
     });
@@ -268,7 +268,7 @@ export interface EspionageTarget {
   defenses: DefenseCounts;
   /** У старых снимков обороны нет — интерфейс об этом предупреждает. */
   hasDefenseData: boolean;
-  stock: { titanite: number; silicate: number; tritium: number; storageLevel: number };
+  stock: { ore: number; polymers: number; plasma: number; storageLevel: number };
 }
 
 function defensesFromRows(rows: Array<{ type: DefenseType; count: number }>): DefenseCounts {

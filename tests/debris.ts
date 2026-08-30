@@ -46,7 +46,7 @@ check('доля обломков — 30% стоимости', DEBRIS_SHARE === 0
 
 {
   const debris = debrisFromLosses(fleet({}), fleet({}), emptyDefenseCounts());
-  check('без потерь обломков нет', debris.titanite === 0 && debris.silicate === 0);
+  check('без потерь обломков нет', debris.ore === 0 && debris.polymers === 0);
 }
 
 {
@@ -54,9 +54,9 @@ check('доля обломков — 30% стоимости', DEBRIS_SHARE === 0
   const debris = debrisFromLosses(fleet({ HEAVY_CRUISER: 10 }), fleet({}), emptyDefenseCounts());
   check(
     'обломки считаются по стоимости постройки',
-    debris.titanite === Math.floor(cost.titanite * 10 * DEBRIS_SHARE) &&
-      debris.silicate === Math.floor(cost.silicate * 10 * DEBRIS_SHARE),
-    `${debris.titanite} Ti / ${debris.silicate} Si`,
+    debris.ore === Math.floor(cost.ore * 10 * DEBRIS_SHARE) &&
+      debris.polymers === Math.floor(cost.polymers * 10 * DEBRIS_SHARE),
+    `${debris.ore} Ti / ${debris.polymers} Si`,
   );
 }
 
@@ -68,32 +68,32 @@ check('доля обломков — 30% стоимости', DEBRIS_SHARE === 0
 
   check(
     'потери нападавшего дают обломки наравне с потерями защитника',
-    onlyAttacker.titanite === onlyDefender.titanite && onlyAttacker.titanite > 0,
-    `${onlyAttacker.titanite} = ${onlyDefender.titanite}`,
+    onlyAttacker.ore === onlyDefender.ore && onlyAttacker.ore > 0,
+    `${onlyAttacker.ore} = ${onlyDefender.ore}`,
   );
   check(
     'обломки обеих сторон складываются',
-    both.titanite === onlyAttacker.titanite + onlyDefender.titanite,
-    `${both.titanite}`,
+    both.ore === onlyAttacker.ore + onlyDefender.ore,
+    `${both.ore}`,
   );
 }
 
 {
-  const cost = defenseCost('ROCKET_LAUNCHER');
-  const debris = debrisFromLosses(fleet({}), fleet({}), { ROCKET_LAUNCHER: 6, LASER_TURRET: 0 });
+  const cost = defenseCost('CANNON_TURRET');
+  const debris = debrisFromLosses(fleet({}), fleet({}), { CANNON_TURRET: 6, LASER_TURRET: 0 });
   check(
     'разбитая оборона тоже дает обломки',
-    debris.titanite === Math.floor(cost.titanite * 6 * DEBRIS_SHARE),
-    `${debris.titanite}`,
+    debris.ore === Math.floor(cost.ore * 6 * DEBRIS_SHARE),
+    `${debris.ore}`,
   );
 }
 
 {
-  // Тритий в обломках не остается: топливо и реагент сгорают в бою.
+  // Плазма в обломках не остается: топливо и реагент сгорают в бою.
   const debris = debrisFromLosses(fleet({ ION_FRIGATE: 5 }), fleet({}), emptyDefenseCounts());
   check(
-    'в обломках только титанит и силикаты',
-    Object.keys(debris).sort().join() === 'silicate,titanite',
+    'в обломках только руда и полимеры',
+    Object.keys(debris).sort().join() === 'ore,polymers',
     Object.keys(debris).join(),
   );
 }
@@ -101,11 +101,11 @@ check('доля обломков — 30% стоимости', DEBRIS_SHARE === 0
 {
   const outcome = resolveBattle(
     { ships: fleet({ HEAVY_CRUISER: 10 }), defenses: emptyDefenseCounts() },
-    { ships: fleet({ ION_FRIGATE: 13 }), defenses: { ROCKET_LAUNCHER: 5, LASER_TURRET: 0 } },
+    { ships: fleet({ ION_FRIGATE: 13 }), defenses: { CANNON_TURRET: 5, LASER_TURRET: 0 } },
   );
   check(
     'исход боя содержит поле обломков',
-    outcome.debris.titanite > 0 && outcome.debris.silicate > 0,
+    outcome.debris.ore > 0 && outcome.debris.polymers > 0,
     JSON.stringify(outcome.debris),
   );
 
@@ -113,14 +113,14 @@ check('доля обломков — 30% стоимости', DEBRIS_SHARE === 0
     fleet({ HEAVY_CRUISER: outcome.attackerLosses.find((l) => l.key === 'HEAVY_CRUISER')?.lost ?? 0 }),
     fleet({ ION_FRIGATE: outcome.defenderLosses.find((l) => l.key === 'ION_FRIGATE')?.lost ?? 0 }),
     {
-      ROCKET_LAUNCHER: outcome.defenderLosses.find((l) => l.key === 'ROCKET_LAUNCHER')?.lost ?? 0,
+      CANNON_TURRET: outcome.defenderLosses.find((l) => l.key === 'CANNON_TURRET')?.lost ?? 0,
       LASER_TURRET: 0,
     },
   );
   check(
     'обломки сходятся с заявленными потерями',
-    outcome.debris.titanite === manual.titanite && outcome.debris.silicate === manual.silicate,
-    `${outcome.debris.titanite} против ${manual.titanite}`,
+    outcome.debris.ore === manual.ore && outcome.debris.polymers === manual.polymers,
+    `${outcome.debris.ore} против ${manual.ore}`,
   );
 }
 
@@ -156,25 +156,25 @@ console.log('\n=== 3. Гонка за поле обломков ===');
  * Game Loop: два «флота» одновременно видят одно поле и пробуют его забрать.
  * Ресурсы не должны задвоиться — суммарно нельзя вынести больше, чем лежало.
  */
-async function claim(planetId: string, capacity: number): Promise<{ titanite: number; silicate: number }> {
+async function claim(planetId: string, capacity: number): Promise<{ ore: number; polymers: number }> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const planet = await prisma.planet.findUnique({
       where: { id: planetId },
-      select: { debrisTitanite: true, debrisSilicate: true },
+      select: { debrisOre: true, debrisPolymers: true },
     });
     if (!planet) break;
 
-    const titanite = Math.floor(Math.min(planet.debrisTitanite, capacity));
-    const silicate = Math.floor(Math.min(planet.debrisSilicate, Math.max(0, capacity - titanite)));
-    if (titanite <= 0 && silicate <= 0) break;
+    const ore = Math.floor(Math.min(planet.debrisOre, capacity));
+    const polymers = Math.floor(Math.min(planet.debrisPolymers, Math.max(0, capacity - ore)));
+    if (ore <= 0 && polymers <= 0) break;
 
     const { count } = await prisma.planet.updateMany({
-      where: { id: planetId, debrisTitanite: { gte: titanite }, debrisSilicate: { gte: silicate } },
-      data: { debrisTitanite: { decrement: titanite }, debrisSilicate: { decrement: silicate } },
+      where: { id: planetId, debrisOre: { gte: ore }, debrisPolymers: { gte: polymers } },
+      data: { debrisOre: { decrement: ore }, debrisPolymers: { decrement: polymers } },
     });
-    if (count > 0) return { titanite, silicate };
+    if (count > 0) return { ore, polymers };
   }
-  return { titanite: 0, silicate: 0 };
+  return { ore: 0, polymers: 0 };
 }
 
 const planet = await prisma.planet.findFirst({ select: { id: true, name: true } });
@@ -185,56 +185,56 @@ if (!planet) {
   const FIELD = 10000;
   await prisma.planet.update({
     where: { id: planet.id },
-    data: { debrisTitanite: FIELD, debrisSilicate: FIELD },
+    data: { debrisOre: FIELD, debrisPolymers: FIELD },
   });
 
   // Оба флота вмещают всё поле целиком — забрать всё должен ровно один.
   const [first, second] = await Promise.all([claim(planet.id, 20000), claim(planet.id, 20000)]);
   const left = await prisma.planet.findUniqueOrThrow({
     where: { id: planet.id },
-    select: { debrisTitanite: true, debrisSilicate: true },
+    select: { debrisOre: true, debrisPolymers: true },
   });
 
-  const takenTitanite = first.titanite + second.titanite;
+  const takenOre = first.ore + second.ore;
   check(
     'два флота не задвоили поле',
-    takenTitanite + left.debrisTitanite === FIELD,
-    `забрали ${takenTitanite}, осталось ${left.debrisTitanite} из ${FIELD}`,
+    takenOre + left.debrisOre === FIELD,
+    `забрали ${takenOre}, осталось ${left.debrisOre} из ${FIELD}`,
   );
   check(
     'поле не ушло в минус',
-    left.debrisTitanite >= 0 && left.debrisSilicate >= 0,
-    `${left.debrisTitanite}/${left.debrisSilicate}`,
+    left.debrisOre >= 0 && left.debrisPolymers >= 0,
+    `${left.debrisOre}/${left.debrisPolymers}`,
   );
   check(
     'опоздавший улетает пустым или добирает остаток',
-    first.titanite === 0 || second.titanite === 0 || takenTitanite === FIELD,
-    `${first.titanite} и ${second.titanite}`,
+    first.ore === 0 || second.ore === 0 || takenOre === FIELD,
+    `${first.ore} и ${second.ore}`,
   );
 
   // Трюмы ограничивают вывоз: маленький флот забирает не всё поле.
   await prisma.planet.update({
     where: { id: planet.id },
-    data: { debrisTitanite: FIELD, debrisSilicate: FIELD },
+    data: { debrisOre: FIELD, debrisPolymers: FIELD },
   });
   const small = await claim(planet.id, 3000);
   const afterSmall = await prisma.planet.findUniqueOrThrow({
     where: { id: planet.id },
-    select: { debrisTitanite: true, debrisSilicate: true },
+    select: { debrisOre: true, debrisPolymers: true },
   });
   check(
     'трюмы ограничивают сборку',
-    small.titanite + small.silicate === 3000 && afterSmall.debrisTitanite === FIELD - 3000,
-    `собрал ${small.titanite + small.silicate}, осталось ${afterSmall.debrisTitanite} Ti`,
+    small.ore + small.polymers === 3000 && afterSmall.debrisOre === FIELD - 3000,
+    `собрал ${small.ore + small.polymers}, осталось ${afterSmall.debrisOre} Ti`,
   );
 
   // Пустое поле не создает ресурсы из воздуха.
   await prisma.planet.update({
     where: { id: planet.id },
-    data: { debrisTitanite: 0, debrisSilicate: 0 },
+    data: { debrisOre: 0, debrisPolymers: 0 },
   });
   const nothing = await claim(planet.id, 20000);
-  check('с пустого поля берется ноль', nothing.titanite === 0 && nothing.silicate === 0);
+  check('с пустого поля берется ноль', nothing.ore === 0 && nothing.polymers === 0);
 }
 
 /* ------------------------- 4. Живой сервер ------------------------- */
@@ -252,7 +252,7 @@ if (!token) {
 } else if (planet) {
   await prisma.planet.update({
     where: { id: planet.id },
-    data: { debrisTitanite: 4321, debrisSilicate: 1234 },
+    data: { debrisOre: 4321, debrisPolymers: 1234 },
   });
 
   const simulated = await api(
@@ -266,7 +266,7 @@ if (!token) {
   );
   check(
     'симулятор показывает прогноз обломков',
-    (simulated.data['debris'] as any)?.titanite > 0,
+    (simulated.data['debris'] as any)?.ore > 0,
     JSON.stringify(simulated.data['debris']),
   );
 
@@ -283,7 +283,7 @@ if (!token) {
 
   await prisma.planet.update({
     where: { id: planet.id },
-    data: { debrisTitanite: 0, debrisSilicate: 0 },
+    data: { debrisOre: 0, debrisPolymers: 0 },
   });
 }
 
