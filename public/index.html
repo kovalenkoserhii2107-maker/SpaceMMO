@@ -13,6 +13,179 @@
   Каждая иконка нарисована на сетке 24×24 и опирается на форму, а не на цвет:
   титанит — слиток, силикат — кристалл, тритий — капля, эридий — искра.
 -->
+<!--
+  Спрайт иллюстраций построек, обороны и кораблей.
+  Отдельно от ресурсных иконок: тут сетка 64×64 и другая логика отрисовки —
+  тонкий контур currentColor плюс акцентное ядро цвета --art-accent, который
+  задается снаружи на элементе .art. Внутрь <use> обычные CSS-селекторы
+  не достают, а пользовательские свойства и currentColor наследуются.
+-->
+<svg class="icon-sprite" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="art-titanite_mine" viewBox="0 0 64 64">
+      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M8 54h48"/>
+        <path d="M32 14 18 46h28L32 14Z"/>
+        <path d="M24 32h16"/>
+        <path d="M32 14v-5"/>
+      </g>
+      <circle cx="32" cy="8" r="3.5" fill="var(--art-accent)"/>
+      <path d="M22 46h20l3 8H19l3-8Z" fill="var(--art-accent)" opacity=".35"/>
+    </symbol>
+
+    <symbol id="art-silicate_mine" viewBox="0 0 64 64">
+      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M8 54h48"/>
+        <path d="M16 54 22 34l8-6 8 6 6 20"/>
+        <path d="M22 34h20"/>
+      </g>
+      <path d="M30 10 38 22l-6 12-6-12 4-12Z" fill="var(--art-accent)" opacity=".8"/>
+      <path d="M42 18 48 26l-4 8-4-8 2-8Z" fill="var(--art-accent)" opacity=".45"/>
+    </symbol>
+
+    <symbol id="art-tritium_mine" viewBox="0 0 64 64">
+      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M8 54h48"/>
+        <rect x="16" y="20" width="20" height="34" rx="6"/>
+        <path d="M36 28h8a6 6 0 0 1 6 6v20"/>
+        <path d="M16 34h20"/>
+        <path d="M22 20v-6h8v6"/>
+      </g>
+      <path d="M26 38c3 3.4 4.5 5.8 4.5 7.6a4.5 4.5 0 0 1-9 0c0-1.8 1.5-4.2 4.5-7.6Z" fill="var(--art-accent)"/>
+    </symbol>
+
+    <symbol id="art-eridium_synth" viewBox="0 0 64 64">
+      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M8 54h48"/>
+        <path d="M20 54V40M44 54V40"/>
+        <ellipse cx="32" cy="30" rx="20" ry="9"/>
+        <ellipse cx="32" cy="30" rx="20" ry="9" transform="rotate(60 32 30)"/>
+      </g>
+      <path d="m32 20 2.6 8.4L43 31l-8.4 2.6L32 42l-2.6-8.4L21 31l8.4-2.6L32 20Z" fill="var(--art-accent)"/>
+    </symbol>
+
+    <symbol id="art-solar_plant" viewBox="0 0 64 64">
+      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M8 54h48"/>
+        <path d="M32 54v-8"/>
+        <path d="M12 46h40l-6-18H18l-6 18Z"/>
+        <path d="M20 28 16 46M32 28v18M44 28l4 18M15 37h34"/>
+      </g>
+      <circle cx="50" cy="14" r="6" fill="var(--art-accent)"/>
+      <g stroke="var(--art-accent)" stroke-width="2" stroke-linecap="round" opacity=".7">
+        <path d="M50 2v3M50 23v3M39 14h3M58 14h3M42 6l2 2M56 20l2 2"/>
+      </g>
+    </symbol>
+
+    <symbol id="art-research_lab" viewBox="0 0 64 64">
+      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M8 54h48"/>
+        <path d="M14 54V34a18 18 0 0 1 36 0v20"/>
+        <path d="M14 40h36"/>
+        <ellipse cx="32" cy="34" rx="15" ry="6"/>
+        <ellipse cx="32" cy="34" rx="15" ry="6" transform="rotate(55 32 34)"/>
+      </g>
+      <circle cx="32" cy="34" r="4" fill="var(--art-accent)"/>
+    </symbol>
+
+    <symbol id="art-shipyard" viewBox="0 0 64 64">
+      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M8 54h48"/>
+        <path d="M12 54V16h40v38"/>
+        <path d="M12 16h40M12 28h40"/>
+        <path d="M32 28v6"/>
+        <path d="M24 54v-4M40 54v-4"/>
+      </g>
+      <path d="M22 50V44l10-8 10 8v6H22Z" fill="var(--art-accent)" opacity=".85"/>
+      <circle cx="32" cy="35" r="2.5" fill="var(--art-accent)"/>
+    </symbol>
+
+    <symbol id="art-storage" viewBox="0 0 64 64">
+      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M8 54h48"/>
+        <rect x="12" y="22" width="16" height="32" rx="4"/>
+        <rect x="34" y="14" width="18" height="40" rx="4"/>
+        <path d="M12 32h16M34 26h18"/>
+      </g>
+      <rect x="15" y="41" width="10" height="10" rx="2" fill="var(--art-accent)"/>
+      <rect x="37" y="35" width="12" height="16" rx="2" fill="var(--art-accent)" opacity=".55"/>
+    </symbol>
+
+    <symbol id="art-rocket_launcher" viewBox="0 0 64 64">
+      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M8 54h48"/>
+        <path d="M18 54v-8h28v8"/>
+        <g transform="rotate(-28 31 34)">
+          <rect x="16" y="25" width="28" height="18" rx="3"/>
+          <path d="M16 31h28M16 37h28"/>
+        </g>
+      </g>
+      <g transform="rotate(-28 31 34)" fill="var(--art-accent)">
+        <circle cx="43" cy="28" r="2.1"/>
+        <circle cx="43" cy="34" r="2.1"/>
+        <circle cx="43" cy="40" r="2.1"/>
+      </g>
+    </symbol>
+
+    <symbol id="art-laser_turret" viewBox="0 0 64 64">
+      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M8 54h48"/>
+        <path d="M16 54v-8h32v8"/>
+        <path d="M22 46a10 10 0 0 1 20 0"/>
+        <path d="m36 39 10-10"/>
+        <path d="m32 35 8 8"/>
+      </g>
+      <circle cx="31" cy="44" r="3" fill="var(--art-accent)"/>
+      <path d="m47 28 9-9" stroke="var(--art-accent)" stroke-width="3" stroke-linecap="round" fill="none"/>
+    </symbol>
+
+    <symbol id="art-probe" viewBox="0 0 64 64">
+      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="26" y="26" width="12" height="18" rx="2"/>
+        <path d="M26 30H12v10h14M38 30h14v10H38"/>
+        <path d="M17 30v10M47 30v10"/>
+        <path d="M32 26v-6"/>
+        <path d="M24 20a8.5 8.5 0 0 1 16 0"/>
+      </g>
+      <circle cx="32" cy="19" r="2.6" fill="var(--art-accent)"/>
+    </symbol>
+
+    <symbol id="art-transporter" viewBox="0 0 64 64">
+      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 22h28l8 10-8 10H14a4 4 0 0 1-4-4V26a4 4 0 0 1 4-4Z"/>
+        <path d="M24 22v20M34 22v20"/>
+        <path d="M50 32h6"/>
+      </g>
+      <rect x="14" y="26" width="6" height="12" rx="1.5" fill="var(--art-accent)"/>
+    </symbol>
+
+    <symbol id="art-light_fighter" viewBox="0 0 64 64">
+      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M52 32 22 20v24l30-12Z"/>
+        <path d="M22 26 8 18v28l14-8"/>
+      </g>
+      <circle cx="42" cy="32" r="3" fill="var(--art-accent)"/>
+    </symbol>
+
+    <symbol id="art-heavy_cruiser" viewBox="0 0 64 64">
+      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M56 32 20 18H10l6 14-6 14h10l36-14Z"/>
+        <path d="M22 24h16M22 40h16"/>
+      </g>
+      <rect x="28" y="28" width="16" height="8" rx="2" fill="var(--art-accent)"/>
+    </symbol>
+
+    <symbol id="art-ion_frigate" viewBox="0 0 64 64">
+      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M54 32 24 20v24l30-12Z"/>
+        <path d="M18 18a18 18 0 0 0 0 28"/>
+        <path d="M12 14a26 26 0 0 0 0 36"/>
+      </g>
+      <circle cx="40" cy="32" r="3.5" fill="var(--art-accent)"/>
+    </symbol>
+  </defs>
+</svg>
+
 <svg class="icon-sprite" aria-hidden="true" focusable="false">
   <defs>
     <symbol id="ico-titanite" viewBox="0 0 24 24">

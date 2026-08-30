@@ -176,6 +176,20 @@
     );
   }
 
+  /**
+   * Крупная иллюстрация объекта: постройка, оборона или корабль.
+   * Идентификатор символа — это тип объекта в нижнем регистре, поэтому новый
+   * класс достаточно нарисовать в спрайте, отдельной таблицы соответствий нет.
+   */
+  function artNode(type, label) {
+    const wrap = document.createElement('div');
+    wrap.className = `art ${type.toLowerCase()}`;
+    wrap.innerHTML =
+      `<svg viewBox="0 0 64 64" role="img" aria-label="${label}">` +
+      `<title>${label}</title><use href="#art-${type.toLowerCase()}"/></svg>`;
+    return wrap;
+  }
+
   /** Иконка как DOM-узел — там, где строка собирается не через innerHTML. */
   function iconNode(name, extraClass = '') {
     const wrap = document.createElement('span');
@@ -699,7 +713,7 @@
 
       for (const building of base.buildings) {
         cards.buildings.set(building.type, createActionCard(el.buildings, building.label, '', () =>
-          send(`/api/bases/${base.baseId}/build`, { type: building.type })));
+          send(`/api/bases/${base.baseId}/build`, { type: building.type }), building.type));
       }
       for (const tech of base.technologies) {
         cards.technologies.set(tech.tech, createActionCard(el.technologies, tech.label, tech.description, () =>
@@ -727,16 +741,25 @@
     }
   }
 
-  function createCardShell(container, title, description) {
+  function createCardShell(container, title, description, type) {
     const article = document.createElement('article');
     article.className = 'card';
 
+    // Обложка: иллюстрация и заголовок в одной полосе. Уровень уезжает вправо,
+    // остальное содержимое карточки идет ниже на всю ширину — так сетка
+    // не зависит от размера иллюстрации и не ломается на узких экранах.
     const header = document.createElement('header');
+    header.className = 'card-cover';
+    if (type) header.appendChild(artNode(type, title));
+
+    const titles = document.createElement('div');
+    titles.className = 'card-titles';
     const heading = document.createElement('h4');
     heading.textContent = title;
     const level = document.createElement('span');
     level.className = 'level';
-    header.append(heading, level);
+    titles.append(heading, level);
+    header.appendChild(titles);
 
     const desc = document.createElement('div');
     desc.className = 'desc';
@@ -765,8 +788,8 @@
     return { article, level, costTitanite, costSilicate, costTritium, combat, time, reqs };
   }
 
-  function createActionCard(container, title, description, onClick) {
-    const shell = createCardShell(container, title, description);
+  function createActionCard(container, title, description, onClick, type) {
+    const shell = createCardShell(container, title, description, type);
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'primary';
@@ -776,7 +799,7 @@
   }
 
   function createShipCard(container, ship, baseId) {
-    const shell = createCardShell(container, ship.label, ship.description);
+    const shell = createCardShell(container, ship.label, ship.description, ship.type);
 
     const order = document.createElement('div');
     order.className = 'order';
@@ -798,7 +821,7 @@
   }
 
   function createDefenseCard(container, item, baseId) {
-    const shell = createCardShell(container, item.label, item.description);
+    const shell = createCardShell(container, item.label, item.description, item.type);
 
     const order = document.createElement('div');
     order.className = 'order';
@@ -852,6 +875,7 @@
 
     const locked = building.requirements.length > 0;
     card.article.classList.toggle('locked', locked);
+    card.article.classList.toggle('built', building.level > 0);
     card.button.disabled = locked || building.busy || !building.canAfford;
     card.button.textContent = building.busy
       ? 'Идет стройка'
@@ -890,6 +914,7 @@
   function updateShipCard(card, base, ship, ownedLabel = 'В ангаре') {
     if (!card) return;
     card.level.textContent = `${ownedLabel}: ${ship.owned}`;
+    card.article.classList.toggle('built', ship.owned > 0);
     if (card.combat) card.combat.textContent = combatLine(ship.combat);
     fillCost(card, ship.cost, base.resources);
     card.time.textContent = `Время постройки: ${fmtTime(ship.unitSeconds)} за штуку`;
