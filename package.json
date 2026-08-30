@@ -15,11 +15,13 @@
     "check:rules": "tsx src/scripts/checkRules.ts",
     "audit": "tsc -p tsconfig.audit.json",
     "legacy:password": "tsx src/scripts/legacyPassword.ts",
+    "admin:grant": "tsx src/scripts/grantAdmin.ts",
     "test:stand": "tsx src/scripts/testStand.ts",
     "test:cleanup": "tsx src/scripts/cleanupTestAccounts.ts",
     "test:storage": "tsx tests/storage.ts",
     "test:commander": "tsx tests/commander.ts",
-    "test:mail": "tsx tests/mail.ts"
+    "test:mail": "tsx tests/mail.ts",
+    "test:admin": "tsx tests/admin.ts"
   },
   "keywords": [],
   "author": "",

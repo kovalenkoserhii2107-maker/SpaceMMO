@@ -8,6 +8,7 @@ import type { EspionageTarget } from '../services/mapService.js';
 import type { FleetTemplateView } from '../services/fleetTemplateService.js';
 import type { SimulationResult } from '../services/simulationService.js';
 import type { MailboxView } from '../services/mailService.js';
+import type { CommanderDetail, CommanderSummary } from '../services/adminService.js';
 import type { CommanderProfile } from '../services/commanderService.js';
 import type { MarketView } from '../services/marketService.js';
 import type { DiplomacyView } from '../services/warService.js';
@@ -31,6 +32,8 @@ export interface HealthResponse {
 export interface AccountView {
   id: string;
   email: string;
+  /** Права доступа: по ним клиент решает, показывать ли пульт гейм-мастера. */
+  role?: string;
 }
 
 /** Ответ на регистрацию, вход и смену пароля. */
@@ -73,3 +76,10 @@ export interface EspionageResponse {
 
 /** Почтовый ящик командира. */
 export type MailboxResponse = MailboxView;
+
+/** Пульт гейм-мастера. */
+export interface AdminListResponse {
+  commanders: CommanderSummary[];
+}
+
+export type AdminDetailResponse = CommanderDetail;

@@ -122,7 +122,9 @@ authRouter.get('/me', requireAuth, async (req, res: Response<SessionResponse>) =
   const account = currentAccount(req);
   const commander = req.commanderId ? await getCommanderProfile(req.commanderId) : null;
   res.json({
-    user: { id: account.id, email: account.email },
+    // Роль нужна клиенту, чтобы показать вкладку пульта. На доступ она не влияет:
+    // каждый админский запрос все равно проверяется на сервере.
+    user: { id: account.id, email: account.email, role: req.role ?? 'USER' },
     commander,
     avatars: AVATARS.map((avatar) => ({ ...avatar })),
   });

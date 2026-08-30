@@ -351,6 +351,7 @@
           <button type="button" class="tab" data-tab="syndicate">Синдикат</button>
           <button type="button" class="tab" data-tab="simulator">Симулятор</button>
           <button type="button" class="tab" data-tab="mail">Центр связи</button>
+          <button type="button" class="tab" data-tab="admin" id="admin-tab" hidden>Управление сервером</button>
         </nav>
 
         <section data-panel="buildings">
@@ -545,6 +546,34 @@
                 <label class="field"><span>Текст</span><textarea id="broadcast-body" rows="4" maxlength="4000"></textarea></label>
                 <button type="button" class="ghost" id="broadcast-send">Разослать составу</button>
               </div>
+            </aside>
+          </div>
+        </section>
+
+        <section data-panel="admin" hidden>
+          <p class="storage-note admin-warning">
+            Пульт гейм-мастера. Значения выставляются целиком, а не прибавляются:
+            в полях уже стоят текущие числа. Каждое изменение пишется в лог сервера.
+          </p>
+
+          <div class="admin-layout">
+            <div>
+              <label class="field">
+                <span>Поиск по позывному</span>
+                <input id="admin-search" type="text" placeholder="начни вводить позывной">
+              </label>
+              <div class="admin-table-wrap">
+                <table class="admin-table">
+                  <thead>
+                    <tr><th>Позывной</th><th>Колония</th><th>Гривна</th><th>Синдикат</th><th>Бои</th></tr>
+                  </thead>
+                  <tbody id="admin-rows"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <aside id="admin-detail" class="hub-card">
+              <p class="storage-note">Выбери игрока в таблице, чтобы открыть его профиль.</p>
             </aside>
           </div>
         </section>

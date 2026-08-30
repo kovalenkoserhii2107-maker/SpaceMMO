@@ -13,6 +13,7 @@ import { warRouter } from './routes/war.js';
 import { syndicateRouter } from './routes/syndicate.js';
 import { commanderRouter } from './routes/commander.js';
 import { mailRouter } from './routes/mail.js';
+import { adminRouter } from './routes/admin.js';
 import { verifyToken } from './services/authService.js';
 import { ensureAchievements } from './services/achievementService.js';
 import { warnIfInsecureSecret } from './config/auth.js';
@@ -39,6 +40,7 @@ app.use('/api/war', warRouter);
 app.use('/api/syndicates', syndicateRouter);
 app.use('/api/commander', commanderRouter);
 app.use('/api/mail', mailRouter);
+app.use('/api/admin', adminRouter);
 app.use('/api', gameRouter);
 
 const httpServer = createServer(app);

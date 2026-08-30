@@ -99,6 +99,10 @@
     cargoSilicateLabel: $('cargo-silicate-label'),
     cargoTritium: $('cargo-tritium'),
     cargoTritiumField: $('cargo-tritium-field'),
+    adminTab: $('admin-tab'),
+    adminSearch: $('admin-search'),
+    adminRows: $('admin-rows'),
+    adminDetail: $('admin-detail'),
     mailButton: $('mail-button'),
     mailBadge: $('mail-badge'),
     mailFilters: $('mail-filters'),
@@ -228,7 +232,7 @@
 
   /* ---------- Авторизация и онбординг ---------- */
 
-  const auth = { mode: 'login', avatars: [], avatarId: 'nova', profile: null };
+  const auth = { mode: 'login', avatars: [], avatarId: 'nova', profile: null, account: null };
 
   const screens = {
     auth: $('auth-screen'),
@@ -439,6 +443,10 @@
 
     auth.avatars = session.data.avatars || [];
     auth.profile = session.data.commander;
+    // Роль живет на учетной записи, а не на командире: командиров у аккаунта
+    // может не быть вовсе, а права доступа к серверу есть всегда.
+    auth.account = session.data.user || null;
+    syncAdminTab();
     if (!auth.avatarId && auth.avatars.length) auth.avatarId = auth.avatars[0].id;
 
     if (!session.data.commander) {
@@ -455,6 +463,8 @@
     state.token = '';
     state.bases = [];
     auth.profile = null;
+    auth.account = null;
+    syncAdminTab();
     cards.buildings.clear();
     cards.technologies.clear();
     cards.ships.clear();
@@ -494,6 +504,8 @@
     if (!session.ok) return;
     auth.avatars = session.data.avatars || auth.avatars;
     auth.profile = session.data.commander;
+    auth.account = session.data.user || auth.account;
+    syncAdminTab();
     renderProfile();
   }
 
@@ -559,6 +571,7 @@
       void loadEspionageTargets();
     }
     if (name === 'presets') void loadPresets();
+    if (name === 'admin') void loadAdminList();
     if (name === 'mail') {
       void loadMail();
       if (!syndicate.data) void loadSyndicate();
@@ -3264,7 +3277,295 @@
     }
   });
 
+
+  /* ---------- Пульт гейм-мастера ---------- */
+
+  const admin = { schema: null, list: [], selected: null, detail: null, searchTimer: null };
+
+  const ADMIN_RESOURCE_LABELS = {
+    titanite: 'Титанит',
+    silicate: 'Силикаты',
+    tritium: 'Тритий',
+    eridium: 'Эридий',
+  };
+
+  /**
+   * Вкладка пульта появляется только у администратора.
+   * Это исключительно удобство: доступ решает сервер, и запрос обычного игрока
+   * к /api/admin/* получает 403 независимо от того, что показано в интерфейсе.
+   */
+  function syncAdminTab() {
+    const isAdmin = Boolean(auth.account) && auth.account.role === 'ADMIN';
+    el.adminTab.hidden = !isAdmin;
+    if (isAdmin) return;
+
+    // Смена аккаунта не должна оставлять на экране открытый пульт с чужими
+    // данными: прятать одну вкладку мало, панель нужно закрыть и очистить.
+    admin.list = [];
+    admin.detail = null;
+    admin.selected = null;
+    el.adminRows.innerHTML = '';
+    el.adminDetail.innerHTML =
+      '<p class="storage-note">Выбери игрока в таблице, чтобы открыть его профиль.</p>';
+    el.adminSearch.value = '';
+    if (state.activeTab === 'admin') showPanel('buildings');
+  }
+
+  async function loadAdminList() {
+    const search = el.adminSearch.value.trim();
+    const query = search ? `?search=${encodeURIComponent(search)}` : '';
+    try {
+      const response = await fetch(`/api/admin/commanders${query}`, { headers: authHeaders() });
+      if (!response.ok) return;
+      admin.list = (await response.json()).commanders || [];
+    } catch (error) {
+      return;
+    }
+    renderAdminRows();
+  }
+
+  function renderAdminRows() {
+    el.adminRows.innerHTML = '';
+    if (!admin.list.length) {
+      const row = document.createElement('tr');
+      row.innerHTML = '<td colspan="5">Никого не найдено</td>';
+      el.adminRows.appendChild(row);
+      return;
+    }
+
+    for (const item of admin.list) {
+      const row = document.createElement('tr');
+      if (admin.selected === item.commanderId) row.className = 'selected';
+      row.innerHTML =
+        `<td>${escapeHtml(item.nickname)}` +
+        `${item.role === 'ADMIN' ? ' <span class="admin-role">admin</span>' : ''}</td>` +
+        `<td>${item.homePlanet ? escapeHtml(item.homePlanet) : '—'}</td>` +
+        `<td>${fmt(item.credits)}</td>` +
+        `<td>${item.syndicate ? `[${escapeHtml(item.syndicate.tag)}]` : '—'}</td>` +
+        `<td>${item.battlesWon}/${item.battlesLost}</td>`;
+      row.addEventListener('click', () => void openAdminCommander(item.commanderId));
+      el.adminRows.appendChild(row);
+    }
+  }
+
+  async function openAdminCommander(commanderId) {
+    admin.selected = commanderId;
+    renderAdminRows();
+
+    try {
+      const [detail, schema] = await Promise.all([
+        fetch(`/api/admin/commanders/${commanderId}`, { headers: authHeaders() }).then((r) => r.json()),
+        admin.schema
+          ? Promise.resolve(admin.schema)
+          : fetch('/api/admin/schema', { headers: authHeaders() }).then((r) => r.json()),
+      ]);
+      admin.schema = schema;
+      admin.detail = detail;
+    } catch (error) {
+      showBuildMessage('Не удалось загрузить профиль игрока', false);
+      return;
+    }
+    renderAdminDetail();
+  }
+
+  /** Инпуты формы: ключ поля → элемент, чтобы собрать патч одним проходом. */
+  const adminInputs = { credits: null, technologies: {}, bases: {} };
+
+  function adminField(label, value, step = '1') {
+    const field = document.createElement('label');
+    field.className = 'field';
+    const caption = document.createElement('span');
+    caption.textContent = label;
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = '0';
+    input.step = step;
+    input.value = String(value);
+    field.append(caption, input);
+    return { field, input };
+  }
+
+  function adminGroup(title) {
+    const group = document.createElement('div');
+    group.className = 'admin-group';
+    const heading = document.createElement('h4');
+    heading.textContent = title;
+    const fields = document.createElement('div');
+    fields.className = 'admin-fields';
+    group.append(heading, fields);
+    return { group, fields };
+  }
+
+  function renderAdminDetail() {
+    const detail = admin.detail;
+    el.adminDetail.innerHTML = '';
+    adminInputs.technologies = {};
+    adminInputs.bases = {};
+
+    const title = document.createElement('div');
+    title.className = 'admin-detail-title';
+    title.innerHTML =
+      `<h3>${escapeHtml(detail.nickname)}</h3>` +
+      `<span>${escapeHtml(detail.email)} · ${detail.role}</span>`;
+    el.adminDetail.appendChild(title);
+
+    if (detail.fleetsInFlight > 0) {
+      const note = document.createElement('p');
+      note.className = 'storage-note';
+      note.textContent = `Флотов в полете: ${detail.fleetsInFlight}. Их состав правится после возвращения.`;
+      el.adminDetail.appendChild(note);
+    }
+
+    // Криптогривна
+    const credits = adminGroup('Счет командира');
+    const creditsField = adminField('Криптогривна', Math.round(detail.credits), '0.01');
+    adminInputs.credits = creditsField.input;
+    credits.fields.appendChild(creditsField.field);
+    el.adminDetail.appendChild(credits.group);
+
+    // Технологии
+    const techs = adminGroup('Технологии');
+    for (const tech of admin.schema.technologies) {
+      const { field, input } = adminField(tech, detail.technologies[tech] ?? 0);
+      adminInputs.technologies[tech] = input;
+      techs.fields.appendChild(field);
+    }
+    el.adminDetail.appendChild(techs.group);
+
+    // Базы
+    for (const base of detail.bases) {
+      adminInputs.bases[base.baseId] = { resources: {}, buildings: {}, ships: {}, defenses: {} };
+      const store = adminInputs.bases[base.baseId];
+
+      const heading = document.createElement('h4');
+      heading.className = 'section-title';
+      heading.style.marginTop = '18px';
+      heading.textContent = `${base.name} · ${base.planetName} (${base.systemName})`;
+      el.adminDetail.appendChild(heading);
+
+      const resources = adminGroup('Склад');
+      for (const key of admin.schema.resources) {
+        const { field, input } = adminField(ADMIN_RESOURCE_LABELS[key] || key, Math.round(base.resources[key]), '0.01');
+        store.resources[key] = input;
+        resources.fields.appendChild(field);
+      }
+      el.adminDetail.appendChild(resources.group);
+
+      const buildings = adminGroup('Постройки');
+      for (const type of admin.schema.buildings) {
+        const { field, input } = adminField(type, base.buildings[type] ?? 0);
+        store.buildings[type] = input;
+        buildings.fields.appendChild(field);
+      }
+      el.adminDetail.appendChild(buildings.group);
+
+      const ships = adminGroup('Ангар');
+      for (const type of admin.schema.ships) {
+        const { field, input } = adminField(type, base.ships[type] ?? 0);
+        store.ships[type] = input;
+        ships.fields.appendChild(field);
+      }
+      el.adminDetail.appendChild(ships.group);
+
+      const defenses = adminGroup('Оборона');
+      for (const type of admin.schema.defenses) {
+        const { field, input } = adminField(type, base.defenses[type] ?? 0);
+        store.defenses[type] = input;
+        defenses.fields.appendChild(field);
+      }
+      el.adminDetail.appendChild(defenses.group);
+    }
+
+    if (detail.hubStorages.length > 0) {
+      const note = document.createElement('p');
+      note.className = 'storage-note';
+      note.style.marginTop = '14px';
+      note.textContent =
+        'Склады на хабах: ' +
+        detail.hubStorages
+          .map((s) => `${s.hubName} — ${fmt(s.titanite)} Ti / ${fmt(s.silicate)} Si (ур. ${s.level})`)
+          .join('; ');
+      el.adminDetail.appendChild(note);
+    }
+
+    const save = document.createElement('button');
+    save.type = 'button';
+    save.className = 'primary';
+    save.style.marginTop = '16px';
+    save.style.width = '100%';
+    save.textContent = 'Сохранить изменения';
+    save.addEventListener('click', () => void saveAdminChanges());
+    el.adminDetail.appendChild(save);
+  }
+
+  /**
+   * Собираем только реально измененные поля.
+   * Патч из одних текущих значений был бы бессмысленной записью в лог и лишним
+   * поводом затереть то, что игрок успел изменить за время открытой формы.
+   */
+  function saveAdminChanges() {
+    const detail = admin.detail;
+    const patch = {};
+
+    const credits = Number(adminInputs.credits.value);
+    if (Number.isFinite(credits) && Math.round(credits) !== Math.round(detail.credits)) {
+      patch.credits = credits;
+    }
+
+    const technologies = {};
+    for (const [tech, input] of Object.entries(adminInputs.technologies)) {
+      const value = Number(input.value);
+      if (Number.isFinite(value) && value !== (detail.technologies[tech] ?? 0)) technologies[tech] = value;
+    }
+    if (Object.keys(technologies).length) patch.technologies = technologies;
+
+    const bases = [];
+    for (const base of detail.bases) {
+      const store = adminInputs.bases[base.baseId];
+      const entry = { baseId: base.baseId };
+      let touched = false;
+
+      for (const [group, current] of [
+        ['resources', base.resources],
+        ['buildings', base.buildings],
+        ['ships', base.ships],
+        ['defenses', base.defenses],
+      ]) {
+        const changed = {};
+        for (const [key, input] of Object.entries(store[group])) {
+          const value = Number(input.value);
+          const before = group === 'resources' ? Math.round(current[key] ?? 0) : current[key] ?? 0;
+          if (Number.isFinite(value) && value !== before) changed[key] = value;
+        }
+        if (Object.keys(changed).length) {
+          entry[group] = changed;
+          touched = true;
+        }
+      }
+      if (touched) bases.push(entry);
+    }
+    if (bases.length) patch.bases = bases;
+
+    if (Object.keys(patch).length === 0) {
+      showBuildMessage('Ничего не изменилось', false);
+      return Promise.resolve();
+    }
+
+    return send(`/api/admin/commanders/${detail.commanderId}`, patch, 'PATCH').then(async (ok) => {
+      if (ok) {
+        await openAdminCommander(detail.commanderId);
+        await loadAdminList();
+      }
+    });
+  }
+
+  el.adminSearch.addEventListener('input', () => {
+    clearTimeout(admin.searchTimer);
+    admin.searchTimer = setTimeout(() => void loadAdminList(), 250);
+  });
+
   /* ---------- Старт ---------- */
+
 
 
   el.logout.addEventListener('click', () => logout());

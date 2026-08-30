@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import { prisma } from '../db/prisma.js';
 import { verifyToken } from '../services/authService.js';
+import type { UserRole } from '../generated/prisma/enums.js';
 import type { ErrorResponse } from '../types/api.js';
 
 declare global {
@@ -11,6 +12,7 @@ declare global {
       email?: string;
       commanderId?: string;
       nickname?: string;
+      role?: UserRole;
     }
   }
 }
@@ -60,6 +62,7 @@ export async function requireAuth(
 
   req.userId = user.id;
   req.email = user.email;
+  req.role = user.role;
   if (user.commander) {
     req.commanderId = user.commander.id;
     req.nickname = user.commander.nickname;
@@ -78,6 +81,28 @@ export function requireCommander(
 ): void {
   if (!req.commanderId) {
     res.status(409).json({ error: 'Сначала создай командира', code: 'COMMANDER_REQUIRED' });
+    return;
+  }
+  next();
+}
+
+/**
+ * Пульт гейм-мастера. Роль читается из БД в `requireAuth` при каждом запросе,
+ * а не из токена: снятая роль должна действовать сразу, а не после истечения JWT.
+ *
+ * Отказ намеренно одинаков и для анонима, и для авторизованного игрока —
+ * по ответу нельзя определить, существует ли админский раздел вообще.
+ */
+export function requireAdmin(
+  req: Request,
+  res: Response<ErrorResponse>,
+  next: NextFunction,
+): void {
+  if (req.role !== 'ADMIN') {
+    console.error(
+      `[admin] отказано в доступе: ${req.email ?? 'аноним'} → ${req.method} ${req.originalUrl}`,
+    );
+    res.status(403).json({ error: 'Доступ запрещен' });
     return;
   }
   next();

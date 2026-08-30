@@ -31,6 +31,10 @@ model User {
   /// Хеш пароля для локальных аккаунтов; у OAuth-аккаунтов пуст.
   passwordHash String?
 
+  /// Права доступа. Роль живет на учетной записи, а не на командире:
+  /// это свойство доступа к серверу, а не игровой роли в мире.
+  role UserRole @default(USER)
+
   /// Одноразовый токен смены пароля.
   passwordResetToken   String?   @unique
   passwordResetExpires DateTime?
@@ -221,6 +225,11 @@ model CommanderAchievement {
 
   @@unique([commanderId, achievementId])
   @@map("commander_achievements")
+}
+
+enum UserRole {
+  USER
+  ADMIN
 }
 
 enum AuthProvider {

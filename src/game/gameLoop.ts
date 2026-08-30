@@ -1372,6 +1372,49 @@ class GameLoop {
     );
   }
 
+  /**
+   * Сброс состояния игрока из памяти в БД без выгрузки.
+   * Нужен всем, кто читает игрока напрямую из базы: иначе видны числа,
+   * устаревшие на несколько секунд тика.
+   */
+  async flushCommander(commanderId: string): Promise<void> {
+    const commander = this.commanders.get(commanderId);
+    if (commander) await this.persistCommander(commander);
+  }
+
+  /**
+   * Правка состояния игрока в обход обычных правил (пульт гейм-мастера).
+   *
+   * Главная сложность — тик держит состояние загруженных игроков в памяти и
+   * периодически пишет его в БД. Если админ поправит базу напрямую, ближайший
+   * сброс из памяти затрет правку. Поэтому порядок такой:
+   *
+   * 1. сбрасываем актуальное состояние игрока в БД и убираем его из памяти —
+   *    после этого тик про него не знает и ничего не перезапишет;
+   * 2. выполняем правку по свежим данным;
+   * 3. при следующем обращении игрок загрузится из БД уже с новыми числами,
+   *    а подключенному клиенту сразу уходит обновленное состояние.
+   *
+   * Выгрузка не рвет сокет: `connections` не трогаем, а `getCommander`
+   * поднимет игрока обратно из БД по первому же запросу.
+   */
+  async applyAdminMutation<T>(commanderId: string, mutate: () => Promise<T>): Promise<T> {
+    const commander = this.commanders.get(commanderId);
+    if (commander) {
+      await this.persistCommander(commander);
+      this.commanders.delete(commanderId);
+    }
+
+    const result = await mutate();
+
+    // Если игрок онлайн, показываем ему новое состояние немедленно.
+    if (this.connections.has(commanderId)) {
+      await this.getCommander(commanderId);
+      this.emitUser(commanderId);
+    }
+    return result;
+  }
+
   /** Обновить бейдж непрочитанного у конкретного командира. */
   pushUnread(commanderId: string): void {
     if (!this.io) return;
