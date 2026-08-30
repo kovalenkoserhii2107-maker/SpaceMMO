@@ -247,17 +247,32 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .tab:hover { color: var(--text); }
 .tab.active { color: var(--accent); border-color: var(--accent); }
 
-.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 14px; }
+/*
+ * Карточки тянутся на всю высоту строки грида, а кнопка действия прижата к низу
+ * (`margin-top: auto` ниже). Иначе при разной длине описаний кнопки в одном ряду
+ * оказываются на разной высоте и сетка выглядит разъехавшейся.
+ */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
+  align-items: stretch;
+}
 
 .card {
   padding: 16px;
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
-  align-content: start;
+  height: 100%;
   border: 1px solid var(--line);
   border-radius: 14px;
   background: var(--panel);
 }
+
+/* Кнопка и поле заказа всегда внизу карточки — ряд выглядит ровным. */
+.card > button,
+.card > .order { margin-top: auto; }
 /* ---------- Обложка карточки: иллюстрация и заголовок ---------- */
 
 /*
@@ -286,13 +301,14 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
  * когда растр появится.
  */
 /*
- * Пропорции задает aspect-ratio на контейнере, а не высота картинки: место под
- * баннер занято до загрузки, поэтому карточки не прыгают, когда растр доезжает.
+ * Обложка — строгий квадрат под квадратный растр. Пропорции задает aspect-ratio
+ * на контейнере, а не высота картинки: место занято до загрузки, поэтому карточки
+ * не прыгают, когда изображение доезжает.
  */
 .art {
   position: relative;
   width: 100%;
-  aspect-ratio: 5 / 2;
+  aspect-ratio: 1 / 1;
   overflow: hidden;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
@@ -424,6 +440,14 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .fleet-line { stroke: rgba(157, 123, 255, 0.5); stroke-width: 1.5; stroke-dasharray: 4 4; }
 .fleet-marker { fill: var(--accent-2); }
 .star-core { fill: url(#starGlow); }
+.hole-core { fill: url(#holeGlow); }
+
+/*
+ * Карта круговая, поэтому холст квадратный. Карточка планеты рядом уезжает
+ * под карту на узких экранах — на 900px .map-wrap уже переключается в колонку.
+ */
+.map-canvas svg#system-map { max-width: 100%; }
+.map-canvas svg#system-map image { pointer-events: none; }
 
 .tooltip {
   position: absolute;

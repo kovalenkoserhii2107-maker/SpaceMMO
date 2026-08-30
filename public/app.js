@@ -1060,7 +1060,26 @@
     GAS_GIANT: '#c08bd9', VOLCANIC: '#d9614a', TOXIC: '#8fbf5a',
   };
   const SVG_NS = 'http://www.w3.org/2000/svg';
-  const MAP = { width: 900, height: 340, starX: 60, firstOrbit: 250, orbitStep: 215 };
+  /**
+   * Геометрия круговой карты.
+   *
+   * Холст квадратный, звезда в центре, планеты — на концентрических орбитах.
+   * Радиус орбиты считается не жестким шагом, а делением доступного места между
+   * орбитами: система с пятью планетами и система с тремя одинаково вписываются
+   * в круг, и внешняя орбита никогда не уезжает за край.
+   */
+  const MAP = {
+    size: 860,
+    center: 430,
+    starRadius: 58,
+    /** Первая орбита отодвинута за корону звезды и кольцо хаба. */
+    firstOrbit: 168,
+    /** До внешней орбиты: остаток радиуса уходит под тело планеты и две подписи. */
+    lastOrbit: 300,
+    /** Хаб висит на своем кольце между короной звезды и первой орбитой. */
+    hubOrbit: 118,
+    deepOrbit: 350,
+  };
 
   const map = { data: null, selectedId: null, selectedKind: 'PLANET', hoverId: null, plan: null, planTimer: null };
 
@@ -1070,12 +1089,53 @@
     DEEP_SPACE: [['EXPEDITION', 'Экспедиция']],
   };
 
-  function hubX() {
-    return MAP.starX + 118;
+  /** Самая дальняя занятая орбита — по ней раскладываются остальные. */
+  function maxPosition() {
+    const positions = (map.data?.planets ?? []).map((planet) => planet.position);
+    return positions.length ? Math.max(...positions) : 1;
   }
 
-  function planetX(position) {
-    return MAP.starX + MAP.firstOrbit + (position - 1) * MAP.orbitStep;
+  function orbitRadius(position) {
+    const last = maxPosition();
+    if (last <= 1) return MAP.firstOrbit;
+    const step = (MAP.lastOrbit - MAP.firstOrbit) / (last - 1);
+    return MAP.firstOrbit + (position - 1) * step;
+  }
+
+  /**
+   * Угол планеты на орбите. Считается от позиции, а не от индекса в списке:
+   * планета всегда оказывается в одном и том же месте карты, и точки не
+   * перескакивают между перерисовками.
+   */
+  function orbitAngle(position) {
+    const last = maxPosition();
+    return (-90 + ((position - 1) * 360) / Math.max(1, last)) * (Math.PI / 180);
+  }
+
+  function polar(radius, angle) {
+    return {
+      x: MAP.center + Math.cos(angle) * radius,
+      y: MAP.center + Math.sin(angle) * radius,
+    };
+  }
+
+  function planetPoint(position) {
+    return polar(orbitRadius(position), orbitAngle(position));
+  }
+
+  /**
+   * Хаб и глубокий космос стоят в фиксированных секторах: их положение не зависит
+   * от состава системы, поэтому игрок всегда знает, где их искать.
+   */
+  const HUB_ANGLE = (-145 * Math.PI) / 180;
+  const DEEP_SPACE_ANGLE = (52 * Math.PI) / 180;
+
+  function hubPoint() {
+    return polar(MAP.hubOrbit, HUB_ANGLE);
+  }
+
+  function deepSpacePoint() {
+    return polar(MAP.deepOrbit, DEEP_SPACE_ANGLE);
   }
 
   async function loadMap() {
@@ -1093,6 +1153,38 @@
     return node;
   }
 
+  /**
+   * Круглое тело с картинкой.
+   *
+   * Цветной круг рисуется всегда и работает заглушкой, картинка ложится поверх
+   * с круглой обрезкой. Сломанную ссылку обязательно снимаем: Chrome рисует
+   * на месте не загрузившегося <image> собственную иконку «битой картинки»,
+   * и она перекрывает круг — рассчитывать, что фон просто останется виден, нельзя.
+   */
+  function celestialBody(group, cx, cy, radius, fill, opacity, src, clipId) {
+    group.appendChild(svgEl('circle', {
+      class: 'body', cx, cy, r: radius, fill, opacity,
+    }));
+    if (!src) return;
+
+    const clip = svgEl('clipPath', { id: clipId });
+    clip.appendChild(svgEl('circle', { cx, cy, r: radius }));
+    group.appendChild(clip);
+
+    const image = svgEl('image', {
+      x: cx - radius,
+      y: cy - radius,
+      width: radius * 2,
+      height: radius * 2,
+      preserveAspectRatio: 'xMidYMid slice',
+      'clip-path': `url(#${clipId})`,
+    });
+    image.addEventListener('error', () => image.remove());
+    group.appendChild(image);
+    // href ставим после подписки, чтобы не потерять событие ошибки.
+    image.setAttribute('href', src);
+  }
+
   function renderMap() {
     if (!map.data) return;
     const svg = el.systemMap;
@@ -1101,39 +1193,45 @@
     const defs = svgEl('defs');
     defs.innerHTML =
       '<radialGradient id="starGlow"><stop offset="0%" stop-color="#fff3c4"/>' +
-      '<stop offset="60%" stop-color="#ffb347"/><stop offset="100%" stop-color="rgba(255,140,60,0)"/></radialGradient>';
+      '<stop offset="55%" stop-color="#ffb347"/><stop offset="100%" stop-color="rgba(255,140,60,0)"/></radialGradient>' +
+      '<radialGradient id="holeGlow"><stop offset="0%" stop-color="#05070f"/>' +
+      '<stop offset="70%" stop-color="#2b1840"/><stop offset="100%" stop-color="rgba(157,123,255,0)"/></radialGradient>';
     svg.appendChild(defs);
 
-    svg.appendChild(svgEl('circle', { class: 'star-core', cx: MAP.starX, cy: MAP.height / 2, r: 72 }));
-    const starLabel = svgEl('text', { x: MAP.starX, y: MAP.height - 14, class: 'planet-label' });
-    starLabel.textContent = `${map.data.systemName} · ${map.data.starClass}`;
-    svg.appendChild(starLabel);
+    // Орбиты рисуем первыми, чтобы тела легли поверх колец.
+    for (const planet of map.data.planets) {
+      svg.appendChild(svgEl('circle', {
+        class: 'orbit', cx: MAP.center, cy: MAP.center, r: orbitRadius(planet.position),
+      }));
+    }
+
+    renderStar();
 
     for (const planet of map.data.planets) {
-      const x = planetX(planet.position);
-      const y = MAP.height / 2;
-      svg.appendChild(svgEl('circle', {
-        class: 'orbit', cx: MAP.starX, cy: y, r: x - MAP.starX,
-      }));
+      const { x, y } = planetPoint(planet.position);
 
       const group = svgEl('g', {
         class: `planet-dot${planet.planetId === map.selectedId ? ' selected' : ''}`,
       });
 
       const radius = planet.visibility === 'UNKNOWN' ? 22 : 28;
-      group.appendChild(svgEl('circle', {
-        class: 'body', cx: x, cy: y, r: radius,
-        fill: planet.visibility === 'UNKNOWN' ? '#3a4360' : (PLANET_COLORS[planet.type] || '#7f8db5'),
-        opacity: planet.visibility === 'UNKNOWN' ? 0.55 : 1,
-      }));
 
-      // Пунктирное кольцо обломков рисуем первым, чтобы кольцо владельца
-      // легло поверх и не потерялось на планетах со своей колонией.
+      // Пунктирное кольцо обломков — под телом планеты, чтобы не перекрывать его.
       if (planet.debris && planet.debris.ore + planet.debris.polymers > 0) {
         group.appendChild(svgEl('circle', {
           class: 'debris-ring', cx: x, cy: y, r: radius + 12,
         }));
       }
+
+      celestialBody(
+        group, x, y, radius,
+        planet.visibility === 'UNKNOWN' ? '#3a4360' : (PLANET_COLORS[planet.type] || '#7f8db5'),
+        planet.visibility === 'UNKNOWN' ? 0.55 : 1,
+        // Картинка привязана к типу планеты, а не к номеру орбиты: ледяной мир
+        // должен выглядеть ледяным в любой системе.
+        `/assets/planets/${planet.type.toLowerCase()}.webp`,
+        `clip-planet-${planet.planetId}`,
+      );
 
       if (planet.isOwn) {
         group.appendChild(svgEl('circle', {
@@ -1146,11 +1244,17 @@
         }));
       }
 
-      const label = svgEl('text', { x, y: y + radius + 26, class: `planet-label${planet.isOwn ? ' own' : ''}` });
+      // Подписи уходят наружу вдоль радиуса: на круговой карте «вниз» у внутренних
+      // орбит упирается прямо в звезду, и текст ложился бы на нее.
+      const caption = polar(orbitRadius(planet.position) + radius + 18, orbitAngle(planet.position));
+
+      const label = svgEl('text', {
+        x: caption.x, y: caption.y, class: `planet-label${planet.isOwn ? ' own' : ''}`,
+      });
       label.textContent = planet.name;
       group.appendChild(label);
 
-      const status = svgEl('text', { x, y: y + radius + 44, class: 'planet-label' });
+      const status = svgEl('text', { x: caption.x, y: caption.y + 16, class: 'planet-label' });
       status.textContent = planet.visibility === 'UNKNOWN' ? 'нет данных' :
         planet.colonized ? (planet.isOwn ? 'ваша колония' : `колония: ${planet.owner}`) : 'необитаема';
       group.appendChild(status);
@@ -1167,11 +1271,44 @@
     renderFleetMarkers();
   }
 
-  /** Глубокий космос — абстрактная 16-я позиция системы, точка экспедиций. */
+  /** Центр системы: звезда или черная дыра. */
+  function renderStar() {
+    const svg = el.systemMap;
+    const hole = map.data.anomaly === 'BLACK_HOLE';
+    const group = svgEl('g', { class: 'star-node' });
+
+    group.appendChild(svgEl('circle', {
+      class: hole ? 'hole-core' : 'star-core',
+      cx: MAP.center, cy: MAP.center, r: MAP.starRadius + 22,
+    }));
+    celestialBody(
+      group, MAP.center, MAP.center, MAP.starRadius,
+      hole ? '#120b1f' : '#ffb347', 1,
+      `/assets/planets/${hole ? 'black_hole' : 'star'}.webp`,
+      'clip-star',
+    );
+
+    const label = svgEl('text', {
+      x: MAP.center, y: MAP.center + MAP.starRadius + 26, class: 'planet-label',
+    });
+    label.textContent = `${map.data.systemName} · ${map.data.starClass}`;
+    group.appendChild(label);
+
+    if (hole) {
+      const anomaly = svgEl('text', {
+        x: MAP.center, y: MAP.center + MAP.starRadius + 42, class: 'planet-label',
+      });
+      anomaly.textContent = 'черная дыра · искажение времени';
+      group.appendChild(anomaly);
+    }
+
+    svg.appendChild(group);
+  }
+
+  /** Точка выхода в глубокий космос: своя орбита за внешним кольцом системы. */
   function renderDeepSpace() {
     const svg = el.systemMap;
-    const x = MAP.width - 46;
-    const y = MAP.height / 2;
+    const { x, y } = deepSpacePoint();
 
     const group = svgEl('g', {
       class: `planet-dot${map.selectedKind === 'DEEP_SPACE' ? ' selected' : ''}`,
@@ -1181,12 +1318,16 @@
       fill: 'rgba(157, 123, 255, 0.10)', stroke: 'rgba(157, 123, 255, 0.55)',
       'stroke-width': 1.5, 'stroke-dasharray': '4 4',
     }));
+    celestialBody(group, x, y, 24, 'transparent', 1, '/assets/planets/deep_space.webp', 'clip-deep-space');
 
-    const label = svgEl('text', { x, y: y + 46, class: 'planet-label' });
+    // Подписи наружу по радиусу, как у планет и хаба.
+    const caption = polar(MAP.deepOrbit + 40, DEEP_SPACE_ANGLE);
+
+    const label = svgEl('text', { x: caption.x, y: caption.y, class: 'planet-label' });
     label.textContent = 'Глубокий космос';
     group.appendChild(label);
 
-    const position = svgEl('text', { x, y: y + 60, class: 'planet-label' });
+    const position = svgEl('text', { x: caption.x, y: caption.y + 15, class: 'planet-label' });
     position.textContent = 'позиция 16';
     group.appendChild(position);
 
@@ -1213,8 +1354,7 @@
   /** Нейтральная станция у звезды — точка входа на биржу. */
   function renderHub(hub) {
     const svg = el.systemMap;
-    const x = hubX();
-    const y = MAP.height / 2 - 96;
+    const { x, y } = hubPoint();
 
     const group = svgEl('g', {
       class: `hub-node${map.selectedKind === 'HUB' && map.selectedId === hub.hubId ? ' selected' : ''}`,
@@ -1227,15 +1367,18 @@
       x1: x - 30, y1: y, x2: x + 30, y2: y, stroke: 'rgba(126, 231, 135, 0.5)', 'stroke-width': 2,
     }));
 
-    const label = svgEl('text', { x, y: y - 24, class: 'planet-label' });
+    // Подпись уходит наружу по радиусу: хаб висит близко к звезде, и текст
+    // «под ним» лег бы прямо на корону.
+    //
+    // На карте оставлено только название: содержимое склада — длинная строка,
+    // которая в тесном центре наезжала на сам хаб. Цифры и так есть в тултипе
+    // и в панели справа, и там их можно показать с иконками, чего SVG-текст
+    // не умеет в принципе.
+    const caption = polar(MAP.hubOrbit + 36, HUB_ANGLE);
+
+    const label = svgEl('text', { x: caption.x, y: caption.y, class: 'planet-label' });
     label.textContent = hub.name;
     group.appendChild(label);
-
-    const storage = svgEl('text', { x, y: y + 30, class: 'planet-label' });
-    storage.textContent = hub.storage
-      ? `склад: ${icon('ore', 'sm')} ${fmt(hub.storage.ore)} · ${icon('polymers', 'sm')} ${fmt(hub.storage.polymers)}`
-      : 'склад пуст';
-    group.appendChild(storage);
 
     group.addEventListener('mouseenter', (event) => showHubTooltip(hub, event));
     group.addEventListener('mousemove', (event) => positionTooltip(event));
@@ -1287,15 +1430,20 @@
       const legEnd = outbound ? fleet.arrivesAt : fleet.returnsAt;
       const progress = Math.min(1, Math.max(0, (now - legStart) / Math.max(1, legEnd - legStart)));
 
-      const x1 = from.hub ? hubX() : from.deep ? MAP.width - 46 : planetX(from.position);
-      const x2 = to.hub ? hubX() : to.deep ? MAP.width - 46 : planetX(to.position);
-      const y = MAP.height / 2 - 62;
-      layer.appendChild(svgEl('line', { class: 'fleet-line', x1, y1: y, x2, y2: y }));
-      layer.appendChild(svgEl('circle', {
-        class: 'fleet-marker', cx: x1 + (x2 - x1) * progress, cy: y, r: 5,
+      // Точки на круговой карте, поэтому маршрут — отрезок между ними,
+      // а маркер едет по этому отрезку пропорционально пройденному времени.
+      const a = from.hub ? hubPoint() : from.deep ? deepSpacePoint() : planetPoint(from.position);
+      const b = to.hub ? hubPoint() : to.deep ? deepSpacePoint() : planetPoint(to.position);
+
+      layer.appendChild(svgEl('line', {
+        class: 'fleet-line', x1: a.x, y1: a.y, x2: b.x, y2: b.y,
       }));
 
-      const label = svgEl('text', { x: x1 + (x2 - x1) * progress, y: y - 12, class: 'planet-label' });
+      const cx = a.x + (b.x - a.x) * progress;
+      const cy = a.y + (b.y - a.y) * progress;
+      layer.appendChild(svgEl('circle', { class: 'fleet-marker', cx, cy, r: 5 }));
+
+      const label = svgEl('text', { x: cx, y: cy - 12, class: 'planet-label' });
       label.textContent = `${fleet.missionLabel} · ${fleet.etaSeconds} с`;
       layer.appendChild(label);
     }

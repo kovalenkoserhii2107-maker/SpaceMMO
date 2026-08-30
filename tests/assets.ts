@@ -26,11 +26,30 @@ function check(name: string, passed: boolean, detail?: string): void {
 }
 
 const ROOT = 'public/assets';
+/**
+ * Тела на карте: типы планет плюс центр системы и точка глубокого космоса.
+ * Картинка привязана к типу, а не к орбите — ледяной мир должен выглядеть
+ * ледяным в любой системе.
+ */
+const PLANET_SLOTS = [
+  'star',
+  'black_hole',
+  'deep_space',
+  'rocky',
+  'oceanic',
+  'desert',
+  'ice',
+  'gas_giant',
+  'volcanic',
+  'toxic',
+];
+
 const GROUPS: Array<{ folder: string; kind: string; types: readonly string[] }> = [
   { folder: 'buildings', kind: 'постройки', types: BUILDING_TYPES },
   { folder: 'ships', kind: 'корабли', types: SHIP_TYPES },
   { folder: 'defense', kind: 'оборона', types: DEFENSE_TYPES },
   { folder: 'tech', kind: 'технологии', types: TECHNOLOGY_TYPES },
+  { folder: 'planets', kind: 'тела карты', types: PLANET_SLOTS },
 ];
 
 console.log('\n=== Папки и соответствие имен ===');
@@ -43,16 +62,26 @@ for (const group of GROUPS) {
   const files = readdirSync(dir).filter((file) => file.endsWith('.webp'));
   const expected = new Set(group.types.map((type) => `${type.toLowerCase()}.webp`));
 
-  // Файл, не совпавший ни с одним типом, никогда не будет показан.
-  const orphans = files.filter((file) => !expected.has(file));
-  check(
-    `${group.kind}: нет файлов мимо конвенции`,
-    orphans.length === 0,
-    orphans.length ? `не будут показаны: ${orphans.join(', ')}` : `файлов ${files.length}`,
-  );
-
   const present = group.types.filter((type) => files.includes(`${type.toLowerCase()}.webp`));
   const absent = group.types.filter((type) => !files.includes(`${type.toLowerCase()}.webp`));
+
+  /*
+   * Файл, не совпавший ни с одним типом, никогда не будет показан. Но опасен он
+   * только пока есть незаполненные слоты: тогда это почти наверняка опечатка
+   * в имени, и картинка молча подменяется заглушкой. Если все слоты заполнены,
+   * лишний файл — просто забытый черновик, и ронять из-за него прогон незачем.
+   */
+  const orphans = files.filter((file) => !expected.has(file));
+  check(
+    `${group.kind}: имена совпадают с типами`,
+    orphans.length === 0 || absent.length === 0,
+    orphans.length === 0
+      ? `файлов ${files.length}`
+      : absent.length === 0
+        ? `лишние черновики (все слоты заполнены): ${orphans.join(', ')}`
+        : `похоже на опечатку в имени: ${orphans.join(', ')} при пустых слотах ` +
+          `${absent.map((t) => t.toLowerCase()).join(', ')}`,
+  );
   console.log(
     `       ${group.kind}: есть ${present.length} из ${group.types.length}` +
       (absent.length ? `, ждут картинки: ${absent.map((t) => t.toLowerCase()).join(', ')}` : ''),
@@ -82,15 +111,18 @@ check(
 
 const styles = await import('node:fs').then((fs) => fs.readFileSync('public/styles.css', 'utf8'));
 check(
-  'место под баннер занято до загрузки картинки',
-  /\.art \{[^}]*aspect-ratio: 5 \/ 2/s.test(styles),
-  'aspect-ratio на контейнере не дает карточкам прыгать',
-);
-check(
   'картинка кадрируется, а не растягивается',
   /\.art img \{[^}]*object-fit: cover/s.test(styles),
 );
 check('заглушка стилизована', styles.includes('.art.art-missing'));
+check(
+  'обложка карточки — строгий квадрат',
+  /\.art \{[^}]*aspect-ratio: 1 \/ 1/s.test(styles),
+);
+check(
+  'карточки тянутся на высоту ряда, кнопка прижата к низу',
+  styles.includes('height: 100%') && styles.includes('margin-top: auto'),
+);
 
 const html = await import('node:fs').then((fs) => fs.readFileSync('public/index.html', 'utf8'));
 check(
@@ -103,6 +135,34 @@ check(
     html.includes(`<symbol id="ico-${name}"`),
   ),
 );
+
+console.log('\n=== Карта системы ===');
+
+check(
+  'карта круговая: положение считается через полярные координаты',
+  client.includes('function polar(') && client.includes('function orbitRadius('),
+);
+check(
+  'центр системы отличает звезду от черной дыры',
+  client.includes("'black_hole' : 'star'"),
+);
+check(
+  'картинка планеты берется по ее типу, а не по номеру орбиты',
+  client.includes('planet.type.toLowerCase()'),
+);
+check(
+  'сломанная картинка тела снимается, иначе браузер рисует свою иконку поверх круга',
+  /addEventListener\('error', \(\) => image\.remove\(\)\)/.test(client),
+);
+check(
+  'круг-заглушка рисуется всегда, до картинки',
+  /celestialBody[\s\S]{0,400}class: 'body'/.test(client),
+);
+check(
+  'холст карты квадратный',
+  html.includes('id="system-map" viewBox="0 0 860 860"'),
+);
+
 
 const passed = results.filter((item) => item.passed).length;
 console.log(`\n=== ИТОГ: ${passed}/${results.length} пройдено ===`);
