@@ -292,3 +292,162 @@ export function buildHarvestMail(input: HarvestMailInput): OutgoingMessage[] {
     },
   ];
 }
+
+/* ------------------------- Логистика ------------------------- */
+
+export interface CargoAmounts {
+  ore: number;
+  polymers: number;
+  plasma: number;
+  antimatter?: number;
+}
+
+/** Состав флота одной строкой: «крейсера ×5, транспорты ×4». */
+export function describeFleet(ships: UnitLoss[]): string {
+  const real = ships.filter((item) => item.before > 0);
+  if (real.length === 0) return 'пустой флот';
+  return real.map((item) => `${item.label} ×${item.before}`).join(', ');
+}
+
+function cargoTotal(cargo: CargoAmounts): number {
+  return cargo.ore + cargo.polymers + cargo.plasma + (cargo.antimatter ?? 0);
+}
+
+function describeCargo(cargo: CargoAmounts): string {
+  const parts = [
+    cargo.ore > 0 ? `${cargo.ore} руды` : null,
+    cargo.polymers > 0 ? `${cargo.polymers} полимеров` : null,
+    cargo.plasma > 0 ? `${cargo.plasma} плазмы` : null,
+    cargo.antimatter && cargo.antimatter > 0 ? `${cargo.antimatter} антиматерии` : null,
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(', ') : 'ничего';
+}
+
+export interface TransportMailInput {
+  senderId: string;
+  /** Владелец колонии-получателя; null — колония ничья или своя же. */
+  recipientId: string | null;
+  senderName: string;
+  planetName: string;
+  systemName: string;
+  fleet: UnitLoss[];
+  cargo: CargoAmounts;
+}
+
+/**
+ * Доставка груза.
+ *
+ * Чужой колонии уходит второе письмо: без него ресурсы появлялись бы на складе
+ * молча, и получатель не знал бы, кого благодарить.
+ */
+export function buildTransportMail(input: TransportMailInput): OutgoingMessage[] {
+  const { planetName, systemName, cargo } = input;
+  const where = `${planetName} (${systemName})`;
+  const payload = {
+    kind: 'TRANSPORT' as const,
+    planetName,
+    systemName,
+    cargo,
+    fleet: input.fleet,
+  };
+
+  const messages: OutgoingMessage[] = [
+    {
+      recipientId: input.senderId,
+      type: 'FLEET',
+      subject: `Доставка: ${where}`,
+      body:
+        `Флот доставил груз на ${where}.\n` +
+        `Выгружено: ${describeCargo(cargo)}.\n` +
+        `Состав: ${describeFleet(input.fleet)}. Флот возвращается домой.`,
+      payload: { ...payload, role: 'SENDER' },
+    },
+  ];
+
+  if (input.recipientId && input.recipientId !== input.senderId) {
+    messages.push({
+      recipientId: input.recipientId,
+      type: 'FLEET',
+      subject: `Получен груз: ${where}`,
+      body:
+        `На вашу колонию ${where} доставлен груз.\n` +
+        `Отправитель: ${input.senderName}.\n` +
+        `Получено: ${describeCargo(cargo)}.`,
+      payload: { ...payload, role: 'RECIPIENT', senderName: input.senderName },
+    });
+  }
+
+  return messages;
+}
+
+export interface DeployMailInput {
+  commanderId: string;
+  baseName: string;
+  planetName: string;
+  systemName: string;
+  fleet: UnitLoss[];
+  cargo: CargoAmounts;
+}
+
+/** Дислокация: флот прибыл на свою колонию и остается там. */
+export function buildDeployMail(input: DeployMailInput): OutgoingMessage[] {
+  const where = `${input.planetName} (${input.systemName})`;
+  const cargo = cargoTotal(input.cargo) > 0 ? `\nДоставлено: ${describeCargo(input.cargo)}.` : '';
+
+  return [
+    {
+      recipientId: input.commanderId,
+      type: 'FLEET',
+      subject: `Дислокация: ${where}`,
+      body:
+        `Флот прибыл на ${input.baseName} и переведен в состав колонии ${where}.\n` +
+        `Прибыло: ${describeFleet(input.fleet)}.${cargo}`,
+      payload: {
+        kind: 'DEPLOY',
+        planetName: input.planetName,
+        systemName: input.systemName,
+        fleet: input.fleet,
+        cargo: input.cargo,
+      },
+    },
+  ];
+}
+
+export interface ReturnMailInput {
+  commanderId: string;
+  baseName: string;
+  planetName: string;
+  missionLabel: string;
+  fleet: UnitLoss[];
+  cargo: CargoAmounts;
+}
+
+/**
+ * Возвращение флота.
+ *
+ * Письмо шлется только когда флот привез груз. Пустой возврат — это конец
+ * рейса, о котором уже был свой отчет (бой, разведка, экспедиция), и второе
+ * письмо на каждый вылет удвоило бы ящик, ничего не добавив.
+ */
+export function buildReturnMail(input: ReturnMailInput): OutgoingMessage[] {
+  if (cargoTotal(input.cargo) <= 0) return [];
+
+  return [
+    {
+      recipientId: input.commanderId,
+      type: 'FLEET',
+      subject: `Флот вернулся: ${input.missionLabel.toLowerCase()}`,
+      body:
+        `Флот вернулся на ${input.baseName} (${input.planetName}).\n` +
+        `Разгружено: ${describeCargo(input.cargo)}.\n` +
+        `Состав: ${describeFleet(input.fleet)}.`,
+      payload: {
+        kind: 'RETURN',
+        planetName: input.planetName,
+        missionLabel: input.missionLabel,
+        fleet: input.fleet,
+        cargo: input.cargo,
+      },
+    },
+  ];
+}

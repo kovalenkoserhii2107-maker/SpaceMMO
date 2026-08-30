@@ -29,12 +29,17 @@ const PILOT_PASSWORD = 'pilot-pass-123';
 
 const admiral = await prisma.commander.findUniqueOrThrow({
   where: { nickname: 'Адмирал' },
-  include: { bases: true, user: true },
+  include: { bases: { orderBy: { createdAt: 'asc' } }, user: true },
 });
 const pilot = await prisma.commander.findUniqueOrThrow({
   where: { nickname: 'Тестовый Пилот' },
-  include: { bases: true, user: true },
+  include: { bases: { orderBy: { createdAt: 'asc' } }, user: true },
 });
+/*
+ * Базы берем в порядке создания: стартовая колония всегда первая. Без сортировки
+ * у командира с несколькими колониями стенд начинал указывать на случайную,
+ * и тесты вылетали в соседнюю систему.
+ */
 const hub = await prisma.tradeHub.findFirstOrThrow({
   where: { system: { planets: { some: { base: { commanderId: admiral.id } } } } },
 });

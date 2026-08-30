@@ -34,6 +34,7 @@ import {
   fleetCapacity,
   fleetSize,
   isHubMission,
+  MISSION_LABELS,
   planFlight,
   validateCargo,
   isOneWayMission,
@@ -57,15 +58,18 @@ import {
   missingDefenseRequirements,
   type DefenseType,
 } from './defenses.js';
-import { plunderAmount, resolveBattle, type SideForces } from './combat.js';
+import { plunderAmount, resolveBattle, type SideForces, type UnitLoss } from './combat.js';
 import { checkArchitect, checkPirateBane } from '../services/achievementService.js';
 import { canAttack } from '../services/warService.js';
 import { countUnread, deliver, type OutgoingMessage } from '../services/mailService.js';
 import {
   buildBattleMail,
+  buildDeployMail,
   buildExpeditionMail,
   buildHarvestMail,
+  buildReturnMail,
   buildSpyMail,
+  buildTransportMail,
 } from '../services/reportMail.js';
 import {
   buildSeconds,
@@ -92,6 +96,7 @@ import {
   missingShipRequirements,
   shipCost,
   shipUnitSeconds,
+  shipLabel,
   SHIP_TYPES,
   type ShipCounts,
   type ShipType,
@@ -113,6 +118,46 @@ const FLEET_SWEEP_EVERY_TICKS = 2;
 type GameServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
 
 export type ActionResult = { ok: true; message: string } | { ok: false; error: string };
+
+
+/**
+ * Куда прилетел флот: имя планеты и системы.
+ *
+ * У записи полета подгружена планета, но не ее система, а письмам логистики
+ * нужно и то и другое: «Кобзар II» без системы не говорит ничего. Запрос идет
+ * один раз на прилет, а не на каждый тик.
+ */
+async function arrivalPlace(fleet: FleetRow): Promise<{ planetName: string; systemName: string }> {
+  if (fleet.targetSystem) {
+    return { planetName: fleet.targetPlanet?.name ?? 'глубокий космос', systemName: fleet.targetSystem.name };
+  }
+  if (!fleet.targetPlanetId) {
+    return { planetName: fleet.targetPlanet?.name ?? 'цель', systemName: 'неизвестная система' };
+  }
+
+  const planet = await prisma.planet.findUnique({
+    where: { id: fleet.targetPlanetId },
+    select: { name: true, system: { select: { name: true } } },
+  });
+  return {
+    planetName: planet?.name ?? fleet.targetPlanet?.name ?? 'цель',
+    systemName: planet?.system.name ?? 'неизвестная система',
+  };
+}
+
+/**
+ * Состав флота в форме, которую понимают письма: у каждого класса свое имя
+ * и число кораблей. Потерь тут нет — это логистика, а не бой.
+ */
+function fleetRoster(ships: ShipCounts): UnitLoss[] {
+  return SHIP_TYPES.filter((type) => ships[type] > 0).map((type) => ({
+    key: type,
+    label: shipLabel(type),
+    before: ships[type],
+    lost: 0,
+  }));
+}
+
 
 class GameLoop {
   private io: GameServer | null = null;
@@ -1056,6 +1101,29 @@ class GameLoop {
         polymers: fleet.cargoPolymers,
         plasma: fleet.cargoPlasma,
       });
+
+      const [sender, place] = await Promise.all([
+        prisma.commander.findUnique({
+          where: { id: fleet.commanderId },
+          select: { nickname: true },
+        }),
+        arrivalPlace(fleet),
+      ]);
+      await this.notify(
+        buildTransportMail({
+          senderId: fleet.commanderId,
+          recipientId: targetBase.commanderId,
+          senderName: sender?.nickname ?? 'неизвестный командир',
+          planetName: place.planetName,
+          systemName: place.systemName,
+          fleet: fleetRoster(fleetShips(fleet)),
+          cargo: {
+            ore: fleet.cargoOre,
+            polymers: fleet.cargoPolymers,
+            plasma: fleet.cargoPlasma,
+          },
+        }),
+      );
       return;
     }
 
@@ -1069,7 +1137,28 @@ class GameLoop {
         return;
       }
 
+      const roster = fleetRoster(fleetShips(fleet));
+      const cargo = {
+        ore: fleet.cargoOre,
+        polymers: fleet.cargoPolymers,
+        plasma: fleet.cargoPlasma,
+        antimatter: fleet.cargoAntimatter,
+      };
+      // Место читаем до посадки: она удаляет запись полета.
+      const place = await arrivalPlace(fleet);
+
       await this.landFleet(fleet, targetBase.id);
+
+      await this.notify(
+        buildDeployMail({
+          commanderId: fleet.commanderId,
+          baseName: targetBase.name,
+          planetName: place.planetName,
+          systemName: place.systemName,
+          fleet: roster,
+          cargo,
+        }),
+      );
       return;
     }
 
@@ -1671,7 +1760,32 @@ class GameLoop {
    * посреди операции либо задвоил бы корабли, либо потерял их.
    */
   private async handleReturn(fleet: FleetRow): Promise<void> {
+    // Состав и груз читаем до посадки: она удаляет запись полета.
+    const roster = fleetRoster(fleetShips(fleet));
+    const cargo = {
+      ore: fleet.cargoOre,
+      polymers: fleet.cargoPolymers,
+      plasma: fleet.cargoPlasma,
+      antimatter: fleet.cargoAntimatter,
+    };
+
+    const base = await prisma.base.findUnique({
+      where: { id: fleet.originBaseId },
+      select: { name: true },
+    });
+
     await this.landFleet(fleet, fleet.originBaseId);
+
+    await this.notify(
+      buildReturnMail({
+        commanderId: fleet.commanderId,
+        baseName: base?.name ?? 'базу',
+        planetName: fleet.originPlanet.name,
+        missionLabel: MISSION_LABELS[fleet.mission],
+        fleet: roster,
+        cargo,
+      }),
+    );
   }
 
   /**

@@ -44,6 +44,7 @@ export const MESSAGE_TYPES: readonly MessageType[] = [
   'BATTLE_REPORT',
   'SPY_REPORT',
   'EXPEDITION',
+  'FLEET',
 ];
 
 export function isMessageType(value: unknown): value is MessageType {

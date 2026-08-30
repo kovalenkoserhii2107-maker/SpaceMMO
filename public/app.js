@@ -3973,6 +3973,7 @@
     { key: 'BATTLE_REPORT', label: 'Бои' },
     { key: 'SPY_REPORT', label: 'Разведка' },
     { key: 'EXPEDITION', label: 'Экспедиции' },
+    { key: 'FLEET', label: 'Логистика' },
   ];
 
   const MAIL_KIND_LABELS = {
@@ -3981,6 +3982,7 @@
     BATTLE_REPORT: 'бой',
     SPY_REPORT: 'разведка',
     EXPEDITION: 'экспедиция',
+    FLEET: 'логистика',
   };
 
   const mail = { filter: '', data: null, expanded: new Set() };

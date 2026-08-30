@@ -1300,3 +1300,6 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 @media (max-width: 720px), (hover: none) {
   .tooltip { display: none; }
 }
+
+/* Логистика — свой цвет метки: эти письма приходят чаще боевых. */
+.mail-kind.fleet { color: var(--ok); border-color: rgba(74, 222, 128, 0.35); }

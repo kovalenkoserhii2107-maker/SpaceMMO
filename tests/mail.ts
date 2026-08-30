@@ -10,7 +10,14 @@
  *
  * Запуск: npm run test:mail
  */
-import { buildBattleMail, buildExpeditionMail, buildSpyMail } from '../src/services/reportMail.js';
+import {
+  buildBattleMail,
+  buildDeployMail,
+  buildExpeditionMail,
+  buildReturnMail,
+  buildSpyMail,
+  buildTransportMail,
+} from '../src/services/reportMail.js';
 import { emptyDefenseCounts } from '../src/game/defenses.js';
 import { emptyShipCounts, type ShipCounts } from '../src/game/ships.js';
 import { resolveBattle } from '../src/game/combat.js';
@@ -354,6 +361,124 @@ if (!alice || !bob) {
 }
 
 /* ------------------------- Итог ------------------------- */
+
+
+/* ------------------------- Письма логистики ------------------------- */
+
+console.log('\n=== Логистика: доставка, дислокация, возвращение ===');
+
+const roster = [
+  { key: 'TRANSPORTER', label: 'Малый транспорт', before: 6, lost: 0 },
+  { key: 'HEAVY_CRUISER', label: 'Тяжелый крейсер', before: 2, lost: 0 },
+];
+
+{
+  // Доставка на свою колонию: письмо одно, второе адресовать некому.
+  const own = buildTransportMail({
+    senderId: 'atk',
+    recipientId: 'atk',
+    senderName: 'Адмирал',
+    planetName: 'Ярило I',
+    systemName: 'Ярило',
+    fleet: roster,
+    cargo: { ore: 5000, polymers: 2000, plasma: 0 },
+  });
+  check('доставка себе дает одно письмо', own.length === 1, `${own.length}`);
+  check('в письме о доставке есть груз и место', own[0]!.body.includes('5000 руды') && own[0]!.body.includes('Ярило I'));
+  check('логистика идет своим типом', own[0]!.type === 'FLEET', own[0]!.type);
+  check('плазму с нулем не перечисляем', !own[0]!.body.includes('0 плазмы'));
+
+  // Доставка чужой колонии: получатель тоже должен узнать, кто прислал груз.
+  const foreign = buildTransportMail({
+    senderId: 'atk',
+    recipientId: 'def',
+    senderName: 'Адмирал',
+    planetName: 'Кобзар II',
+    systemName: 'Сич',
+    fleet: roster,
+    cargo: { ore: 1000, polymers: 0, plasma: 500 },
+  });
+  check('доставка чужому дает два письма', foreign.length === 2, `${foreign.length}`);
+  check(
+    'письма адресованы отправителю и получателю',
+    foreign[0]!.recipientId === 'atk' && foreign[1]!.recipientId === 'def',
+  );
+  check(
+    'получатель видит, кто прислал груз',
+    foreign[1]!.body.includes('Адмирал') && foreign[1]!.body.includes('1000 руды'),
+  );
+  check(
+    'роли в нагрузке различаются',
+    (foreign[0]!.payload as any).role === 'SENDER' && (foreign[1]!.payload as any).role === 'RECIPIENT',
+  );
+}
+
+{
+  const mail = buildDeployMail({
+    commanderId: 'atk',
+    baseName: 'Колония Хорс IV',
+    planetName: 'Хорс IV',
+    systemName: 'Сектор 866',
+    fleet: roster,
+    cargo: { ore: 0, polymers: 0, plasma: 0 },
+  });
+  check('дислокация дает письмо', mail.length === 1 && mail[0]!.type === 'FLEET');
+  check(
+    'в письме о дислокации есть состав и колония',
+    mail[0]!.body.includes('Малый транспорт ×6') && mail[0]!.body.includes('Хорс IV'),
+  );
+  check('пустой трюм в дислокации не упоминается', !mail[0]!.body.includes('Доставлено'));
+
+  const loaded = buildDeployMail({
+    commanderId: 'atk',
+    baseName: 'Колония Хорс IV',
+    planetName: 'Хорс IV',
+    systemName: 'Сектор 866',
+    fleet: roster,
+    cargo: { ore: 300, polymers: 0, plasma: 0 },
+  });
+  check('груз при дислокации попадает в письмо', loaded[0]!.body.includes('Доставлено: 300 руды'));
+}
+
+{
+  // Пустой возврат молчит: о рейсе уже был свой отчет, второе письмо на каждый
+  // вылет удвоило бы ящик.
+  const empty = buildReturnMail({
+    commanderId: 'atk',
+    baseName: 'Колония Ярило I',
+    planetName: 'Ярило I',
+    missionLabel: 'Разведка',
+    fleet: roster,
+    cargo: { ore: 0, polymers: 0, plasma: 0, antimatter: 0 },
+  });
+  check('пустой возврат письма не дает', empty.length === 0, `${empty.length}`);
+
+  const loot = buildReturnMail({
+    commanderId: 'atk',
+    baseName: 'Колония Ярило I',
+    planetName: 'Ярило I',
+    missionLabel: 'Атака',
+    fleet: roster,
+    cargo: { ore: 17650, polymers: 0, plasma: 0, antimatter: 0 },
+  });
+  check('возврат с добычей письмо дает', loot.length === 1 && loot[0]!.type === 'FLEET');
+  check(
+    'в письме о возврате есть добыча и миссия',
+    loot[0]!.body.includes('17650 руды') && loot[0]!.subject.includes('атака'),
+    loot[0]!.subject,
+  );
+  check(
+    'антиматерия в трюме тоже считается грузом',
+    buildReturnMail({
+      commanderId: 'atk',
+      baseName: 'база',
+      planetName: 'Ярило I',
+      missionLabel: 'Экспедиция',
+      fleet: roster,
+      cargo: { ore: 0, polymers: 0, plasma: 0, antimatter: 12 },
+    }).length === 1,
+  );
+}
 
 const passed = results.filter((item) => item.passed).length;
 console.log(`\n=== ИТОГ: ${passed}/${results.length} пройдено ===`);
