@@ -1213,7 +1213,9 @@
       preserveAspectRatio: 'xMidYMid slice',
     });
 
-    if (!glow) {
+    if (glow) {
+      image.setAttribute('mask', 'url(#glowFade)');
+    } else {
       const clip = svgEl('clipPath', { id: clipId });
       clip.appendChild(svgEl('circle', { cx, cy, r: radius }));
       group.appendChild(clip);
@@ -1236,7 +1238,15 @@
       '<radialGradient id="starGlow"><stop offset="0%" stop-color="#fff3c4"/>' +
       '<stop offset="55%" stop-color="#ffb347"/><stop offset="100%" stop-color="rgba(255,140,60,0)"/></radialGradient>' +
       '<radialGradient id="holeGlow"><stop offset="0%" stop-color="#05070f"/>' +
-      '<stop offset="70%" stop-color="#2b1840"/><stop offset="100%" stop-color="rgba(157,123,255,0)"/></radialGradient>';
+      '<stop offset="70%" stop-color="#2b1840"/><stop offset="100%" stop-color="rgba(157,123,255,0)"/></radialGradient>' +
+      // Мягкий круглый спад по краю светящегося тела. Режим screen убирает черный
+      // фон картинки, но яркое содержимое, доходящее до края кадра, все равно
+      // обрывалось бы прямой линией — маска растворяет его вместо обрезки.
+      '<radialGradient id="glowFadeGrad">' +
+      '<stop offset="52%" stop-color="#fff"/><stop offset="100%" stop-color="#000"/>' +
+      '</radialGradient>' +
+      '<mask id="glowFade" maskContentUnits="objectBoundingBox">' +
+      '<rect width="1" height="1" fill="url(#glowFadeGrad)"/></mask>';
     svg.appendChild(defs);
 
     // Орбиты рисуем первыми, чтобы тела легли поверх колец.

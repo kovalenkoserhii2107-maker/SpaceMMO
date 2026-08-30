@@ -168,8 +168,12 @@ check(
   client.includes("kind: 'glow'") && styles.includes('mix-blend-mode: screen'),
 );
 check(
+  'у светящихся тел мягкий край: яркое содержимое не обрывается рамкой кадра',
+  client.includes("image.setAttribute('mask', 'url(#glowFade)')") && client.includes('glowFadeGrad'),
+);
+check(
   'планеты обрезаются кругом и не смешиваются',
-  /if \(!glow\) \{[\s\S]{0,220}clip-path/.test(client),
+  /\} else \{[\s\S]{0,260}clip-path/.test(client) && !client.includes("kind = 'glow'"),
 );
 check(
   'сломанная картинка тела снимается, иначе браузер рисует свою иконку поверх круга',
