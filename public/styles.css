@@ -998,3 +998,135 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   color: var(--ok);
 }
 .debris-ring { fill: none; stroke: var(--ok); stroke-width: 1.5; stroke-dasharray: 3 3; opacity: 0.8; }
+
+/*
+ * Боевой отчет: общий компонент для писем центра связи и предпросмотра
+ * симулятора. Верстка одна, поэтому правка внешнего вида не расходится
+ * между вкладками.
+ */
+.battle-report {
+  display: grid;
+  gap: 14px;
+  margin-top: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: 12px;
+  background: var(--panel-2);
+}
+.battle-report.win { border-left-color: var(--ok); }
+.battle-report.loss { border-left-color: var(--err); }
+.battle-report.draw { border-left-color: var(--warn); }
+
+.battle-report header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.battle-verdict {
+  padding: 3px 10px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.battle-verdict.win { color: var(--ok); }
+.battle-verdict.loss { color: var(--err); }
+.battle-verdict.draw { color: var(--warn); }
+
+.battle-where { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.battle-where b { font-size: 14px; }
+.battle-where span { color: var(--muted); font-size: 12px; }
+/* Дата уходит вправо, но на узком экране просто переносится следующей строкой. */
+.battle-date { margin-left: auto; color: var(--muted); font-size: 12px; }
+
+/* Итоги — то, ради чего отчет открывают, поэтому цифры крупные. */
+.battle-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+.battle-total {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.battle-total .caption {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+.battle-total .amounts { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 18px; }
+.battle-total .amounts .muted { font-size: 18px; }
+
+.battle-note { margin: 0; color: var(--muted); font-size: 12px; }
+
+.battle-sides {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.battle-side { min-width: 0; }
+.battle-side h5 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+.losses { width: 100%; border-collapse: collapse; font-size: 13px; }
+.losses th {
+  padding: 0 6px 6px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  text-align: right;
+}
+.losses th:first-child { text-align: left; }
+.losses td { padding: 6px; text-align: right; border-bottom: 1px solid rgba(120, 160, 255, 0.08); }
+.losses td.unit { display: flex; align-items: center; gap: 8px; text-align: left; }
+.losses td.lost { color: var(--err); }
+/* Ряд, от которого ничего не осталось, гасим — взгляд цепляется за выживших. */
+.losses tr.wiped td { opacity: 0.55; }
+
+/* Мелкая иконка юнита в таблице: та же картинка, что и на карточке верфи. */
+.art.art-mini {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.art.art-mini.art-missing::after { font-size: 10px; letter-spacing: 0; }
+
+.fleet-wiped {
+  margin: 8px 0 0;
+  color: var(--err);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+
+.battle-footer { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.battle-footer b { color: var(--text); }
+.battle-damage { display: grid; gap: 4px; margin-top: 10px; }
+.battle-damage .line { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.battle-damage .line b { color: var(--text); }
+
+/* На узком экране колонки сторон встают друг под другом, а не сжимаются в кашу. */
+@media (max-width: 720px) {
+  .battle-sides { grid-template-columns: 1fr; }
+}
+
+/* Метка прочтения в списке писем: словами, рядом с типом. */
+.mail-state { color: var(--muted); }
+.mail-state.unread { color: var(--accent); font-weight: 600; }

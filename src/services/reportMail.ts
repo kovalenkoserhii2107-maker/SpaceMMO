@@ -29,26 +29,43 @@ function describeLoot(loot: { ore: number; polymers: number; plasma: number }): 
   return parts.length > 0 ? parts.join(', ') : 'ничего';
 }
 
+/** Где случился бой: отчет открывают спустя часы, и «у планеты X» без системы бесполезно. */
+export interface BattleLocation {
+  planetName: string;
+  systemName: string;
+  position: number;
+  galaxyX: number;
+  galaxyY: number;
+}
+
 export interface BattleMailInput {
   attackerId: string;
   defenderId: string;
   attackerName: string;
   defenderName: string;
-  planetName: string;
+  location: BattleLocation;
   outcome: BattleOutcome;
   plunder: PlunderResult;
 }
 
 export function buildBattleMail(input: BattleMailInput): OutgoingMessage[] {
-  const { outcome, plunder, planetName, attackerName, defenderName } = input;
+  const { outcome, plunder, location, attackerName, defenderName } = input;
+  const planetName = location.planetName;
   const attackerWon = outcome.winner === 'ATTACKER';
   const loot = describeLoot(plunder);
 
   const payload = {
     planetName,
+    location,
     attackerName,
     defenderName,
     winner: outcome.winner,
+    /*
+     * Настоящий исход, включая ничью: `winner` отдает ее защитнику, а игроку
+     * важно видеть разницу между «отбились» и «никто не дожал».
+     */
+    result: outcome.combat.winner,
+    rounds: outcome.combat.rounds.length,
     attackerFirepower: Math.round(outcome.attackerPower.firepower),
     defenderFirepower: Math.round(outcome.defenderPower.firepower),
     attackerLosses: outcome.attackerLosses,
@@ -94,18 +111,22 @@ export function buildBattleMail(input: BattleMailInput): OutgoingMessage[] {
       : 'Оборона выстояла, склад цел.') +
     debrisLine;
 
+  // В теме — исход и место: список писем просматривают, не открывая, и
+  // «где это было» там нужнее всего.
+  const where = `${planetName} (${location.systemName})`;
+
   return [
     {
       recipientId: input.attackerId,
       type: 'BATTLE_REPORT',
-      subject: `${attackerWon ? 'Победа' : 'Поражение'}: атака на ${planetName}`,
+      subject: `${attackerWon ? 'Победа' : 'Поражение'}: атака на ${where}`,
       body: attackerBody,
       payload: { ...payload, role: 'ATTACKER' },
     },
     {
       recipientId: input.defenderId,
       type: 'BATTLE_REPORT',
-      subject: `${attackerWon ? 'Колония разграблена' : 'Атака отбита'}: ${planetName}`,
+      subject: `${attackerWon ? 'Колония разграблена' : 'Атака отбита'}: ${where}`,
       body: defenderBody,
       payload: { ...payload, role: 'DEFENDER' },
     },

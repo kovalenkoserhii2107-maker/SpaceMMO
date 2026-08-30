@@ -28,7 +28,17 @@ export interface SimulationStock {
 
 export interface SimulationResult {
   winner: 'ATTACKER' | 'DEFENDER';
+  /**
+   * Настоящий исход движка, включая ничью.
+   *
+   * `winner` ничьей не знает: переходник отдает поле защитнику, потому что
+   * атакующий его не занял. Отчету этого мало — «ничья» и «поражение» читаются
+   * игроком по-разному, поэтому исход едет отдельным полем.
+   */
+  result: 'ATTACKER' | 'DEFENDER' | 'DRAW';
   attackerWins: boolean;
+  /** Сколько раундов реально отстрелялись: бой мог кончиться раньше шестого. */
+  rounds: number;
   attackerPower: number;
   defenderPower: number;
   attackerLossRatio: number;
@@ -103,7 +113,9 @@ export function simulateBattle(
 
   return {
     winner: outcome.winner,
+    result: outcome.combat.winner,
     attackerWins: outcome.winner === 'ATTACKER',
+    rounds: outcome.combat.rounds.length,
     attackerPower: Math.round(outcome.attackerPower.firepower),
     defenderPower: Math.round(outcome.defenderPower.firepower),
     attackerLossRatio: outcome.attackerLossRatio,

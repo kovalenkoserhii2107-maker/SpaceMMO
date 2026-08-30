@@ -206,10 +206,10 @@
    */
   const ART_FOLDERS = { building: 'buildings', ship: 'ships', defense: 'defense', tech: 'tech' };
 
-  function artNode(type, label, kind) {
+  function artNode(type, label, kind, extraClass = '') {
     const slug = type.toLowerCase();
     const wrap = document.createElement('div');
-    wrap.className = `art ${slug}`;
+    wrap.className = `art ${slug}${extraClass ? ' ' + extraClass : ''}`;
 
     const image = document.createElement('img');
     image.alt = label;
@@ -3283,27 +3283,15 @@
 
   function renderSimulation(result) {
     el.simResult.innerHTML = '';
+    el.simResult.appendChild(renderBattleReport(battleReportFromSimulation(result)));
 
-    const card = document.createElement('article');
-    card.className = `battle ${result.attackerWins ? 'win' : 'loss'}`;
-
-    const header = document.createElement('header');
-    const title = document.createElement('h4');
-    title.textContent = 'Прогноз боя';
-    const verdict = document.createElement('span');
-    verdict.className = 'verdict';
-    verdict.textContent = result.attackerWins ? 'атака проходит' : 'атака захлебывается';
-    header.append(title, verdict);
-    card.appendChild(header);
-
-    card.appendChild(line(
-      `огневая мощь: <b>${fmt(result.attackerPower)}</b> против <b>${fmt(result.defenderPower)}</b> · ` +
+    // Разбор урона нужен именно в предпросмотре: по нему видно, вязнет залп
+    // в щитах или проходит по корпусу, и что менять в составе.
+    const details = document.createElement('div');
+    details.className = 'battle-damage';
+    details.appendChild(line(
       `потери атакующего <b>${Math.round(result.attackerLossRatio * 100)}%</b>, ` +
       `защитника <b>${Math.round(result.defenderLossRatio * 100)}%</b>`));
-
-    card.appendChild(line(
-      `мои потери: <b>${describeLosses(result.attackerLosses)}</b><br>` +
-      `потери противника: <b>${describeLosses(result.defenderLosses)}</b>`));
 
     for (const [report, caption] of [
       [result.attackerDamageReport, 'урон атакующего'],
@@ -3311,39 +3299,12 @@
     ]) {
       if (!report) continue;
       const mix = (report.damageMix || []).map((d) => d.label).join(', ') || 'без оружия';
-      card.appendChild(line(
+      details.appendChild(line(
         `${caption} (${mix}): щиты поглотили <b>${fmt(report.shield)}</b>, ` +
         `броня <b>${fmt(report.armor)}</b>, по корпусу прошло <b>${fmt(report.hull)}</b>`));
     }
 
-    if (result.plunder) {
-      const loot = result.plunder;
-      const total = loot.ore + loot.polymers + loot.plasma;
-      card.appendChild(line(
-        `добыча: ${icon('ore', 'sm')} <b>${fmt(loot.ore)}</b> · ` +
-        `${icon('polymers', 'sm')} <b>${fmt(loot.polymers)}</b> · ` +
-        `${icon('plasma', 'sm')} <b>${fmt(loot.plasma)}</b> (всего ${fmt(total)})<br>` +
-        `хранилище защитника прячет <b>${fmt(loot.protectedAmount)}</b>, ` +
-        `уязвимый излишек <b>${fmt(loot.surplus)}</b>` +
-        (loot.cargoLimited
-          ? `<br><span class="scan-warning">Трюмы уцелевших вмещают ${fmt(result.survivingCapacity)} — ` +
-            `взять можно было ${fmt(loot.takeable)}. Добавь транспортов.</span>`
-          : '')));
-    } else if (result.attackerWins) {
-      card.appendChild(line('добыча: склад защитника не задан — заполни его, чтобы увидеть трофеи'));
-    }
-
-    const debrisTotal = result.debris.ore + result.debris.polymers;
-    card.appendChild(line(
-      debrisTotal > 0
-        ? `обломки после боя: ${icon('ore', 'sm')} <b>${fmt(result.debris.ore)}</b> · ` +
-          `${icon('polymers', 'sm')} <b>${fmt(result.debris.polymers)}</b> — включая наши потери, ` +
-          'их соберет тот, чей переработчик долетит первым'
-        : 'обломков после такого боя не останется',
-    ));
-
-    card.appendChild(line('Это прогноз: бой считается по тем же формулам, но реальный состав противника мог измениться.'));
-    el.simResult.appendChild(card);
+    el.simResult.appendChild(details);
   }
 
   function line(html) {
@@ -3371,6 +3332,288 @@
     const base = activeBase();
     if (base) writeCounts(sim.attacker, base.fleet);
   });
+
+
+  /* ---------- Боевой отчет ---------- */
+
+  /*
+   * Один компонент на два источника: письмо из центра связи и предпросмотр
+   * симулятора. Оба приводятся к общей форме адаптерами ниже — иначе отчет
+   * пришлось бы верстать дважды и правки расходились бы.
+   *
+   * Отчеты в ящике — данные из прошлого: письмо, отправленное до появления
+   * координат или ничьей, приходит без этих полей. Поэтому компонент читает
+   * нагрузку защищенно и просто не рисует то, чего в ней нет.
+   */
+
+  const BATTLE_STATUS = {
+    WIN: { label: 'Победа', className: 'win' },
+    LOSS: { label: 'Поражение', className: 'loss' },
+    DRAW: { label: 'Ничья', className: 'draw' },
+  };
+
+  /** Исход глазами того, кто читает отчет: одна и та же битва для сторон разная. */
+  function battleStatus(result, role) {
+    if (result === 'DRAW') return BATTLE_STATUS.DRAW;
+    return result === role ? BATTLE_STATUS.WIN : BATTLE_STATUS.LOSS;
+  }
+
+  function unitFolder(key) {
+    return SHIP_LABELS[key] ? 'ship' : 'defense';
+  }
+
+  function unitLabel(key, fallback) {
+    return SHIP_LABELS[key] || DEFENSE_LABELS[key] || fallback || key;
+  }
+
+  /** Строка потерь: было, потеряно, осталось. Ноль потерь тоже показываем — это результат. */
+  function lossRows(losses) {
+    return (losses || []).map((row) => ({
+      key: row.key,
+      label: unitLabel(row.key, row.label),
+      before: row.before || 0,
+      lost: row.lost || 0,
+      left: Math.max(0, (row.before || 0) - (row.lost || 0)),
+    }));
+  }
+
+  function lossTable(rows) {
+    const table = document.createElement('table');
+    table.className = 'losses';
+    table.innerHTML =
+      '<thead><tr><th>Юнит</th><th>Было</th><th>Потеряно</th><th>Осталось</th></tr></thead>';
+
+    const body = document.createElement('tbody');
+    for (const row of rows) {
+      const tr = document.createElement('tr');
+      if (row.left === 0) tr.className = 'wiped';
+
+      const name = document.createElement('td');
+      name.className = 'unit';
+      name.appendChild(artNode(row.key, row.label, unitFolder(row.key), 'art-mini'));
+      const caption = document.createElement('span');
+      caption.textContent = row.label;
+      name.appendChild(caption);
+
+      tr.appendChild(name);
+      for (const [value, className] of [
+        [row.before, ''],
+        [row.lost, row.lost > 0 ? 'lost' : ''],
+        [row.left, ''],
+      ]) {
+        const cell = document.createElement('td');
+        cell.className = className;
+        cell.textContent = className === 'lost' && value > 0 ? `−${fmt(value)}` : fmt(value);
+        tr.appendChild(cell);
+      }
+      body.appendChild(tr);
+    }
+
+    table.appendChild(body);
+    return table;
+  }
+
+  function battleColumn(title, side) {
+    const column = document.createElement('div');
+    column.className = 'battle-side';
+
+    const head = document.createElement('h5');
+    head.textContent = side.name ? `${title}: ${side.name}` : title;
+    column.appendChild(head);
+
+    const rows = lossRows(side.losses);
+    if (!rows.length) {
+      const empty = document.createElement('p');
+      empty.className = 'muted';
+      empty.textContent = 'Сил не было';
+      column.appendChild(empty);
+      return column;
+    }
+
+    column.appendChild(lossTable(rows));
+
+    // Полное уничтожение стоит назвать словами: пустая колонка нулей читается
+    // хуже, чем прямая надпись.
+    if (rows.every((row) => row.left === 0)) {
+      const wiped = document.createElement('p');
+      wiped.className = 'fleet-wiped';
+      wiped.textContent = 'Флот уничтожен';
+      column.appendChild(wiped);
+    }
+
+    return column;
+  }
+
+  function resourceTotal(node, label, amounts) {
+    const block = document.createElement('div');
+    block.className = 'battle-total';
+
+    const caption = document.createElement('span');
+    caption.className = 'caption';
+    caption.textContent = label;
+    block.appendChild(caption);
+
+    const value = document.createElement('div');
+    value.className = 'amounts';
+    value.innerHTML = amounts
+      .filter((item) => item.value > 0)
+      .map((item) => `${icon(item.key, 'sm')} <b>${fmt(item.value)}</b>`)
+      .join(' · ');
+    if (!value.innerHTML) value.innerHTML = '<b class="muted">—</b>';
+    block.appendChild(value);
+
+    node.appendChild(block);
+  }
+
+  /**
+   * Отчет о бое. `report` — нормализованная форма (см. адаптеры ниже).
+   * Пораундового лога здесь нет намеренно: сводка «было / стало» отвечает
+   * на вопрос «что я потерял», а разбор по раундам — уже другая задача.
+   */
+  function renderBattleReport(report) {
+    const status = battleStatus(report.result, report.role);
+
+    const card = document.createElement('article');
+    card.className = `battle-report ${status.className}`;
+
+    /* Заголовок: исход, место боя и дата. */
+    const header = document.createElement('header');
+    const verdict = document.createElement('span');
+    verdict.className = `battle-verdict ${status.className}`;
+    verdict.textContent = report.statusLabel || status.label;
+
+    const where = document.createElement('div');
+    where.className = 'battle-where';
+    where.innerHTML =
+      `<b>${escapeHtml(report.title)}</b>` +
+      (report.place ? `<span>${escapeHtml(report.place)}</span>` : '');
+
+    header.append(verdict, where);
+    if (report.date) {
+      const date = document.createElement('span');
+      date.className = 'battle-date';
+      date.textContent = new Date(report.date).toLocaleString('ru-RU');
+      header.appendChild(date);
+    }
+    card.appendChild(header);
+
+    /* Итоги: обломки и трофеи крупно — это то, ради чего отчет открывают. */
+    const summary = document.createElement('div');
+    summary.className = 'battle-summary';
+    resourceTotal(summary, 'Обломки на орбите', [
+      { key: 'ore', value: (report.debris && report.debris.ore) || 0 },
+      { key: 'polymers', value: (report.debris && report.debris.polymers) || 0 },
+    ]);
+    // Трофеи показываем всегда, даже нулевые: «награблено —» после отбитой
+    // атаки — это ответ, а не пустое место.
+    const loot = report.plunder || {};
+    resourceTotal(summary, report.plunderLabel || 'Награблено', [
+      { key: 'ore', value: loot.ore || 0 },
+      { key: 'polymers', value: loot.polymers || 0 },
+      { key: 'plasma', value: loot.plasma || 0 },
+    ]);
+    card.appendChild(summary);
+
+    if (report.note) {
+      const note = document.createElement('p');
+      note.className = 'battle-note';
+      note.innerHTML = report.note;
+      card.appendChild(note);
+    }
+
+    /* Потери сторон: атакующий слева, защитник справа. */
+    const sides = document.createElement('div');
+    sides.className = 'battle-sides';
+    sides.append(
+      battleColumn('Атакующий', report.attacker),
+      battleColumn('Защитник', report.defender),
+    );
+    card.appendChild(sides);
+
+    if (report.footer) {
+      const footer = document.createElement('p');
+      footer.className = 'battle-footer';
+      footer.innerHTML = report.footer;
+      card.appendChild(footer);
+    }
+
+    return card;
+  }
+
+  /** Письмо центра связи → отчет. */
+  function battleReportFromMail(message) {
+    const payload = message.payload;
+    if (!payload || !payload.attackerLosses || !payload.defenderLosses) return null;
+
+    const place = payload.location
+      ? `${payload.location.planetName} · система ${payload.location.systemName} · ` +
+        `орбита ${payload.location.position} · ${payload.location.galaxyX}:${payload.location.galaxyY}`
+      : payload.planetName || '';
+
+    const role = payload.role === 'DEFENDER' ? 'DEFENDER' : 'ATTACKER';
+    // Старые письма не знают о ничьей: у них есть только победитель.
+    const result = payload.result || payload.winner || 'DEFENDER';
+    const loot = payload.plunder;
+
+    return {
+      title: 'Боевой отчет',
+      place,
+      date: message.createdAt,
+      role,
+      result,
+      attacker: { name: payload.attackerName, losses: payload.attackerLosses },
+      defender: { name: payload.defenderName, losses: payload.defenderLosses },
+      debris: payload.debris,
+      plunder: loot,
+      plunderLabel: role === 'ATTACKER' ? 'Награблено' : 'Вывезено со склада',
+      footer:
+        (payload.rounds ? `Бой занял раундов: <b>${payload.rounds}</b>. ` : '') +
+        // Про укрытое хранилищем есть смысл говорить, только если до склада
+        // вообще дошли: у отбитой атаки эта цифра выглядит почти-добычей,
+        // которой не было.
+        (result === 'ATTACKER' && loot && loot.protectedAmount > 0
+          ? `Хранилище защитника укрыло <b>${fmt(loot.protectedAmount)}</b>.`
+          : ''),
+    };
+  }
+
+  /** Результат симулятора → тот же отчет. */
+  function battleReportFromSimulation(result) {
+    const loot = result.plunder;
+
+    const warning =
+      loot && loot.cargoLimited
+        ? `<span class="scan-warning">Трюмы уцелевших вмещают ${fmt(result.survivingCapacity)} — ` +
+          `взять можно было ${fmt(loot.takeable)}. Добавь транспортов.</span><br>`
+        : '';
+
+    return {
+      title: 'Прогноз боя',
+      place: `огневая мощь ${fmt(result.attackerPower)} против ${fmt(result.defenderPower)}`,
+      date: null,
+      role: 'ATTACKER',
+      result: result.result || (result.attackerWins ? 'ATTACKER' : 'DEFENDER'),
+      statusLabel: result.attackerWins
+        ? 'Атака проходит'
+        : result.result === 'DRAW'
+          ? 'Ничья: поле за защитником'
+          : 'Атака захлебывается',
+      attacker: { name: null, losses: result.attackerLosses },
+      defender: { name: null, losses: result.defenderLosses },
+      debris: result.debris,
+      plunder: loot,
+      plunderLabel: 'Трофеи',
+      note:
+        !loot && result.attackerWins
+          ? 'Склад защитника не задан — заполни его, чтобы увидеть трофеи.'
+          : '',
+      footer:
+        warning +
+        (result.rounds ? `Бой занял раундов: <b>${result.rounds}</b>. ` : '') +
+        'Это прогноз по тем же формулам, что и реальный бой, но с фиксированным ' +
+        'броском кубика: состав противника к моменту атаки может измениться.',
+    };
+  }
 
 
   /* ---------- Центр связи ---------- */
@@ -3463,8 +3706,13 @@
 
       const from = document.createElement('div');
       from.className = 'mail-from';
+      // Метка прочтения словами: цветная полоса слева читается быстро, но
+      // не отвечает на вопрос прямо — а список просматривают именно на предмет
+      // «что я еще не открывал».
       from.innerHTML =
         `<span class="mail-kind ${message.type.toLowerCase()}">${MAIL_KIND_LABELS[message.type] || message.type}</span> ` +
+        `<span class="mail-state${message.isRead ? '' : ' unread'}">` +
+        `${message.isRead ? 'Прочитано' : 'Не прочитано'}</span> ` +
         `от ${message.from ? escapeHtml(message.from) : 'Центра связи'}`;
 
       item.append(head, from);
@@ -3473,10 +3721,18 @@
       // превращают ящик в простыню, по которой ничего не найти.
       const open = mail.expanded.has(message.id);
       if (open) {
-        const body = document.createElement('div');
-        body.className = 'mail-body';
-        body.textContent = message.body;
-        item.appendChild(body);
+        // Боевое письмо разворачивается в полноценный отчет, остальные — текстом.
+        // Если нагрузки нет (старое письмо или другой тип), текст и остается:
+        // отчет без данных нарисовать не из чего.
+        const report = message.type === 'BATTLE_REPORT' ? battleReportFromMail(message) : null;
+        if (report) {
+          item.appendChild(renderBattleReport(report));
+        } else {
+          const body = document.createElement('div');
+          body.className = 'mail-body';
+          body.textContent = message.body;
+          item.appendChild(body);
+        }
       }
 
       const actions = document.createElement('div');

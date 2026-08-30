@@ -63,7 +63,7 @@ console.log('\n=== 1. Системные отчеты ===');
     defenderId: 'def',
     attackerName: 'Адмирал',
     defenderName: 'Пилот',
-    planetName: 'Кобзар II',
+    location: { planetName: 'Кобзар II', systemName: 'Кобзар', position: 2, galaxyX: 4, galaxyY: 7 },
     outcome,
     plunder,
   });
@@ -82,6 +82,11 @@ console.log('\n=== 1. Системные отчеты ===');
     (mail[0]!.payload as any).role === 'ATTACKER' && (mail[1]!.payload as any).role === 'DEFENDER',
   );
   check(
+    'в теме письма есть и планета, и система',
+    mail.every((m) => m.subject.includes('Кобзар II') && m.subject.includes('(Кобзар)')),
+    `${mail[0]!.subject}`,
+  );
+  check(
     'победитель и проигравший видят разные заголовки',
     mail[0]!.subject !== mail[1]!.subject,
     `${mail[0]!.subject} / ${mail[1]!.subject}`,
@@ -93,6 +98,29 @@ console.log('\n=== 1. Системные отчеты ===');
   check(
     'в теле письма есть обе стороны потерь',
     mail[0]!.body.includes('Наши потери') && mail[0]!.body.includes('Потери противника'),
+  );
+
+  // Ниже — то, из чего интерфейс рисует отчет. Тело письма остается запасным
+  // вариантом для старых писем, а UI читает структурную нагрузку.
+  const payload = mail[0]!.payload as any;
+  check(
+    'в отчете есть координаты боя, а не только имя планеты',
+    payload.location.systemName === 'Кобзар' &&
+      payload.location.position === 2 &&
+      payload.location.galaxyX === 4 &&
+      payload.location.galaxyY === 7,
+  );
+  check(
+    'в отчете есть настоящий исход и число раундов',
+    ['ATTACKER', 'DEFENDER', 'DRAW'].includes(payload.result) && payload.rounds >= 1,
+    `${payload.result}, раундов ${payload.rounds}`,
+  );
+  check(
+    'потери приходят построчно с «было» и «потеряно» для каждого класса',
+    payload.attackerLosses.every(
+      (row: any) => typeof row.key === 'string' && row.before > 0 && row.lost >= 0 && row.lost <= row.before,
+    ),
+    `строк ${payload.attackerLosses.length}`,
   );
 }
 
@@ -108,7 +136,7 @@ console.log('\n=== 1. Системные отчеты ===');
     defenderId: 'def',
     attackerName: 'Адмирал',
     defenderName: 'Пилот',
-    planetName: 'Ярило I',
+    location: { planetName: 'Ярило I', systemName: 'Ярило', position: 1, galaxyX: 2, galaxyY: 9 },
     outcome,
     plunder,
   });

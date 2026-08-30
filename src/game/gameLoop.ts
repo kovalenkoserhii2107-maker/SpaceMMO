@@ -1287,7 +1287,7 @@ class GameLoop {
   private async resolveAttack(fleet: FleetRow, planetId: string, now: number): Promise<void> {
     const planet = await prisma.planet.findUnique({
       where: { id: planetId },
-      include: { base: true },
+      include: { base: true, system: true },
     });
 
     if (!planet?.base) {
@@ -1470,7 +1470,13 @@ class GameLoop {
         defenderId,
         attackerName: result.attackerName,
         defenderName: result.defenderName,
-        planetName: planet.name,
+        location: {
+          planetName: planet.name,
+          systemName: planet.system.name,
+          position: planet.position,
+          galaxyX: planet.system.galaxyX,
+          galaxyY: planet.system.galaxyY,
+        },
         outcome: result.outcome,
         plunder: result.plunder,
       }),
