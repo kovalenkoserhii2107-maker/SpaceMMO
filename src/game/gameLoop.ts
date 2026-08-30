@@ -60,7 +60,12 @@ import { plunderAmount, resolveBattle, type SideForces } from './combat.js';
 import { checkArchitect, checkPirateBane } from '../services/achievementService.js';
 import { canAttack } from '../services/warService.js';
 import { countUnread, deliver, type OutgoingMessage } from '../services/mailService.js';
-import { buildBattleMail, buildExpeditionMail, buildSpyMail } from '../services/reportMail.js';
+import {
+  buildBattleMail,
+  buildExpeditionMail,
+  buildHarvestMail,
+  buildSpyMail,
+} from '../services/reportMail.js';
 import {
   buildSeconds,
   emptyLevels,
@@ -97,6 +102,8 @@ const PERSIST_EVERY_TICKS = 10;
 const MAX_OFFLINE_SECONDS = 24 * 60 * 60;
 /** Предохранитель от бесконечного цикла при разборе очереди верфи. */
 const MAX_QUEUE_STEPS = 10_000;
+/** Сколько раз переработчик пробует забрать поле, если его увели в момент списания. */
+const HARVEST_RETRIES = 3;
 /** Через сколько простоя выгружать из памяти игрока без активных сокетов. */
 const IDLE_EVICT_MS = 60_000;
 /** Как часто проверять прилеты флотов (в тиках). */
@@ -508,6 +515,12 @@ class GameLoop {
         return { ok: false, error: 'На планете нет колонии — груз выгружать некуда' };
       }
 
+      // Обломки висят на орбите сами по себе: колония и дипломатия не важны,
+      // собирать можно и над чужой планетой, и над пустой.
+      if (mission === 'HARVEST' && planet.debrisTitanite <= 0 && planet.debrisSilicate <= 0) {
+        return { ok: false, error: 'На этой орбите нет поля обломков' };
+      }
+
       if (mission === 'ATTACK') {
         if (!planet.base) return { ok: false, error: 'Атаковать необитаемую планету бессмысленно' };
         if (planet.base.commanderId === commanderId) {
@@ -610,6 +623,7 @@ class GameLoop {
         lightFighters: ships.LIGHT_FIGHTER,
         heavyCruisers: ships.HEAVY_CRUISER,
         ionFrigates: ships.ION_FRIGATE,
+        recyclers: ships.RECYCLER,
         cargoTitanite: outboundCargo.titanite,
         cargoSilicate: outboundCargo.silicate,
         cargoTritium: outboundCargo.tritium,
@@ -1082,6 +1096,11 @@ class GameLoop {
       return;
     }
 
+    if (fleet.mission === 'HARVEST' && fleet.targetPlanetId) {
+      await this.harvestDebris(fleet, fleet.targetPlanetId);
+      return;
+    }
+
     if (fleet.mission === 'HUB_DELIVERY' && fleet.targetHubId) {
       await this.unloadToHub(fleet, fleet.targetHubId);
       return;
@@ -1093,6 +1112,77 @@ class GameLoop {
     }
 
     await prisma.fleet.update({ where: { id: fleet.id }, data: { status: 'RETURNING' } });
+  }
+
+  /**
+   * Сборка поля обломков.
+   *
+   * Гонка здесь реальная: два переработчика могут прилететь в один тик, и оба
+   * увидят одно и то же поле. Поэтому списание идет условным `updateMany` —
+   * поле уменьшается, только если в нем еще лежит столько, сколько мы забираем.
+   * Проигравший гонку получает count = 0, перечитывает остаток и берет то,
+   * что осталось. Дюпнуть обломки нельзя: БД разрешит списать их ровно один раз.
+   */
+  private async harvestDebris(fleet: FleetRow, planetId: string): Promise<void> {
+    const capacity = fleetCapacity(fleetShips(fleet));
+    let takenTitanite = 0;
+    let takenSilicate = 0;
+
+    for (let attempt = 0; attempt < HARVEST_RETRIES; attempt += 1) {
+      const planet = await prisma.planet.findUnique({
+        where: { id: planetId },
+        select: { debrisTitanite: true, debrisSilicate: true },
+      });
+      if (!planet) break;
+
+      // Трюмы делятся между титанитом и силикатом: сперва титанит, остаток — силикат.
+      const titanite = Math.floor(Math.min(planet.debrisTitanite, capacity));
+      const silicate = Math.floor(Math.min(planet.debrisSilicate, Math.max(0, capacity - titanite)));
+      if (titanite <= 0 && silicate <= 0) break;
+
+      const { count } = await prisma.planet.updateMany({
+        where: {
+          id: planetId,
+          debrisTitanite: { gte: titanite },
+          debrisSilicate: { gte: silicate },
+        },
+        data: {
+          debrisTitanite: { decrement: titanite },
+          debrisSilicate: { decrement: silicate },
+        },
+      });
+
+      if (count > 0) {
+        takenTitanite = titanite;
+        takenSilicate = silicate;
+        break;
+      }
+      // Поле увели из-под носа между чтением и списанием — пробуем по остатку.
+    }
+
+    await prisma.fleet.update({
+      where: { id: fleet.id },
+      data: {
+        status: 'RETURNING',
+        cargoTitanite: { increment: takenTitanite },
+        cargoSilicate: { increment: takenSilicate },
+      },
+    });
+
+    const planet = await prisma.planet.findUnique({
+      where: { id: planetId },
+      select: { name: true, system: { select: { name: true } } },
+    });
+    await this.notify(
+      buildHarvestMail({
+        commanderId: fleet.commanderId,
+        planetName: planet?.name ?? 'неизвестной планеты',
+        systemName: planet?.system.name ?? '—',
+        capacity,
+        titanite: takenTitanite,
+        silicate: takenSilicate,
+      }),
+    );
   }
 
   /**
@@ -1130,6 +1220,7 @@ class GameLoop {
             lightFighters: result.survivors.LIGHT_FIGHTER,
             heavyCruisers: result.survivors.HEAVY_CRUISER,
             ionFrigates: result.survivors.ION_FRIGATE,
+            recyclers: result.survivors.RECYCLER,
             cargoTitanite: titanite,
             cargoSilicate: silicate,
             cargoEridium: result.loot.eridium,
@@ -1252,6 +1343,18 @@ class GameLoop {
         });
       }
 
+      // Обломки оседают в той же транзакции, что и потери: поле обломков —
+      // прямое следствие боя, и половинчатого результата тут быть не должно.
+      if (outcome.debris.titanite > 0 || outcome.debris.silicate > 0) {
+        await tx.planet.update({
+          where: { id: planetId },
+          data: {
+            debrisTitanite: { increment: outcome.debris.titanite },
+            debrisSilicate: { increment: outcome.debris.silicate },
+          },
+        });
+      }
+
       if (plunder.titanite > 0 || plunder.silicate > 0 || plunder.tritium > 0) {
         await tx.base.update({
           where: { id: defenderBaseId },
@@ -1278,6 +1381,7 @@ class GameLoop {
             lightFighters: outcome.attackerSurvivors.LIGHT_FIGHTER,
             heavyCruisers: outcome.attackerSurvivors.HEAVY_CRUISER,
             ionFrigates: outcome.attackerSurvivors.ION_FRIGATE,
+            recyclers: outcome.attackerSurvivors.RECYCLER,
             cargoTitanite: plunder.titanite,
             cargoSilicate: plunder.silicate,
             cargoTritium: plunder.tritium,
@@ -1331,6 +1435,7 @@ class GameLoop {
             attackerLosses: outcome.attackerLosses,
             defenderLosses: outcome.defenderLosses,
             attackerSurvivors: outcome.attackerSurvivors,
+            debris: outcome.debris,
             plunder,
             storageDefense: {
               capacity: Math.round(plunder.storageCapacity),
@@ -1907,6 +2012,7 @@ function fleetShips(fleet: FleetRow): ShipCounts {
   ships.LIGHT_FIGHTER = fleet.lightFighters;
   ships.HEAVY_CRUISER = fleet.heavyCruisers;
   ships.ION_FRIGATE = fleet.ionFrigates;
+  ships.RECYCLER = fleet.recyclers;
   return ships;
 }
 
@@ -1946,6 +2052,7 @@ function toFleetRuntime(row: FleetRow): FleetRuntimeState {
       LIGHT_FIGHTER: row.lightFighters,
       HEAVY_CRUISER: row.heavyCruisers,
       ION_FRIGATE: row.ionFrigates,
+      RECYCLER: row.recyclers,
     },
     cargo: {
       titanite: row.cargoTitanite,

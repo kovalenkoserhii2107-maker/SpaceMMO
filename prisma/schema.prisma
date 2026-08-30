@@ -281,6 +281,12 @@ model Planet {
   /// Насыщенность экзотическими частицами — множитель синтеза антиматерии.
   eridiumRichness  Float @default(1)
 
+  /// Поле обломков на орбите: остатки уничтоженных флотов и обороны.
+  /// Хранится на планете, а не отдельной таблицей: поле есть у каждой орбиты
+  /// и живет ровно столько же, сколько сама планета.
+  debrisTitanite Float @default(0)
+  debrisSilicate Float @default(0)
+
   system        SolarSystem    @relation(fields: [systemId], references: [id], onDelete: Cascade)
   base          Base?
   scans         PlanetScan[]
@@ -543,6 +549,7 @@ model Fleet {
   lightFighters Int @default(0)
   heavyCruisers Int @default(0)
   ionFrigates   Int @default(0)
+  recyclers     Int @default(0)
 
   /// Груз на борту: титанит, силикат и тритий занимают трюмы.
   cargoTitanite Float @default(0)
@@ -630,6 +637,7 @@ model FleetTemplate {
   lightFighters Int @default(0)
   heavyCruisers Int @default(0)
   ionFrigates   Int @default(0)
+  recyclers     Int @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -754,6 +762,7 @@ enum FleetMission {
   HUB_PICKUP
   ATTACK
   EXPEDITION
+  HARVEST
 }
 
 enum ExpeditionOutcome {
@@ -796,6 +805,7 @@ enum ShipType {
   LIGHT_FIGHTER
   HEAVY_CRUISER
   ION_FRIGATE
+  RECYCLER
 }
 
 enum SystemAnomaly {

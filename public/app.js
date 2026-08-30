@@ -99,6 +99,7 @@
     cargoSilicateLabel: $('cargo-silicate-label'),
     cargoTritium: $('cargo-tritium'),
     cargoTritiumField: $('cargo-tritium-field'),
+    cargoInputs: $('cargo-inputs'),
     adminTab: $('admin-tab'),
     adminSearch: $('admin-search'),
     adminRows: $('admin-rows'),
@@ -168,6 +169,7 @@
     LIGHT_FIGHTER: 'Истребители',
     HEAVY_CRUISER: 'Крейсера',
     ION_FRIGATE: 'Фрегаты',
+    RECYCLER: 'Переработчики',
   };
 
   /**
@@ -1107,6 +1109,14 @@
         opacity: planet.visibility === 'UNKNOWN' ? 0.55 : 1,
       }));
 
+      // Пунктирное кольцо обломков рисуем первым, чтобы кольцо владельца
+      // легло поверх и не потерялось на планетах со своей колонией.
+      if (planet.debris && planet.debris.titanite + planet.debris.silicate > 0) {
+        group.appendChild(svgEl('circle', {
+          class: 'debris-ring', cx: x, cy: y, r: radius + 12,
+        }));
+      }
+
       if (planet.isOwn) {
         group.appendChild(svgEl('circle', {
           cx: x, cy: y, r: radius + 7, fill: 'none', stroke: 'var(--accent)', 'stroke-width': 1.5,
@@ -1299,8 +1309,12 @@
   function planetDetailsHtml(planet, short) {
     const head = `<b>${planet.name}</b><br>орбита ${planet.position} · ${PLANET_TYPES[planet.type] || planet.type} · слотов ${planet.size}`;
 
+    // Обломки светятся на радарах: их видно и по неразведанной планете,
+    // поэтому строка идет до проверки на туман войны.
+    const debris = debrisHtml(planet);
+
     if (planet.visibility === 'UNKNOWN') {
-      return `${head}<br><span class="unknown">Данных нет. Отправь зонд для сканирования.</span>`;
+      return `${head}${debris}<br><span class="unknown">Данных нет. Отправь зонд для сканирования.</span>`;
     }
 
     const rich = planet.richness
@@ -1341,7 +1355,17 @@
     const age = planet.visibility === 'SCANNED' ? scanAgeHtml(planet) : '';
     const hint = short ? '' : '<br>';
 
-    return head + owner + rich + buildings + resources + fleet + defenses + age + hint;
+    return head + debris + owner + rich + buildings + resources + fleet + defenses + age + hint;
+  }
+
+  /** Поле обломков на орбите. Туман войны его не скрывает — гонка честная. */
+  function debrisHtml(planet) {
+    const debris = planet.debris;
+    if (!debris || debris.titanite + debris.silicate <= 0) return '';
+    return (
+      `<br><span class="debris">обломки: ${icon('titanite', 'sm')} ${fmt(debris.titanite)} · ` +
+      `${icon('silicate', 'sm')} ${fmt(debris.silicate)}</span>`
+    );
   }
 
   const FRESHNESS_LABELS = {
@@ -1392,7 +1416,18 @@
 
   /** Список миссий зависит от того, что выбрано: планета или хаб. */
   function syncMissionOptions() {
-    const options = MISSION_OPTIONS[map.selectedKind] || MISSION_OPTIONS.PLANET;
+    const base = MISSION_OPTIONS[map.selectedKind] || MISSION_OPTIONS.PLANET;
+    const options = [...base];
+
+    // «Переработка» появляется только когда в составе есть переработчик и над
+    // планетой действительно висит поле: пустой пункт меню сбивал бы с толку.
+    if (map.selectedKind === 'PLANET') {
+      const planet = selectedPlanet();
+      const hasDebris = planet && planet.debris && planet.debris.titanite + planet.debris.silicate > 0;
+      const picked = readComposition();
+      if (hasDebris && picked.RECYCLER > 0) options.push(['HARVEST', 'Переработка обломков']);
+    }
+
     const current = el.mission.value;
     const same = [...el.mission.options].map((o) => o.value).join() === options.map((o) => o[0]).join();
     if (!same) {
@@ -1415,6 +1450,15 @@
     const hubRun = pickup || el.mission.value === 'HUB_DELIVERY';
     el.cargoTritiumField.hidden = hubRun;
     if (hubRun) el.cargoTritium.value = '0';
+
+    // Переработчики летят за обломками, а не с грузом: трюмы должны быть пусты.
+    const harvest = el.mission.value === 'HARVEST';
+    el.cargoInputs.hidden = harvest;
+    if (harvest) {
+      el.cargoTitanite.value = '0';
+      el.cargoSilicate.value = '0';
+      el.cargoTritium.value = '0';
+    }
   }
 
   function renderPlanetInfo() {
@@ -1482,7 +1526,10 @@
         input.min = '0';
         input.value = '0';
         input.dataset.ship = type;
-        input.addEventListener('input', schedulePlan);
+        input.addEventListener('input', () => {
+          syncMissionOptions();
+          schedulePlan();
+        });
         field.append(caption, input);
         el.fleetInputs.appendChild(field);
         fleetInputs[type] = { caption, input };
@@ -1525,7 +1572,10 @@
     if (!base || !target) return;
 
     const ships = readComposition();
-    if (!ships.PROBE && !ships.TRANSPORTER && !ships.LIGHT_FIGHTER) {
+    // Проверяем любой класс, а не три исходных: иначе флот из одних крейсеров,
+    // фрегатов или переработчиков остается без расчета маршрута.
+    const picked = Object.values(ships).reduce((total, count) => total + count, 0);
+    if (picked <= 0) {
       map.plan = null;
       el.flightPlan.textContent = 'Выбери корабли, чтобы увидеть расчет.';
       return;
@@ -2070,6 +2120,16 @@
       // Почему увезли именно столько: сколько спрятало хранилище защитника.
       const safe = battle.victory && battle.role === 'ATTACKER' ? battle.storageDefense : null;
 
+      // Обломки образуют обе стороны, поэтому строка одинакова для всех.
+      const debris = document.createElement('div');
+      debris.className = 'line';
+      const debrisTotal = battle.debris ? battle.debris.titanite + battle.debris.silicate : 0;
+      debris.innerHTML =
+        debrisTotal > 0
+          ? `на орбите осело обломков: ${icon('titanite', 'sm')} <b>${fmt(battle.debris.titanite)}</b> · ` +
+            `${icon('silicate', 'sm')} <b>${fmt(battle.debris.silicate)}</b> — их можно собрать переработчиком`
+          : 'обломков не осталось';
+
       const when = document.createElement('div');
       when.className = 'line';
       when.textContent = new Date(battle.createdAt).toLocaleString('ru-RU');
@@ -2091,7 +2151,7 @@
         card.appendChild(line);
       }
 
-      card.append(plunder);
+      card.append(plunder, debris);
 
       if (safe) {
         const line = document.createElement('div');
@@ -3048,6 +3108,15 @@
     } else if (result.attackerWins) {
       card.appendChild(line('добыча: склад защитника не задан — заполни его, чтобы увидеть трофеи'));
     }
+
+    const debrisTotal = result.debris.titanite + result.debris.silicate;
+    card.appendChild(line(
+      debrisTotal > 0
+        ? `обломки после боя: ${icon('titanite', 'sm')} <b>${fmt(result.debris.titanite)}</b> · ` +
+          `${icon('silicate', 'sm')} <b>${fmt(result.debris.silicate)}</b> — включая наши потери, ` +
+          'их соберет тот, чей переработчик долетит первым'
+        : 'обломков после такого боя не останется',
+    ));
 
     card.appendChild(line('Это прогноз: бой считается по тем же формулам, но реальный состав противника мог измениться.'));
     el.simResult.appendChild(card);

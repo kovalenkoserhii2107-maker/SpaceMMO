@@ -65,6 +65,10 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
       position: planet.position,
       type: planet.type,
       size: planet.size,
+      debris: {
+        titanite: Math.floor(planet.debrisTitanite),
+        silicate: Math.floor(planet.debrisSilicate),
+      },
     };
 
     const ownBase = planet.base && planet.base.commanderId === commanderId ? planet.base : null;

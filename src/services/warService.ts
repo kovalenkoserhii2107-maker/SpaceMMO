@@ -58,6 +58,8 @@ export interface DiplomacyView {
     plunder: { titanite: number; silicate: number; tritium: number };
     /** Почему увезли именно столько: что спрятало хранилище защитника. */
     storageDefense: StorageDefenseReport | null;
+    /** Сколько обломков осело на орбите после боя. */
+    debris: { titanite: number; silicate: number } | null;
     myLosses: Array<{ label: string; lost: number; before: number }>;
     enemyLosses: Array<{ label: string; lost: number; before: number }>;
     attackerPower: number;
@@ -108,6 +110,7 @@ interface BattleData {
   defenderDamageReport?: DamageReport;
   plunder: { titanite: number; silicate: number; tritium: number };
   storageDefense?: StorageDefenseReport;
+  debris?: { titanite: number; silicate: number };
 }
 
 export async function getDiplomacy(commanderId: string): Promise<DiplomacyView> {
@@ -244,6 +247,7 @@ export async function getDiplomacy(commanderId: string): Promise<DiplomacyView> 
           tritium: report.plunderTritium,
         },
         storageDefense: data.storageDefense ?? null,
+        debris: data.debris ?? null,
         myLosses: role === 'ATTACKER' ? data.attackerLosses : data.defenderLosses,
         enemyLosses: role === 'ATTACKER' ? data.defenderLosses : data.attackerLosses,
         attackerPower: Math.round(data.attackerPower?.firepower ?? 0),

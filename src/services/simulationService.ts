@@ -50,6 +50,12 @@ export interface SimulationResult {
   } | null;
   /** Грузоподъемность уцелевшей части флота. */
   survivingCapacity: number;
+  /**
+   * Обломки, которые осядут на орбите после боя.
+   * Часть из них — потери самого атакующего, поэтому цифра полезна обеим
+   * сторонам: она показывает, что оставит после себя вылет.
+   */
+  debris: { titanite: number; silicate: number };
 }
 
 export function simulateBattle(
@@ -93,5 +99,6 @@ export function simulateBattle(
         }
       : null,
     survivingCapacity,
+    debris: outcome.debris,
   };
 }

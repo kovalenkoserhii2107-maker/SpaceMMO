@@ -14,6 +14,7 @@ const FLEET_MISSIONS = [
   'HUB_PICKUP',
   'ATTACK',
   'EXPEDITION',
+  'HARVEST',
 ] as const;
 export type FleetMission = (typeof FLEET_MISSIONS)[number];
 
@@ -28,6 +29,7 @@ export const MISSION_LABELS: Record<FleetMission, string> = {
   HUB_PICKUP: 'Вывоз с хаба',
   ATTACK: 'Атака',
   EXPEDITION: 'Экспедиция',
+  HARVEST: 'Переработка',
 };
 
 /** Миссии, летящие к торговому хабу, а не к планете. */
@@ -53,6 +55,9 @@ const FLIGHT_PROFILES: Record<ShipType, FlightProfile> = {
   // Тяжелые классы медленнее и прожорливее: за огневую мощь платят логистикой.
   HEAVY_CRUISER: { speed: 90, cargo: 300, fuelPerSecond: 0.8, eridiumPerDistance: 2.5 },
   ION_FRIGATE: { speed: 120, cargo: 150, fuelPerSecond: 0.6, eridiumPerDistance: 2.0 },
+  // Переработчик: гигантский трюм ценой скорости и расхода трития.
+  // За один рейс он собирает больше, чем десяток транспортов, но ползет и жжет.
+  RECYCLER: { speed: 40, cargo: 20000, fuelPerSecond: 3.0, eridiumPerDistance: 6.0 },
 };
 
 /** Базовое время перелета между соседними орбитами, секунды. */
@@ -226,6 +231,11 @@ export function validateComposition(mission: FleetMission, ships: ShipCounts): s
   }
   if (isHubMission(mission) && fleetCapacity(ships) <= 0) {
     return 'Для рейса на хаб нужен корабль с трюмом';
+  }
+  // Обломки собирает только специализированный корабль: обычные трюмы
+  // для этого не приспособлены, иначе переработчик был бы не нужен.
+  if (mission === 'HARVEST' && ships.RECYCLER <= 0) {
+    return 'Для сборки обломков нужен хотя бы один переработчик';
   }
   return null;
 }

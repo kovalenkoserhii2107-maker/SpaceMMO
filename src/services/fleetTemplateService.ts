@@ -102,6 +102,7 @@ interface TemplateRow {
   lightFighters: number;
   heavyCruisers: number;
   ionFrigates: number;
+  recyclers: number;
 }
 
 function toView(row: TemplateRow): FleetTemplateView {
@@ -111,6 +112,7 @@ function toView(row: TemplateRow): FleetTemplateView {
   ships.LIGHT_FIGHTER = row.lightFighters;
   ships.HEAVY_CRUISER = row.heavyCruisers;
   ships.ION_FRIGATE = row.ionFrigates;
+  ships.RECYCLER = row.recyclers;
 
   return { id: row.id, name: row.name, ships, size: fleetSize(ships) };
 }
@@ -122,5 +124,6 @@ function toColumns(ships: ShipCounts): Omit<TemplateRow, 'id' | 'name'> {
     lightFighters: ships.LIGHT_FIGHTER,
     heavyCruisers: ships.HEAVY_CRUISER,
     ionFrigates: ships.ION_FRIGATE,
+    recyclers: ships.RECYCLER,
   };
 }

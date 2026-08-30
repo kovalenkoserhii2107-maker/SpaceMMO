@@ -19,6 +19,7 @@ export const SHIP_TYPES = [
   'LIGHT_FIGHTER',
   'HEAVY_CRUISER',
   'ION_FRIGATE',
+  'RECYCLER',
 ] as const;
 
 export type ShipType = (typeof SHIP_TYPES)[number];
@@ -30,7 +31,7 @@ export function isShipType(value: unknown): value is ShipType {
 }
 
 export function emptyShipCounts(): ShipCounts {
-  return { PROBE: 0, TRANSPORTER: 0, LIGHT_FIGHTER: 0, HEAVY_CRUISER: 0, ION_FRIGATE: 0 };
+  return { PROBE: 0, TRANSPORTER: 0, LIGHT_FIGHTER: 0, HEAVY_CRUISER: 0, ION_FRIGATE: 0, RECYCLER: 0 };
 }
 
 interface ShipDefinition {
@@ -83,6 +84,16 @@ const SHIPS: Record<ShipType, ShipDefinition> = {
     baseSeconds: 150,
     shipyardLevel: 4,
     requires: { HYPERSPACE_PHYSICS: 1 },
+  },
+  RECYCLER: {
+    label: 'Переработчик',
+    description:
+      'Сборщик обломков. Без оружия, медленный и прожорливый, зато трюм больше, чем у десяти транспортов.',
+    cost: { titanite: 8000, silicate: 4000, tritium: 2000 },
+    baseSeconds: 300,
+    shipyardLevel: 4,
+    // Тяжелый корпус под гигантский трюм требует развитой тяги.
+    requires: { COMBUSTION_DRIVE: 4 },
   },
 };
 

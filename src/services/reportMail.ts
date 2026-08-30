@@ -63,7 +63,15 @@ export function buildBattleMail(input: BattleMailInput): OutgoingMessage[] {
       surplus: Math.round(plunder.surplus),
       cargoLimited: plunder.cargoLimited,
     },
+    debris: outcome.debris,
   };
+
+  // Обломки образуют обе стороны, поэтому строка одинаковая в обоих письмах.
+  const debrisLine =
+    outcome.debris.titanite + outcome.debris.silicate > 0
+      ? `\nНа орбите осталось обломков: ${outcome.debris.titanite} титанита, ` +
+        `${outcome.debris.silicate} силикатов.`
+      : '';
 
   const attackerBody =
     `Бой у планеты ${planetName}. Противник: ${defenderName}.\n` +
@@ -73,7 +81,8 @@ export function buildBattleMail(input: BattleMailInput): OutgoingMessage[] {
     (attackerWon
       ? `Вывезено: ${loot}. Хранилище противника укрыло ${payload.plunder.protectedAmount}` +
         (plunder.cargoLimited ? ', остальное не влезло в трюмы уцелевших.' : '.')
-      : 'Атака отбита, трофеев нет.');
+      : 'Атака отбита, трофеев нет.') +
+    debrisLine;
 
   const defenderBody =
     `Наша колония ${planetName} атакована. Нападавший: ${attackerName}.\n` +
@@ -82,7 +91,8 @@ export function buildBattleMail(input: BattleMailInput): OutgoingMessage[] {
     `Потери нападавшего: ${describeLosses(outcome.attackerLosses)}.\n` +
     (attackerWon
       ? `Со склада вывезено: ${loot}. Хранилище укрыло ${payload.plunder.protectedAmount}.`
-      : 'Оборона выстояла, склад цел.');
+      : 'Оборона выстояла, склад цел.') +
+    debrisLine;
 
   return [
     {
@@ -212,6 +222,52 @@ export function buildSpyMail(input: SpyMailInput): OutgoingMessage[] {
         buildLine,
       ].join('\n'),
       payload: { planetName, systemName, ...payload },
+    },
+  ];
+}
+
+export interface HarvestMailInput {
+  commanderId: string;
+  planetName: string;
+  systemName: string;
+  capacity: number;
+  titanite: number;
+  silicate: number;
+}
+
+/**
+ * Отчет переработчика.
+ *
+ * Пустой рейс — тоже результат: поле мог собрать другой игрок, пока флот летел.
+ * Об этом надо сказать прямо, иначе исчезнувшие обломки выглядят как баг.
+ */
+export function buildHarvestMail(input: HarvestMailInput): OutgoingMessage[] {
+  const total = input.titanite + input.silicate;
+  const empty = total <= 0;
+
+  const body = empty
+    ? `Переработчики вышли на орбиту ${input.planetName} (система ${input.systemName}), ` +
+      'но поле обломков оказалось пустым — его успели собрать раньше. Флот возвращается ни с чем.'
+    : `Переработчики собрали поле обломков на орбите ${input.planetName} ` +
+      `(система ${input.systemName}).\n` +
+      `Поднято: ${input.titanite} титанита, ${input.silicate} силикатов.\n` +
+      `Трюмы: занято ${total} из ${input.capacity}.`;
+
+  return [
+    {
+      recipientId: input.commanderId,
+      type: 'EXPEDITION',
+      subject: empty
+        ? `Переработка: пусто у ${input.planetName}`
+        : `Переработка: собрано ${total} у ${input.planetName}`,
+      body,
+      payload: {
+        planetName: input.planetName,
+        systemName: input.systemName,
+        titanite: input.titanite,
+        silicate: input.silicate,
+        capacity: input.capacity,
+      },
     },
   ];
 }

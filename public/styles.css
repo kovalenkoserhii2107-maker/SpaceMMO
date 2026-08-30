@@ -317,6 +317,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .art.light_fighter { --art-accent: var(--warn); }
 .art.heavy_cruiser { --art-accent: var(--err); }
 .art.ion_frigate { --art-accent: var(--silicate); }
+.art.recycler { --art-accent: var(--ok); }
 
 /* Построенный объект перестает быть блеклым — видно, что он уже работает. */
 .card.built .art { color: var(--text); }
@@ -918,3 +919,17 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 @media (max-width: 480px) { .admin-fields { grid-template-columns: 1fr; } }
 .admin-fields .field span { font-size: 11px; }
 .admin-fields input { padding: 8px 10px; font-size: 13px; }
+
+
+/* ---------- Поле обломков ---------- */
+.debris {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 8px;
+  border: 1px solid rgba(74, 222, 128, 0.35);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--ok);
+}
+.debris-ring { fill: none; stroke: var(--ok); stroke-width: 1.5; stroke-dasharray: 3 3; opacity: 0.8; }

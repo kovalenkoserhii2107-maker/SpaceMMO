@@ -91,6 +91,8 @@ export interface PlanetView {
   resources: ScanPayload['resources'] | null;
   fleet: ShipCounts | null;
   defenses: DefenseCounts | null;
+  /** Поле обломков на орбите: видно всем, туман войны его не скрывает. */
+  debris: { titanite: number; silicate: number };
   /** Возраст данных разведки в секундах. */
   scanAgeSeconds: number | null;
   /** Свежесть разведданных; null — планета не разведана. */
@@ -102,12 +104,20 @@ export interface PlanetView {
   staleHidden: boolean;
 }
 
+/**
+ * Астрономические факты о планете — то, что видно без разведки.
+ *
+ * Поле обломков сюда же: оно висит на орбите и светится на радарах, поэтому
+ * известно всем и не скрывается туманом войны. Иначе гонка за обломками была бы
+ * невозможна — соперники просто не знали бы, куда лететь.
+ */
 interface PlanetFacts {
   planetId: string;
   name: string;
   position: number;
   type: string;
   size: number;
+  debris: { titanite: number; silicate: number };
 }
 
 /** Своя планета: видно всё и в реальном времени. */

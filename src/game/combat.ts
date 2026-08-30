@@ -18,9 +18,23 @@
  * Именно поэтому дорогой кинетический флот вязнет в дешевых ионных фрегатах:
  * его урон режется вдвое щитами, а щиты у фрегатов — основной слой защиты.
  */
-import { DEFENSE_TYPES, defenseLabel, emptyDefenseCounts, type DefenseCounts, type DefenseType } from './defenses.js';
+import {
+  DEFENSE_TYPES,
+  defenseCost,
+  defenseLabel,
+  emptyDefenseCounts,
+  type DefenseCounts,
+  type DefenseType,
+} from './defenses.js';
 import { PROTECTED_STORAGE_SHARE } from './rules.js';
-import { emptyShipCounts, SHIP_TYPES, shipLabel, type ShipCounts, type ShipType } from './ships.js';
+import {
+  emptyShipCounts,
+  SHIP_TYPES,
+  shipCost,
+  shipLabel,
+  type ShipCounts,
+  type ShipType,
+} from './ships.js';
 
 export const DAMAGE_TYPES = ['KINETIC', 'LASER', 'ION'] as const;
 export type DamageType = (typeof DAMAGE_TYPES)[number];
@@ -60,6 +74,8 @@ const SHIP_COMBAT: Record<ShipType, CombatProfile> = {
   LIGHT_FIGHTER: { damage: 15, damageType: 'LASER', shield: 0, armor: 0, hull: 60 },
   HEAVY_CRUISER: { damage: 60, damageType: 'KINETIC', shield: 0, armor: 250, hull: 150 },
   ION_FRIGATE: { damage: 45, damageType: 'ION', shield: 220, armor: 0, hull: 90 },
+  // Переработчик безоружен, но живуч: он лезет на поле боя за обломками.
+  RECYCLER: { damage: 0, damageType: 'LASER', shield: 0, armor: 0, hull: 400 },
 };
 
 const DEFENSE_COMBAT: Record<DefenseType, CombatProfile> = {
@@ -69,6 +85,15 @@ const DEFENSE_COMBAT: Record<DefenseType, CombatProfile> = {
 
 /** Доля уязвимого излишка, которую победитель успевает вывезти. */
 const RAID_SHARE = 0.9;
+
+/**
+ * Какая часть стоимости уничтоженной техники остается на орбите обломками.
+ *
+ * Обломки образуют обе стороны: сгоревший флот нападавшего висит над планетой
+ * ровно так же, как разбитая оборона защитника. Тритий в обломках не остается —
+ * топливо и реагент сгорают в бою, поэтому поле состоит из титанита и силикатов.
+ */
+export const DEBRIS_SHARE = 0.3;
 
 export interface SideForces {
   ships: ShipCounts;
@@ -124,6 +149,14 @@ export interface BattleOutcome {
   /** Куда ушел урон атакующего (по защите обороняющегося) и наоборот. */
   attackerDamageReport: AbsorptionReport;
   defenderDamageReport: AbsorptionReport;
+  /** Обломки, осевшие на орбите после боя: от потерь обеих сторон. */
+  debris: DebrisAmount;
+}
+
+/** Обломки на орбите. Только титанит и силикаты: тритий в бою сгорает. */
+export interface DebrisAmount {
+  titanite: number;
+  silicate: number;
 }
 
 /** Есть ли во флоте хоть один вооруженный корабль. */
@@ -328,7 +361,61 @@ export function resolveBattle(attacker: SideForces, defender: SideForces): Battl
     ],
     attackerDamageReport: absorb(defenderPower.pools, attackerDamage, attackerPower.firepower * finiteTime),
     defenderDamageReport: absorb(attackerPower.pools, defenderDamage, defenderPower.firepower * finiteTime),
+    debris: debrisFromLosses(
+      shipLossCounts(attacker.ships, attackerSurvivors),
+      shipLossCounts(defender.ships, defenderSurvivorShips),
+      defenseLossCounts(defender.defenses, defenderSurvivorDefenses),
+    ),
   };
+}
+
+/**
+ * Обломки от уничтоженной техники.
+ *
+ * Считается по стоимости постройки, а не по «мощи»: игрок понимает, во что ему
+ * обошелся корабль, и легко прикидывает, сколько висит над планетой.
+ * Дробные остатки отбрасываются вниз — обломков не должно становиться больше,
+ * чем сгорело техники.
+ */
+export function debrisFromLosses(
+  attackerShipLosses: ShipCounts,
+  defenderShipLosses: ShipCounts,
+  defenderDefenseLosses: DefenseCounts,
+): DebrisAmount {
+  let titanite = 0;
+  let silicate = 0;
+
+  for (const type of SHIP_TYPES) {
+    const lost = attackerShipLosses[type] + defenderShipLosses[type];
+    if (lost <= 0) continue;
+    const cost = shipCost(type);
+    titanite += cost.titanite * lost;
+    silicate += cost.silicate * lost;
+  }
+  for (const type of DEFENSE_TYPES) {
+    const lost = defenderDefenseLosses[type];
+    if (lost <= 0) continue;
+    const cost = defenseCost(type);
+    titanite += cost.titanite * lost;
+    silicate += cost.silicate * lost;
+  }
+
+  return {
+    titanite: Math.floor(titanite * DEBRIS_SHARE),
+    silicate: Math.floor(silicate * DEBRIS_SHARE),
+  };
+}
+
+function shipLossCounts(before: ShipCounts, after: ShipCounts): ShipCounts {
+  const lost = emptyShipCounts();
+  for (const type of SHIP_TYPES) lost[type] = Math.max(0, before[type] - after[type]);
+  return lost;
+}
+
+function defenseLossCounts(before: DefenseCounts, after: DefenseCounts): DefenseCounts {
+  const lost = emptyDefenseCounts();
+  for (const type of DEFENSE_TYPES) lost[type] = Math.max(0, before[type] - after[type]);
+  return lost;
 }
 
 /** Что удалось вывезти и почему именно столько — основа отчета для агрессора. */

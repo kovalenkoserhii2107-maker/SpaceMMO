@@ -21,7 +21,8 @@
     "test:storage": "tsx tests/storage.ts",
     "test:commander": "tsx tests/commander.ts",
     "test:mail": "tsx tests/mail.ts",
-    "test:admin": "tsx tests/admin.ts"
+    "test:admin": "tsx tests/admin.ts",
+    "test:debris": "tsx tests/debris.ts"
   },
   "keywords": [],
   "author": "",
