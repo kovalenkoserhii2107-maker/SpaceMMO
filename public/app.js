@@ -1304,7 +1304,9 @@
    * перекрывает круг — рассчитывать, что фон просто останется виден, нельзя.
    */
   function celestialBody(group, cx, cy, radius, options) {
-    const { fill, opacity = 1, src, clipId, kind = 'solid', spread = 1, zoom = 1 } = options;
+    const {
+      fill, opacity = 1, src, clipId, kind = 'solid', spread = 1, zoom = 1, mask = 'glowFade',
+    } = options;
 
     group.appendChild(svgEl('circle', {
       class: `body${kind === 'glow' ? ' glow-body' : ''}`, cx, cy, r: radius, fill, opacity,
@@ -1324,7 +1326,7 @@
     });
 
     if (glow) {
-      image.setAttribute('mask', 'url(#glowFade)');
+      image.setAttribute('mask', `url(#${mask})`);
     } else {
       const clip = svgEl('clipPath', { id: clipId });
       clip.appendChild(svgEl('circle', { cx, cy, r: radius }));
@@ -1353,7 +1355,19 @@
       '<stop offset="52%" stop-color="#fff"/><stop offset="100%" stop-color="#000"/>' +
       '</radialGradient>' +
       '<mask id="glowFade" maskContentUnits="objectBoundingBox">' +
-      '<rect width="1" height="1" fill="url(#glowFadeGrad)"/></mask>';
+      '<rect width="1" height="1" fill="url(#glowFadeGrad)"/></mask>' +
+      /*
+       * Жесткий вариант для миниатюр галактик. У части арта содержимое доходит
+       * до самых углов кадра, и мягкого спада по краю мало: под `screen`
+       * светится вся картинка целиком, и от нее остается квадрат. Здесь маска
+       * закрывает всё за серединой картинки, то есть наружная половина арта
+       * не рисуется вовсе — видно только светлую сердцевину.
+       */
+      '<radialGradient id="glowCropGrad">' +
+      '<stop offset="28%" stop-color="#fff"/><stop offset="53%" stop-color="#000"/>' +
+      '</radialGradient>' +
+      '<mask id="glowCrop" maskContentUnits="objectBoundingBox">' +
+      '<rect width="1" height="1" fill="url(#glowCropGrad)"/></mask>';
     return defs;
   }
 
@@ -2883,8 +2897,16 @@
    * всего 24 при иконке в 48, из-за чего соседние системы налезали друг на друга.
    */
   const GALAXY = { margin: 74, step: 74 };
-  /** Сторона миниатюры на макро-карте: заметно меньше шага сетки, чтобы был воздух. */
-  const SYSTEM_ICON = 40;
+  /**
+   * Видимый размер миниатюры на макро-карте.
+   *
+   * Это размер того, что реально видно: картинка рисуется крупнее и обрезается
+   * маской до светлой сердцевины, поэтому наружная половина арта — с рамками
+   * и мусором по углам — не доезжает до экрана вовсе.
+   */
+  const SYSTEM_ICON = 56;
+  /** Во сколько раз картинка крупнее видимого круга; обратное — доля арта, что видна. */
+  const SYSTEM_ICON_SPREAD = 1.9;
 
   /*
    * Картинка системы выбирается по классу и координатам.
@@ -2985,13 +3007,12 @@
         }));
       }
 
-      // Картинка дается крупнее иконки: маске нужен запас, чтобы растворить
-      // края кадра, иначе от них осталась бы квадратная рамка.
       celestialBody(group, point.x, point.y, SYSTEM_ICON / 2, {
         kind: 'glow',
         fill: blackHole ? 'rgba(157, 123, 255, 0.16)' : 'rgba(120, 160, 255, 0.16)',
         src: systemArt(system),
-        spread: 1.3,
+        spread: SYSTEM_ICON_SPREAD,
+        mask: 'glowCrop',
       });
 
       const label = svgEl('text', { x: point.x, y: point.y + SYSTEM_ICON / 2 + 14, class: `system-label name${system.isHome ? ' home' : ''}` });

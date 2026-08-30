@@ -196,7 +196,16 @@ check(
 );
 check(
   'у светящихся тел мягкий край: яркое содержимое не обрывается рамкой кадра',
-  client.includes("image.setAttribute('mask', 'url(#glowFade)')") && client.includes('glowFadeGrad'),
+  client.includes("image.setAttribute('mask', `url(#${mask})`)") && client.includes('glowFadeGrad'),
+);
+/*
+ * Миниатюрам галактик мягкого края мало: у части арта содержимое доходит до углов
+ * кадра, и под `screen` от картинки остается светящийся квадрат. Им нужна вторая,
+ * жесткая маска, которая срезает наружную половину арта.
+ */
+check(
+  'миниатюры галактик обрезаются до сердцевины, а не просто гасят край',
+  client.includes('glowCropGrad') && client.includes("mask: 'glowCrop'"),
 );
 check(
   'планеты обрезаются кругом и не смешиваются',
