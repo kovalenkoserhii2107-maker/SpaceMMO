@@ -181,9 +181,14 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   gap: 16px;
   flex-wrap: wrap;
 }
-.res { display: flex; align-items: baseline; gap: 6px; font-variant-numeric: tabular-nums; }
-.res b { font-size: 15px; }
-.res small { color: var(--muted); font-size: 11px; }
+/*
+ * Иконка крупнее кегля строки: в шапке она единственное, что отличает руду
+ * от полимеров на скорости, и на 1.15em силуэт превращался в точку.
+ */
+.res { display: flex; align-items: center; gap: 7px; font-variant-numeric: tabular-nums; }
+.res .ico { width: 22px; height: 22px; vertical-align: 0; }
+.res b { font-size: 16px; }
+.res small { color: var(--muted); font-size: 11px; align-self: flex-end; padding-bottom: 2px; }
 .res-sep { width: 1px; height: 22px; background: var(--line-strong); }
 
 /*
@@ -419,20 +424,91 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 
 .planet-card {
   padding: 16px 18px;
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
   gap: 18px;
-  flex-wrap: wrap;
+  align-items: start;
 }
-.brief-head { min-width: 0; }
+.colony-art { width: 132px; }
+/* Портрет планеты круглый: у арта черный фон, и в квадрате он спорил бы с панелью. */
+.colony-art .art { border-radius: 50%; aspect-ratio: 1 / 1; border-color: var(--line-strong); }
+
+.colony-main { display: grid; gap: 14px; min-width: 0; }
+.colony-head { min-width: 0; }
 .planet-card h2 { margin: 0 0 4px; font-size: 20px; }
 
-.richness { display: flex; gap: 14px; flex-wrap: wrap; }
-.richness div { text-align: center; font-size: 12px; color: var(--muted); }
-.richness b { display: block; font-size: 15px; color: var(--text); }
+.colony-block { display: grid; gap: 8px; min-width: 0; }
+.colony-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.4px;
+  color: var(--muted);
+}
+.colony-sub b { color: var(--accent); font-size: 12px; letter-spacing: 0; }
+
+/*
+ * Богатство недр. Раньше это был ряд «×0.61» под иконкой — число без шкалы,
+ * которое не с чем сравнить. Теперь у каждой строки название, полоса
+ * с единицей посередине и словесная оценка: «бедно» понятно без справочника.
+ */
+.richness { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 6px 18px; }
+.rich-row {
+  display: grid;
+  grid-template-columns: minmax(96px, auto) minmax(40px, 1fr) minmax(104px, auto);
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+.rich-name { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+.rich-name .ico { width: 18px; height: 18px; vertical-align: 0; }
+.rich-bar { height: 6px; border-radius: 999px; background: rgba(120, 160, 255, 0.14); overflow: hidden; }
+.rich-bar > i { display: block; height: 100%; border-radius: 999px; background: currentColor; }
+.rich-value { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+.rich-value b { color: var(--text); margin-right: 4px; }
+
+/* Оценка цветом: от красного к бирюзовому — та же шкала, что у хранилища. */
+.rich-row.poor { color: var(--err); }
+.rich-row.low { color: var(--warn); }
+.rich-row.mid { color: var(--muted); }
+.rich-row.high { color: var(--accent); }
+.rich-row.top { color: var(--ok); }
+.rich-row.poor .rich-value b, .rich-row.low .rich-value b { color: currentColor; }
+.rich-row.high .rich-value b, .rich-row.top .rich-value b { color: currentColor; }
+
+/* ---------- Гарнизон базы ---------- */
+.colony-garrison { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.garrison { display: flex; flex-wrap: wrap; gap: 8px; }
+.garrison-unit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px 5px 5px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-2);
+}
+.garrison-unit b { font-size: 14px; font-variant-numeric: tabular-nums; }
+.garrison-unit small { display: block; font-size: 10px; color: var(--muted); }
+.garrison-empty { margin: 0; font-size: 12px; color: var(--muted); }
+
+/* Круглая миниатюра юнита: тот же арт, что на карточке постройки. */
+.art.art-chip {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  aspect-ratio: 1 / 1;
+  border-radius: 50%;
+  border-width: 1px;
+}
+.art.art-chip.art-missing::after { font-size: 11px; }
 
 /* ---------- Хранилище: заполненность и остановка добычи ---------- */
-.storage { flex-basis: 100%; display: grid; gap: 6px; }
+.storage { display: grid; gap: 6px; }
 .storage-head {
   display: flex;
   justify-content: space-between;
@@ -483,14 +559,16 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
  * оказываются на разной высоте и сетка выглядит разъехавшейся.
  */
 /*
- * `auto-fit` вместо `auto-fill`: колонок столько, сколько влезает, и они
- * делят ширину поровну. Верхнюю границу трека сюда ставить нельзя — число
- * повторов грид считает по максимуму трека, и `minmax(230px, 340px)` дал бы
- * две широкие колонки там, где помещаются четыре.
+ * `auto-fill`, а не `auto-fit`: пустые треки сохраняются, поэтому карточка
+ * везде одного размера. С `auto-fit` раздел из двух турелей растягивал каждую
+ * на пол-экрана — квадратная обложка превращалась в постер, и оборона выглядела
+ * крупнее всей верфи. Верхнюю границу трека ставить нельзя: число повторов
+ * грид считает по максимуму, и `minmax(230px, 340px)` дал бы две широкие
+ * колонки там, где помещаются четыре.
  */
 .cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
   gap: 14px;
   align-items: stretch;
 }
@@ -591,7 +669,13 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   gap: 10px;
   padding: 10px 12px;
 }
-.card-titles h4 { margin: 0; font-size: 15px; overflow-wrap: break-word; }
+/*
+ * `anywhere`, а не `break-word`: только он уменьшает min-content ширину
+ * флекс-элемента. С `break-word` строка «Гиперпространственная физика» держала
+ * ширину самого длинного слова, вылезала за карточку и выдавливала бейдж
+ * уровня за ее край — уровень техники просто пропадал с экрана.
+ */
+.card-titles h4 { margin: 0; min-width: 0; font-size: 15px; overflow-wrap: anywhere; hyphens: auto; }
 .card-titles .level { flex: none; }
 
 /* Построенный объект подсвечен рамкой — видно, что он уже работает. */
@@ -609,23 +693,75 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .time { font-size: 12px; color: var(--muted); }
 .reqs { font-size: 11px; color: var(--warn); }
 
+/*
+ * Полоса ожидания. Один вид на все четыре очереди — стройка, исследование,
+ * верфь и оборона: игрок ждет одинаково, и четыре разных способа показать
+ * ожидание заставляли бы каждый раз разбираться заново.
+ */
 .job-banner {
-  padding: 14px 16px;
+  padding: 12px 16px;
   border: 1px solid rgba(77, 210, 255, 0.35);
   border-radius: 14px;
   background: var(--panel-2);
   display: grid;
-  gap: 8px;
+  gap: 7px;
 }
-.job-banner .job-title { display: flex; justify-content: space-between; font-size: 13px; gap: 12px; }
-.job-banner .job-title b { color: var(--accent); font-variant-numeric: tabular-nums; }
+.job-banner .job-title { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; gap: 12px; }
+.job-banner .job-title span { font-weight: 600; }
+.job-banner .job-title b { flex: none; color: var(--accent); font-variant-numeric: tabular-nums; }
+.job-banner .job-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Заказ из хвоста очереди еще не начат — рамка гаснет, полоса стоит на нуле. */
+.job-banner.queued { border-color: var(--line); opacity: 0.75; }
+.job-banner.queued .job-title b { color: var(--muted); }
 
 .bar { height: 6px; border-radius: 999px; background: rgba(120, 160, 255, 0.15); overflow: hidden; }
-.bar > i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+.bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transition: width 0.4s ease;
+}
 
-.fleet { display: flex; gap: 18px; flex-wrap: wrap; padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
-.fleet div { font-size: 12px; color: var(--muted); }
-.fleet b { display: block; font-size: 17px; color: var(--text); }
+/*
+ * Состав флота и обороны. Было шесть чисел с подписями в строку — класс
+ * опознавался только по слову, а сила юнита лежала в карточке ниже.
+ * Стало: силуэт, счетчик и боевой профиль в одном месте.
+ */
+.fleet {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+}
+.roster-unit {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel-2);
+}
+.roster-unit .art.art-chip { width: 40px; height: 40px; }
+.roster-body { display: grid; gap: 2px; min-width: 0; }
+.roster-head { font-size: 13px; color: var(--muted); }
+.roster-head b { font-size: 17px; color: var(--text); margin-right: 4px; font-variant-numeric: tabular-nums; }
+.roster-combat { font-size: 11px; color: var(--accent); opacity: 0.85; overflow-wrap: anywhere; }
+/* Пустой ангар занимает всю ширину: одна фраза в узкой колонке рвется по слогам. */
+.roster-empty { grid-column: 1 / -1; margin: 0; font-size: 13px; color: var(--muted); }
 
 .queue { display: grid; gap: 8px; }
 .queue .queue-item {
@@ -1614,12 +1750,11 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 
   .identity-lines { display: none; }
   .cards { grid-template-columns: minmax(0, 1fr); }
-  /*
-   * Колонкой — и обязательно без переноса: у блока хранилища `flex-basis: 100%`,
-   * и в колонке с `wrap` он занимает всю высоту, не влезает и уезжает второй
-   * колонкой вправо, растягивая страницу вдвое шире экрана.
-   */
-  .planet-card { flex-direction: column; flex-wrap: nowrap; }
+
+  /* Портрет планеты встает над паспортом и уменьшается: рядом ему места нет. */
+  .planet-card { grid-template-columns: minmax(0, 1fr); justify-items: start; }
+  .colony-art { width: 96px; }
+  .rich-row { grid-template-columns: minmax(88px, auto) minmax(30px, 1fr) auto; gap: 8px; }
   .base-list { min-width: 0; width: max(220px, 60vw); }
 }
 

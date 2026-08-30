@@ -11,42 +11,54 @@
   Спрайт иконок. Один инлайновый блок <symbol> вместо десятка файлов:
   без лишних запросов, красится через currentColor и масштабируется под кегль.
   Ресурсные иконки нарисованы на сетке 24×24 и опираются на форму, а не на цвет:
-  руда — слиток, полимеры — кристалл, плазма — капля, антиматерия — искра.
+  дальтоник и черно-белый скриншот должны читаться так же. Каждая изображает
+  сам предмет, а не абстрактную фигуру: руда — кусок породы с жилой, полимеры —
+  молекулярное кольцо, плазма — ядро в кольце удержания, антиматерия — атом
+  с отрицательным ядром, энергия — разряд, криптогривна — монета с гривной.
   Навигационные — штриховые, одной толщины: в списке разделов важен силуэт,
   а заливка на 18 пикселях превращает любой значок в пятно.
 -->
 <svg class="icon-sprite" aria-hidden="true" focusable="false">
   <defs>
     <symbol id="ico-ore" viewBox="0 0 24 24">
-      <path d="M4 9.5 12 5l8 4.5-8 4.5-8-4.5Z" fill="currentColor" opacity=".55"/>
-      <path d="M4 9.5v5L12 19l8-4.5v-5l-8 4.5-8-4.5Z" fill="currentColor"/>
+      <path d="M8.6 2.9 3.1 8.6a1.9 1.9 0 0 0-.5 1.8l1.9 6.9c.2.7.7 1.2 1.4 1.4l6.6 1.7c.6.2 1.3 0 1.8-.5l4.7-4.9c.5-.5.7-1.1.5-1.8l-1.3-5.4a1.9 1.9 0 0 0-1.2-1.4l-6.6-2.3a1.9 1.9 0 0 0-1.8.3Z" fill="currentColor" opacity=".5"/>
+      <path d="m9.9 8.2 4.3 1.5.8 4.1-3.6 1.9-3.3-2.7.5-3.9Z" fill="currentColor"/>
     </symbol>
     <symbol id="ico-polymers" viewBox="0 0 24 24">
-      <path d="M12 2.5 19 9l-7 12.5L5 9l7-6.5Z" fill="currentColor" opacity=".55"/>
-      <path d="M12 2.5 19 9h-4l-3-6.5ZM12 2.5 5 9h4l3-6.5ZM9 9h6l-3 12.5L9 9Z" fill="currentColor"/>
+      <path d="M6.6 8.4 12 5.3l5.4 3.1M6.6 15.6 12 18.7l5.4-3.1M6.6 8.4v7.2M17.4 8.4v7.2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <circle cx="12" cy="5.3" r="2.5" fill="currentColor"/>
+      <circle cx="12" cy="18.7" r="2.5" fill="currentColor"/>
+      <circle cx="6.6" cy="8.4" r="2.2" fill="currentColor" opacity=".65"/>
+      <circle cx="17.4" cy="8.4" r="2.2" fill="currentColor" opacity=".65"/>
+      <circle cx="6.6" cy="15.6" r="2.2" fill="currentColor" opacity=".65"/>
+      <circle cx="17.4" cy="15.6" r="2.2" fill="currentColor" opacity=".65"/>
     </symbol>
     <symbol id="ico-plasma" viewBox="0 0 24 24">
-      <path d="M12 2.5c4.2 4.6 6.3 8 6.3 10.7A6.3 6.3 0 0 1 12 19.5a6.3 6.3 0 0 1-6.3-6.3C5.7 10.5 7.8 7.1 12 2.5Z" fill="currentColor" opacity=".45"/>
-      <circle cx="12" cy="13.2" r="3.1" fill="currentColor"/>
+      <path d="M12.4 1.6c4 4.9 6 8.5 6 11.1a6.4 6.4 0 1 1-12.8 0c0-1.7.7-3.5 2-5.5.4 1.2 1.1 2 2.1 2.5.5-3 1.4-5.7 2.7-8.1Z" fill="currentColor" opacity=".34"/>
+      <path d="M12.2 9.4c2.1 2.7 3.1 4.6 3.1 5.9a3.3 3.3 0 0 1-6.6 0c0-1.3 1.2-3.3 3.5-5.9Z" fill="currentColor"/>
     </symbol>
     <symbol id="ico-antimatter" viewBox="0 0 24 24">
-      <path d="M12 2.5 13.9 9 20.5 12 13.9 15 12 21.5 10.1 15 3.5 12 10.1 9 12 2.5Z" fill="currentColor"/>
-      <circle cx="12" cy="12" r="1.9" fill="var(--bg)"/>
+      <ellipse cx="12" cy="12" rx="9.3" ry="3.9" fill="none" stroke="currentColor" stroke-width="1.5" transform="rotate(45 12 12)"/>
+      <ellipse cx="12" cy="12" rx="9.3" ry="3.9" fill="none" stroke="currentColor" stroke-width="1.5" transform="rotate(-45 12 12)"/>
+      <circle cx="12" cy="12" r="3.6" fill="currentColor"/>
+      <path d="M10.1 12h3.8" stroke="var(--bg)" stroke-width="2.2" stroke-linecap="round"/>
     </symbol>
     <symbol id="ico-energy" viewBox="0 0 24 24">
-      <path d="M13.5 2.5 6 13h4.5L9.8 21.5 18 10.5h-4.9l.4-8Z" fill="currentColor"/>
+      <path d="M13.9 1.9 5.3 13.6h5.1l-1 8.5 9.3-12h-5.4l.6-8.2Z" fill="currentColor"/>
     </symbol>
     <symbol id="ico-credits" viewBox="0 0 24 24">
-      <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8" opacity=".55"/>
-      <path d="M9 16.5V9.8c0-1.8 1.2-3 2.9-3 1.5 0 2.6.9 2.9 2.3M7.6 11.6h8.8M7.6 14.1h8.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+      <circle cx="12" cy="12" r="9.1" fill="currentColor" opacity=".2"/>
+      <circle cx="12" cy="12" r="9.1" fill="none" stroke="currentColor" stroke-width="1.7"/>
+      <path d="M9.2 16.7V9.9c0-1.7 1.2-2.9 2.9-2.9 1.4 0 2.5.8 2.8 2.1M7.5 11.4h9M7.5 13.9h9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
     </symbol>
     <symbol id="ico-mail" viewBox="0 0 24 24">
       <rect x="3" y="5.5" width="18" height="13" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/>
       <path d="m4 7.5 8 6 8-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
     </symbol>
     <symbol id="ico-efficiency" viewBox="0 0 24 24">
-      <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8" opacity=".45"/>
-      <path d="M12 3.5a8.5 8.5 0 0 1 0 17Z" fill="currentColor"/>
+      <path d="M3.4 17.6a9 9 0 1 1 17.2 0" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
+      <path d="m12 13.4 4.6-4.3" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
+      <circle cx="12" cy="13.8" r="1.9" fill="currentColor"/>
     </symbol>
 
     <!-- Навигация: штриховые значки разделов -->
@@ -55,10 +67,9 @@
       <path d="M8.5 12.5h.01M8.5 16h.01M14 15.5h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
     </symbol>
     <symbol id="ico-nav-research" viewBox="0 0 24 24">
-      <circle cx="12" cy="12" r="2.2" fill="currentColor"/>
-      <ellipse cx="12" cy="12" rx="9" ry="4" fill="none" stroke="currentColor" stroke-width="1.6"/>
-      <ellipse cx="12" cy="12" rx="9" ry="4" fill="none" stroke="currentColor" stroke-width="1.6" transform="rotate(60 12 12)"/>
-      <ellipse cx="12" cy="12" rx="9" ry="4" fill="none" stroke="currentColor" stroke-width="1.6" transform="rotate(120 12 12)"/>
+      <path d="M10 2.8v6.1L4.9 17c-.9 1.5.2 3.4 2 3.4h10.2c1.8 0 2.9-1.9 2-3.4L14 8.9V2.8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+      <path d="M8.6 2.8h6.8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+      <path d="M7.2 14.4h9.6l2.1 3.3c.5.9-.1 2-1.1 2H6.2c-1 0-1.6-1.1-1.1-2l2.1-3.3Z" fill="currentColor" opacity=".5"/>
     </symbol>
     <symbol id="ico-nav-shipyard" viewBox="0 0 24 24">
       <path d="M12 2.5 18 15l-6-3-6 3 6-12.5Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
@@ -283,20 +294,45 @@
       </aside>
 
       <main class="content">
-        <!-- Сводка активной базы: богатство недр и заполненность склада. -->
+        <!--
+          Сводка активной базы: паспорт колонии. Слева портрет планеты, справа
+          адрес, склад, богатство недр и гарнизон — флот на орбите и оборона.
+          Все это состояние одной базы, и разносить его по вкладкам значит
+          заставлять игрока помнить числа при переходе между разделами.
+        -->
         <section class="planet-card">
-          <div class="brief-head">
-            <h2 id="base-name">—</h2>
-            <p class="muted" id="planet-meta">—</p>
-          </div>
-          <div class="richness" id="richness"></div>
-          <div class="storage" id="storage">
-            <div class="storage-head">
-              <span>Хранилище</span>
-              <b id="storage-text">0 / 0</b>
+          <div class="colony-art" id="colony-art"></div>
+
+          <div class="colony-main">
+            <div class="colony-head">
+              <h2 id="base-name">—</h2>
+              <p class="muted" id="planet-meta">—</p>
             </div>
-            <div class="storage-bar"><i id="storage-fill"></i></div>
-            <p class="storage-note" id="storage-note"></p>
+
+            <div class="storage" id="storage">
+              <div class="storage-head">
+                <span>Хранилище</span>
+                <b id="storage-text">0 / 0</b>
+              </div>
+              <div class="storage-bar"><i id="storage-fill"></i></div>
+              <p class="storage-note" id="storage-note"></p>
+            </div>
+
+            <div class="colony-block">
+              <h3 class="colony-sub">Богатство недр</h3>
+              <div class="richness" id="richness"></div>
+            </div>
+
+            <div class="colony-garrison">
+              <div class="colony-block">
+                <h3 class="colony-sub">Флот на орбите <b id="garrison-fleet-total">0</b></h3>
+                <div id="garrison-fleet" class="garrison"></div>
+              </div>
+              <div class="colony-block">
+                <h3 class="colony-sub">Оборона планеты <b id="garrison-defense-total">0</b></h3>
+                <div id="garrison-defense" class="garrison"></div>
+              </div>
+            </div>
           </div>
         </section>
 

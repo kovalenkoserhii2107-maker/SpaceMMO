@@ -60,6 +60,11 @@
     baseName: $('base-name'),
     planetMeta: $('planet-meta'),
     richness: $('richness'),
+    colonyArt: $('colony-art'),
+    garrisonFleet: $('garrison-fleet'),
+    garrisonFleetTotal: $('garrison-fleet-total'),
+    garrisonDefense: $('garrison-defense'),
+    garrisonDefenseTotal: $('garrison-defense-total'),
     storage: $('storage'),
     storageText: $('storage-text'),
     storageFill: $('storage-fill'),
@@ -221,7 +226,7 @@
    * Пока картинки нет, карточка показывает заглушку: `onerror` помечает блок
    * классом, и верстка от отсутствия файла не разъезжается.
    */
-  const ART_FOLDERS = { building: 'buildings', ship: 'ships', defense: 'defense', tech: 'tech' };
+  const ART_FOLDERS = { building: 'buildings', ship: 'ships', defense: 'defense', tech: 'tech', planet: 'planets' };
 
   function artNode(type, label, kind, extraClass = '') {
     const slug = type.toLowerCase();
@@ -515,6 +520,12 @@
     cards.ships.clear();
     cards.defenses.clear();
     cardsBaseId = null;
+    // Кэши перерисовки привязаны к содержимому, а не к аккаунту: без сброса
+    // следующий игрок с таким же составом увидел бы чужие миниатюры.
+    rosterKeys.fleet.value = null;
+    rosterKeys.defense.value = null;
+    colonyArtKey = '';
+    baseListSignature = '';
     showScreen('auth');
   }
 
@@ -812,13 +823,9 @@
       `система ${base.systemName} · орбита ${base.position} · слотов ${base.size}` +
       (base.anomaly === 'BLACK_HOLE' ? ' · черная дыра: искажение времени' : '');
 
-    el.richness.innerHTML = `
-      <div title="Руда">${icon('ore')}<b>×${base.richness.ore}</b></div>
-      <div title="Полимеры">${icon('polymers')}<b>×${base.richness.polymers}</b></div>
-      <div title="Плазма">${icon('plasma')}<b>×${base.richness.plasma}</b></div>
-      <div title="Инсоляция">${icon('energy')}<b>×${base.richness.energy}</b></div>
-      <div title="Антиматерия">${icon('antimatter')}<b>×${base.richness.antimatter}</b></div>`;
-
+    renderColonyArt(base);
+    renderRichness(base);
+    renderGarrison(base);
     renderStorage(base.storage);
 
     renderJobBanner(el.buildJob, base.buildJob && {
@@ -839,6 +846,110 @@
     renderFleetList();
     renderFleetMarkers();
     if (map.data) renderPlanetInfo();
+  }
+
+  /**
+   * Портрет планеты в паспорте колонии. Тот же арт, что и на карте системы,
+   * поэтому колония узнается в лицо и там, и тут. Пересобирается только при
+   * смене базы или биома: каждую секунду создавать <img> заново значит
+   * каждую секунду заново дергать загрузку картинки.
+   */
+  let colonyArtKey = '';
+  function renderColonyArt(base) {
+    const biome = PLANET_ART[base.planetType] || 'rocky';
+    if (colonyArtKey === `${base.baseId}:${biome}`) return;
+    colonyArtKey = `${base.baseId}:${biome}`;
+
+    el.colonyArt.innerHTML = '';
+    el.colonyArt.appendChild(artNode(biome, base.planetName, 'planet'));
+  }
+
+  /*
+   * Богатство недр. Голое «×0.61» не отвечает на вопрос, много это или мало:
+   * шкала не имеет ни нуля, ни потолка, и сравнивать не с чем. Поэтому рядом
+   * с множителем стоит словесная оценка и полоса, где единица — середина:
+   * так видно, что 0.61 — это бедная жила, а 1.39 — заметно выше обычного.
+   */
+  const RICHNESS_TIERS = [
+    { upTo: 0.75, label: 'скудно', tone: 'poor' },
+    { upTo: 0.95, label: 'бедно', tone: 'low' },
+    { upTo: 1.1, label: 'обычно', tone: 'mid' },
+    { upTo: 1.35, label: 'богато', tone: 'high' },
+    { upTo: Infinity, label: 'изобилие', tone: 'top' },
+  ];
+
+  /** Строки паспорта: инсоляция — не ресурс на складе, но добычу она задает так же. */
+  const RICHNESS_ROWS = [
+    { key: 'ore', icon: 'ore', label: 'Руда' },
+    { key: 'polymers', icon: 'polymers', label: 'Полимеры' },
+    { key: 'plasma', icon: 'plasma', label: 'Плазма' },
+    { key: 'energy', icon: 'energy', label: 'Инсоляция' },
+    { key: 'antimatter', icon: 'antimatter', label: 'Антиматерия' },
+  ];
+
+  function richnessTier(value) {
+    return RICHNESS_TIERS.find((tier) => value < tier.upTo) || RICHNESS_TIERS[RICHNESS_TIERS.length - 1];
+  }
+
+  function renderRichness(base) {
+    el.richness.innerHTML = '';
+
+    for (const row of RICHNESS_ROWS) {
+      const value = Number(base.richness[row.key]) || 0;
+      const tier = richnessTier(value);
+      // Полоса упирается в потолок на удвоенной норме: множители выше двух
+      // в генераторе не встречаются, а растягивать шкалу до бесконечности
+      // значит сплющить весь рабочий диапазон в левую четверть.
+      const fill = Math.max(4, Math.min(100, (value / 2) * 100));
+
+      const item = document.createElement('div');
+      item.className = `rich-row ${tier.tone}`;
+      item.innerHTML =
+        `<span class="rich-name">${icon(row.icon)} ${row.label}</span>` +
+        `<span class="rich-bar"><i style="width:${fill.toFixed(1)}%"></i></span>` +
+        `<span class="rich-value"><b>×${value}</b> ${tier.label}</span>`;
+      el.richness.appendChild(item);
+    }
+  }
+
+  /**
+   * Гарнизон базы: что стоит на орбите и что вкопано в грунт. Пустые классы
+   * не показываем — список из шести нулей ничего не сообщает, а место занимает.
+   */
+  function renderGarrison(base) {
+    const fleetTotal = fillGarrison(el.garrisonFleet, base.fleet, SHIP_LABELS, 'ship', 'Кораблей на орбите нет');
+    const defenseTotal = fillGarrison(el.garrisonDefense, base.defenses, DEFENSE_LABELS, 'defense', 'Планета не укреплена');
+    el.garrisonFleetTotal.textContent = fmt(fleetTotal);
+    el.garrisonDefenseTotal.textContent = fmt(defenseTotal);
+  }
+
+  function fillGarrison(node, counts, labels, kind, emptyText) {
+    node.innerHTML = '';
+    let total = 0;
+
+    for (const [type, label] of Object.entries(labels)) {
+      const count = Number(counts[type]) || 0;
+      total += count;
+      if (count === 0) continue;
+
+      const unit = document.createElement('div');
+      unit.className = 'garrison-unit';
+      unit.title = label;
+      unit.appendChild(artNode(type, label, kind, 'art-chip'));
+
+      const text = document.createElement('span');
+      text.innerHTML = `<b>${fmt(count)}</b><small>${label}</small>`;
+      unit.appendChild(text);
+      node.appendChild(unit);
+    }
+
+    if (total === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'garrison-empty';
+      empty.textContent = emptyText;
+      node.appendChild(empty);
+    }
+    return total;
   }
 
   /**
@@ -884,12 +995,23 @@
     node.hidden = false;
 
     if (!node.firstChild) {
-      node.innerHTML = '<div class="job-title"><span></span><b></b></div><div class="bar"><i></i></div>';
+      node.innerHTML =
+        '<div class="job-title"><span></span><b></b></div>' +
+        '<div class="bar"><i></i></div>' +
+        '<div class="job-meta"><span></span><span></span></div>';
     }
+    const done = job.totalSeconds > 0 ? (job.totalSeconds - job.remainingSeconds) / job.totalSeconds : 1;
+    const percent = Math.min(100, Math.max(0, done * 100));
+
     node.querySelector('.job-title span').textContent = job.title;
     node.querySelector('.job-title b').textContent = `осталось ${fmtTime(job.remainingSeconds)}`;
-    const done = job.totalSeconds > 0 ? (job.totalSeconds - job.remainingSeconds) / job.totalSeconds : 1;
-    node.querySelector('.bar > i').style.width = `${Math.min(100, Math.max(0, done * 100))}%`;
+    node.querySelector('.bar > i').style.width = `${percent}%`;
+
+    // Процент и полное время рядом с полосой: по одной только полосе нельзя
+    // сказать, идет речь о десяти секундах или о четверти часа.
+    const meta = node.querySelectorAll('.job-meta span');
+    meta[0].textContent = `готово ${Math.round(percent)}%`;
+    meta[1].textContent = `всего ${fmtTime(job.totalSeconds)}`;
   }
 
   /**
@@ -1123,39 +1245,109 @@
     card.quantity.disabled = locked;
   }
 
-  function renderFleet(base) {
-    el.fleet.innerHTML = '';
-    for (const [type, label] of Object.entries(SHIP_LABELS)) {
-      const item = document.createElement('div');
-      const value = document.createElement('b');
-      value.textContent = fmt(base.fleet[type] || 0);
-      item.append(value, document.createTextNode(label));
-      el.fleet.appendChild(item);
-    }
-  }
+  /**
+   * Состав флота или обороны на базе. Строка из шести чисел не отвечала на
+   * вопрос «что у меня есть»: класс опознавался только по подписи, а боевые
+   * характеристики лежали в карточке ниже, куда надо было доскроллить.
+   * Здесь у каждого класса свой силуэт, счетчик и его профиль боя.
+   *
+   * Перерисовывается только при изменении состава: пересобирать картинки
+   * каждую секунду значит каждую секунду заново дергать их загрузку.
+   */
+  function renderRoster(node, cards, counts, keyRef, emptyText) {
+    const signature = cards.map((card) => `${card.type}:${counts[card.type] || 0}`).join('|');
+    if (keyRef.value === signature) return;
+    keyRef.value = signature;
 
-  function renderQueue(base) {
-    el.shipQueue.innerHTML = '';
-    if (!base.shipQueue.length) {
-      const empty = document.createElement('div');
-      empty.className = 'queue-item';
-      empty.textContent = 'Очередь верфи пуста';
-      el.shipQueue.appendChild(empty);
+    node.innerHTML = '';
+    const owned = cards.filter((card) => (counts[card.type] || 0) > 0);
+
+    if (!owned.length) {
+      const empty = document.createElement('p');
+      empty.className = 'roster-empty';
+      empty.textContent = emptyText;
+      node.appendChild(empty);
       return;
     }
 
-    base.shipQueue.forEach((job, index) => {
+    for (const card of owned) {
+      const unit = document.createElement('article');
+      unit.className = 'roster-unit';
+      unit.appendChild(artNode(card.type, card.label, card.kind, 'art-chip'));
+
+      const body = document.createElement('div');
+      body.className = 'roster-body';
+      body.innerHTML =
+        `<span class="roster-head"><b>${fmt(counts[card.type] || 0)}</b> ${escapeHtml(card.label)}</span>` +
+        `<span class="roster-combat">${escapeHtml(combatLine(card.combat))}</span>`;
+      unit.appendChild(body);
+      node.appendChild(unit);
+    }
+  }
+
+  const rosterKeys = { fleet: { value: null }, defense: { value: null } };
+
+  function renderFleet(base) {
+    renderRoster(
+      el.fleet,
+      base.ships.map((ship) => ({ ...ship, kind: 'ship' })),
+      base.fleet,
+      rosterKeys.fleet,
+      'В ангаре пусто. Построй первый корабль ниже.',
+    );
+  }
+
+  /**
+   * Очередь верфи или обороны. Раньше это была строка текста «осталось 1 из 1»,
+   * и понять, сколько ждать, можно было только у первого заказа. Теперь у
+   * каждого заказа полоса и полное время до конца — тот же вид, что у стройки
+   * и исследования, чтобы четыре разных ожидания читались одинаково.
+   *
+   * Полоса первого заказа показывает текущую единицу, остальные ждут своей
+   * очереди и стоят на нуле: верфь собирает заказы подряд, а не разом.
+   */
+  function renderUnitQueue(node, jobs, emptyText) {
+    node.innerHTML = '';
+    if (!jobs.length) {
+      const empty = document.createElement('div');
+      empty.className = 'queue-item';
+      empty.textContent = emptyText;
+      node.appendChild(empty);
+      return;
+    }
+
+    let waitBefore = 0;
+    jobs.forEach((job, index) => {
+      const done = job.quantity - job.remaining;
+      // Время до конца заказа: текущая единица плюс оставшиеся целиком.
+      // Для заказов из хвоста очереди к этому добавляется ожидание предыдущих.
+      const ownSeconds = index === 0
+        ? job.nextUnitInSeconds + Math.max(0, job.remaining - 1) * job.unitSeconds
+        : job.remaining * job.unitSeconds;
+      const totalSeconds = waitBefore + ownSeconds;
+      waitBefore = totalSeconds;
+
+      const unitDone = index === 0 && job.unitSeconds > 0
+        ? (job.unitSeconds - job.nextUnitInSeconds) / job.unitSeconds
+        : 0;
+      // Полоса меряет заказ целиком: собранные единицы плюс доля текущей.
+      const progress = job.quantity > 0 ? (done + unitDone) / job.quantity : 0;
+
       const item = document.createElement('div');
-      item.className = 'queue-item';
-      const title = document.createElement('b');
-      title.textContent = `${job.label} — осталось ${job.remaining} из ${job.quantity}`;
-      const timer = document.createElement('span');
-      timer.textContent = index === 0
-        ? `следующий через ${fmtTime(job.nextUnitInSeconds)}`
-        : `в очереди · по ${fmtTime(job.unitSeconds)}`;
-      item.append(title, timer);
-      el.shipQueue.appendChild(item);
+      item.className = `job-banner${index === 0 ? '' : ' queued'}`;
+      item.innerHTML =
+        `<div class="job-title"><span>${escapeHtml(job.label)} · ${job.quantity} шт.</span>` +
+        `<b>${index === 0 ? 'осталось ' : 'готово через '}${fmtTime(totalSeconds)}</b></div>` +
+        '<div class="bar"><i></i></div>' +
+        `<div class="job-meta"><span>собрано ${done} из ${job.quantity}</span>` +
+        `<span>${index === 0 ? `выпуск через ${fmtTime(job.nextUnitInSeconds)}` : 'ждет очереди'} · по ${fmtTime(job.unitSeconds)} за штуку</span></div>`;
+      item.querySelector('.bar > i').style.width = `${Math.min(100, Math.max(0, progress * 100)).toFixed(1)}%`;
+      node.appendChild(item);
     });
+  }
+
+  function renderQueue(base) {
+    renderUnitQueue(el.shipQueue, base.shipQueue, 'Очередь верфи пуста');
   }
 
   async function send(url, body, method = 'POST') {
@@ -2985,35 +3177,14 @@
   }
 
   function renderDefenses(base) {
-    el.defenseSummary.innerHTML = '';
-    for (const [type, label] of Object.entries(DEFENSE_LABELS)) {
-      const item = document.createElement('div');
-      const value = document.createElement('b');
-      value.textContent = fmt(base.defenses[type] || 0);
-      item.append(value, document.createTextNode(label));
-      el.defenseSummary.appendChild(item);
-    }
-
-    el.defenseQueue.innerHTML = '';
-    if (!base.defenseQueue.length) {
-      const empty = document.createElement('div');
-      empty.className = 'queue-item';
-      empty.textContent = 'Очередь обороны пуста';
-      el.defenseQueue.appendChild(empty);
-    } else {
-      base.defenseQueue.forEach((job, index) => {
-        const item = document.createElement('div');
-        item.className = 'queue-item';
-        const title = document.createElement('b');
-        title.textContent = `${job.label} — осталось ${job.remaining} из ${job.quantity}`;
-        const timer = document.createElement('span');
-        timer.textContent = index === 0
-          ? `следующая через ${fmtTime(job.nextUnitInSeconds)}`
-          : `в очереди · по ${fmtTime(job.unitSeconds)}`;
-        item.append(title, timer);
-        el.defenseQueue.appendChild(item);
-      });
-    }
+    renderRoster(
+      el.defenseSummary,
+      base.defenseCards.map((item) => ({ ...item, kind: 'defense' })),
+      base.defenses,
+      rosterKeys.defense,
+      'Планета не укреплена. Турели строятся ниже.',
+    );
+    renderUnitQueue(el.defenseQueue, base.defenseQueue, 'Очередь обороны пуста');
   }
 
 
