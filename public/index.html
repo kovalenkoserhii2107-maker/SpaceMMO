@@ -296,7 +296,7 @@
       <main class="content">
         <!--
           Паспорт активной базы, три колонки: кто и где мы (портрет, адрес,
-          склад), что у нас стоит (гарнизон) и что под нами лежит (недра).
+          склад), что под нами лежит (недра) и что у нас стоит (гарнизон).
           Три колонки, а не одна лента: на широком экране полоса склада
           и полосы богатства тянулись от края до края, и глазу приходилось
           проходить полтора метра пикселей ради одного числа справа.
@@ -321,6 +321,13 @@
             </div>
           </div>
 
+          <div class="colony-col">
+            <div class="colony-block">
+              <h3 class="colony-sub">Богатство недр</h3>
+              <div class="richness" id="richness"></div>
+            </div>
+          </div>
+
           <div class="colony-col colony-garrison">
             <div class="colony-block">
               <h3 class="colony-sub">Флот на орбите <b id="garrison-fleet-total">0</b></h3>
@@ -329,13 +336,6 @@
             <div class="colony-block">
               <h3 class="colony-sub">Оборона планеты <b id="garrison-defense-total">0</b></h3>
               <div id="garrison-defense" class="garrison"></div>
-            </div>
-          </div>
-
-          <div class="colony-col">
-            <div class="colony-block">
-              <h3 class="colony-sub">Богатство недр</h3>
-              <div class="richness" id="richness"></div>
             </div>
           </div>
         </section>
