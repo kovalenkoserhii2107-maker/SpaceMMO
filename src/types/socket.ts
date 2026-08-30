@@ -229,12 +229,20 @@ export interface GalaxyMap {
   systems: GalaxySystemView[];
 }
 
+/** Слоты под колонии: сколько занято и сколько открыто астрофизикой. */
+export interface ColonySnapshot {
+  used: number;
+  slots: number;
+}
+
 export interface StateUpdatePayload {
   bases: BaseSnapshot[];
   research: ResearchSnapshot;
   fleets: FleetSnapshot[];
   /** Баланс криптогривны игрока. */
   credits: number;
+  /** Предел расширения: без него игрок узнает о нем только отказом на вылете. */
+  colonies: ColonySnapshot;
   serverTime: number;
 }
 

@@ -11,6 +11,7 @@
     research: { techs: {}, active: null },
     fleets: [],
     credits: 0,
+    colonies: { used: 0, slots: 1 },
     activeBaseId: null,
     activeTab: 'buildings',
     socket: null,
@@ -192,6 +193,7 @@
     HEAVY_CRUISER: 'Крейсера',
     ION_FRIGATE: 'Фрегаты',
     RECYCLER: 'Переработчики',
+    COLONY_SHIP: 'Колонизаторы',
   };
 
   /**
@@ -673,6 +675,9 @@
     state.research = payload.research || { techs: {}, active: null };
     state.fleets = payload.fleets || [];
     state.credits = payload.credits || 0;
+    // Отчет, отправленный до появления слотов, приходит без поля — читаем
+    // защищенно и показываем хотя бы стартовую колонию.
+    state.colonies = payload.colonies || { used: state.bases.length, slots: 1 };
     el.resCredits.textContent = fmt(state.credits);
     if (!state.bases.length) return;
     if (!state.bases.some((base) => base.baseId === state.activeBaseId)) {
@@ -707,7 +712,8 @@
     // с запасным адресом словами.
     const signature =
       state.bases.map((base) => `${base.baseId}:${base.baseName}`).join('|') +
-      `#${state.activeBaseId}#${galaxy.data ? 'xy' : 'names'}`;
+      `#${state.activeBaseId}#${galaxy.data ? 'xy' : 'names'}` +
+      `#${state.colonies.used}/${state.colonies.slots}`;
     if (signature === baseListSignature) return;
     baseListSignature = signature;
 
@@ -730,6 +736,15 @@
       li.appendChild(button);
       el.baseList.appendChild(li);
     }
+
+    // Предел расширения виден там же, где список колоний: иначе о нем узнают
+    // только отказом на вылете колонизатора, уже построив его за десять тысяч.
+    const foot = document.createElement('li');
+    foot.className = 'base-list-foot';
+    foot.textContent =
+      `Колоний: ${state.colonies.used} из ${state.colonies.slots}` +
+      (state.colonies.used >= state.colonies.slots ? ' · нужен уровень астрофизики' : '');
+    el.baseList.appendChild(foot);
   }
 
   /* --- выпадающий список баз в шапке --- */
@@ -1507,6 +1522,13 @@
     PLANET: [['TRANSPORT', 'Транспортировка'], ['SCAN', 'Разведка зондом'], ['ATTACK', 'Атака']],
     /* Своя колония: атаковать себя нельзя, зато можно перебросить туда флот. */
     OWN_PLANET: [['TRANSPORT', 'Транспортировка'], ['DEPLOY', 'Дислокация']],
+    /*
+     * Необитаемая планета. Ни транспорт, ни атака здесь невозможны — сервер
+     * отвечает на них отказом, и держать в списке заведомо мертвые пункты
+     * значит учить игрока, что интерфейс врет. Остается разведка, а к ней
+     * ниже добавляется колонизация, если в составе есть основатель.
+     */
+    FREE_PLANET: [['SCAN', 'Разведка зондом']],
     HUB: [['HUB_DELIVERY', 'Доставка на хаб'], ['HUB_PICKUP', 'Вывоз с хаба']],
     DEEP_SPACE: [['EXPEDITION', 'Экспедиция']],
   };
@@ -2297,10 +2319,19 @@
   function syncMissionOptions() {
     const target = dispatchTarget();
     const kind = target ? target.kind : map.selectedKind;
+    const free = Boolean(target) && target.kind === 'PLANET' && !target.isOwn && !target.owner;
     const base = target && target.kind === 'PLANET' && target.isOwn
       ? MISSION_OPTIONS.OWN_PLANET
-      : MISSION_OPTIONS[kind] || MISSION_OPTIONS.PLANET;
+      : free
+        ? MISSION_OPTIONS.FREE_PLANET
+        : MISSION_OPTIONS[kind] || MISSION_OPTIONS.PLANET;
     const options = [...base];
+
+    // Колонизация — только на свободную планету и только с основателем на борту,
+    // по той же логике, что и переработка: пункт появляется, когда он выполним.
+    if (free && readComposition().COLONY_SHIP > 0) {
+      options.push(['COLONIZE', 'Основать колонию']);
+    }
 
     // «Переработка» появляется только когда в составе есть переработчик и над
     // планетой действительно висит поле: пустой пункт меню сбивал бы с толку.
@@ -2385,8 +2416,27 @@
 
     const planet = selectedPlanet();
     if (!planet) {
-      el.planetInfo.innerHTML = 'Наведи курсор или выбери планету на карте.';
-      el.dispatch.hidden = true;
+      /*
+       * Цель, заданная координатами, живет отдельно от выбора на карте: она
+       * может лежать в системе, которой на текущей карте просто нет. Панель
+       * отправки при ней остается открытой — иначе игрок ввел координаты,
+       * увидел «Цель: …» и не нашел, куда нажать. Особенно это мешало
+       * колонизации: свободные планеты почти всегда в чужих системах.
+       */
+      const coord = map.coordTarget;
+      el.planetInfo.innerHTML = coord
+        ? `<b>${escapeHtml(coord.planetName)}</b><br>` +
+          `система ${escapeHtml(coord.systemName)} · орбита ${coord.position} · ` +
+          `${coord.galaxyX}:${coord.galaxyY}<br>` +
+          'Цель задана координатами. Разведданных нет — отправь зонд.'
+        : 'Наведи курсор или выбери планету на карте.';
+
+      el.dispatch.hidden = !base || !coord;
+      if (!el.dispatch.hidden) {
+        syncMissionOptions();
+        renderFleetInputs();
+        renderDispatchTarget();
+      }
       return;
     }
 
@@ -2691,8 +2741,10 @@
 
       map.coordTarget = data;
       note(`Цель: ${data.planetName} (${data.systemName})`, false);
-      syncMissionOptions();
-      renderDispatchTarget();
+
+      // Панель открывает renderPlanetInfo — правило видимости живет там одно
+      // на все случаи, и дублировать его здесь значит развести их со временем.
+      renderPlanetInfo();
       schedulePlan();
     } catch {
       note('Не удалось проверить координаты', true);

@@ -64,6 +64,8 @@ import { canAttack } from '../services/warService.js';
 import { countUnread, deliver, type OutgoingMessage } from '../services/mailService.js';
 import {
   buildBattleMail,
+  buildColonyFailedMail,
+  buildColonyMail,
   buildDeployMail,
   buildExpeditionMail,
   buildHarvestMail,
@@ -84,6 +86,7 @@ import {
   type BuildingType,
 } from './rules.js';
 import {
+  colonySlots,
   emptyTechLevels,
   missingTechRequirements,
   researchCost,
@@ -366,6 +369,7 @@ class GameLoop {
       research: researchSnapshot(commander, now),
       fleets: fleetSnapshots(commander, now),
       credits: commander.credits,
+      colonies: { used: commander.bases.size, slots: colonySlots(commander.techs) },
       serverTime: now,
     };
   }
@@ -573,6 +577,24 @@ class GameLoop {
         }
       }
 
+      if (mission === 'COLONIZE') {
+        if (planet.base) {
+          return { ok: false, error: 'Планета уже заселена — колонию основать негде' };
+        }
+        // Слот проверяется и здесь, и на прилете: за время полета игрок мог
+        // основать колонию другим кораблем, и лимит к посадке уже исчерпан.
+        const slots = colonySlots(commander.techs);
+        const owned = await prisma.base.count({ where: { commanderId } });
+        if (owned >= slots) {
+          return {
+            ok: false,
+            error:
+              `Занято колоний: ${owned} из ${slots}. Подними уровень астрофизики — ` +
+              'каждые два уровня открывают новый слот',
+          };
+        }
+      }
+
       if (mission === 'ATTACK') {
         if (!planet.base) return { ok: false, error: 'Атаковать необитаемую планету бессмысленно' };
         if (planet.base.commanderId === commanderId) {
@@ -677,6 +699,7 @@ class GameLoop {
         heavyCruisers: ships.HEAVY_CRUISER,
         ionFrigates: ships.ION_FRIGATE,
         recyclers: ships.RECYCLER,
+        colonyShips: ships.COLONY_SHIP,
         cargoOre: outboundCargo.ore,
         cargoPolymers: outboundCargo.polymers,
         cargoPlasma: outboundCargo.plasma,
@@ -1162,6 +1185,11 @@ class GameLoop {
       return;
     }
 
+    if (fleet.mission === 'COLONIZE' && fleet.targetPlanetId) {
+      await this.resolveColonizeArrival(fleet, fleet.targetPlanetId);
+      return;
+    }
+
     if (fleet.mission === 'SCAN' && fleet.targetPlanetId) {
       const payload = await this.buildScanPayload(fleet.targetPlanetId);
       const planetId = fleet.targetPlanetId;
@@ -1307,6 +1335,96 @@ class GameLoop {
    * Найденное едет домой в трюмах: на базу оно попадет обычным возвратным
    * рейсом, через ту же логику, что и торговый груз.
    */
+  /**
+   * Прилет колонизатора. Планета могла быть занята, а слот — израсходован
+   * другим рейсом, пока флот летел, поэтому обе проверки повторяются здесь:
+   * та, что была при вылете, говорила о состоянии дел получасовой давности.
+   *
+   * Сорвавшийся рейс не наказывается: топливо на обратный путь при вылете
+   * не бралось (рейс односторонний), и флот возвращается даром — бросить его
+   * на чужой орбите было бы хуже.
+   */
+  private async resolveColonizeArrival(fleet: FleetRow, planetId: string): Promise<void> {
+    const ships = fleetShips(fleet);
+    const planet = await prisma.planet.findUnique({
+      where: { id: planetId },
+      include: { base: true, system: true },
+    });
+
+    const commander = await this.getCommander(fleet.commanderId);
+    const techs = commander ? commander.techs : emptyTechLevels();
+    const slots = colonySlots(techs);
+    const owned = await prisma.base.count({ where: { commanderId: fleet.commanderId } });
+
+    const reason = !planet
+      ? 'планета не найдена'
+      : planet.base
+        ? 'ее успели заселить до нас'
+        : owned >= slots
+          ? `свободных слотов под колонию не осталось (занято ${owned} из ${slots})`
+          : ships.COLONY_SHIP <= 0
+            ? 'колониальный транспорт не дошел до цели'
+            : null;
+
+    if (reason) {
+      await prisma.fleet.update({ where: { id: fleet.id }, data: { status: 'RETURNING' } });
+      const place = await arrivalPlace(fleet);
+      await this.notify(
+        buildColonyFailedMail({
+          commanderId: fleet.commanderId,
+          planetName: place.planetName,
+          systemName: place.systemName,
+          reason,
+          fleet: fleetRoster(ships),
+        }),
+      );
+      return;
+    }
+
+    // Дальше planet точно есть и свободна — проверки выше это гарантируют.
+    const target = planet as NonNullable<typeof planet>;
+
+    // Основатель разбирается на первую инфраструктуру: из состава он уходит,
+    // остальной флот переходит новой колонии — тем же `landFleet`, которым
+    // садится дислокация. Лишние колонизаторы остаются на борту как груз.
+    const landing = { ...ships, COLONY_SHIP: ships.COLONY_SHIP - 1 };
+    const cargo = {
+      ore: fleet.cargoOre,
+      polymers: fleet.cargoPolymers,
+      plasma: fleet.cargoPlasma,
+      antimatter: fleet.cargoAntimatter,
+    };
+    const baseName = `Колония ${target.name}`;
+
+    await this.withCommanderReloaded(fleet.commanderId, async () => {
+      // Уникальный индекс на Base.planetId — последний рубеж от гонки двух
+      // рейсов к одной планете: проверка выше и вставка идут не атомарно.
+      // Проигравший упрется в него, ошибка попадет в лог тика, а флот
+      // останется OUTBOUND и разберется следующим тиком — тогда планета уже
+      // занята, и он честно уйдет домой по ветке отказа.
+      const base = await prisma.base.create({
+        data: { name: baseName, commanderId: fleet.commanderId, planetId: target.id },
+      });
+      await this.landFleet(fleet, base.id, landing);
+    });
+
+    await this.notify(
+      buildColonyMail({
+        commanderId: fleet.commanderId,
+        baseName,
+        planetName: target.name,
+        systemName: target.system.name,
+        galaxyX: target.system.galaxyX,
+        galaxyY: target.system.galaxyY,
+        position: target.position,
+        fleet: fleetRoster(landing),
+        cargo,
+        used: owned + 1,
+        slots,
+      }),
+    );
+  }
+
   private async resolveExpeditionArrival(fleet: FleetRow, systemId: string): Promise<void> {
     const ships = fleetShips(fleet);
 
@@ -1332,6 +1450,7 @@ class GameLoop {
             heavyCruisers: result.survivors.HEAVY_CRUISER,
             ionFrigates: result.survivors.ION_FRIGATE,
             recyclers: result.survivors.RECYCLER,
+            colonyShips: result.survivors.COLONY_SHIP,
             cargoOre: ore,
             cargoPolymers: polymers,
             cargoAntimatter: result.loot.antimatter,
@@ -1493,6 +1612,7 @@ class GameLoop {
             heavyCruisers: outcome.attackerSurvivors.HEAVY_CRUISER,
             ionFrigates: outcome.attackerSurvivors.ION_FRIGATE,
             recyclers: outcome.attackerSurvivors.RECYCLER,
+            colonyShips: outcome.attackerSurvivors.COLONY_SHIP,
             cargoOre: plunder.ore,
             cargoPolymers: plunder.polymers,
             cargoPlasma: plunder.plasma,
@@ -1621,6 +1741,18 @@ class GameLoop {
    * поднимет игрока обратно из БД по первому же запросу.
    */
   async applyAdminMutation<T>(commanderId: string, mutate: () => Promise<T>): Promise<T> {
+    return this.withCommanderReloaded(commanderId, mutate);
+  }
+
+  /**
+   * Выполнить операцию, меняющую состав баз или ресурсы игрока в обход тика.
+   *
+   * Тик держит игроков в памяти и периодически пишет их в БД, поэтому прямая
+   * запись живет только до ближайшего сброса — а новую базу тик и вовсе
+   * не увидит, пока не перечитает игрока. Поэтому игрок сначала сбрасывается
+   * и выгружается, а после операции подгружается заново уже с изменениями.
+   */
+  private async withCommanderReloaded<T>(commanderId: string, mutate: () => Promise<T>): Promise<T> {
     const commander = this.commanders.get(commanderId);
     if (commander) {
       await this.persistCommander(commander);
@@ -1790,11 +1922,13 @@ class GameLoop {
 
   /**
    * Посадка флота на базу: корабли и груз переходят колонии, запись полета
-   * удаляется. Возврат домой и дислокация отличаются только тем, на какую базу
-   * садится флот, поэтому операция одна.
+   * удаляется. Возврат домой, дислокация и колонизация отличаются только тем,
+   * на какую базу садится флот и в каком составе, поэтому операция одна.
    */
-  private async landFleet(fleet: FleetRow, baseId: string): Promise<void> {
-    const ships = fleetShips(fleet);
+  private async landFleet(fleet: FleetRow, baseId: string, override?: ShipCounts): Promise<void> {
+    // Состав можно подменить: колонизация сажает флот без корабля-основателя,
+    // он остается на планете первой инфраструктурой, а не пополняет ангар.
+    const ships = override ?? fleetShips(fleet);
 
     await this.flushBaseOwner(baseId);
 
@@ -2164,6 +2298,7 @@ function fleetShips(fleet: FleetRow): ShipCounts {
   ships.HEAVY_CRUISER = fleet.heavyCruisers;
   ships.ION_FRIGATE = fleet.ionFrigates;
   ships.RECYCLER = fleet.recyclers;
+  ships.COLONY_SHIP = fleet.colonyShips;
   return ships;
 }
 
@@ -2204,6 +2339,7 @@ function toFleetRuntime(row: FleetRow): FleetRuntimeState {
       HEAVY_CRUISER: row.heavyCruisers,
       ION_FRIGATE: row.ionFrigates,
       RECYCLER: row.recyclers,
+      COLONY_SHIP: row.colonyShips,
     },
     cargo: {
       ore: row.cargoOre,

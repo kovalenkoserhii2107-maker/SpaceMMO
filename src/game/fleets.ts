@@ -16,6 +16,7 @@ const FLEET_MISSIONS = [
   'DEPLOY',
   'EXPEDITION',
   'HARVEST',
+  'COLONIZE',
 ] as const;
 export type FleetMission = (typeof FLEET_MISSIONS)[number];
 
@@ -25,11 +26,15 @@ export function isFleetMission(value: unknown): value is FleetMission {
 
 /**
  * Рейс в один конец: флот остается на месте назначения и домой не идет.
- * Пока такая миссия одна, но признак нужен и расчету топлива, и прилету,
- * поэтому живет здесь, а не проверкой `=== 'DEPLOY'` в трех местах.
+ * Признак нужен и расчету топлива, и прилету, поэтому живет здесь,
+ * а не проверкой на конкретную миссию в трех местах.
+ *
+ * Колонизация односторонняя по той же причине, что и дислокация: флот
+ * остается новой колонии. Если сесть не удалось, обратный путь оплачен не был
+ * и флот возвращается даром — это честнее, чем бросить его на орбите.
  */
 export function isOneWayMission(mission: FleetMission): boolean {
-  return mission === 'DEPLOY';
+  return mission === 'DEPLOY' || mission === 'COLONIZE';
 }
 
 export const MISSION_LABELS: Record<FleetMission, string> = {
@@ -41,6 +46,7 @@ export const MISSION_LABELS: Record<FleetMission, string> = {
   DEPLOY: 'Дислокация',
   EXPEDITION: 'Экспедиция',
   HARVEST: 'Переработка',
+  COLONIZE: 'Колонизация',
 };
 
 /** Миссии, летящие к торговому хабу, а не к планете. */
@@ -69,6 +75,9 @@ const FLIGHT_PROFILES: Record<ShipType, FlightProfile> = {
   // Переработчик: гигантский трюм ценой скорости и расхода плазмы.
   // За один рейс он собирает больше, чем десяток транспортов, но ползет и жжет.
   RECYCLER: { speed: 40, cargo: 20000, fuelPerSecond: 3.0, antimatterPerDistance: 6.0 },
+  // Колонизатор везет припасы новой базы, поэтому трюм большой, а скорость
+  // низкая: колонию основывают заранее, а не выигрывают гонку к планете.
+  COLONY_SHIP: { speed: 55, cargo: 5000, fuelPerSecond: 2.0, antimatterPerDistance: 5.0 },
 };
 
 /** Базовое время перелета между соседними орбитами, секунды. */
@@ -256,6 +265,10 @@ export function validateComposition(mission: FleetMission, ships: ShipCounts): s
   // для этого не приспособлены, иначе переработчик был бы не нужен.
   if (mission === 'HARVEST' && ships.RECYCLER <= 0) {
     return 'Для сборки обломков нужен хотя бы один переработчик';
+  }
+  // Колонию основывает сам корабль-основатель, конвой лишь прикрывает рейс.
+  if (mission === 'COLONIZE' && ships.COLONY_SHIP <= 0) {
+    return 'Для колонизации нужен колониальный транспорт';
   }
   return null;
 }

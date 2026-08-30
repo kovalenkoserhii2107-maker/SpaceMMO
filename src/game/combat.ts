@@ -106,6 +106,9 @@ const SHIP_COMBAT: Record<ShipType, UnitStats> = {
   HEAVY_CRUISER: { attack: 100, shield: 50, hull: 400, shieldPiercing: 1 },
   ION_FRIGATE: { attack: 45, shield: 80, hull: 120, shieldPiercing: 2 },
   RECYCLER: { attack: 0, shield: 10, hull: 400, shieldPiercing: 1 },
+  // Гражданское судно: ни оружия, ни щита. Корпус большой, но в бою это
+  // просто мишень — колонизатор водят под конвоем, а не отправляют одного.
+  COLONY_SHIP: { attack: 0, shield: 0, hull: 500, shieldPiercing: 1 },
 };
 
 /*

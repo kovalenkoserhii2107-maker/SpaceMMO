@@ -20,6 +20,7 @@ export const SHIP_TYPES = [
   'HEAVY_CRUISER',
   'ION_FRIGATE',
   'RECYCLER',
+  'COLONY_SHIP',
 ] as const;
 
 export type ShipType = (typeof SHIP_TYPES)[number];
@@ -31,7 +32,15 @@ export function isShipType(value: unknown): value is ShipType {
 }
 
 export function emptyShipCounts(): ShipCounts {
-  return { PROBE: 0, TRANSPORTER: 0, LIGHT_FIGHTER: 0, HEAVY_CRUISER: 0, ION_FRIGATE: 0, RECYCLER: 0 };
+  return {
+    PROBE: 0,
+    TRANSPORTER: 0,
+    LIGHT_FIGHTER: 0,
+    HEAVY_CRUISER: 0,
+    ION_FRIGATE: 0,
+    RECYCLER: 0,
+    COLONY_SHIP: 0,
+  };
 }
 
 interface ShipDefinition {
@@ -94,6 +103,18 @@ const SHIPS: Record<ShipType, ShipDefinition> = {
     shipyardLevel: 4,
     // Тяжелый корпус под гигантский трюм требует развитой тяги.
     requires: { COMBUSTION_DRIVE: 4 },
+  },
+  COLONY_SHIP: {
+    label: 'Колониальный транспорт',
+    description:
+      'Одноразовый корабль-основатель: садится на свободную планету и разбирается ' +
+      'на первую инфраструктуру колонии. Обратно не возвращается.',
+    // Дороже переработчика: это не рейс за обломками, а новая база навсегда.
+    cost: { ore: 10000, polymers: 6000, plasma: 2000 },
+    baseSeconds: 400,
+    shipyardLevel: 4,
+    // Астрофизика нужна и на сам полет к чужой звезде, и на выбор пригодной планеты.
+    requires: { ASTROPHYSICS: 1, COMBUSTION_DRIVE: 3 },
   },
 };
 

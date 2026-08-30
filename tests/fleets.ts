@@ -14,10 +14,12 @@ import {
   isOneWayMission,
   MISSION_LABELS,
   planFlight,
+  validateComposition,
   type FleetMission,
 } from '../src/game/fleets.js';
-import { emptyShipCounts, type ShipCounts } from '../src/game/ships.js';
-import { emptyTechLevels, type TechLevels } from '../src/game/techTree.js';
+import { emptyShipCounts, missingShipRequirements, type ShipCounts } from '../src/game/ships.js';
+import { colonySlots, emptyTechLevels, type TechLevels } from '../src/game/techTree.js';
+import { emptyLevels } from '../src/game/rules.js';
 
 const BASE_URL = 'http://localhost:3000';
 const results: Array<{ name: string; passed: boolean }> = [];
@@ -44,7 +46,7 @@ const FAR_SYSTEM = { position: 2, system: { galaxyX: 4, galaxyY: 5 } };
 console.log('\n=== 1. Типы миссий ===');
 
 {
-  const required: FleetMission[] = ['ATTACK', 'TRANSPORT', 'DEPLOY', 'SCAN'];
+  const required: FleetMission[] = ['ATTACK', 'TRANSPORT', 'DEPLOY', 'SCAN', 'COLONIZE'];
   check(
     'все базовые миссии распознаются',
     required.every((mission) => isFleetMission(mission)),
@@ -57,8 +59,9 @@ console.log('\n=== 1. Типы миссий ===');
   check('выдуманная миссия не проходит', !isFleetMission('WARP') && !isFleetMission(''));
 
   check(
-    'в один конец летит только дислокация',
+    'в один конец летят дислокация и колонизация',
     isOneWayMission('DEPLOY') &&
+      isOneWayMission('COLONIZE') &&
       !isOneWayMission('ATTACK') &&
       !isOneWayMission('TRANSPORT') &&
       !isOneWayMission('SCAN'),
@@ -168,9 +171,62 @@ console.log('\n=== 4. Топливо в один конец ===');
   check('пустой состав не дает ни времени, ни расхода', nobody.flightSeconds === 0 && nobody.fuel === 0);
 }
 
-/* ------------------------- 5. Живой сервер ------------------------- */
+/* ------------------------- 5. Колонизация ------------------------- */
 
-console.log('\n=== 5. Правила вылета и поиск по координатам ===');
+console.log('\n=== 5. Колонизация ===');
+
+{
+  check(
+    'без основателя колонизация не проходит',
+    validateComposition('COLONIZE', fleet({ TRANSPORTER: 10, HEAVY_CRUISER: 5 })) !== null,
+  );
+  check(
+    'с основателем состав принимается',
+    validateComposition('COLONIZE', fleet({ COLONY_SHIP: 1 })) === null,
+  );
+  check(
+    'пустой состав не летит колонизировать',
+    validateComposition('COLONIZE', emptyShipCounts()) !== null,
+  );
+
+  // Слот на старте один, дальше по слоту за каждые два уровня астрофизики.
+  const slots = [0, 1, 2, 3, 4, 5, 6].map((level) => colonySlots(techs({ ASTROPHYSICS: level })));
+  check(
+    'слоты растут через уровень астрофизики',
+    slots.join(',') === '1,1,2,2,3,3,4',
+    `уровни 0..6 → ${slots.join(', ')}`,
+  );
+  check(
+    'без астрофизики колония ровно одна',
+    colonySlots(techs()) === 1 && colonySlots(techs({ ASTROPHYSICS: -5 })) === 1,
+  );
+
+  // Постройка закрыта до астрофизики: слот без корабля бесполезен и наоборот.
+  const noTech = missingShipRequirements('COLONY_SHIP', emptyLevels(), techs({ COMBUSTION_DRIVE: 3 }));
+  check(
+    'колонизатор требует астрофизику и верфь',
+    noTech.length > 0 && noTech.some((item) => item.key === 'ASTROPHYSICS'),
+    noTech.map((item) => `${item.label} ур. ${item.level}`).join(', '),
+  );
+
+  // Колонизатор тихоходен: он тормозит конвой, и это осознанная цена.
+  const escort = planFlight(fleet({ HEAVY_CRUISER: 4 }), techs(), HOME, NEIGHBOUR);
+  const withFounder = planFlight(fleet({ HEAVY_CRUISER: 4, COLONY_SHIP: 1 }), techs(), HOME, NEIGHBOUR);
+  check(
+    'основатель замедляет конвой',
+    withFounder.speed < escort.speed,
+    `${escort.speed} → ${withFounder.speed}`,
+  );
+  check(
+    'у основателя есть трюм под припасы колонии',
+    fleetCapacity(fleet({ COLONY_SHIP: 1 })) > 0,
+    `вместимость ${fleetCapacity(fleet({ COLONY_SHIP: 1 }))}`,
+  );
+}
+
+/* ------------------------- 6. Живой сервер ------------------------- */
+
+console.log('\n=== 6. Правила вылета и поиск по координатам ===');
 
 async function live(): Promise<void> {
   const config = JSON.parse(process.argv[2] ? await readConfig(process.argv[2]) : '{}');

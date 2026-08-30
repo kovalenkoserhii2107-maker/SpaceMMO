@@ -413,6 +413,88 @@ export function buildDeployMail(input: DeployMailInput): OutgoingMessage[] {
   ];
 }
 
+export interface ColonyMailInput {
+  commanderId: string;
+  baseName: string;
+  planetName: string;
+  systemName: string;
+  galaxyX: number;
+  galaxyY: number;
+  position: number;
+  /** Флот, оставшийся у новой колонии: сам основатель уже разобран. */
+  fleet: UnitLoss[];
+  cargo: CargoAmounts;
+  /** Сколько колоний теперь занято и сколько всего доступно. */
+  used: number;
+  slots: number;
+}
+
+/** Колония основана: планета занята, флот переходит новой базе. */
+export function buildColonyMail(input: ColonyMailInput): OutgoingMessage[] {
+  const where = `${input.planetName} (${input.systemName})`;
+  const coords = `${input.galaxyX}:${input.galaxyY}:${input.position}`;
+  const cargo = cargoTotal(input.cargo) > 0 ? `\nВыгружено: ${describeCargo(input.cargo)}.` : '';
+  const rest = input.fleet.length > 0 ? `\nОстались у колонии: ${describeFleet(input.fleet)}.` : '';
+
+  return [
+    {
+      recipientId: input.commanderId,
+      type: 'FLEET',
+      subject: `Колония основана: ${where}`,
+      body:
+        `Колониальный транспорт сел на ${where}, координаты ${coords}. ` +
+        `Корабль разобран на первую инфраструктуру, база «${input.baseName}» на связи.\n` +
+        `Занято колоний: ${input.used} из ${input.slots}.${rest}${cargo}`,
+      payload: {
+        kind: 'COLONIZE',
+        planetName: input.planetName,
+        systemName: input.systemName,
+        galaxyX: input.galaxyX,
+        galaxyY: input.galaxyY,
+        position: input.position,
+        fleet: input.fleet,
+        cargo: input.cargo,
+      },
+    },
+  ];
+}
+
+export interface ColonyFailedMailInput {
+  commanderId: string;
+  planetName: string;
+  systemName: string;
+  reason: string;
+  fleet: UnitLoss[];
+}
+
+/**
+ * Колонизация сорвалась. Письмо обязательно: рейс односторонний, игрок ждет
+ * новую базу и без объяснения увидел бы только вернувшийся домой флот.
+ */
+export function buildColonyFailedMail(input: ColonyFailedMailInput): OutgoingMessage[] {
+  const where = `${input.planetName} (${input.systemName})`;
+
+  return [
+    {
+      recipientId: input.commanderId,
+      type: 'FLEET',
+      subject: `Колонизация сорвана: ${where}`,
+      body:
+        `Высадка на ${where} отменена: ${input.reason}.\n` +
+        `Флот возвращается домой, колониальный транспорт цел. ` +
+        `Обратный путь топлива не стоил — он не был оплачен при вылете.\n` +
+        `В составе: ${describeFleet(input.fleet)}.`,
+      payload: {
+        kind: 'COLONIZE_FAILED',
+        planetName: input.planetName,
+        systemName: input.systemName,
+        reason: input.reason,
+        fleet: input.fleet,
+      },
+    },
+  ];
+}
+
 export interface ReturnMailInput {
   commanderId: string;
   baseName: string;

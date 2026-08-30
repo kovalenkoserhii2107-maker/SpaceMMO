@@ -550,6 +550,7 @@ model Fleet {
   heavyCruisers Int @default(0)
   ionFrigates   Int @default(0)
   recyclers     Int @default(0)
+  colonyShips   Int @default(0)
 
   /// Груз на борту: руда, полимеры и плазма занимают трюмы.
   cargoOre        Float @default(0)
@@ -640,6 +641,7 @@ model FleetTemplate {
   heavyCruisers Int @default(0)
   ionFrigates   Int @default(0)
   recyclers     Int @default(0)
+  colonyShips   Int @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -766,6 +768,7 @@ enum FleetMission {
   DEPLOY
   EXPEDITION
   HARVEST
+  COLONIZE
 }
 
 enum ExpeditionOutcome {
@@ -812,6 +815,7 @@ enum ShipType {
   HEAVY_CRUISER
   ION_FRIGATE
   RECYCLER
+  COLONY_SHIP
 }
 
 enum SystemAnomaly {
