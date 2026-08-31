@@ -1751,6 +1751,18 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .dispatch-target .own { color: var(--ok); }
 .dispatch-target .unknown { color: var(--warn); }
 
+/* Флажок с подписью в строку: подпись кликабельна вместе с самим квадратом. */
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.check-row input { accent-color: var(--accent); }
+.check-row:hover { color: var(--text); }
+
 /* Поле координат: ввод и кнопка поиска стоят в строку. */
 .coord-row { display: flex; gap: 6px; }
 .coord-row input { flex: 1 1 auto; min-width: 0; }

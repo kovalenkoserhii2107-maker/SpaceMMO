@@ -332,13 +332,17 @@ export interface TransportMailInput {
   systemName: string;
   fleet: UnitLoss[];
   cargo: CargoAmounts;
+  /** Рейс в один конец: корабли перешли получателю вместе с грузом. */
+  handedOver?: boolean;
 }
 
 /**
  * Доставка груза.
  *
  * Чужой колонии уходит второе письмо: без него ресурсы появлялись бы на складе
- * молча, и получатель не знал бы, кого благодарить.
+ * молча, и получатель не знал бы, кого благодарить. Передача флота — событие
+ * крупнее доставки, поэтому оба письма про нее говорят прямо: у отправителя
+ * кораблей больше нет, у получателя они появились.
  */
 export function buildTransportMail(input: TransportMailInput): OutgoingMessage[] {
   const { planetName, systemName, cargo } = input;
@@ -355,12 +359,15 @@ export function buildTransportMail(input: TransportMailInput): OutgoingMessage[]
     {
       recipientId: input.senderId,
       type: 'FLEET',
-      subject: `Доставка: ${where}`,
+      subject: input.handedOver ? `Флот передан: ${where}` : `Доставка: ${where}`,
       body:
         `Флот доставил груз на ${where}.\n` +
         `Выгружено: ${describeCargo(cargo)}.\n` +
-        `Состав: ${describeFleet(input.fleet)}. Флот возвращается домой.`,
-      payload: { ...payload, role: 'SENDER' },
+        `Состав: ${describeFleet(input.fleet)}. ` +
+        (input.handedOver
+          ? 'Рейс был без возврата: корабли переданы владельцу колонии.'
+          : 'Флот возвращается домой.'),
+      payload: { ...payload, role: 'SENDER', handedOver: Boolean(input.handedOver) },
     },
   ];
 
@@ -368,12 +375,20 @@ export function buildTransportMail(input: TransportMailInput): OutgoingMessage[]
     messages.push({
       recipientId: input.recipientId,
       type: 'FLEET',
-      subject: `Получен груз: ${where}`,
+      subject: input.handedOver ? `Получены корабли: ${where}` : `Получен груз: ${where}`,
       body:
         `На вашу колонию ${where} доставлен груз.\n` +
         `Отправитель: ${input.senderName}.\n` +
-        `Получено: ${describeCargo(cargo)}.`,
-      payload: { ...payload, role: 'RECIPIENT', senderName: input.senderName },
+        `Получено: ${describeCargo(cargo)}.` +
+        (input.handedOver
+          ? `\nКорабли остались вам: ${describeFleet(input.fleet)}.`
+          : ''),
+      payload: {
+        ...payload,
+        role: 'RECIPIENT',
+        senderName: input.senderName,
+        handedOver: Boolean(input.handedOver),
+      },
     });
   }
 

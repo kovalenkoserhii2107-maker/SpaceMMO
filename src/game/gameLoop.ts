@@ -37,7 +37,7 @@ import {
   MISSION_LABELS,
   planFlight,
   validateCargo,
-  isOneWayMission,
+  resolveOneWay,
   validateComposition,
   type FleetMission,
 } from './fleets.js';
@@ -495,10 +495,14 @@ class GameLoop {
     ships: ShipCounts,
     cargo: { ore: number; polymers: number; plasma: number },
     pickup: { ore: number; polymers: number } = { ore: 0, polymers: 0 },
+    /** Оставить флот в точке назначения. Учитывается только там, где есть выбор. */
+    requestedOneWay = false,
   ): Promise<ActionResult> {
     const commander = await this.getCommander(commanderId);
     const base = commander?.bases.get(baseId);
     if (!commander || !base) return { ok: false, error: 'База не найдена' };
+
+    const oneWay = resolveOneWay(mission, requestedOneWay);
 
     const compositionError = validateComposition(mission, ships);
     if (compositionError) return { ok: false, error: compositionError };
@@ -650,7 +654,7 @@ class GameLoop {
       commander.techs,
       { position: base.position, system: base.galaxy },
       target_,
-      { oneWay: isOneWayMission(mission) },
+      { oneWay },
     );
 
     // Межзвездный прыжок возможен только с гипердвигателем и идет на антиматерии.
@@ -707,6 +711,7 @@ class GameLoop {
         ionFrigates: ships.ION_FRIGATE,
         recyclers: ships.RECYCLER,
         colonyShips: ships.COLONY_SHIP,
+        oneWay,
         cargoOre: outboundCargo.ore,
         cargoPolymers: outboundCargo.polymers,
         cargoPlasma: outboundCargo.plasma,
@@ -1108,6 +1113,44 @@ class GameLoop {
       if (!targetBase) {
         // Колонии больше нет — груз остается в трюмах и вернется домой.
         await prisma.fleet.update({ where: { id: fleet.id }, data: { status: 'RETURNING' } });
+        return;
+      }
+
+      /*
+       * Рейс в один конец отдает получателю не только груз, но и сами корабли —
+       * именно так передают флот союзнику. Садится он тем же `landFleet`,
+       * которым садится дислокация: разница лишь в том, чья это база.
+       */
+      if (fleet.oneWay) {
+        const roster = fleetRoster(fleetShips(fleet));
+        const cargo = {
+          ore: fleet.cargoOre,
+          polymers: fleet.cargoPolymers,
+          plasma: fleet.cargoPlasma,
+        };
+        // Место читаем до посадки: она удаляет запись полета.
+        const [sender, place] = await Promise.all([
+          prisma.commander.findUnique({
+            where: { id: fleet.commanderId },
+            select: { nickname: true },
+          }),
+          arrivalPlace(fleet),
+        ]);
+
+        await this.landFleet(fleet, targetBase.id);
+
+        await this.notify(
+          buildTransportMail({
+            senderId: fleet.commanderId,
+            recipientId: targetBase.commanderId,
+            senderName: sender?.nickname ?? 'неизвестный командир',
+            planetName: place.planetName,
+            systemName: place.systemName,
+            fleet: roster,
+            cargo,
+            handedOver: true,
+          }),
+        );
         return;
       }
 

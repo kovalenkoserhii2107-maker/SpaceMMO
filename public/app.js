@@ -107,6 +107,8 @@
     cargoOre: $('cargo-ore'),
     cargoPolymers: $('cargo-polymers'),
     flightPlan: $('flight-plan'),
+    oneWay: $('one-way'),
+    oneWayRow: $('one-way-row'),
     sendFleetButton: $('send-fleet'),
     fleetList: $('fleet-list'),
     resCredits: $('res-credits'),
@@ -2479,6 +2481,12 @@
     el.cargoPlasmaField.hidden = hubRun;
     if (hubRun) el.cargoPlasma.value = '0';
 
+    // Выбор односторонности есть только у транспорта: дислокация и колонизация
+    // односторонни всегда, остальные миссии всегда возвращаются.
+    const canChooseOneWay = map.mission === 'TRANSPORT';
+    el.oneWayRow.hidden = !canChooseOneWay;
+    if (!canChooseOneWay) el.oneWay.checked = false;
+
     // Переработчики летят за обломками, а не с грузом: трюмы должны быть пусты.
     // Разведке трюмы тоже ни к чему — зонд везет данные, а не ресурсы.
     const harvest = map.mission === 'HARVEST' || map.mission === 'SCAN';
@@ -2724,7 +2732,7 @@
         method: 'POST',
         headers: authHeaders(),
         // Миссию шлем в расчет: рейс в один конец не платит за обратный путь.
-        body: JSON.stringify({ ...target, ships, mission: map.mission }),
+        body: JSON.stringify({ ...target, ships, mission: map.mission, oneWay: el.oneWay.checked }),
       });
       if (!response.ok) {
         map.plan = null;
@@ -2749,8 +2757,12 @@
       const fuelStock = jump ? base.resources.antimatter : base.resources.plasma;
       const fuelName = jump ? 'антиматерии' : 'плазмы';
       const noFuel = fuelAmount > fuelStock;
-      // Дислокация домой не возвращается, и топливо за обратный путь не берется.
-      const oneWay = map.mission === 'DEPLOY' || map.mission === 'COLONIZE';
+      // Рейс без возврата не платит за обратный путь. У дислокации и колонизации
+      // это свойство миссии, у транспорта — выбор игрока.
+      const oneWay =
+        map.mission === 'DEPLOY' ||
+        map.mission === 'COLONIZE' ||
+        (map.mission === 'TRANSPORT' && el.oneWay.checked);
 
       el.flightPlan.innerHTML =
         (jump
@@ -2782,6 +2794,7 @@
     const ok = await send(`/api/bases/${base.baseId}/fleets`, {
       ...target,
       mission: map.mission,
+      oneWay: el.oneWay.checked,
       ships: readComposition(),
       cargo: pickup ? { ore: 0, polymers: 0, plasma: 0 } : amounts,
       pickup: pickup ? { ore: amounts.ore, polymers: amounts.polymers } : { ore: 0, polymers: 0 },
@@ -2794,6 +2807,7 @@
       el.cargoPolymers.value = '0';
       el.cargoPlasma.value = '0';
       el.presetSelect.value = '';
+      el.oneWay.checked = false;
       map.plan = null;
       el.flightPlan.textContent = 'Выбери корабли, чтобы увидеть расчет.';
       showMissionWarning(null);
@@ -2910,6 +2924,7 @@
   el.cargoOre.addEventListener('input', schedulePlan);
   el.cargoPolymers.addEventListener('input', schedulePlan);
   el.cargoPlasma.addEventListener('input', schedulePlan);
+  el.oneWay.addEventListener('change', schedulePlan);
 
 
   /* ---------- Хаб и биржа ---------- */

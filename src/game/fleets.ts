@@ -37,6 +37,23 @@ export function isOneWayMission(mission: FleetMission): boolean {
   return mission === 'DEPLOY' || mission === 'COLONIZE';
 }
 
+/** Может ли игрок сам решить, останется ли флот в точке назначения. */
+export function allowsOneWayChoice(mission: FleetMission): boolean {
+  return mission === 'TRANSPORT';
+}
+
+/**
+ * Итоговая односторонность рейса.
+ *
+ * У дислокации и колонизации она свойство самой миссии и выбору не подлежит.
+ * Транспорт летит и так, и так: обычная доставка возвращает корабли домой,
+ * а помощь союзнику может уйти вместе с ними — именно этим передают флот.
+ */
+export function resolveOneWay(mission: FleetMission, requested: boolean): boolean {
+  if (isOneWayMission(mission)) return true;
+  return allowsOneWayChoice(mission) && requested;
+}
+
 export const MISSION_LABELS: Record<FleetMission, string> = {
   TRANSPORT: 'Транспортировка',
   SCAN: 'Разведка',

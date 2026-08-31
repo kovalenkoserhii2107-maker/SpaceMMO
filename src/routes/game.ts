@@ -4,7 +4,7 @@ import { isBuildingType } from '../game/rules.js';
 import { isTechnologyType } from '../game/techTree.js';
 import { isShipType } from '../game/ships.js';
 import { isDefenseType } from '../game/defenses.js';
-import { isFleetMission, isOneWayMission, planFlight } from '../game/fleets.js';
+import { isFleetMission, planFlight, resolveOneWay } from '../game/fleets.js';
 import { buildGalaxyMap, buildSystemMap } from '../services/mapService.js';
 import { prisma } from '../db/prisma.js';
 import { attackWarning } from '../services/warService.js';
@@ -128,6 +128,8 @@ interface FleetRequestBody {
   ships?: Record<string, unknown>;
   cargo?: { ore?: unknown; polymers?: unknown; plasma?: unknown };
   pickup?: { ore?: unknown; polymers?: unknown };
+  /** Оставить флот у цели. Действует только там, где выбор вообще есть. */
+  oneWay?: unknown;
 }
 
 function readTarget(body: FleetRequestBody): { planetId?: string; hubId?: string; systemId?: string } {
@@ -204,7 +206,8 @@ gameRouter.post('/bases/:baseId/fleets/preview', async (req, res: Response<Fligh
 
   // Миссия влияет на расход: рейс в один конец не платит за обратный путь.
   // Ее может не быть — тогда считаем обычный рейс туда и обратно.
-  const oneWay = isFleetMission(body.mission) && isOneWayMission(body.mission);
+  const oneWay =
+    isFleetMission(body.mission) && resolveOneWay(body.mission, body.oneWay === true);
 
   const plan = planFlight(
     ships,
@@ -261,6 +264,7 @@ gameRouter.post('/bases/:baseId/fleets', async (req, res: Response<ActionRespons
     ships,
     cargo,
     pickup,
+    body.oneWay === true,
   );
   res.status(result.ok ? 200 : 409).json(result);
 });

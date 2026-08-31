@@ -632,6 +632,15 @@
               <label class="field"><span id="cargo-polymers-label"><svg class="ico polymers sm" role="img" aria-label="Полимеры"><title>Полимеры</title><use href="#ico-polymers"/></svg> Полимеры</span><input id="cargo-polymers" type="number" min="0" value="0"></label>
               <label class="field" id="cargo-plasma-field"><span id="cargo-plasma-label"><svg class="ico plasma sm" role="img" aria-label="Плазма"><title>Плазма</title><use href="#ico-plasma"/></svg> Плазма</span><input id="cargo-plasma" type="number" min="0" value="0"></label>
             </div>
+            <!--
+              Рейс без возврата. Для дислокации и колонизации это свойство
+              самой миссии, а транспорт летит и так, и так: помощь союзнику
+              может уйти вместе с кораблями — именно этим передают флот.
+            -->
+            <label class="check-row" id="one-way-row" hidden>
+              <input id="one-way" type="checkbox">
+              <span>Без возврата — корабли остаются у цели</span>
+            </label>
             <div id="flight-plan" class="flight-plan">Выбери корабли, чтобы увидеть расчет.</div>
             <button id="send-fleet" type="button" class="primary">Запуск</button>
           </section>

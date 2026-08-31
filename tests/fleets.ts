@@ -12,6 +12,7 @@ import {
   galaxyDistance,
   isFleetMission,
   isOneWayMission,
+  resolveOneWay,
   MISSION_LABELS,
   planFlight,
   validateComposition,
@@ -169,6 +170,38 @@ console.log('\n=== 4. Топливо в один конец ===');
   // Пустой флот никуда не летит — на нем расчет не должен ломаться.
   const nobody = planFlight(emptyShipCounts(), techs(), HOME, NEIGHBOUR);
   check('пустой состав не дает ни времени, ни расхода', nobody.flightSeconds === 0 && nobody.fuel === 0);
+}
+
+/* ------------------------- 4b. Рейс без возврата по выбору ------------------------- */
+
+console.log('\n=== 4b. Рейс без возврата по выбору ===');
+
+{
+  // У дислокации и колонизации односторонность — свойство миссии, и снять
+  // ее нельзя: флот там остается по самому смыслу задачи.
+  check(
+    'дислокация и колонизация односторонни при любом флажке',
+    resolveOneWay('DEPLOY', false) && resolveOneWay('COLONIZE', false),
+  );
+  check(
+    'транспорт слушается флажка',
+    resolveOneWay('TRANSPORT', true) && !resolveOneWay('TRANSPORT', false),
+  );
+  // Атаке и разведке возвращаться обязательно: флот, брошенный у чужой
+  // колонии, достался бы противнику даром.
+  check(
+    'атака и разведка возвращаются всегда',
+    !resolveOneWay('ATTACK', true) && !resolveOneWay('SCAN', true),
+  );
+
+  const ships = fleet({ TRANSPORTER: 6 });
+  const round = planFlight(ships, techs(), HOME, NEIGHBOUR);
+  const gift = planFlight(ships, techs(), HOME, NEIGHBOUR, { oneWay: resolveOneWay('TRANSPORT', true) });
+  check(
+    'односторонняя помощь стоит вдвое дешевле',
+    Math.abs(gift.fuel * 2 - round.fuel) <= 1,
+    `${round.fuel} против ${gift.fuel}`,
+  );
 }
 
 /* ------------------------- 5. Колонизация ------------------------- */
