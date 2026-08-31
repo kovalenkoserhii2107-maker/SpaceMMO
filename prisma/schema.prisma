@@ -39,6 +39,10 @@ model User {
   passwordResetToken   String?   @unique
   passwordResetExpires DateTime?
 
+  /// Когда аккаунт заблокирован гейм-мастером. null — доступ открыт.
+  /// Дата, а не флаг: важно не только «закрыт», но и когда это случилось.
+  blockedAt DateTime?
+
   createdAt   DateTime  @default(now())
   lastLoginAt DateTime?
 
@@ -631,6 +635,8 @@ enum MessageType {
   EXPEDITION
   /// Логистика: доставка груза, дислокация, возвращение флота с добычей.
   FLEET
+  /// Письмо от гейм-мастера: отправитель системный, но это не автоотчет.
+  ADMIN
 }
 
 /// Сохраненный состав флота: пресет для быстрой отправки.

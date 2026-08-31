@@ -8,7 +8,7 @@ import type { EspionageTarget } from '../services/mapService.js';
 import type { FleetTemplateView } from '../services/fleetTemplateService.js';
 import type { SimulationResult } from '../services/simulationService.js';
 import type { MailboxView } from '../services/mailService.js';
-import type { CommanderDetail, CommanderSummary } from '../services/adminService.js';
+import type { AdminDashboard, CommanderDetail, CommanderSummary } from '../services/adminService.js';
 import type { CommanderProfile } from '../services/commanderService.js';
 import type { MarketView } from '../services/marketService.js';
 import type { DiplomacyView } from '../services/warService.js';
@@ -115,3 +115,13 @@ export interface AdminListResponse {
 }
 
 export type AdminDetailResponse = CommanderDetail;
+
+export type AdminDashboardResponse = AdminDashboard;
+
+/** Код смены пароля, выданный пультом: админ передает его игроку сам. */
+export interface AdminResetResponse {
+  ok: true;
+  message: string;
+  token: string;
+  expiresAt: number;
+}

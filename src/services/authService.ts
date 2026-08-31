@@ -107,9 +107,24 @@ export async function login(email: string, password: string): Promise<AuthResult
   const invalid: AuthResult = { ok: false, error: 'Неверный email или пароль', status: 401 };
   if (!user || !(await verifyPassword(password, user.passwordHash))) return invalid;
 
+  /*
+   * Блокировку проверяем после пароля, а не до: иначе по разнице ответов
+   * можно перебором узнать, какие email зарегистрированы. Токен выдавать
+   * не за чем — все игровые роуты его все равно отвергнут, и игрок увидел бы
+   * пустой интерфейс вместо объяснения.
+   */
+  if (user.blockedAt) return blockedResult;
+
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
   return { ok: true, token: issueToken(user), user };
 }
+
+/** Один текст отказа на вход и на игровые роуты: причина у них общая. */
+const blockedResult: AuthResult = {
+  ok: false,
+  error: 'Учетная запись заблокирована. Обратись к администрации.',
+  status: 403,
+};
 
 /* ------------------------- Смена пароля ------------------------- */
 
@@ -185,6 +200,7 @@ export async function loginWithProvider(
     where: { authProvider_providerId: { authProvider: provider, providerId: profile.providerId } },
   });
   if (linked) {
+    if (linked.blockedAt) return blockedResult;
     const updated = await prisma.user.update({
       where: { id: linked.id },
       data: { lastLoginAt: new Date() },

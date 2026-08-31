@@ -71,6 +71,12 @@ io.use(async (socket, next) => {
     next(new Error('commander required'));
     return;
   }
+  // Блокировка закрывает и игровой канал: иначе заблокированный аккаунт
+  // продолжал бы получать состояние мира, пока живет выданный токен.
+  if (user.blockedAt) {
+    next(new Error('blocked'));
+    return;
+  }
 
   socket.data.commanderId = user.commander.id;
   socket.data.nickname = user.commander.nickname;

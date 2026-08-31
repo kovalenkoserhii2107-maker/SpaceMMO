@@ -129,6 +129,7 @@
     cargoPlasmaField: $('cargo-plasma-field'),
     cargoInputs: $('cargo-inputs'),
     adminSearch: $('admin-search'),
+    adminDashboard: $('admin-dashboard'),
     adminRows: $('admin-rows'),
     adminDetail: $('admin-detail'),
     mailButton: $('mail-button'),
@@ -729,7 +730,10 @@
       void loadEspionageTargets();
     }
     if (name === 'presets') void loadPresets();
-    if (name === 'admin') void loadAdminList();
+    if (name === 'admin') {
+      void loadAdminList();
+      void loadAdminDashboard();
+    }
     if (name === 'mail') {
       void loadMail();
       if (!syndicate.data) void loadSyndicate();
@@ -4699,6 +4703,7 @@
     { key: 'SPY_REPORT', label: 'Разведка' },
     { key: 'EXPEDITION', label: 'Экспедиции' },
     { key: 'FLEET', label: 'Логистика' },
+    { key: 'ADMIN', label: 'Администрация' },
   ];
 
   const MAIL_KIND_LABELS = {
@@ -4708,6 +4713,7 @@
     SPY_REPORT: 'разведка',
     EXPEDITION: 'экспедиция',
     FLEET: 'логистика',
+    ADMIN: 'администрация',
   };
 
   const mail = { filter: '', data: null, expanded: new Set() };
@@ -4935,6 +4941,39 @@
     if (state.activeTab === 'admin') showPanel('buildings');
   }
 
+  /*
+   * Сводка по серверу. Онлайн считает тик по живым сокетам, остальное —
+   * запросы к БД, поэтому дашборд обновляется при открытии раздела,
+   * а не каждую секунду: считать девять агрегатов на тик незачем.
+   */
+  const DASHBOARD_CELLS = [
+    { key: 'online', label: 'сейчас в сети', tone: 'ok' },
+    { key: 'activeToday', label: 'заходили сегодня' },
+    { key: 'registeredToday', label: 'новых сегодня' },
+    { key: 'activeWeek', label: 'заходили за неделю' },
+    { key: 'commanders', label: 'командиров' },
+    { key: 'accounts', label: 'учетных записей' },
+    { key: 'blocked', label: 'заблокировано', tone: 'bad' },
+    { key: 'colonies', label: 'колоний' },
+    { key: 'fleetsInFlight', label: 'флотов в полете' },
+    { key: 'syndicates', label: 'синдикатов' },
+  ];
+
+  async function loadAdminDashboard() {
+    const result = await api('/api/admin/dashboard');
+    if (!result.ok) return;
+
+    el.adminDashboard.innerHTML = '';
+    for (const cell of DASHBOARD_CELLS) {
+      const value = Number(result.data[cell.key]) || 0;
+      const node = document.createElement('div');
+      // Нулевые «заблокировано» красным не красим: ноль здесь хорошая новость.
+      node.className = `admin-stat${cell.tone && value > 0 ? ' ' + cell.tone : ''}`;
+      node.innerHTML = `<b>${fmt(value)}</b><span>${cell.label}</span>`;
+      el.adminDashboard.appendChild(node);
+    }
+  }
+
   async function loadAdminList() {
     const search = el.adminSearch.value.trim();
     const query = search ? `?search=${encodeURIComponent(search)}` : '';
@@ -5020,6 +5059,150 @@
     return { group, fields };
   }
 
+  const PROVIDER_LABELS = { LOCAL: 'пароль', GOOGLE: 'Google', APPLE: 'Apple', FACEBOOK: 'Facebook' };
+
+  const fmtDateTime = (value) => (value ? new Date(value).toLocaleString('ru-RU') : 'никогда');
+
+  /**
+   * Учетная запись игрока и действия над ней.
+   *
+   * Отделена от игровых чисел намеренно: правка ресурсов и закрытие доступа —
+   * разные по последствиям вещи, и складывать их в одну форму «Сохранить»
+   * значит однажды заблокировать игрока, поправляя ему руду.
+   */
+  function renderAdminAccount(detail) {
+    const account = detail.account;
+    const box = document.createElement('div');
+    box.className = 'admin-group admin-account';
+
+    const blocked = Boolean(account.blockedAt);
+    box.innerHTML =
+      '<h4>Учетная запись</h4>' +
+      '<div class="admin-account-facts">' +
+      `<div><span>Почта</span><b>${escapeHtml(account.email)}</b></div>` +
+      `<div><span>Вход</span><b>${PROVIDER_LABELS[account.authProvider] || account.authProvider}</b></div>` +
+      `<div><span>Зарегистрирован</span><b>${fmtDateTime(account.createdAt)}</b></div>` +
+      `<div><span>Последний вход</span><b>${fmtDateTime(account.lastLoginAt)}</b></div>` +
+      `<div><span>Права</span><b>${account.role}</b></div>` +
+      `<div><span>Доступ</span><b class="${blocked ? 'bad' : 'ok'}">` +
+      `${blocked ? 'заблокирован ' + fmtDateTime(account.blockedAt) : 'открыт'}</b></div>` +
+      '</div>';
+
+    const actions = document.createElement('div');
+    actions.className = 'admin-account-actions';
+
+    const resetButton = document.createElement('button');
+    resetButton.type = 'button';
+    resetButton.className = 'ghost';
+    resetButton.textContent = 'Выдать код смены пароля';
+    resetButton.addEventListener('click', () => void issueReset(detail.commanderId));
+
+    const blockButton = document.createElement('button');
+    blockButton.type = 'button';
+    blockButton.className = 'ghost';
+    blockButton.textContent = blocked ? 'Разблокировать' : 'Заблокировать';
+    blockButton.addEventListener('click', () => void toggleBlock(detail.commanderId, !blocked));
+
+    actions.append(resetButton, blockButton);
+    box.appendChild(actions);
+
+    // Код смены пароля показывается здесь же: передать его игроку — забота
+    // администратора, сервер писем пока не отправляет.
+    const reset = document.createElement('p');
+    reset.className = 'admin-reset';
+    reset.hidden = true;
+    adminInputs.resetNote = reset;
+    box.appendChild(reset);
+
+    box.appendChild(renderAdminMessageForm(detail));
+    box.appendChild(renderAdminDangerZone(detail));
+    return box;
+  }
+
+  /** Письмо игроку от гейм-мастера: уходит системным отправителем с типом ADMIN. */
+  function renderAdminMessageForm(detail) {
+    const form = document.createElement('div');
+    form.className = 'admin-subform';
+    form.innerHTML =
+      '<h5>Написать игроку</h5>' +
+      '<label class="field"><span>Тема</span><input type="text" maxlength="120"></label>' +
+      '<label class="field"><span>Текст</span><textarea rows="3" maxlength="4000"></textarea></label>';
+
+    const [subject] = form.getElementsByTagName('input');
+    const [body] = form.getElementsByTagName('textarea');
+    const sendButton = document.createElement('button');
+    sendButton.type = 'button';
+    sendButton.className = 'ghost';
+    sendButton.textContent = 'Отправить';
+    sendButton.addEventListener('click', async () => {
+      const ok = await send(`/api/admin/commanders/${detail.commanderId}/message`, {
+        subject: subject.value,
+        body: body.value,
+      });
+      if (ok) {
+        subject.value = '';
+        body.value = '';
+      }
+    });
+    form.appendChild(sendButton);
+    return form;
+  }
+
+  /**
+   * Удаление учетной записи. Отделено рамкой и требует ввести позывной:
+   * каскад унесет колонии, флоты и синдикат, если игрок был лидером,
+   * а отменить это нечем.
+   */
+  function renderAdminDangerZone(detail) {
+    const zone = document.createElement('div');
+    zone.className = 'admin-danger';
+    zone.innerHTML =
+      '<h5>Удаление учетной записи</h5>' +
+      '<p>Необратимо. Вместе с аккаунтом исчезнут колонии (планеты освободятся), ' +
+      'флоты и синдикат, если игрок им руководил.</p>' +
+      `<label class="field"><span>Введи позывной «${escapeHtml(detail.nickname)}» для подтверждения</span>` +
+      '<input type="text" autocomplete="off"></label>';
+
+    const [confirm] = zone.getElementsByTagName('input');
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'danger';
+    remove.textContent = 'Удалить навсегда';
+    remove.addEventListener('click', async () => {
+      const ok = await send(`/api/admin/commanders/${detail.commanderId}`, { confirm: confirm.value }, 'DELETE');
+      if (ok) {
+        admin.detail = null;
+        admin.selected = null;
+        el.adminDetail.innerHTML = '<p class="storage-note">Учетная запись удалена.</p>';
+        await loadAdminList();
+        await loadAdminDashboard();
+      }
+    });
+    zone.appendChild(remove);
+    return zone;
+  }
+
+  async function issueReset(commanderId) {
+    const result = await api(`/api/admin/commanders/${commanderId}/password-reset`, { method: 'POST' });
+    if (!result.ok) {
+      showBuildMessage(result.data.error || 'Не удалось выдать код', false);
+      return;
+    }
+    const note = adminInputs.resetNote;
+    if (!note) return;
+    note.hidden = false;
+    note.innerHTML =
+      `Код: <b>${escapeHtml(result.data.token)}</b><br>` +
+      `Действует до ${fmtDateTime(result.data.expiresAt)}. Передай его игроку — ` +
+      'пароль он задаст себе сам.';
+    showBuildMessage(result.data.message, true);
+  }
+
+  async function toggleBlock(commanderId, blocked) {
+    const ok = await send(`/api/admin/commanders/${commanderId}/block`, { blocked });
+    if (ok) await openAdminCommander(commanderId);
+  }
+
   function renderAdminDetail() {
     const detail = admin.detail;
     el.adminDetail.innerHTML = '';
@@ -5039,6 +5222,8 @@
       note.textContent = `Флотов в полете: ${detail.fleetsInFlight}. Их состав правится после возвращения.`;
       el.adminDetail.appendChild(note);
     }
+
+    el.adminDetail.appendChild(renderAdminAccount(detail));
 
     // Криптогривна
     const credits = adminGroup('Счет командира');

@@ -9,8 +9,11 @@
  * в форме и вводит нужные. Это исключает двойное применение при повторной
  * отправке формы — самый частый способ случайно выдать вдвое больше.
  */
+import { randomBytes } from 'node:crypto';
 import { prisma } from '../db/prisma.js';
 import { gameLoop } from '../game/gameLoop.js';
+import { authConfig } from '../config/auth.js';
+import { deliver } from './mailService.js';
 import { BUILDING_TYPES, isBuildingType, type BuildingType } from '../game/rules.js';
 import { isTechnologyType, TECHNOLOGY_TYPES, type TechnologyType } from '../game/techTree.js';
 import { isShipType, SHIP_TYPES, type ShipType } from '../game/ships.js';
@@ -84,11 +87,209 @@ export interface AdminBaseView {
   defenses: Record<DefenseType, number>;
 }
 
+/** Учетная запись игрока: то, что не относится к игровому состоянию. */
+export interface AdminAccountView {
+  userId: string;
+  email: string;
+  role: string;
+  /** Как игрок входит: пароль или внешний провайдер. */
+  authProvider: string;
+  createdAt: number;
+  lastLoginAt: number | null;
+  /** Когда заблокирован; null — доступ открыт. */
+  blockedAt: number | null;
+}
+
+/** Сводка по серверу: то, ради чего пульт открывают первым делом. */
+/* ------------------------- Действия над учетной записью ------------------------- */
+
+/** Найти аккаунт по командиру: пульт оперирует командирами, права — аккаунтом. */
+async function accountOf(
+  commanderId: string,
+): Promise<{ userId: string; nickname: string; role: string; email: string } | null> {
+  const row = await prisma.commander.findUnique({
+    where: { id: commanderId },
+    select: { nickname: true, user: { select: { id: true, role: true, email: true } } },
+  });
+  return row ? { userId: row.user.id, nickname: row.nickname, role: row.user.role, email: row.user.email } : null;
+}
+
+/**
+ * Выдать игроку код смены пароля.
+ *
+ * Пульт не задает пароль сам и не показывает старый: админ передает игроку
+ * одноразовый код, а новый пароль игрок вводит себе сам. Так гейм-мастер
+ * не начинает знать чужие пароли — а знать их он не должен даже технически.
+ */
+export async function issuePasswordReset(
+  commanderId: string,
+): Promise<AdminResult & { token?: string; expiresAt?: number }> {
+  const account = await accountOf(commanderId);
+  if (!account) return { ok: false, error: 'Командир не найден', status: 404 };
+
+  const token = randomBytes(24).toString('hex');
+  const expiresAt = new Date(Date.now() + authConfig.resetTtlMinutes * 60 * 1000);
+  await prisma.user.update({
+    where: { id: account.userId },
+    data: { passwordResetToken: token, passwordResetExpires: expiresAt },
+  });
+
+  console.log(`[admin] выдан код смены пароля: ${account.nickname} (${account.email})`);
+  return {
+    ok: true,
+    message: `Код действует ${authConfig.resetTtlMinutes} минут. Передай его игроку.`,
+    token,
+    expiresAt: expiresAt.getTime(),
+  };
+}
+
+/**
+ * Заблокировать или разблокировать аккаунт.
+ *
+ * Блокировка не трогает игровое состояние: колонии, флоты и склады остаются
+ * на месте, тик продолжает их считать. Это запрет на вход, а не удаление —
+ * разблокированный игрок находит мир таким, каким его оставил.
+ */
+export async function setAccountBlocked(commanderId: string, blocked: boolean): Promise<AdminResult> {
+  const account = await accountOf(commanderId);
+  if (!account) return { ok: false, error: 'Командир не найден', status: 404 };
+  // Заблокировать администратора нельзя: иначе один гейм-мастер запирает
+  // другого, и разблокировать некому, кроме как руками в базе.
+  if (account.role === 'ADMIN' && blocked) {
+    return { ok: false, error: 'Нельзя заблокировать администратора', status: 409 };
+  }
+
+  await prisma.user.update({
+    where: { id: account.userId },
+    data: { blockedAt: blocked ? new Date() : null },
+  });
+
+  console.log(`[admin] ${blocked ? 'блокировка' : 'разблокировка'}: ${account.nickname} (${account.email})`);
+  return { ok: true, message: blocked ? `${account.nickname} заблокирован` : `${account.nickname} разблокирован` };
+}
+
+/**
+ * Удалить учетную запись вместе с командиром.
+ *
+ * Необратимо и задевает не только игрока: каскад унесет его колонии (планеты
+ * освободятся), флоты и, если он был лидером, весь его синдикат. Поэтому
+ * вызывающий обязан подтвердить операцию позывным — совпадение проверяется
+ * здесь же, а не только в интерфейсе.
+ */
+export async function deleteAccount(commanderId: string, confirmNickname: string): Promise<AdminResult> {
+  const account = await accountOf(commanderId);
+  if (!account) return { ok: false, error: 'Командир не найден', status: 404 };
+  if (account.role === 'ADMIN') {
+    return { ok: false, error: 'Нельзя удалить администратора', status: 409 };
+  }
+  if (confirmNickname.trim() !== account.nickname) {
+    return { ok: false, error: 'Позывной для подтверждения не совпадает', status: 400 };
+  }
+
+  // Игрок мог быть в памяти тика: без выгрузки ближайший сброс попытался бы
+  // записать состояние уже удаленных баз.
+  await gameLoop.applyAdminMutation(commanderId, async () => {
+    await prisma.user.delete({ where: { id: account.userId } });
+  });
+
+  console.log(`[admin] удалена учетная запись: ${account.nickname} (${account.email})`);
+  return { ok: true, message: `Учетная запись ${account.nickname} удалена` };
+}
+
+const MAX_SUBJECT = 120;
+const MAX_BODY = 4000;
+
+/**
+ * Письмо игроку от гейм-мастера.
+ *
+ * Уходит с системным отправителем и типом `ADMIN`: это не автоотчет тика,
+ * и игрок должен отличать обращение администрации от письма про добычу.
+ */
+export async function messagePlayer(
+  commanderId: string,
+  subject: string,
+  body: string,
+): Promise<AdminResult> {
+  const account = await accountOf(commanderId);
+  if (!account) return { ok: false, error: 'Командир не найден', status: 404 };
+
+  const cleanSubject = subject.trim();
+  const cleanBody = body.trim();
+  if (!cleanSubject || !cleanBody) return { ok: false, error: 'Тема и текст обязательны', status: 400 };
+  if (cleanSubject.length > MAX_SUBJECT || cleanBody.length > MAX_BODY) {
+    return { ok: false, error: 'Слишком длинная тема или текст', status: 400 };
+  }
+
+  await deliver([
+    { recipientId: commanderId, type: 'ADMIN', subject: cleanSubject, body: cleanBody },
+  ]);
+
+  console.log(`[admin] письмо игроку ${account.nickname}: ${cleanSubject}`);
+  return { ok: true, message: `Письмо отправлено: ${account.nickname}` };
+}
+
+export interface AdminDashboard {
+  /** Учетных записей всего и сколько из них заблокировано. */
+  accounts: number;
+  blocked: number;
+  /** Командиров: аккаунт без командира в игре не участвует. */
+  commanders: number;
+  /** Сейчас в сети — по живым сокетам, а не по времени последнего входа. */
+  online: number;
+  /** Заходили с начала сегодняшних суток и за последнюю неделю. */
+  activeToday: number;
+  activeWeek: number;
+  /** Новые за сегодня — по ним видно приток. */
+  registeredToday: number;
+  colonies: number;
+  fleetsInFlight: number;
+  syndicates: number;
+}
+
+/** Начало текущих суток по времени сервера. */
+function startOfToday(): Date {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+}
+
+export async function getDashboard(): Promise<AdminDashboard> {
+  const today = startOfToday();
+  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+  const [accounts, blocked, commanders, activeToday, activeWeek, registeredToday, colonies, fleetsInFlight, syndicates] =
+    await Promise.all([
+      prisma.user.count(),
+      prisma.user.count({ where: { blockedAt: { not: null } } }),
+      prisma.commander.count(),
+      prisma.user.count({ where: { lastLoginAt: { gte: today } } }),
+      prisma.user.count({ where: { lastLoginAt: { gte: weekAgo } } }),
+      prisma.user.count({ where: { createdAt: { gte: today } } }),
+      prisma.base.count(),
+      prisma.fleet.count(),
+      prisma.syndicate.count(),
+    ]);
+
+  return {
+    accounts,
+    blocked,
+    commanders,
+    // Онлайн знает только тик: в БД этого нет, там лишь время последнего входа.
+    online: gameLoop.onlineCount(),
+    activeToday,
+    activeWeek,
+    registeredToday,
+    colonies,
+    fleetsInFlight,
+    syndicates,
+  };
+}
+
 export interface CommanderDetail {
   commanderId: string;
   nickname: string;
   email: string;
   role: string;
+  account: AdminAccountView;
   credits: number;
   technologies: Record<TechnologyType, number>;
   bases: AdminBaseView[];
@@ -106,7 +307,7 @@ export async function getCommanderDetail(commanderId: string): Promise<Commander
   const row = await prisma.commander.findUnique({
     where: { id: commanderId },
     include: {
-      user: { select: { email: true, role: true } },
+      user: true,
       researches: true,
       hubStorages: { include: { hub: { select: { name: true } } } },
       bases: {
@@ -131,6 +332,15 @@ export async function getCommanderDetail(commanderId: string): Promise<Commander
     nickname: row.nickname,
     email: row.user.email,
     role: row.user.role,
+    account: {
+      userId: row.user.id,
+      email: row.user.email,
+      role: row.user.role,
+      authProvider: row.user.authProvider,
+      createdAt: row.user.createdAt.getTime(),
+      lastLoginAt: row.user.lastLoginAt?.getTime() ?? null,
+      blockedAt: row.user.blockedAt?.getTime() ?? null,
+    },
     credits: row.credits,
     technologies,
     fleetsInFlight: row._count.fleets,

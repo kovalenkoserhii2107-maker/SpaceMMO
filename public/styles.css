@@ -694,16 +694,19 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 }
 
 /*
- * Заголовок и уровень идут колонкой: длинные названия вроде
- * «Энергетическая станция» получают всю оставшуюся ширину и переносятся
- * по словам, а не рвутся посреди слова ради бейджа в той же строке.
+ * Заголовок и метка идут строго друг под другом.
+ *
+ * В строку они не помещаются: «В ангаре: 3» и «На позиции: 4» отъедают у
+ * названия половину ширины, и «Колониальный транспорт» рвется по слогам
+ * на три строки. Метка короче названия почти всегда, поэтому уступает
+ * именно она — строкой ниже места хватает обоим.
  */
 .card-titles {
   min-width: 0;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
   padding: 10px 12px;
 }
 /*
@@ -712,8 +715,13 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
  * ширину самого длинного слова, вылезала за карточку и выдавливала бейдж
  * уровня за ее край — уровень техники просто пропадал с экрана.
  */
+/*
+ * Названию теперь достается вся ширина карточки, и перенос по слогам почти
+ * не нужен — но `anywhere` оставлен: он единственный уменьшает min-content
+ * ширину, и без него самое длинное слово все равно распирало бы карточку.
+ */
 .card-titles h4 { margin: 0; min-width: 0; font-size: 15px; overflow-wrap: anywhere; hyphens: auto; }
-.card-titles .level { flex: none; }
+.card-titles .level { flex: none; max-width: 100%; }
 
 /* Построенный объект подсвечен рамкой — видно, что он уже работает. */
 .card.built .card-cover { border-color: rgba(77, 210, 255, 0.45); }
@@ -1781,6 +1789,89 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 
 /* Логистика — свой цвет метки: эти письма приходят чаще боевых. */
 .mail-kind.fleet { color: var(--ok); border-color: rgba(74, 222, 128, 0.35); }
+/* Письмо администрации выделено: его нельзя пролистать вместе с отчетами. */
+.mail-kind.admin { color: var(--warm); border-color: rgba(255, 159, 67, 0.5); }
+
+/* ---------- Пульт: сводка и учетная запись ---------- */
+.admin-dashboard {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.admin-stat {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel-2);
+}
+.admin-stat b { font-size: 20px; font-variant-numeric: tabular-nums; }
+.admin-stat span { font-size: 11px; color: var(--muted); }
+.admin-stat.ok b { color: var(--ok); }
+.admin-stat.bad b { color: var(--err); }
+
+.admin-account-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 8px 16px;
+  margin-bottom: 12px;
+}
+.admin-account-facts div { display: grid; gap: 1px; min-width: 0; }
+.admin-account-facts span { font-size: 10px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted); }
+.admin-account-facts b { font-size: 12px; overflow-wrap: anywhere; }
+.admin-account-facts b.ok { color: var(--ok); }
+.admin-account-facts b.bad { color: var(--err); }
+
+.admin-account-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.admin-reset {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--panel-2);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.admin-reset b { color: var(--accent); font-family: ui-monospace, SFMono-Regular, monospace; overflow-wrap: anywhere; }
+
+.admin-subform { display: grid; gap: 8px; margin-top: 14px; }
+.admin-subform h5, .admin-danger h5 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); }
+.admin-subform button, .admin-danger button { justify-self: start; }
+.admin-subform textarea {
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(8, 12, 24, 0.8);
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+
+/*
+ * Удаление отделено рамкой и цветом: это единственное действие пульта,
+ * которое нельзя отменить, и оно не должно выглядеть как соседняя кнопка.
+ */
+.admin-danger {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  border-radius: 12px;
+  background: rgba(248, 113, 113, 0.05);
+}
+.admin-danger p { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.5; }
+.danger {
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #2a0a0a;
+  background: var(--err);
+  border: 1px solid var(--err);
+}
+.danger:hover { filter: brightness(1.1); }
 
 /* ---------- Адаптив: от трех колонок к одной ---------- */
 

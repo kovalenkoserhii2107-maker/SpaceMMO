@@ -9,12 +9,29 @@ import { Router, type Response } from 'express';
 import {
   adminSchema,
   applyPatch,
+  deleteAccount,
   getCommanderDetail,
+  getDashboard,
+  issuePasswordReset,
   listCommanders,
+  messagePlayer,
   parsePatch,
+  setAccountBlocked,
 } from '../services/adminService.js';
 import { currentAccount, requireAdmin, requireAuth } from './middleware.js';
-import type { ActionResponse, AdminDetailResponse, AdminListResponse, ErrorResponse } from '../types/api.js';
+import type {
+  ActionResponse,
+  AdminDashboardResponse,
+  AdminDetailResponse,
+  AdminListResponse,
+  AdminResetResponse,
+  ErrorResponse,
+} from '../types/api.js';
+
+/** Строка из тела запроса: чего нет или что не строка — пустая строка. */
+function text(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
 
 export const adminRouter = Router();
 
@@ -24,6 +41,11 @@ adminRouter.use(requireAdmin);
 /** Справочник ключей для формы: клиент не хардкодит перечисления. */
 adminRouter.get('/schema', (_req, res) => {
   res.json(adminSchema());
+});
+
+/** Сводка по серверу: игроки, онлайн, активность за сутки. */
+adminRouter.get('/dashboard', async (_req, res: Response<AdminDashboardResponse>) => {
+  res.json(await getDashboard());
 });
 
 /** Список командиров с поиском по позывному. */
@@ -51,5 +73,50 @@ adminRouter.patch('/commanders/:id', async (req, res: Response<ActionResponse | 
   }
 
   const result = await applyPatch(currentAccount(req).email, req.params.id, patch);
+  res.status(result.ok ? 200 : result.status).json(result.ok ? result : { error: result.error });
+});
+
+/**
+ * Выдать код смены пароля. Пароль пульт не задает и не показывает:
+ * админ передает игроку одноразовый код, новый пароль игрок вводит сам.
+ */
+adminRouter.post(
+  '/commanders/:id/password-reset',
+  async (req, res: Response<AdminResetResponse | ErrorResponse>) => {
+    const result = await issuePasswordReset(req.params.id);
+    if (!result.ok) {
+      res.status(result.status).json({ error: result.error });
+      return;
+    }
+    res.json({
+      ok: true,
+      message: result.message,
+      token: result.token ?? '',
+      expiresAt: result.expiresAt ?? 0,
+    });
+  },
+);
+
+/** Закрыть или вернуть доступ. Игровое состояние при этом не трогается. */
+adminRouter.post('/commanders/:id/block', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const blocked = (req.body as { blocked?: unknown } | undefined)?.blocked === true;
+  const result = await setAccountBlocked(req.params.id, blocked);
+  res.status(result.ok ? 200 : result.status).json(result.ok ? result : { error: result.error });
+});
+
+/** Письмо игроку от гейм-мастера. */
+adminRouter.post('/commanders/:id/message', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const body = (req.body ?? {}) as { subject?: unknown; body?: unknown };
+  const result = await messagePlayer(req.params.id, text(body.subject), text(body.body));
+  res.status(result.ok ? 200 : result.status).json(result.ok ? result : { error: result.error });
+});
+
+/**
+ * Удаление учетной записи. Необратимо и уносит каскадом колонии, флоты
+ * и синдикат, если игрок им руководил, поэтому требует подтверждения позывным.
+ */
+adminRouter.delete('/commanders/:id', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const confirm = text((req.body as { confirm?: unknown } | undefined)?.confirm);
+  const result = await deleteAccount(req.params.id, confirm);
   res.status(result.ok ? 200 : result.status).json(result.ok ? result : { error: result.error });
 });
