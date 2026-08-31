@@ -9,6 +9,7 @@ import {
   validateEmail,
   validatePassword,
 } from '../services/authService.js';
+import { isExternalProvider } from '../config/auth.js';
 import { currentAccount, requireAuth } from './middleware.js';
 import type { AuthResponse, ErrorResponse, SessionResponse } from '../types/api.js';
 
@@ -66,7 +67,7 @@ authRouter.post('/login', async (req, res: Response<AuthResponse | ErrorResponse
 /** Вход через стороннего провайдера. Пока ключи не подключены — 501. */
 authRouter.post('/oauth/:provider', async (req, res: Response<AuthResponse | ErrorResponse>) => {
   const provider = String(req.params.provider).toUpperCase();
-  if (provider !== 'GOOGLE' && provider !== 'APPLE' && provider !== 'FACEBOOK') {
+  if (!isExternalProvider(provider)) {
     res.status(400).json({ error: 'Неизвестный провайдер' });
     return;
   }

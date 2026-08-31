@@ -8,8 +8,8 @@ import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../db/prisma.js';
-import { authConfig, isProviderConfigured } from '../config/auth.js';
-import type { AuthProvider, User } from '../generated/prisma/client.js';
+import { authConfig, isProviderConfigured, type ExternalProvider } from '../config/auth.js';
+import type { User } from '../generated/prisma/client.js';
 
 const scryptAsync = promisify(scrypt) as (
   password: string,
@@ -157,15 +157,15 @@ export async function resetPassword(token: string, password: string): Promise<Au
 /* ------------------------- Вход через провайдера ------------------------- */
 
 /**
- * Вход через Google/Apple/Facebook.
+ * Вход через внешнего провайдера — сейчас только Google.
  *
- * Ключи еще не подключены, поэтому проверка токена провайдера вынесена в
- * отдельный шаг: когда появятся реальные client id, достаточно реализовать
+ * Ключ еще не подключен, поэтому проверка токена вынесена в отдельный шаг:
+ * когда появится реальный client id, достаточно реализовать
  * `verifyProviderToken` — остальной флоу (поиск аккаунта, выдача JWT,
  * требование создать командира) уже готов и не изменится.
  */
 export async function loginWithProvider(
-  provider: Exclude<AuthProvider, 'LOCAL'>,
+  provider: ExternalProvider,
   idToken: string,
 ): Promise<AuthResult> {
   if (!isProviderConfigured(provider)) {
@@ -203,7 +203,7 @@ interface ProviderProfile {
  * запрос раньше по `isProviderConfigured`.
  */
 async function verifyProviderToken(
-  _provider: Exclude<AuthProvider, 'LOCAL'>,
+  _provider: ExternalProvider,
   _idToken: string,
 ): Promise<ProviderProfile | null> {
   return null;

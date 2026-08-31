@@ -340,13 +340,14 @@
     await startSession();
   });
 
-  /* --- вход через провайдеров: обработчики готовы, ключей пока нет --- */
+  /* --- вход через Google: обработчик готов, ключа пока нет --- */
   el.providers.addEventListener('click', async (event) => {
     const button = event.target.closest('.provider');
     if (!button) return;
 
     const provider = button.dataset.provider;
-    // Когда появятся ключи, здесь будет получение id_token у SDK провайдера.
+    // Когда появится client id, здесь будет получение id_token у Google
+    // Identity Services, а пока сервер честно отвечает 501 на пустой токен.
     const result = await api(`/api/auth/oauth/${provider.toLowerCase()}`, {
       method: 'POST',
       body: JSON.stringify({ idToken: '' }),
