@@ -157,8 +157,17 @@ if (!resetToken) {
 }
 
 /* ---------- OAuth ---------- */
+/*
+ * Ответ зависит от стенда: без GOOGLE_CLIENT_ID роут отвечает 501, с ключом —
+ * 401 на подделанный токен. Оба исхода правильные, неправильным был бы вход.
+ */
 const google = await api('POST', '/api/auth/oauth/google', { idToken: 'stub' });
-check('google: вход отвечает «ключи не подключены»', google.status === 501, JSON.stringify(google.data));
+check(
+  'google: выдуманный токен внутрь не пускает',
+  google.status === 501 || google.status === 401,
+  `${google.status} ${JSON.stringify(google.data)}`,
+);
+check('google: токен доступа при этом не выдан', !google.data.token);
 
 // Apple и Facebook сняты намеренно: для роута они такие же чужие, как Steam.
 for (const provider of ['apple', 'facebook', 'steam']) {

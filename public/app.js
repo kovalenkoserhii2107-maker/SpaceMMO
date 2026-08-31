@@ -39,7 +39,8 @@
     authSubmit: $('auth-submit'),
     authMessage: $('auth-message'),
     forgotPassword: $('forgot-password'),
-    providers: document.querySelector('.providers'),
+    googleButton: $('google-button'),
+    googleNote: $('google-note'),
     resetForm: $('reset-form'),
     resetToken: $('reset-token'),
     resetPassword: $('reset-password'),
@@ -340,20 +341,82 @@
     await startSession();
   });
 
-  /* --- вход через Google: обработчик готов, ключа пока нет --- */
-  el.providers.addEventListener('click', async (event) => {
-    const button = event.target.closest('.provider');
-    if (!button) return;
+  /* --- вход через Google --- */
 
-    const provider = button.dataset.provider;
-    // Когда появится client id, здесь будет получение id_token у Google
-    // Identity Services, а пока сервер честно отвечает 501 на пустой токен.
-    const result = await api(`/api/auth/oauth/${provider.toLowerCase()}`, {
-      method: 'POST',
-      body: JSON.stringify({ idToken: '' }),
+  /**
+   * Подключение Google Identity Services.
+   *
+   * Скрипт грузится по требованию, а не тегом в разметке: без настроенного
+   * client id он не нужен вовсе, и тянуть сторонний домен на каждый показ
+   * экрана входа только ради несуществующей кнопки незачем.
+   */
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      const existing = document.querySelector(`script[src="${src}"]`);
+      if (existing) {
+        if (existing.dataset.loaded === 'yes') resolve();
+        else existing.addEventListener('load', () => resolve());
+        existing.addEventListener('error', () => reject(new Error('script')));
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = src;
+      script.async = true;
+      script.addEventListener('load', () => {
+        script.dataset.loaded = 'yes';
+        resolve();
+      });
+      script.addEventListener('error', () => reject(new Error('script')));
+      document.head.appendChild(script);
     });
-    showAuthMessage(el.authMessage, result.data.error || 'Провайдер ответил неожиданно', result.ok);
-  });
+  }
+
+  async function initGoogleSignIn() {
+    const config = await api('/api/auth/config');
+    const clientId = config.ok ? config.data.googleClientId : null;
+    if (!clientId) {
+      el.googleNote.hidden = false;
+      return;
+    }
+
+    try {
+      await loadScript('https://accounts.google.com/gsi/client');
+    } catch {
+      // Сеть до Google не дошла — это не повод ронять экран входа:
+      // вход по паролю рядом и работает.
+      el.googleNote.textContent = 'Не удалось загрузить вход через Google.';
+      el.googleNote.hidden = false;
+      return;
+    }
+
+    window.google.accounts.id.initialize({ client_id: clientId, callback: onGoogleCredential });
+    // Язык подписи выбирает сам Google по настройкам пользователя: параметр
+    // locale он для отрисованной кнопки игнорирует, и держать его здесь значит
+    // делать вид, что мы этим управляем.
+    window.google.accounts.id.renderButton(el.googleButton, {
+      theme: 'filled_black',
+      size: 'large',
+      shape: 'pill',
+      text: 'signin_with',
+      width: 320,
+    });
+  }
+
+  async function onGoogleCredential(response) {
+    const result = await api('/api/auth/oauth/google', {
+      method: 'POST',
+      body: JSON.stringify({ idToken: response.credential }),
+    });
+
+    if (!result.ok) {
+      showAuthMessage(el.authMessage, result.data.error || 'Google не пустил', false);
+      return;
+    }
+
+    state.token = result.data.token;
+    localStorage.setItem(TOKEN_KEY, state.token);
+    await startSession();
+  }
 
   /* --- смена пароля --- */
   el.forgotPassword.addEventListener('click', async () => {
@@ -5038,6 +5101,8 @@
 
 
   el.logout.addEventListener('click', () => logout());
+
+  void initGoogleSignIn();
 
   if (state.token) {
     startSession().catch(() => showScreen('auth'));

@@ -151,8 +151,14 @@
 
       <div class="divider"><span>или</span></div>
 
+      <!--
+        Кнопку рисует сам Google Identity Services в этот контейнер: получить
+        id_token из произвольной своей кнопки библиотека не дает, а фирменное
+        оформление входа Google к тому же требует по своим правилам.
+      -->
       <div class="providers">
-        <button type="button" class="provider" data-provider="GOOGLE"><span>G</span> Google</button>
+        <div id="google-button"></div>
+        <p id="google-note" class="muted" hidden>Вход через Google не настроен на этом сервере.</p>
       </div>
 
       <p id="auth-message" class="auth-message" hidden></p>

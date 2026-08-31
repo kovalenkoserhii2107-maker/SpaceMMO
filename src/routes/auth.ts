@@ -9,10 +9,10 @@ import {
   validateEmail,
   validatePassword,
 } from '../services/authService.js';
-import { isExternalProvider } from '../config/auth.js';
+import { authConfig, isExternalProvider } from '../config/auth.js';
 import { env } from '../config/env.js';
 import { currentAccount, requireAuth } from './middleware.js';
-import type { AuthResponse, ErrorResponse, SessionResponse } from '../types/api.js';
+import type { AuthConfigResponse, AuthResponse, ErrorResponse, SessionResponse } from '../types/api.js';
 
 export const authRouter: Router = Router();
 
@@ -65,7 +65,17 @@ authRouter.post('/login', async (req, res: Response<AuthResponse | ErrorResponse
   });
 });
 
-/** Вход через стороннего провайдера. Пока ключи не подключены — 501. */
+/**
+ * Публичные настройки входа. Роут открытый: клиенту нужен client id раньше,
+ * чем у него появится хоть какой-то токен. Ключа нет — приходит null,
+ * и клиент просто не рисует кнопку вместо того, чтобы вести в 501.
+ */
+authRouter.get('/config', (_req, res: Response<AuthConfigResponse>) => {
+  const clientId = authConfig.providers.GOOGLE.clientId;
+  res.json({ googleClientId: clientId.length > 0 ? clientId : null });
+});
+
+/** Вход через стороннего провайдера. Ключа нет — 501. */
 authRouter.post('/oauth/:provider', async (req, res: Response<AuthResponse | ErrorResponse>) => {
   const provider = String(req.params.provider).toUpperCase();
   if (!isExternalProvider(provider)) {

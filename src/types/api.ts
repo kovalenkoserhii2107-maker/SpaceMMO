@@ -45,6 +45,16 @@ export interface AuthResponse {
   hasCommander?: boolean;
 }
 
+/**
+ * Публичные настройки входа: что клиенту нужно знать до авторизации.
+ * Client ID Google не секрет — он по устройству протокола уезжает в браузер
+ * и виден в каждом запросе к Google; секретом был бы client_secret, но
+ * для проверки id_token он не нужен и на сервере его нет.
+ */
+export interface AuthConfigResponse {
+  googleClientId: string | null;
+}
+
 /** Текущая сессия: аккаунт, командир и доступные аватары. */
 export interface SessionResponse {
   user: AccountView;

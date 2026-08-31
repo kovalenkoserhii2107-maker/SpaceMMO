@@ -8,6 +8,7 @@ import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../db/prisma.js';
+import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { authConfig, isProviderConfigured, type ExternalProvider } from '../config/auth.js';
 import type { User } from '../generated/prisma/client.js';
 
@@ -159,10 +160,9 @@ export async function resetPassword(token: string, password: string): Promise<Au
 /**
  * Вход через внешнего провайдера — сейчас только Google.
  *
- * Ключ еще не подключен, поэтому проверка токена вынесена в отдельный шаг:
- * когда появится реальный client id, достаточно реализовать
- * `verifyProviderToken` — остальной флоу (поиск аккаунта, выдача JWT,
- * требование создать командира) уже готов и не изменится.
+ * Аккаунт ищется по паре «провайдер + идентификатор у провайдера», а не по email:
+ * `sub` у Google неизменен, а адрес человек меняет, и у Workspace его может
+ * переиспользовать администратор домена. Email остается справочным полем.
  */
 export async function loginWithProvider(
   provider: ExternalProvider,
@@ -179,32 +179,137 @@ export async function loginWithProvider(
   const profile = await verifyProviderToken(provider, idToken);
   if (!profile) return { ok: false, error: 'Провайдер отклонил токен', status: 401 };
 
-  const user = await prisma.user.upsert({
+  // Уже привязанный аккаунт — самый частый путь, и проверяется он первым.
+  // Иначе сменивший адрес игрок упирался бы в чужой аккаунт с его старым email.
+  const linked = await prisma.user.findUnique({
     where: { authProvider_providerId: { authProvider: provider, providerId: profile.providerId } },
-    create: {
-      email: profile.email,
-      authProvider: provider,
-      providerId: profile.providerId,
-      lastLoginAt: new Date(),
-    },
-    update: { lastLoginAt: new Date() },
   });
-  return { ok: true, token: issueToken(user), user };
+  if (linked) {
+    const updated = await prisma.user.update({
+      where: { id: linked.id },
+      data: { lastLoginAt: new Date() },
+    });
+    return { ok: true, token: issueToken(updated), user: updated };
+  }
+
+  /*
+   * Привязки нет. Автоматически связывать по совпавшему email нельзя: мы email
+   * при регистрации не подтверждаем, поэтому кто угодно может заранее завести
+   * аккаунт на чужой адрес. Владелец адреса потом войдет через Google, получит
+   * этот подставленный аккаунт — и злоумышленник останется в нем с паролем,
+   * который он же и задал. Поэтому здесь честный отказ, а привязка делается
+   * только изнутри сессии, где владение аккаунтом уже доказано входом.
+   */
+  const taken = await prisma.user.findUnique({ where: { email: profile.email } });
+  if (taken) {
+    return {
+      ok: false,
+      error:
+        'Этот email уже занят аккаунтом с паролем. Войди паролем — ' +
+        'привязать вход через Google можно будет из настроек.',
+      status: 409,
+    };
+  }
+
+  try {
+    const user = await prisma.user.create({
+      data: {
+        email: profile.email,
+        authProvider: provider,
+        providerId: profile.providerId,
+        lastLoginAt: new Date(),
+      },
+    });
+    return { ok: true, token: issueToken(user), user };
+  } catch (error) {
+    // Между проверкой и вставкой этот же email мог занять параллельный запрос.
+    // Окно узкое, но ответ должен быть тем же понятным отказом, а не пятисоткой.
+    if (isUniqueViolation(error)) {
+      return { ok: false, error: 'Этот email уже занят другим аккаунтом', status: 409 };
+    }
+    throw error;
+  }
 }
 
-interface ProviderProfile {
+function isUniqueViolation(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'P2002';
+}
+
+export interface ProviderProfile {
   providerId: string;
   email: string;
 }
 
-/**
- * Здесь будет реальная проверка подписи id_token у провайдера.
- * До подключения ключей функция недостижима: `loginWithProvider` отсекает
- * запрос раньше по `isProviderConfigured`.
+/*
+ * Ключи Google для проверки подписи id_token.
+ *
+ * `createRemoteJWKSet` сам кеширует набор и перечитывает его при незнакомом
+ * `kid` — Google ротирует ключи регулярно, и держать их копию у себя значит
+ * однажды начать отвергать честные токены. Объект создается один раз на
+ * процесс: на каждый вход новый набор означал бы поход в сеть за ключами.
  */
-async function verifyProviderToken(
-  _provider: ExternalProvider,
-  _idToken: string,
+const GOOGLE_JWKS = createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v3/certs'));
+
+/** Оба варианта издателя, которые Google ставит в id_token. */
+const GOOGLE_ISSUERS = ['https://accounts.google.com', 'accounts.google.com'];
+
+/**
+ * Чем проверять подпись и с каким client id сверять `aud`.
+ *
+ * Вынесено параметром по той же причине, что и генератор случайных чисел
+ * в бою: настоящий вход ходит за ключами к Google, а тест подставляет свою
+ * пару ключей и проверяет ровно те отказы, ради которых проверка и написана.
+ */
+export interface GoogleVerifier {
+  keys: Parameters<typeof jwtVerify>[1];
+  clientId: string;
+}
+
+function googleVerifier(): GoogleVerifier {
+  return { keys: GOOGLE_JWKS, clientId: authConfig.providers.GOOGLE.clientId };
+}
+
+/**
+ * Проверка id_token Google.
+ *
+ * Проверяется подпись, издатель, срок и — обязательно — `aud`: без сверки
+ * с нашим client id подошел бы токен, выписанный Google любому другому сайту,
+ * и вход превратился бы в «предъяви любой гугловый токен».
+ *
+ * `email_verified` тоже обязателен. Google ставит его не всегда, и адрес
+ * без подтверждения не годится даже как справочное поле: по нему мы отказываем
+ * в регистрации другим, то есть он влияет на чужие аккаунты.
+ */
+export async function verifyGoogleIdToken(
+  idToken: string,
+  verifier: GoogleVerifier = googleVerifier(),
 ): Promise<ProviderProfile | null> {
-  return null;
+  if (!idToken || !verifier.clientId) return null;
+
+  try {
+    const { payload } = await jwtVerify(idToken, verifier.keys, {
+      issuer: GOOGLE_ISSUERS,
+      audience: verifier.clientId,
+    });
+
+    if (payload.email_verified !== true) return null;
+
+    const providerId = typeof payload.sub === 'string' ? payload.sub : '';
+    const email = typeof payload.email === 'string' ? payload.email.trim().toLowerCase() : '';
+    if (!providerId || !email) return null;
+
+    return { providerId, email };
+  } catch {
+    // Разбирать причину незачем: неверная подпись, чужой aud и протухший токен
+    // для входящего одинаково означают «не пущен», а подробности — подсказка.
+    return null;
+  }
+}
+
+async function verifyProviderToken(
+  provider: ExternalProvider,
+  idToken: string,
+): Promise<ProviderProfile | null> {
+  if (provider !== 'GOOGLE') return null;
+  return verifyGoogleIdToken(idToken);
 }
