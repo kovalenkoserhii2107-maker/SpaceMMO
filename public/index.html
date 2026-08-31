@@ -101,6 +101,10 @@
       <circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.7"/>
       <path d="m15.6 8.4-2 5.2-5.2 2 2-5.2 5.2-2Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
     </symbol>
+    <symbol id="ico-nav-rating" viewBox="0 0 24 24">
+      <path d="M4 20h16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+      <path d="M5.5 20v-6h4v6M14.5 20V9h4v11M10 20V4.5h4V20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+    </symbol>
     <symbol id="ico-nav-simulator" viewBox="0 0 24 24">
       <circle cx="12" cy="12" r="7.6" fill="none" stroke="currentColor" stroke-width="1.7"/>
       <path d="M12 1.8v4M12 18.2v4M1.8 12h4M18.2 12h4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
@@ -282,6 +286,7 @@
             <button type="button" class="tab" data-tab="market"><svg class="ico" aria-hidden="true"><use href="#ico-nav-market"/></svg><span>Хаб и биржа</span></button>
             <button type="button" class="tab" data-tab="syndicate"><svg class="ico" aria-hidden="true"><use href="#ico-nav-syndicate"/></svg><span>Синдикат</span></button>
             <button type="button" class="tab" data-tab="war"><svg class="ico" aria-hidden="true"><use href="#ico-nav-war"/></svg><span>Экспедиции и войны</span></button>
+            <button type="button" class="tab" data-tab="rating"><svg class="ico" aria-hidden="true"><use href="#ico-nav-rating"/></svg><span>Рейтинг</span></button>
           </div>
 
           <div class="nav-group">
@@ -443,6 +448,24 @@
 
           <h3 class="section-title">Отчеты о боях</h3>
           <div id="battles" class="battles"></div>
+        </section>
+
+        <section data-panel="rating" hidden>
+          <h3 class="panel-title">Рейтинг</h3>
+          <p class="storage-note" id="rating-note"></p>
+          <div id="rating-mine" class="rating-mine"></div>
+
+          <div class="rating-modes">
+            <button type="button" class="mode active" data-rating="players">Командиры</button>
+            <button type="button" class="mode" data-rating="syndicates">Синдикаты</button>
+          </div>
+
+          <div class="admin-table-wrap">
+            <table class="admin-table rating-table">
+              <thead id="rating-head"></thead>
+              <tbody id="rating-rows"></tbody>
+            </table>
+          </div>
         </section>
 
         <section data-panel="syndicate" hidden>

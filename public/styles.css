@@ -1792,6 +1792,35 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 /* Письмо администрации выделено: его нельзя пролистать вместе с отчетами. */
 .mail-kind.admin { color: var(--warm); border-color: rgba(255, 159, 67, 0.5); }
 
+/* ---------- Рейтинг ---------- */
+.rating-modes { display: flex; gap: 8px; margin: 14px 0 12px; flex-wrap: wrap; }
+
+/*
+ * Своя строка вынесена над таблицей: в сотне строк искать себя глазами —
+ * первое, чем игрок займется, и последнее, чего он должен хотеть.
+ */
+.rating-mine {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  margin-top: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: linear-gradient(90deg, rgba(77, 210, 255, 0.1), transparent 65%), var(--panel);
+}
+.rating-mine-head { display: flex; align-items: baseline; gap: 10px; font-size: 15px; }
+.rating-mine-head b { font-size: 20px; color: var(--accent); font-variant-numeric: tabular-nums; }
+.rating-mine-head em { margin-left: auto; font-style: normal; font-size: 20px; font-variant-numeric: tabular-nums; }
+
+.rating-parts { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.rating-parts span { display: grid; gap: 1px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.rating-parts i { font-size: 10px; font-style: normal; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted); }
+
+.rating-table td { font-variant-numeric: tabular-nums; }
+.rating-table tr.rating-self { background: rgba(77, 210, 255, 0.1); }
+.rating-table tr.rating-self td { color: var(--text); }
+.rating-tag { color: var(--warm); font-size: 11px; }
+
 /* ---------- Пульт: сводка и учетная запись ---------- */
 .admin-dashboard {
   display: grid;

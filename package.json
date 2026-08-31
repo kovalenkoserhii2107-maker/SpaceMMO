@@ -22,6 +22,7 @@
     "test:commander": "tsx tests/commander.ts",
     "test:mail": "tsx tests/mail.ts",
     "test:oauth": "tsx tests/oauth.ts",
+    "test:score": "tsx tests/score.ts",
     "test:admin": "tsx tests/admin.ts",
     "test:debris": "tsx tests/debris.ts",
     "test:assets": "tsx tests/assets.ts",

@@ -8,12 +8,14 @@ import { isFleetMission, planFlight, resolveOneWay } from '../game/fleets.js';
 import { buildGalaxyMap, buildSystemMap } from '../services/mapService.js';
 import { prisma } from '../db/prisma.js';
 import { attackWarning } from '../services/warService.js';
+import { getLeaderboard } from '../services/scoreService.js';
 import { currentCommander, requireAuth, requireCommander } from './middleware.js';
 import { amountsOrNull, cargoOrNull, positiveInt, shipCountsOrNull } from './validation.js';
 import type {
   ActionResponse,
   ErrorResponse,
   FlightPreviewResponse,
+  LeaderboardResponse,
   GalaxyResponse,
   MapResponse,
   PlanetLookupResponse,
@@ -141,6 +143,14 @@ function readTarget(body: FleetRequestBody): { planetId?: string; hubId?: string
 }
 
 
+
+/**
+ * Рейтинг: командиры и синдикаты по вложенным ресурсам.
+ * Требует командира — таблица показывает и собственную строку игрока.
+ */
+gameRouter.get('/leaderboard', async (req, res: Response<LeaderboardResponse>) => {
+  res.json(await getLeaderboard(currentCommander(req).id));
+});
 
 /**
  * Поиск планеты по координатам «система X:Y, орбита N».

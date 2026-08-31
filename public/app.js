@@ -129,6 +129,11 @@
     cargoPlasmaField: $('cargo-plasma-field'),
     cargoInputs: $('cargo-inputs'),
     adminSearch: $('admin-search'),
+    ratingNote: $('rating-note'),
+    ratingMine: $('rating-mine'),
+    ratingModes: document.querySelector('.rating-modes'),
+    ratingHead: $('rating-head'),
+    ratingRows: $('rating-rows'),
     adminDashboard: $('admin-dashboard'),
     adminRows: $('admin-rows'),
     adminDetail: $('admin-detail'),
@@ -730,6 +735,7 @@
       void loadEspionageTargets();
     }
     if (name === 'presets') void loadPresets();
+    if (name === 'rating') void loadRating();
     if (name === 'admin') {
       void loadAdminList();
       void loadAdminDashboard();
@@ -4907,6 +4913,114 @@
     }
   });
 
+
+  /* ---------- Рейтинг ---------- */
+
+  const rating = { data: null, mode: 'players' };
+
+  /*
+   * Слагаемые счета. Порядок тот же, что в формуле: сперва то, что лежит,
+   * потом то, во что вложено, — так строка читается как объяснение суммы.
+   */
+  const SCORE_PARTS = [
+    { key: 'resources', label: 'ресурсы' },
+    { key: 'fleet', label: 'флот' },
+    { key: 'defense', label: 'оборона' },
+    { key: 'buildings', label: 'постройки' },
+    { key: 'research', label: 'технологии' },
+  ];
+
+  async function loadRating() {
+    const result = await api('/api/leaderboard');
+    if (!result.ok) return;
+    rating.data = result.data;
+    renderRating();
+  }
+
+  function renderRating() {
+    const data = rating.data;
+    if (!data) return;
+
+    el.ratingNote.textContent =
+      'Счет — это ресурсы на руках плюс стоимость всего, что построено и не потеряно: ' +
+      'флот (включая тот, что в полете), оборона, здания и технологии. ' +
+      'Все ресурсы считаются один к одному.';
+
+    renderMyRank(data.me, data.players.length);
+
+    for (const button of el.ratingModes.querySelectorAll('.mode')) {
+      button.classList.toggle('active', button.dataset.rating === rating.mode);
+    }
+
+    if (rating.mode === 'syndicates') renderSyndicateRating(data.syndicates);
+    else renderPlayerRating(data.players, data.me);
+  }
+
+  /** Своя строка отдельно: игрок может не попасть в показанную сотню. */
+  function renderMyRank(me, shown) {
+    if (!me) {
+      el.ratingMine.hidden = true;
+      return;
+    }
+    el.ratingMine.hidden = false;
+    const parts = SCORE_PARTS.map(
+      (part) => `<span><i>${part.label}</i>${fmt(me.score[part.key])}</span>`,
+    ).join('');
+    el.ratingMine.innerHTML =
+      `<div class="rating-mine-head"><b>#${me.rank}</b> ${escapeHtml(me.nickname)}` +
+      `<em>${fmt(me.score.total)}</em></div>` +
+      `<div class="rating-parts">${parts}</div>` +
+      (me.rank > shown ? '<p class="storage-note">В таблице ниже показана первая сотня.</p>' : '');
+  }
+
+  function renderPlayerRating(players, me) {
+    el.ratingHead.innerHTML =
+      '<tr><th>#</th><th>Командир</th><th>Счет</th><th>Ресурсы</th><th>Флот</th>' +
+      '<th>Оборона</th><th>Постройки</th><th>Технологии</th><th>Колоний</th></tr>';
+
+    el.ratingRows.innerHTML = '';
+    for (const row of players) {
+      const tr = document.createElement('tr');
+      if (me && row.commanderId === me.commanderId) tr.className = 'rating-self';
+      const tag = row.syndicate ? ` <span class="rating-tag">[${escapeHtml(row.syndicate.tag)}]</span>` : '';
+      tr.innerHTML =
+        `<td>${row.rank}</td><td>${escapeHtml(row.nickname)}${tag}</td>` +
+        `<td><b>${fmt(row.score.total)}</b></td>` +
+        SCORE_PARTS.map((part) => `<td>${fmt(row.score[part.key])}</td>`).join('') +
+        `<td>${row.colonies}</td>`;
+      el.ratingRows.appendChild(tr);
+    }
+
+    if (!players.length) {
+      el.ratingRows.innerHTML = '<tr><td colspan="9">Пока никого нет</td></tr>';
+    }
+  }
+
+  function renderSyndicateRating(syndicates) {
+    el.ratingHead.innerHTML =
+      '<tr><th>#</th><th>Синдикат</th><th>Счет</th><th>Состав</th><th>В среднем</th></tr>';
+
+    el.ratingRows.innerHTML = '';
+    for (const row of syndicates) {
+      const tr = document.createElement('tr');
+      tr.innerHTML =
+        `<td>${row.rank}</td>` +
+        `<td><span class="rating-tag">[${escapeHtml(row.tag)}]</span> ${escapeHtml(row.name)}</td>` +
+        `<td><b>${fmt(row.total)}</b></td><td>${row.members}</td><td>${fmt(row.average)}</td>`;
+      el.ratingRows.appendChild(tr);
+    }
+
+    if (!syndicates.length) {
+      el.ratingRows.innerHTML = '<tr><td colspan="5">Синдикатов пока нет</td></tr>';
+    }
+  }
+
+  el.ratingModes.addEventListener('click', (event) => {
+    const button = event.target.closest('.mode');
+    if (!button || button.dataset.rating === rating.mode) return;
+    rating.mode = button.dataset.rating;
+    renderRating();
+  });
 
   /* ---------- Пульт гейм-мастера ---------- */
 

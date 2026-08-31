@@ -9,6 +9,7 @@ import type { FleetTemplateView } from '../services/fleetTemplateService.js';
 import type { SimulationResult } from '../services/simulationService.js';
 import type { MailboxView } from '../services/mailService.js';
 import type { AdminDashboard, CommanderDetail, CommanderSummary } from '../services/adminService.js';
+import type { LeaderboardView } from '../services/scoreService.js';
 import type { CommanderProfile } from '../services/commanderService.js';
 import type { MarketView } from '../services/marketService.js';
 import type { DiplomacyView } from '../services/warService.js';
@@ -94,6 +95,7 @@ export type FlightPreviewResponse = FlightPlan & {
 };
 export type MarketResponse = MarketView;
 export type DiplomacyResponse = DiplomacyView;
+export type LeaderboardResponse = LeaderboardView;
 
 /** Инструменты командира: симулятор, шаблоны флотов и разведданные. */
 export type SimulationResponse = SimulationResult;
