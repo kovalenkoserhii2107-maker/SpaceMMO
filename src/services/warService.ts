@@ -268,17 +268,13 @@ export async function declareWar(commanderId: string, targetId: string): Promise
   if (!targetId) return { ok: false, error: 'Не указан противник' };
   if (targetId === commanderId) return { ok: false, error: 'Нельзя объявить войну самому себе' };
 
-  const me = await prisma.commander.findUnique({
-    where: { id: commanderId },
-    select: { syndicateId: true },
-  });
-  if (me?.syndicateId) {
-    return {
-      ok: false,
-      error: 'Ты в синдикате: войну объявляет лидер или офицер сразу вражескому синдикату',
-    };
-  }
-
+  /*
+   * Членство в синдикате личную войну не запрещает. Раньше запрещало — считалось,
+   * что за состав говорит только лидер, — но тогда кнопка «Атака» у половины
+   * игроков приводила к отказу вместо боя. Последствия решает не запрет, а
+   * предупреждение перед вылетом: синдикат цели может ответить всем составом,
+   * и это забота того, кто нападает, а не сервера.
+   */
   const target = await prisma.commander.findUnique({ where: { id: targetId } });
   if (!target) return { ok: false, error: 'Командир не найден' };
 
@@ -294,6 +290,28 @@ export async function declareWar(commanderId: string, targetId: string): Promise
 
   await prisma.warDeclaration.create({ data: { aggressorId: commanderId, targetId } });
   return { ok: true, message: `Война объявлена: ${target.nickname}` };
+}
+
+/**
+ * Чем грозит атака этой цели, если война еще не идет.
+ *
+ * Считается на сервере: состоит ли цель в синдикате, знает только он.
+ * `null` — предупреждать не о чем: война уже идет или цели нет.
+ */
+export async function attackWarning(commanderId: string, targetId: string): Promise<string | null> {
+  if (await canAttack(commanderId, targetId)) return null;
+
+  const target = await prisma.commander.findUnique({
+    where: { id: targetId },
+    select: { nickname: true, syndicate: { select: { name: true, tag: true } } },
+  });
+  if (!target) return null;
+
+  const base = `Войны с ${target.nickname} нет — вылет объявит ее.`;
+  return target.syndicate
+    ? `${base} Командир состоит в синдикате [${target.syndicate.tag}] ${target.syndicate.name}: ` +
+        'ответить могут всем составом.'
+    : base;
 }
 
 /** Мир: снимает индивидуальное объявление войны в любую сторону. */

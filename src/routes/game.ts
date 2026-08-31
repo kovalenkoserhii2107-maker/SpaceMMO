@@ -7,6 +7,7 @@ import { isDefenseType } from '../game/defenses.js';
 import { isFleetMission, isOneWayMission, planFlight } from '../game/fleets.js';
 import { buildGalaxyMap, buildSystemMap } from '../services/mapService.js';
 import { prisma } from '../db/prisma.js';
+import { attackWarning } from '../services/warService.js';
 import { currentCommander, requireAuth, requireCommander } from './middleware.js';
 import { amountsOrNull, cargoOrNull, positiveInt, shipCountsOrNull } from './validation.js';
 import type {
@@ -205,11 +206,21 @@ gameRouter.post('/bases/:baseId/fleets/preview', async (req, res: Response<Fligh
   // Ее может не быть — тогда считаем обычный рейс туда и обратно.
   const oneWay = isFleetMission(body.mission) && isOneWayMission(body.mission);
 
-  res.json(
-    planFlight(ships, commander.techs, { position: base.position, system: base.galaxy }, target, {
-      oneWay,
-    }),
+  const plan = planFlight(
+    ships,
+    commander.techs,
+    { position: base.position, system: base.galaxy },
+    target,
+    { oneWay },
   );
+
+  // Предупреждение считается только для атаки и только по живой цели:
+  // на остальных миссиях предупреждать не о чем, а лишний запрос к БД
+  // предпросмотр дергает на каждое изменение состава.
+  const defenderId = body.mission === 'ATTACK' ? await gameLoop.planetOwner(readTarget(body)) : null;
+  const warning = defenderId ? await attackWarning(currentCommander(req).id, defenderId) : null;
+
+  res.json({ ...plan, warning });
 });
 
 /** Отправить флот с базы на другую планету. */

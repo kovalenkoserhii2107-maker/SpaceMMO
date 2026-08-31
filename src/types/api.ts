@@ -82,7 +82,16 @@ export interface PlanetLookupResponse {
   isOwn: boolean;
 }
 export type GalaxyResponse = GalaxyMap;
-export type FlightPreviewResponse = FlightPlan;
+/**
+ * Расчет маршрута плюс предупреждение о последствиях вылета.
+ *
+ * Предупреждение считает сервер: только он знает, идет ли война и состоит ли
+ * цель в синдикате. Клиент этих данных не имеет и не должен — иначе пришлось
+ * бы отдавать ему дипломатию всей галактики ради одной строки текста.
+ */
+export type FlightPreviewResponse = FlightPlan & {
+  warning?: string | null;
+};
 export type MarketResponse = MarketView;
 export type DiplomacyResponse = DiplomacyView;
 

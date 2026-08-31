@@ -60,7 +60,7 @@ import {
 } from './defenses.js';
 import { plunderAmount, resolveBattle, type SideForces, type UnitLoss } from './combat.js';
 import { checkArchitect, checkPirateBane } from '../services/achievementService.js';
-import { canAttack } from '../services/warService.js';
+import { canAttack, declareWar } from '../services/warService.js';
 import { countUnread, deliver, type OutgoingMessage } from '../services/mailService.js';
 import {
   buildBattleMail,
@@ -600,13 +600,20 @@ class GameLoop {
         if (planet.base.commanderId === commanderId) {
           return { ok: false, error: 'Нельзя атаковать собственную колонию' };
         }
-        // Право на атаку определяет дипломатия: личная война у одиночек
-        // или война синдикатов у тех, кто состоит в альянсе.
+        /*
+         * Войну объявляет сама атака. Раньше вылет отклонялся, пока игрок
+         * не сходит в раздел дипломатии и не объявит войну руками — лишний
+         * шаг, который к тому же ничего не защищал: объявить ее мог кто угодно.
+         * Теперь состояние войны просто возникает вместе с первым вылетом,
+         * а о последствиях предупреждает предпросмотр маршрута.
+         *
+         * Если война уже идет — личная или синдикатная, — объявление не нужно.
+         */
         if (!(await canAttack(commanderId, planet.base.commanderId))) {
-          return {
-            ok: false,
-            error: 'Нет состояния войны с этим командиром: объяви войну сам или через синдикат',
-          };
+          const declared = await declareWar(commanderId, planet.base.commanderId);
+          // Отказ здесь означает, что воевать с этой целью нельзя в принципе
+          // (например, ее уже нет): в бой такой флот отправлять незачем.
+          if (!declared.ok) return { ok: false, error: declared.error };
         }
       }
 
@@ -1740,6 +1747,19 @@ class GameLoop {
    * Выгрузка не рвет сокет: `connections` не трогаем, а `getCommander`
    * поднимет игрока обратно из БД по первому же запросу.
    */
+  /**
+   * Владелец планеты по цели полета — для предупреждений предпросмотра.
+   * Цель хаба или глубокого космоса владельца не имеет, и это не ошибка.
+   */
+  async planetOwner(target: { planetId?: string }): Promise<string | null> {
+    if (!target.planetId) return null;
+    const base = await prisma.base.findUnique({
+      where: { planetId: target.planetId },
+      select: { commanderId: true },
+    });
+    return base?.commanderId ?? null;
+  }
+
   async applyAdminMutation<T>(commanderId: string, mutate: () => Promise<T>): Promise<T> {
     return this.withCommanderReloaded(commanderId, mutate);
   }

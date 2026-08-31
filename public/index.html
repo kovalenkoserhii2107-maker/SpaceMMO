@@ -583,8 +583,34 @@
         <section class="side-card dispatch" id="dispatch" hidden>
           <h3 class="section-title">Отправка флота</h3>
 
+          <!--
+            Цель стоит над шагами, а не отдельным шагом: она уже выбрана кликом
+            по карте к моменту, когда панель открылась, и нумеровать выбор,
+            который игрок уже сделал, значит считать шаги задним числом.
+          -->
+          <div id="dispatch-target" class="dispatch-target"></div>
+          <label class="field">
+            <span>Координаты — система X:Y и орбита</span>
+            <span class="coord-row">
+              <input id="coord-input" type="text" placeholder="1:1:3" autocomplete="off">
+              <button type="button" class="ghost" id="coord-go">Найти</button>
+            </span>
+          </label>
+          <div id="coord-note" class="coord-note"></div>
+
           <section class="step">
-            <h4 class="step-head"><span class="step-no">1</span> Состав</h4>
+            <h4 class="step-head"><span class="step-no">1</span> Действие</h4>
+            <!--
+              Меню, а не выпадающий список: действий у цели три-четыре, они
+              разные по смыслу и от них зависит остальная форма. В свернутом
+              списке игрок не видит, что вообще можно сделать с этой планетой.
+            -->
+            <div id="mission-menu" class="mission-menu"></div>
+            <p id="mission-warning" class="mission-warning" hidden></p>
+          </section>
+
+          <section class="step">
+            <h4 class="step-head"><span class="step-no">2</span> Состав</h4>
             <div class="preset-row">
               <label class="field">
                 <span>Шаблон флота</span>
@@ -600,24 +626,7 @@
           </section>
 
           <section class="step">
-            <h4 class="step-head"><span class="step-no">2</span> Цель</h4>
-            <div id="dispatch-target" class="dispatch-target"></div>
-            <label class="field">
-              <span>Координаты — система X:Y и орбита</span>
-              <span class="coord-row">
-                <input id="coord-input" type="text" placeholder="1:1:3" autocomplete="off">
-                <button type="button" class="ghost" id="coord-go">Найти</button>
-              </span>
-            </label>
-            <div id="coord-note" class="coord-note"></div>
-          </section>
-
-          <section class="step">
-            <h4 class="step-head"><span class="step-no">3</span> Миссия</h4>
-            <label class="field">
-              <span>Тип миссии</span>
-              <select id="mission"></select>
-            </label>
+            <h4 class="step-head"><span class="step-no">3</span> Груз и запуск</h4>
             <div id="cargo-inputs" class="fleet-inputs">
               <label class="field"><span id="cargo-ore-label"><svg class="ico ore sm" role="img" aria-label="Руда"><title>Руда</title><use href="#ico-ore"/></svg> Руда</span><input id="cargo-ore" type="number" min="0" value="0"></label>
               <label class="field"><span id="cargo-polymers-label"><svg class="ico polymers sm" role="img" aria-label="Полимеры"><title>Полимеры</title><use href="#ico-polymers"/></svg> Полимеры</span><input id="cargo-polymers" type="number" min="0" value="0"></label>

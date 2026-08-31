@@ -95,7 +95,8 @@
     mapTooltip: $('map-tooltip'),
     planetInfo: $('planet-info'),
     dispatch: $('dispatch'),
-    mission: $('mission'),
+    missionMenu: $('mission-menu'),
+    missionWarning: $('mission-warning'),
     fleetInputs: $('fleet-inputs'),
     fleetAll: $('fleet-all'),
     fleetNone: $('fleet-none'),
@@ -1582,12 +1583,27 @@
     planTimer: null,
     /** Цель, найденная по координатам: может лежать вне текущей системы. */
     coordTarget: null,
+    /** Выбранное действие. Пустое, пока цель не выбрана и меню не собрано. */
+    mission: '',
   };
 
+  /* Меню действий пересобирается только при смене набора или выбора. */
+  let missionMenuSignature = '';
+
+  /*
+   * Что можно сделать с целью. Планета дает три разных набора, и решает это
+   * не наличие владельца, а поле `colonized`: у неразведанной планеты владелец
+   * скрыт туманом войны, и пустой владелец там не значит «свободна».
+   */
   const MISSION_OPTIONS = {
-    PLANET: [['TRANSPORT', 'Транспортировка'], ['SCAN', 'Разведка зондом'], ['ATTACK', 'Атака']],
     /* Своя колония: атаковать себя нельзя, зато можно перебросить туда флот. */
     OWN_PLANET: [['TRANSPORT', 'Транспортировка'], ['DEPLOY', 'Дислокация']],
+    /* Чужая колония. Порядок как у игрока в голове: напасть, помочь, посмотреть. */
+    ENEMY_PLANET: [
+      ['ATTACK', 'Атака'],
+      ['TRANSPORT', 'Отправить груз или помощь'],
+      ['SCAN', 'Шпионить зондом'],
+    ],
     /*
      * Необитаемая планета. Ни транспорт, ни атака здесь невозможны — сервер
      * отвечает на них отказом, и держать в списке заведомо мертвые пункты
@@ -1595,9 +1611,26 @@
      * ниже добавляется колонизация, если в составе есть основатель.
      */
     FREE_PLANET: [['SCAN', 'Разведка зондом']],
+    /*
+     * Планета не разведана: заселена она или нет — неизвестно. Здесь пункты
+     * не мертвые, а именно неизвестные, и убирать их нельзя: игрок может знать
+     * о планете от союзника. Сервер откажет, если догадка не подтвердится.
+     */
+    UNKNOWN_PLANET: [
+      ['SCAN', 'Разведка зондом'],
+      ['ATTACK', 'Атака'],
+      ['TRANSPORT', 'Отправить груз или помощь'],
+    ],
     HUB: [['HUB_DELIVERY', 'Доставка на хаб'], ['HUB_PICKUP', 'Вывоз с хаба']],
     DEEP_SPACE: [['EXPEDITION', 'Экспедиция']],
   };
+
+  /*
+   * Чем подставляется выбор, когда прежнее действие стало недоступно.
+   * Не первым пунктом списка: у чужой колонии первая — атака, а она объявляет
+   * войну, и подставлять ее молча нельзя. Разведка ничего не разрушает.
+   */
+  const SAFE_DEFAULT_MISSIONS = ['SCAN', 'TRANSPORT', 'HUB_DELIVERY', 'EXPEDITION'];
 
   /** Самая дальняя занятая орбита — по ней раскладываются остальные. */
   function maxPosition() {
@@ -2385,17 +2418,24 @@
   function syncMissionOptions() {
     const target = dispatchTarget();
     const kind = target ? target.kind : map.selectedKind;
-    const free = Boolean(target) && target.kind === 'PLANET' && !target.isOwn && !target.owner;
-    const base = target && target.kind === 'PLANET' && target.isOwn
+    const planet = Boolean(target) && target.kind === 'PLANET';
+    const unknown = planet && !target.isOwn && target.colonized === null;
+    const free = planet && !target.isOwn && target.colonized === false;
+
+    const base = planet && target.isOwn
       ? MISSION_OPTIONS.OWN_PLANET
       : free
         ? MISSION_OPTIONS.FREE_PLANET
-        : MISSION_OPTIONS[kind] || MISSION_OPTIONS.PLANET;
+        : unknown
+          ? MISSION_OPTIONS.UNKNOWN_PLANET
+          : planet
+            ? MISSION_OPTIONS.ENEMY_PLANET
+            : MISSION_OPTIONS[kind] || MISSION_OPTIONS.UNKNOWN_PLANET;
     const options = [...base];
 
-    // Колонизация — только на свободную планету и только с основателем на борту,
-    // по той же логике, что и переработка: пункт появляется, когда он выполним.
-    if (free && readComposition().COLONY_SHIP > 0) {
+    // Колонизация — только на планету, про которую не известно, что она занята,
+    // и только с основателем на борту: пункт появляется, когда он выполним.
+    if ((free || unknown) && readComposition().COLONY_SHIP > 0) {
       options.push(['COLONIZE', 'Основать колонию']);
     }
 
@@ -2408,32 +2448,40 @@
       if (hasDebris && picked.RECYCLER > 0) options.push(['HARVEST', 'Переработка обломков']);
     }
 
-    const current = el.mission.value;
-    const same = [...el.mission.options].map((o) => o.value).join() === options.map((o) => o[0]).join();
-    if (!same) {
-      el.mission.innerHTML = '';
+    // Выбор игрока сохраняется, пока он выполним: перерисовка меню на каждое
+    // изменение состава иначе сбрасывала бы действие.
+    if (!options.some(([value]) => value === map.mission)) {
+      const safe = SAFE_DEFAULT_MISSIONS.find((value) => options.some(([option]) => option === value));
+      map.mission = safe || (options.length ? options[0][0] : '');
+    }
+
+    const signature = options.map(([value, label]) => `${value}:${label}`).join('|') + `#${map.mission}`;
+    if (missionMenuSignature !== signature) {
+      missionMenuSignature = signature;
+      el.missionMenu.innerHTML = '';
       for (const [value, label] of options) {
-        const option = document.createElement('option');
-        option.value = value;
-        option.textContent = label;
-        el.mission.appendChild(option);
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `mission-option${value === map.mission ? ' active' : ''}`;
+        button.dataset.mission = value;
+        button.textContent = label;
+        el.missionMenu.appendChild(button);
       }
     }
-    if (options.some((o) => o[0] === current)) el.mission.value = current;
 
-    const pickup = el.mission.value === 'HUB_PICKUP';
+    const pickup = map.mission === 'HUB_PICKUP';
     // Подпись перерисовывается вместе с иконкой: textContent стер бы SVG из разметки.
     el.cargoOreLabel.innerHTML = `${icon('ore', 'sm')} ${pickup ? 'Забрать руды' : 'Руда'}`;
     el.cargoPolymersLabel.innerHTML = `${icon('polymers', 'sm')} ${pickup ? 'Забрать полимеров' : 'Полимеры'}`;
 
     // Хаб торгует только рудой и полимерами, плазму туда не возят.
-    const hubRun = pickup || el.mission.value === 'HUB_DELIVERY';
+    const hubRun = pickup || map.mission === 'HUB_DELIVERY';
     el.cargoPlasmaField.hidden = hubRun;
     if (hubRun) el.cargoPlasma.value = '0';
 
     // Переработчики летят за обломками, а не с грузом: трюмы должны быть пусты.
     // Разведке трюмы тоже ни к чему — зонд везет данные, а не ресурсы.
-    const harvest = el.mission.value === 'HARVEST' || el.mission.value === 'SCAN';
+    const harvest = map.mission === 'HARVEST' || map.mission === 'SCAN';
     el.cargoInputs.hidden = harvest;
     if (harvest) {
       el.cargoOre.value = '0';
@@ -2555,6 +2603,12 @@
     return ships;
   }
 
+  /** Предупреждение о последствиях вылета. Пустое — прячем целиком. */
+  function showMissionWarning(text) {
+    el.missionWarning.hidden = !text;
+    el.missionWarning.textContent = text || '';
+  }
+
   function schedulePlan() {
     clearTimeout(map.planTimer);
     map.planTimer = setTimeout(refreshPlan, 250);
@@ -2575,6 +2629,9 @@
           `${map.coordTarget.galaxyX}:${map.coordTarget.galaxyY}`,
         owner: map.coordTarget.owner,
         isOwn: map.coordTarget.isOwn,
+        // Поиск по координатам туманом войны не ограничен и отвечает
+        // о заселенности прямо, поэтому здесь null невозможен.
+        colonized: Boolean(map.coordTarget.owner),
       };
     }
     if (deepSpaceSelected()) {
@@ -2585,6 +2642,7 @@
         place: `система ${map.data.systemName} · 16-я позиция`,
         owner: null,
         isOwn: false,
+        colonized: false,
       };
     }
     const hub = selectedHub();
@@ -2596,6 +2654,7 @@
         place: `нейтральная станция · орбита ${hub.position}`,
         owner: null,
         isOwn: false,
+        colonized: false,
       };
     }
     const planet = selectedPlanet();
@@ -2607,6 +2666,9 @@
         place: `система ${map.data.systemName} · орбита ${planet.position}`,
         owner: planet.owner,
         isOwn: planet.isOwn,
+        // На карте это три состояния, а не два: у неразведанной планеты
+        // владелец скрыт туманом войны, и пустой владелец не значит «свободна».
+        colonized: planet.colonized,
       };
     }
     return null;
@@ -2625,13 +2687,17 @@
       el.dispatchTarget.innerHTML = '<span class="muted">Цель не выбрана: кликни планету на карте или введи координаты.</span>';
       return;
     }
+    // «Колонии нет» и «неизвестно» — разные вещи: у неразведанной планеты
+    // владелец скрыт туманом войны, и выдавать это за пустую орбиту нельзя.
     const owner = target.isOwn
       ? '<span class="own">своя колония</span>'
       : target.owner
         ? `владелец: ${escapeHtml(target.owner)}`
-        : target.kind === 'PLANET'
-          ? 'колонии нет'
-          : '';
+        : target.kind !== 'PLANET'
+          ? ''
+          : target.colonized === false
+            ? 'колонии нет'
+            : '<span class="unknown">не разведана — что на ней, неизвестно</span>';
     el.dispatchTarget.innerHTML =
       `<b>${escapeHtml(target.name)}</b><span>${escapeHtml(target.place)}</span>` +
       (owner ? `<span>${owner}</span>` : '');
@@ -2649,6 +2715,7 @@
     if (picked <= 0) {
       map.plan = null;
       el.flightPlan.textContent = 'Выбери корабли, чтобы увидеть расчет.';
+      showMissionWarning(null);
       return;
     }
 
@@ -2657,14 +2724,18 @@
         method: 'POST',
         headers: authHeaders(),
         // Миссию шлем в расчет: рейс в один конец не платит за обратный путь.
-        body: JSON.stringify({ ...target, ships, mission: el.mission.value }),
+        body: JSON.stringify({ ...target, ships, mission: map.mission }),
       });
       if (!response.ok) {
         map.plan = null;
         el.flightPlan.textContent = 'Не удалось рассчитать маршрут';
+        showMissionWarning(null);
         return;
       }
       map.plan = await response.json();
+      // Предупреждение считает сервер: только он знает, идет ли война
+      // и состоит ли цель в синдикате.
+      showMissionWarning(map.plan.warning);
 
       const cargo =
         Number(el.cargoOre.value || 0) +
@@ -2679,7 +2750,7 @@
       const fuelName = jump ? 'антиматерии' : 'плазмы';
       const noFuel = fuelAmount > fuelStock;
       // Дислокация домой не возвращается, и топливо за обратный путь не берется.
-      const oneWay = el.mission.value === 'DEPLOY';
+      const oneWay = map.mission === 'DEPLOY' || map.mission === 'COLONIZE';
 
       el.flightPlan.innerHTML =
         (jump
@@ -2706,11 +2777,11 @@
       polymers: Number(el.cargoPolymers.value) || 0,
       plasma: Number(el.cargoPlasma.value) || 0,
     };
-    const pickup = el.mission.value === 'HUB_PICKUP';
+    const pickup = map.mission === 'HUB_PICKUP';
 
     const ok = await send(`/api/bases/${base.baseId}/fleets`, {
       ...target,
-      mission: el.mission.value,
+      mission: map.mission,
       ships: readComposition(),
       cargo: pickup ? { ore: 0, polymers: 0, plasma: 0 } : amounts,
       pickup: pickup ? { ore: amounts.ore, polymers: amounts.polymers } : { ore: 0, polymers: 0 },
@@ -2725,6 +2796,7 @@
       el.presetSelect.value = '';
       map.plan = null;
       el.flightPlan.textContent = 'Выбери корабли, чтобы увидеть расчет.';
+      showMissionWarning(null);
     }
     await loadMap();
     await loadGalaxy();
@@ -2826,7 +2898,12 @@
   });
 
   el.sendFleetButton.addEventListener('click', () => void sendFleet());
-  el.mission.addEventListener('change', () => {
+  el.missionMenu.addEventListener('click', (event) => {
+    const button = event.target.closest('.mission-option');
+    if (!button || button.dataset.mission === map.mission) return;
+    map.mission = button.dataset.mission;
+    // Подпись выбранного меняется, поэтому подпись меню пересобирается целиком.
+    missionMenuSignature = '';
     syncMissionOptions();
     schedulePlan();
   });

@@ -1675,7 +1675,41 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .mail-state { color: var(--muted); }
 .mail-state.unread { color: var(--accent); font-weight: 600; }
 
-/* Отправка флота: три шага — состав, цель, миссия. */
+/*
+ * Меню действий у цели. Кнопки в столбец, а не выпадающий список: действий
+ * три-четыре, они разные по смыслу, и от выбора зависит остальная форма —
+ * в свернутом списке игрок не видит, что вообще можно сделать с планетой.
+ */
+.mission-menu { display: grid; gap: 6px; }
+.mission-option {
+  padding: 9px 12px;
+  text-align: left;
+  font-size: 13px;
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+}
+.mission-option:hover { color: var(--text); border-color: var(--warm); }
+.mission-option.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: linear-gradient(90deg, rgba(77, 210, 255, 0.14), transparent 70%);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+/* Предупреждение о последствиях вылета: не запрет, а предупреждение. */
+.mission-warning {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 159, 67, 0.45);
+  border-radius: 8px;
+  background: rgba(255, 159, 67, 0.08);
+  color: var(--warm);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* Отправка флота: три шага — действие, состав, груз. */
 .dispatch .step { display: grid; gap: 8px; padding: 10px 0; border-top: 1px solid var(--line); }
 .dispatch .step:first-of-type { border-top: none; padding-top: 0; }
 .step-head {
@@ -1715,6 +1749,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .dispatch-target b { font-size: 13px; }
 .dispatch-target span { color: var(--muted); }
 .dispatch-target .own { color: var(--ok); }
+.dispatch-target .unknown { color: var(--warn); }
 
 /* Поле координат: ввод и кнопка поиска стоят в строку. */
 .coord-row { display: flex; gap: 6px; }
