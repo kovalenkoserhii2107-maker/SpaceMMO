@@ -115,36 +115,56 @@ check('занятый позывной отклонен', takenNick.status === 4
 
 /* ---------- Смена пароля ---------- */
 const resetRequest = await api('POST', '/api/auth/password/reset-request', { email });
-check('запрос смены пароля принят', resetRequest.status === 200 && Boolean(resetRequest.data.devToken));
+check('запрос смены пароля принят', resetRequest.status === 200);
 
 const ghostRequest = await api('POST', '/api/auth/password/reset-request', { email: `ghost-${unique}@x.local` });
 check(
-  'запрос для несуществующего email не раскрывает данные',
-  ghostRequest.status === 200 && ghostRequest.data.devToken === null,
+  'ответ одинаков для существующего и несуществующего email',
+  ghostRequest.status === 200 && ghostRequest.data.message === resetRequest.data.message,
   JSON.stringify(ghostRequest.data),
 );
 
+/*
+ * Дальше нужен сам код, а сервер отдает его наружу только на стенде с явно
+ * поднятым AUTH_EXPOSE_RESET_TOKEN. Без флага секция пропускается: это не
+ * поломка, а правильно закрытый роут — раздавать код по чужому email нельзя.
+ */
 const resetToken = resetRequest.data.devToken;
-const newPassword = 'brand-new-password-9';
-const reset = await api('POST', '/api/auth/password/reset', { token: resetToken, password: newPassword });
-check('пароль сменен и выдан новый токен', reset.status === 200 && Boolean(reset.data.token));
+if (!resetToken) {
+  console.log(
+    'SKIP | смена пароля по коду :: сервер не отдает код наружу; ' +
+      'для проверки подними стенд с AUTH_EXPOSE_RESET_TOKEN=true',
+  );
+} else {
+  check(
+    'код не приходит для несуществующего email',
+    ghostRequest.data.devToken === null,
+    JSON.stringify(ghostRequest.data.devToken),
+  );
 
-const reused = await api('POST', '/api/auth/password/reset', { token: resetToken, password: 'yet-another-1' });
-check('токен смены пароля одноразовый', reused.status === 400, JSON.stringify(reused.data));
+  const newPassword = 'brand-new-password-9';
+  const reset = await api('POST', '/api/auth/password/reset', { token: resetToken, password: newPassword });
+  check('пароль сменен и выдан новый токен', reset.status === 200 && Boolean(reset.data.token));
 
-const loginNew = await api('POST', '/api/auth/login', { email, password: newPassword });
-check('вход новым паролем работает', loginNew.status === 200 && Boolean(loginNew.data.token));
+  const reused = await api('POST', '/api/auth/password/reset', { token: resetToken, password: 'yet-another-1' });
+  check('токен смены пароля одноразовый', reused.status === 400, JSON.stringify(reused.data));
 
-const loginOld = await api('POST', '/api/auth/login', { email, password });
-check('старый пароль больше не работает', loginOld.status === 401);
+  const loginNew = await api('POST', '/api/auth/login', { email, password: newPassword });
+  check('вход новым паролем работает', loginNew.status === 200 && Boolean(loginNew.data.token));
+
+  const loginOld = await api('POST', '/api/auth/login', { email, password });
+  check('старый пароль больше не работает', loginOld.status === 401);
+}
 
 /* ---------- OAuth ---------- */
-for (const provider of ['google', 'apple', 'facebook']) {
+const google = await api('POST', '/api/auth/oauth/google', { idToken: 'stub' });
+check('google: вход отвечает «ключи не подключены»', google.status === 501, JSON.stringify(google.data));
+
+// Apple и Facebook сняты намеренно: для роута они такие же чужие, как Steam.
+for (const provider of ['apple', 'facebook', 'steam']) {
   const oauth = await api('POST', `/api/auth/oauth/${provider}`, { idToken: 'stub' });
-  check(`${provider}: вход отвечает «ключи не подключены»`, oauth.status === 501, JSON.stringify(oauth.data));
+  check(`${provider} не обслуживается`, oauth.status === 400, JSON.stringify(oauth.data));
 }
-const unknownProvider = await api('POST', '/api/auth/oauth/steam', { idToken: 'stub' });
-check('неизвестный провайдер отклонен', unknownProvider.status === 400, JSON.stringify(unknownProvider.data));
 
 const failed = results.filter((r) => !r.passed);
 console.log(`\n=== ИТОГ: ${results.length - failed.length}/${results.length} пройдено ===`);

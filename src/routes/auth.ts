@@ -10,6 +10,7 @@ import {
   validatePassword,
 } from '../services/authService.js';
 import { isExternalProvider } from '../config/auth.js';
+import { env } from '../config/env.js';
 import { currentAccount, requireAuth } from './middleware.js';
 import type { AuthResponse, ErrorResponse, SessionResponse } from '../types/api.js';
 
@@ -90,11 +91,20 @@ authRouter.post('/password/reset-request', async (req, res) => {
   }
 
   const request = await requestPasswordReset(email);
+
+  /*
+   * Код смены пароля наружу не уходит. Роут открытый и отвечает одинаково
+   * на любой email, поэтому отдать код в ответе значит раздать любой аккаунт
+   * каждому, кто знает адрес его владельца. На стенде это включается явным
+   * флагом `AUTH_EXPOSE_RESET_TOKEN`, в production — никогда.
+   *
+   * Срок жизни возвращается всегда: он ничего не выдает (одинаков для всех)
+   * и нужен интерфейсу, чтобы показать, сколько у игрока времени.
+   */
   res.json({
     ok: true,
     message: 'Если аккаунт существует, ссылка для смены пароля отправлена',
-    // Пока нет почтовой отправки, токен возвращается прямо в ответе.
-    devToken: request.token,
+    ...(env.exposeResetToken ? { devToken: request.token } : {}),
     expiresAt: request.expiresAt ? request.expiresAt.getTime() : null,
   });
 });

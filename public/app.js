@@ -373,11 +373,13 @@
     }
 
     showScreen('reset');
+    // Код приходит в ответе только на стенде с явно включенным флагом.
+    // В обычном случае поля нет — и подставлять нечего, игрок вводит его сам.
     el.resetToken.value = result.data.devToken || '';
     showAuthMessage(
       el.resetMessage,
       result.data.devToken
-        ? 'Код подставлен автоматически: почта еще не подключена.'
+        ? 'Код подставлен автоматически: это стенд разработки.'
         : result.data.message,
       true,
     );
