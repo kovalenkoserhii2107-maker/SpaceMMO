@@ -89,10 +89,15 @@ const NEUTRAL_BONUSES: EconomyBonuses = { mining: 1, energy: 1 };
 const BASE_ENERGY_OUTPUT = 20;
 
 /** Базовая добыча ресурсов в секунду на 1 уровне при коэффициенте 1.0. */
+/*
+ * Базовая добыча. Полимеры и плазма подняты относительно руды: доли в ценах
+ * построек у них выше, чем были доли в доходе, и ранний игрок упирался
+ * не в общий объем добычи, а в перекос между ресурсами.
+ */
 const BASE_YIELD_PER_SECOND: Record<MineType, number> = {
   ORE_MINE: 0.8,
-  POLYMER_PLANT: 0.5,
-  PLASMA_REACTOR: 0.25,
+  POLYMER_PLANT: 0.58,
+  PLASMA_REACTOR: 0.36,
   // Антиматерия синтезируется на порядки медленнее: это топливо для прыжков,
   // а не сырье для стройки.
   ANTIMATTER_FACTORY: 0.02,
@@ -111,17 +116,25 @@ const BASE_YIELD_PER_SECOND: Record<MineType, number> = {
  * уровень должен быть достижением, а не побочным следствием добычи.
  */
 const COSTS: Record<BuildingType, ResourceAmounts & { factor: number }> = {
-  ORE_MINE: { ore: 240, polymers: 60, plasma: 0, factor: 1.6 },
-  POLYMER_PLANT: { ore: 192, polymers: 96, plasma: 0, factor: 1.6 },
-  PLASMA_REACTOR: { ore: 900, polymers: 300, plasma: 0, factor: 1.6 },
-  POWER_PLANT: { ore: 300, polymers: 120, plasma: 0, factor: 1.6 },
+  ORE_MINE: { ore: 140, polymers: 35, plasma: 0, factor: 1.65 },
+  POLYMER_PLANT: { ore: 112, polymers: 56, plasma: 0, factor: 1.65 },
+  // Плазменный реактор был втрое дороже рудной шахты и потому отставал
+  // на уровень-два, а плазму требуют и лаборатория, и верфь: игрок стоял.
+  PLASMA_REACTOR: { ore: 380, polymers: 130, plasma: 0, factor: 1.65 },
+  POWER_PLANT: { ore: 175, polymers: 70, plasma: 0, factor: 1.65 },
   // Первые уровни верфи и лаборатории намеренно дешевы: это обучающие
   // постройки, и упереться в них в первый час игрок не должен. Крутизну
   // задает множитель — к десятому уровню они стоят миллионы.
-  SCIENCE_CENTER: { ore: 400, polymers: 700, plasma: 150, factor: 2.3 },
-  SHIPYARD: { ore: 450, polymers: 225, plasma: 100, factor: 2.3 },
+  /*
+   * Плазмы в первых уровнях верфи и лаборатории нет вовсе, а полимеров
+   * вдвое меньше прежнего. Раньше лаборатория стоила 700 полимеров при доходе
+   * под две тысячи в час — двенадцать минут простоя на одной постройке,
+   * и это в первые полчаса игры.
+   */
+  SCIENCE_CENTER: { ore: 260, polymers: 380, plasma: 0, factor: 2.3 },
+  SHIPYARD: { ore: 320, polymers: 160, plasma: 0, factor: 2.3 },
   ANTIMATTER_FACTORY: { ore: 6000, polymers: 4500, plasma: 2400, factor: 2.3 },
-  STORAGE: { ore: 1200, polymers: 600, plasma: 0, factor: 1.6 },
+  STORAGE: { ore: 700, polymers: 350, plasma: 0, factor: 1.65 },
 };
 
 /** Потребление энергии постройками. Солнечная станция энергию не тратит. */

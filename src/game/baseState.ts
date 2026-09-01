@@ -280,7 +280,7 @@ export function toSnapshot(state: BaseRuntimeState, commander: CommanderRuntimeS
           remainingSeconds: Math.max(0, Math.ceil((state.buildJob.finishesAt - now) / 1000)),
         }
       : null,
-    buildings: BUILDING_TYPES.map((type) => buildingCard(type, state, commander.techs)),
+    buildings: BUILDING_TYPES.map((type) => buildingCard(type, state, commander)),
     technologies: TECHNOLOGY_TYPES.map((tech) => technologyCard(tech, state, commander)),
     ships: SHIP_TYPES.map((type) => shipCard(type, state, commander)),
     defenseCards: DEFENSE_TYPES.map((type) => defenseCard(type, state, commander)),
@@ -332,7 +332,11 @@ function defenseCard(
   };
 }
 
-function buildingCard(type: BuildingType, state: BaseRuntimeState, techs: TechLevels): BuildingCard {
+function buildingCard(
+  type: BuildingType,
+  state: BaseRuntimeState,
+  commander: CommanderRuntimeState,
+): BuildingCard {
   const nextLevel = state.levels[type] + 1;
   const cost = upgradeCost(type, nextLevel);
   const missing = missingBuildingRequirements(type, state.levels).map<Requirement>((item) => ({
@@ -348,10 +352,10 @@ function buildingCard(type: BuildingType, state: BaseRuntimeState, techs: TechLe
     level: state.levels[type],
     nextLevel,
     cost,
-    seconds: buildSeconds(type, nextLevel, systemModifiers(state.anomaly), buildSpeedup(techs)),
+    seconds: buildSeconds(type, nextLevel, systemModifiers(state.anomaly), buildSpeedup(commander.techs)),
     canAfford: hasEnoughResources(state.resources, cost),
     requirements: missing,
-    effect: buildingEffect(type, state.levels[type], nextLevel),
+    effect: buildingEffect(type, state, commander, nextLevel),
     busy: state.buildJob !== null,
   };
 }
@@ -361,11 +365,79 @@ function buildingCard(type: BuildingType, state: BaseRuntimeState, techs: TechLe
  * Заполняется только там, где эффект не читается из названия: у шахт прирост
  * виден в добыче, а вместимость хранилища иначе узнать неоткуда.
  */
-function buildingEffect(type: BuildingType, level: number, nextLevel: number): string | null {
-  if (type !== 'STORAGE') return null;
-  const now = storageCapacityForLevel(level);
-  const next = storageCapacityForLevel(nextLevel);
-  return `вместимость ${Math.round(now)} → ${Math.round(next)}`;
+/**
+ * Что даст следующий уровень — в тех же единицах, что игрок видит в интерфейсе.
+ *
+ * Раньше строка была только у склада, и по остальным карточкам нельзя было
+ * понять, зачем вообще улучшать: цена и время есть, а выгода — нет. Считается
+ * разница между текущим и следующим уровнем на реальных формулах, поэтому
+ * богатство планеты и технологии в число уже заложены.
+ */
+function buildingEffect(
+  type: BuildingType,
+  state: BaseRuntimeState,
+  commander: CommanderRuntimeState,
+  nextLevel: number,
+): string | null {
+  const level = state.levels[type];
+  const bonuses = economyBonuses(commander.techs);
+  const modifiers = systemModifiers(state.anomaly);
+  const drain = defenseEnergyUsage(state.defenses);
+  const techDrain = timeCompressionDrain(commander.techs);
+  const next = { ...state.levels, [type]: nextLevel };
+  const perHour = (value: number) => Math.round(value * 3600).toLocaleString('ru-RU');
+
+  if (type === 'STORAGE') {
+    const now = storageCapacityForLevel(level);
+    const after = storageCapacityForLevel(nextLevel);
+    return `вместимость ${Math.round(now).toLocaleString('ru-RU')} → ${Math.round(after).toLocaleString('ru-RU')}`;
+  }
+
+  if (type === 'POWER_PLANT') {
+    const now = energyOutput(state.levels, state.richness, bonuses);
+    const after = energyOutput(next, state.richness, bonuses);
+    return `энергия ${Math.round(now)} → ${Math.round(after)}`;
+  }
+
+  if (type === 'SCIENCE_CENTER') {
+    // Лаборатория ускоряет исследования: показываем на конкретной технологии,
+    // иначе «ускорение ×1.25» ничего не говорит о реальном сроке.
+    const now = researchSeconds('ENERGY_TECH', commander.techs.ENERGY_TECH + 1, level, commander.techs, modifiers);
+    const after = researchSeconds('ENERGY_TECH', commander.techs.ENERGY_TECH + 1, nextLevel, commander.techs, modifiers);
+    return `исследования быстрее: ${fmtSeconds(now)} → ${fmtSeconds(after)}`;
+  }
+
+  if (type === 'SHIPYARD') {
+    const speedup = buildSpeedup(commander.techs);
+    const now = shipUnitSeconds('LIGHT_FIGHTER', level, modifiers, speedup);
+    const after = shipUnitSeconds('LIGHT_FIGHTER', nextLevel, modifiers, speedup);
+    return `сборка быстрее: истребитель ${fmtSeconds(now)} → ${fmtSeconds(after)}`;
+  }
+
+  const production = (levels: BuildingLevels) =>
+    productionPerSecond(levels, state.richness, bonuses, drain, modifiers, techDrain);
+
+  if (type === 'ANTIMATTER_FACTORY') {
+    const now = production(state.levels).antimatter;
+    const after = production(next).antimatter;
+    return `антиматерия ${perHour(now)} → ${perHour(after)} в час`;
+  }
+
+  const key = type === 'ORE_MINE' ? 'ore' : type === 'POLYMER_PLANT' ? 'polymers' : 'plasma';
+  if (key === 'ore' || key === 'polymers' || key === 'plasma') {
+    const now = production(state.levels)[key];
+    const after = production(next)[key];
+    return `добыча ${perHour(now)} → ${perHour(after)} в час`;
+  }
+  return null;
+}
+
+/** Короткая длительность для строки эффекта: минуты и часы, без секунд там, где их не читают. */
+function fmtSeconds(value: number): string {
+  if (value < 60) return `${Math.round(value)} с`;
+  if (value < 3600) return `${Math.round(value / 60)} мин`;
+  if (value < 86400) return `${(value / 3600).toFixed(1)} ч`;
+  return `${(value / 86400).toFixed(1)} дн`;
 }
 
 function technologyCard(

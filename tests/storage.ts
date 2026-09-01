@@ -388,7 +388,10 @@ if (registered.status !== 200 && registered.status !== 201) {
   check('хранилище доступно к постройке с первого уровня', Boolean(storage) && storage.requirements.length === 0);
   check(
     'карточка хранилища объясняет прирост вместимости',
-    typeof storage?.effect === 'string' && storage.effect.includes('10000'),
+    // Карточка печатает числа с разрядными пробелами, поэтому сверяем цифры,
+    // а не форматирование.
+    typeof storage?.effect === 'string' &&
+      storage.effect.replace(/\s/gu, '').includes('10000'),
     storage?.effect,
   );
 }
