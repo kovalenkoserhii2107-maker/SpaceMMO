@@ -72,7 +72,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
       'На бой не влияет: щиты усиливает щитовая технология.',
     cost: { ore: 0, polymers: 200, plasma: 100, factor: 2.0 },
     baseSeconds: 90,
-    timeFactor: 1.8,
+    timeFactor: 2.15,
     labLevel: 1,
     requires: {},
   },
@@ -81,7 +81,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
     description: '-3% к времени исследований за уровень. Нужна для постройки зондов.',
     cost: { ore: 0, polymers: 100, plasma: 75, factor: 2.0 },
     baseSeconds: 60,
-    timeFactor: 1.8,
+    timeFactor: 2.15,
     labLevel: 1,
     requires: {},
   },
@@ -90,7 +90,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
     description: '+10% к атаке всех кораблей и обороны за уровень.',
     cost: { ore: 800, polymers: 200, plasma: 0, factor: 2.0 },
     baseSeconds: 120,
-    timeFactor: 1.8,
+    timeFactor: 2.15,
     labLevel: 2,
     requires: { ENERGY_TECH: 1 },
   },
@@ -99,7 +99,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
     description: '+10% к щитам всех кораблей и обороны за уровень.',
     cost: { ore: 200, polymers: 600, plasma: 0, factor: 2.0 },
     baseSeconds: 150,
-    timeFactor: 1.8,
+    timeFactor: 2.15,
     labLevel: 3,
     requires: { ENERGY_TECH: 3 },
   },
@@ -108,7 +108,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
     description: '+10% к корпусу всех кораблей и обороны за уровень.',
     cost: { ore: 1000, polymers: 0, plasma: 0, factor: 2.0 },
     baseSeconds: 100,
-    timeFactor: 1.75,
+    timeFactor: 2.15,
     labLevel: 2,
     requires: { ENERGY_TECH: 2 },
   },
@@ -117,7 +117,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
     description: '+2% к добыче всех шахт за уровень.',
     cost: { ore: 200, polymers: 100, plasma: 0, factor: 1.8 },
     baseSeconds: 75,
-    timeFactor: 1.7,
+    timeFactor: 2.15,
     labLevel: 2,
     requires: { ENERGY_TECH: 1 },
   },
@@ -126,7 +126,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
     description: 'Открывает постройку транспортников и легких истребителей.',
     cost: { ore: 100, polymers: 0, plasma: 60, factor: 1.9 },
     baseSeconds: 80,
-    timeFactor: 1.7,
+    timeFactor: 2.15,
     labLevel: 2,
     requires: { ENERGY_TECH: 1 },
   },
@@ -135,7 +135,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
     description: 'Открывает постройку синтезатора антиматерии.',
     cost: { ore: 800, polymers: 1200, plasma: 600, factor: 2.1 },
     baseSeconds: 240,
-    timeFactor: 1.8,
+    timeFactor: 2.15,
     labLevel: 3,
     requires: { ENERGY_TECH: 2, COMPUTING_TECH: 1 },
   },
@@ -148,7 +148,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
       '(0 → 1 база, 2 → 2, 4 → 3) и открывают постройку колониального транспорта.',
     cost: { ore: 400, polymers: 800, plasma: 400, factor: 1.9 },
     baseSeconds: 180,
-    timeFactor: 1.75,
+    timeFactor: 2.15,
     labLevel: 2,
     requires: { COMPUTING_TECH: 1 },
   },
@@ -159,7 +159,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
       'и снижает расход топлива.',
     cost: { ore: 1500, polymers: 1000, plasma: 900, factor: 2.0 },
     baseSeconds: 300,
-    timeFactor: 1.8,
+    timeFactor: 2.15,
     labLevel: 3,
     requires: { HYPERSPACE_PHYSICS: 1 },
   },
@@ -170,7 +170,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
       'кораблей с обороной. На исследования не влияет — там работает лаборатория.',
     cost: { ore: 400, polymers: 200, plasma: 100, factor: 1.9 },
     baseSeconds: 120,
-    timeFactor: 1.75,
+    timeFactor: 2.15,
     labLevel: 2,
     requires: { COMPUTING_TECH: 2 },
   },
@@ -260,7 +260,13 @@ export function researchSeconds(
 ): number {
   const definition = TECHNOLOGIES[tech];
   const raw = definition.baseSeconds * Math.pow(definition.timeFactor, targetLevel - 1);
-  const labSpeedup = 1 + Math.max(0, labLevel) * 0.5;
+  /*
+   * Ускорение лаборатории ослаблено вдвое (было 0.5 за уровень). При прежнем
+   * коэффициенте лаборатория восьмого давала пятикратное ускорение, и самая
+   * дорогая технология десятого уровня изучалась меньше трех часов — наука
+   * переставала быть воротами вовсе.
+   */
+  const labSpeedup = 1 + Math.max(0, labLevel) * 0.25;
   const computingSpeedup = Math.max(0.5, 1 - techs.COMPUTING_TECH * 0.03);
   // Науку ускоряет лаборатория, а не робототехника: автоматы собирают корпуса,
   // а не ставят опыты. «Сжатие времени» действует и здесь — оно гнет само время.

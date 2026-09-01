@@ -99,15 +99,29 @@ const BASE_YIELD_PER_SECOND: Record<MineType, number> = {
 };
 
 /** Базовые стоимости постройки 1 уровня и множитель роста цены. */
+/*
+ * Стоимость уровней.
+ *
+ * Множитель шахт 1.6 против прежних 1.5: при 1.5 следующий уровень стоил
+ * меньше часа добычи вплоть до шестнадцатого, и весь ранний и средний этап
+ * пролетал за вечер. Базовые цены подняты вчетверо по той же причине —
+ * растягивают именно первые уровни, где прогресс был почти бесплатным.
+ *
+ * Верфь и лаборатория дороже остальных (2.3): это ворота контента, и их
+ * уровень должен быть достижением, а не побочным следствием добычи.
+ */
 const COSTS: Record<BuildingType, ResourceAmounts & { factor: number }> = {
-  ORE_MINE: { ore: 60, polymers: 15, plasma: 0, factor: 1.5 },
-  POLYMER_PLANT: { ore: 48, polymers: 24, plasma: 0, factor: 1.6 },
-  PLASMA_REACTOR: { ore: 225, polymers: 75, plasma: 0, factor: 1.5 },
-  POWER_PLANT: { ore: 75, polymers: 30, plasma: 0, factor: 1.5 },
-  SCIENCE_CENTER: { ore: 200, polymers: 400, plasma: 100, factor: 2.0 },
-  SHIPYARD: { ore: 400, polymers: 200, plasma: 100, factor: 2.0 },
-  ANTIMATTER_FACTORY: { ore: 2000, polymers: 1500, plasma: 800, factor: 2.2 },
-  STORAGE: { ore: 500, polymers: 250, plasma: 0, factor: 1.6 },
+  ORE_MINE: { ore: 240, polymers: 60, plasma: 0, factor: 1.6 },
+  POLYMER_PLANT: { ore: 192, polymers: 96, plasma: 0, factor: 1.6 },
+  PLASMA_REACTOR: { ore: 900, polymers: 300, plasma: 0, factor: 1.6 },
+  POWER_PLANT: { ore: 300, polymers: 120, plasma: 0, factor: 1.6 },
+  // Первые уровни верфи и лаборатории намеренно дешевы: это обучающие
+  // постройки, и упереться в них в первый час игрок не должен. Крутизну
+  // задает множитель — к десятому уровню они стоят миллионы.
+  SCIENCE_CENTER: { ore: 400, polymers: 700, plasma: 150, factor: 2.3 },
+  SHIPYARD: { ore: 450, polymers: 225, plasma: 100, factor: 2.3 },
+  ANTIMATTER_FACTORY: { ore: 6000, polymers: 4500, plasma: 2400, factor: 2.3 },
+  STORAGE: { ore: 1200, polymers: 600, plasma: 0, factor: 1.6 },
 };
 
 /** Потребление энергии постройками. Солнечная станция энергию не тратит. */
@@ -170,6 +184,10 @@ export function upgradeCost(type: BuildingType, targetLevel: number): ResourceAm
  * Длительность стройки в секундах: зависит от суммарной стоимости уровня
  * и от модификаторов системы (в черной дыре время течет медленнее).
  */
+/** Коэффициенты кривой времени постройки: минута на старте, сутки в конце. */
+const BUILD_TIME_SCALE = 1.81;
+const BUILD_TIME_EXPONENT = 0.64;
+
 export function buildSeconds(
   type: BuildingType,
   targetLevel: number,
@@ -184,7 +202,14 @@ export function buildSeconds(
 ): number {
   const cost = upgradeCost(type, targetLevel);
   const total = cost.ore + cost.polymers + cost.plasma;
-  return Math.max(5, Math.round(((total / 10) * modifiers.buildTimeMultiplier) / Math.max(1, speedup)));
+  /*
+   * Степенной закон, а не доля цены. Цена растет множителем 1.6 за уровень,
+   * и линейное `цена / 10` давало бы на двадцать втором уровне стройку
+   * длиной в месяц. Показатель 0.64 подобран так, чтобы первые уровни
+   * ставились за минуту-две, а поздние занимали часы и сутки.
+   */
+  const raw = BUILD_TIME_SCALE * Math.pow(total, BUILD_TIME_EXPONENT);
+  return Math.max(5, Math.round((raw * modifiers.buildTimeMultiplier) / Math.max(1, speedup)));
 }
 
 /** Невыполненные требования по другим постройкам. */
@@ -286,7 +311,12 @@ function mineOutput(
   if (level <= 0) return 0;
   // «Горное дело» ускоряет обычные шахты, но не синтез антиматерии.
   const techBonus = type === 'ANTIMATTER_FACTORY' ? 1 : bonuses.mining;
-  return BASE_YIELD_PER_SECOND[type] * level * Math.pow(1.1, level) * richness * techBonus;
+  /*
+   * Показатель 1.07, а не 1.1. При 1.1 добыча обгоняла цену: расхождение
+   * множителей 1.5 и 1.1 гасилось линейным ростом уровня, и кривая становилась
+   * «идловой» только после двадцатого уровня — куда игрок приходил на второй день.
+   */
+  return BASE_YIELD_PER_SECOND[type] * level * Math.pow(1.07, level) * richness * techBonus;
 }
 
 /* ------------------------- Хранилище ------------------------- */

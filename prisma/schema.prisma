@@ -311,9 +311,11 @@ model Base {
   planetId    String @unique
 
   /// Склад ресурсов (дробные значения — начисление идет каждую секунду).
-  ore        Float @default(500)
-  polymers   Float @default(300)
-  plasma     Float @default(100)
+  /// Стартовый запас щедрый намеренно: первый час игрок должен строить,
+  /// а не ждать, пока накопится на первую шахту.
+  ore        Float @default(1500)
+  polymers   Float @default(800)
+  plasma     Float @default(400)
   /// Антиматерия — топливо межзвездных прыжков.
   antimatter Float @default(0)
 
