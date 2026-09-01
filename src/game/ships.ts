@@ -199,8 +199,13 @@ export function shipUnitSeconds(
   type: ShipType,
   shipyardLevel: number,
   modifiers: SystemModifiers = NEUTRAL_MODIFIERS,
+  /**
+   * Ускорение от технологий: робототехника и «Сжатие времени». Числом,
+   * а не уровнями, — модуль о дереве технологий не знает.
+   */
+  techSpeedup = 1,
 ): number {
-  const speedup = 1 + Math.max(0, shipyardLevel) * 0.4;
+  const speedup = (1 + Math.max(0, shipyardLevel) * 0.4) * Math.max(1, techSpeedup);
   return Math.max(3, Math.round((SHIPS[type].baseSeconds / speedup) * modifiers.buildTimeMultiplier));
 }
 

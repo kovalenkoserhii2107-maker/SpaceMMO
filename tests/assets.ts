@@ -58,7 +58,7 @@ const PLANET_SLOTS = [
  * макро-карта перешла на галактики и туманности, их можно удалить.
  */
 const KNOWN_DRAFTS = new Set([
-  'automation.webp',
+  // automation.webp переехал в robotics.webp: черновик пригодился под технологию.
   'plasma_technology.webp',
   'system_star_1.webp',
   'system_star_2.webp',

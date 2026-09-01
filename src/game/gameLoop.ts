@@ -86,6 +86,7 @@ import {
   type BuildingType,
 } from './rules.js';
 import {
+  buildSpeedup,
   colonySlots,
   emptyTechLevels,
   missingTechRequirements,
@@ -378,8 +379,11 @@ class GameLoop {
 
   /** Постановка здания в стройку. Проверки и списание — только на сервере. */
   async startBuild(commanderId: string, baseId: string, type: BuildingType): Promise<ActionResult> {
-    const base = await this.resolveBase(commanderId, baseId);
-    if (!base) return { ok: false, error: 'База не найдена' };
+    // Командир нужен целиком, а не одна база: скорость стройки задают
+    // его технологии, а они общие для всех колоний.
+    const commander = await this.getCommander(commanderId);
+    const base = commander?.bases.get(baseId);
+    if (!commander || !base) return { ok: false, error: 'База не найдена' };
 
     const missing = missingBuildingRequirements(type, base.levels);
     if (missing.length > 0) {
@@ -394,7 +398,12 @@ class GameLoop {
     }
 
     const now = Date.now();
-    const seconds = buildSeconds(type, targetLevel, systemModifiers(base.anomaly));
+    const seconds = buildSeconds(
+      type,
+      targetLevel,
+      systemModifiers(base.anomaly),
+      buildSpeedup(commander.techs),
+    );
     subtractResources(base.resources, cost);
     base.buildJob = { building: type, targetLevel, startedAt: now, finishesAt: now + seconds * 1000 };
     base.dirty = true;
@@ -465,7 +474,12 @@ class GameLoop {
     }
 
     const now = Date.now();
-    const unitSeconds = shipUnitSeconds(type, base.levels.SHIPYARD, systemModifiers(base.anomaly));
+    const unitSeconds = shipUnitSeconds(
+      type,
+      base.levels.SHIPYARD,
+      systemModifiers(base.anomaly),
+      buildSpeedup(commander.techs),
+    );
     subtractResources(base.resources, cost);
     base.shipJobs.push({
       id: randomUUID(),
@@ -810,7 +824,12 @@ class GameLoop {
     }
 
     const now = Date.now();
-    const unitSeconds = defenseUnitSeconds(type, base.levels.SHIPYARD, systemModifiers(base.anomaly));
+    const unitSeconds = defenseUnitSeconds(
+      type,
+      base.levels.SHIPYARD,
+      systemModifiers(base.anomaly),
+      buildSpeedup(commander.techs),
+    );
     subtractResources(base.resources, cost);
     base.defenseJobs.push({
       id: randomUUID(),
@@ -842,11 +861,6 @@ class GameLoop {
       end += job.remaining * job.unitSeconds * 1000;
     }
     return end;
-  }
-
-  private async resolveBase(commanderId: string, baseId: string): Promise<BaseRuntimeState | null> {
-    const commander = await this.getCommander(commanderId);
-    return commander?.bases.get(baseId) ?? null;
   }
 
   /* ------------------------- Тик и таймеры ------------------------- */

@@ -28,7 +28,10 @@
 
 **tech:** `energy_tech`, `computing_tech`, `weapons_tech`, `shields_tech`,
 `armor_tech`, `mining_tech`, `combustion_drive`, `hyperspace_physics`, `hyperdrive`,
-`astrophysics`
+`astrophysics`, `robotics`, `time_compression`
+
+Ждет картинку: `time_compression`. В папке лежит неиспользованный черновик
+`plasma_technology.webp` — если он подойдет по смыслу, достаточно переименовать.
 
 **planets:** `rocky`, `terran`, `desert`, `ice`, `gas_giant`, `lava`, `toxic` — тела
 по биому; `star` и `black_hole` — центр системы; `hub` — орбитальная станция;

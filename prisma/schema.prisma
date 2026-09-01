@@ -829,6 +829,8 @@ enum TechnologyType {
   HYPERSPACE_PHYSICS
   HYPERDRIVE
   ASTROPHYSICS
+  ROBOTICS
+  TIME_COMPRESSION
 }
 
 enum ShipType {

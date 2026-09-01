@@ -174,10 +174,17 @@ export function buildSeconds(
   type: BuildingType,
   targetLevel: number,
   modifiers: SystemModifiers = NEUTRAL_MODIFIERS,
+  /**
+   * Во сколько раз быстрее идет стройка: робототехника и «Сжатие времени».
+   * Передается числом, а не уровнями технологий: `rules.ts` о дереве
+   * технологий ничего не знает и знать не должен — оно импортирует правила,
+   * и обратная зависимость замкнула бы модули в кольцо.
+   */
+  speedup = 1,
 ): number {
   const cost = upgradeCost(type, targetLevel);
   const total = cost.ore + cost.polymers + cost.plasma;
-  return Math.max(5, Math.round((total / 10) * modifiers.buildTimeMultiplier));
+  return Math.max(5, Math.round(((total / 10) * modifiers.buildTimeMultiplier) / Math.max(1, speedup)));
 }
 
 /** Невыполненные требования по другим постройкам. */
@@ -212,8 +219,13 @@ export function energyOutput(
  * Суммарное потребление энергии базой: постройки плюс стационарная оборона.
  * Расход обороны приходит числом, чтобы модуль правил не зависел от модуля обороны.
  */
-export function energyUsage(levels: BuildingLevels, defenseDrain = 0): number {
-  let total = Math.max(0, defenseDrain);
+export function energyUsage(
+  levels: BuildingLevels,
+  defenseDrain = 0,
+  /** Расход сверх построек и обороны: «Сжатие времени» питается постоянно. */
+  techDrain = 0,
+): number {
+  let total = Math.max(0, defenseDrain) + Math.max(0, techDrain);
   for (const type of BUILDING_TYPES) {
     total += drain(ENERGY_DRAIN[type], levels[type]);
   }
@@ -234,8 +246,9 @@ export function energyEfficiency(
   richness: PlanetRichness,
   bonuses: EconomyBonuses = NEUTRAL_BONUSES,
   defenseDrain = 0,
+  techDrain = 0,
 ): number {
-  const usage = energyUsage(levels, defenseDrain);
+  const usage = energyUsage(levels, defenseDrain, techDrain);
   if (usage <= 0) return 1;
   const output = energyOutput(levels, richness, bonuses);
   return Math.min(1, output / usage);
@@ -248,8 +261,10 @@ export function productionPerSecond(
   bonuses: EconomyBonuses = NEUTRAL_BONUSES,
   defenseDrain = 0,
   modifiers: SystemModifiers = NEUTRAL_MODIFIERS,
+  /** Расход энергии сверх построек: «Сжатие времени» питается постоянно. */
+  techDrain = 0,
 ): BaseStock {
-  const efficiency = energyEfficiency(levels, richness, bonuses, defenseDrain);
+  const efficiency = energyEfficiency(levels, richness, bonuses, defenseDrain, techDrain);
   return {
     ore: mineOutput('ORE_MINE', levels, richness.ore, bonuses) * efficiency,
     polymers: mineOutput('POLYMER_PLANT', levels, richness.polymers, bonuses) * efficiency,

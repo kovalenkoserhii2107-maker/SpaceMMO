@@ -21,6 +21,8 @@ export const TECHNOLOGY_TYPES = [
   'HYPERSPACE_PHYSICS',
   'HYPERDRIVE',
   'ASTROPHYSICS',
+  'ROBOTICS',
+  'TIME_COMPRESSION',
 ] as const;
 
 export type TechnologyType = (typeof TECHNOLOGY_TYPES)[number];
@@ -43,6 +45,8 @@ export function emptyTechLevels(): TechLevels {
     HYPERSPACE_PHYSICS: 0,
     HYPERDRIVE: 0,
     ASTROPHYSICS: 0,
+    ROBOTICS: 0,
+    TIME_COMPRESSION: 0,
   };
 }
 
@@ -159,7 +163,71 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
     labLevel: 3,
     requires: { HYPERSPACE_PHYSICS: 1 },
   },
+  ROBOTICS: {
+    label: 'Робототехника',
+    description:
+      'Строительные автоматы. Каждый уровень ускоряет постройку зданий и сборку ' +
+      'кораблей с обороной. На исследования не влияет — там работает лаборатория.',
+    cost: { ore: 400, polymers: 200, plasma: 100, factor: 1.9 },
+    baseSeconds: 120,
+    timeFactor: 1.75,
+    labLevel: 2,
+    requires: { COMPUTING_TECH: 2 },
+  },
+  TIME_COMPRESSION: {
+    label: 'Сжатие времени',
+    description:
+      'Локальное искажение хода времени над колонией. Каждый уровень вдвое сокращает ' +
+      'вообще все сроки: стройку, верфь, оборону и исследования. Плата — энергия: ' +
+      'каждый следующий уровень потребляет вдвое больше предыдущего, и дефицит ' +
+      'бьет по добыче всей базы.',
+    cost: { ore: 20000, polymers: 15000, plasma: 12000, factor: 2.4 },
+    baseSeconds: 3600,
+    timeFactor: 2.0,
+    labLevel: 10,
+    requires: { COMPUTING_TECH: 10, ENERGY_TECH: 10, HYPERSPACE_PHYSICS: 5 },
+  },
 };
+
+/* ------------------------- Скорость: стройка и наука ------------------------- */
+
+/** Прирост скорости стройки за уровень робототехники. */
+const ROBOTICS_SPEED_PER_LEVEL = 0.08;
+
+/**
+ * Энергия под «Сжатие времени» на первом уровне. Дальше удваивается вместе
+ * с эффектом: и выигрыш, и плата растут одинаково, поэтому уровень выше
+ * окупается только тому, кто вложился в энергетику.
+ */
+const TIME_COMPRESSION_BASE_DRAIN = 120;
+
+/**
+ * Ускорение от робототехники. Линейное по уровню, а не степенное: степень
+ * здесь сложилась бы со «Сжатием времени» и обнулила бы сроки вовсе.
+ */
+export function roboticsSpeedup(techs: TechLevels): number {
+  return 1 + Math.max(0, techs.ROBOTICS) * ROBOTICS_SPEED_PER_LEVEL;
+}
+
+/** Во сколько раз «Сжатие времени» сокращает любой срок: каждый уровень вдвое. */
+export function timeCompressionSpeedup(techs: TechLevels): number {
+  return Math.pow(2, Math.max(0, techs.TIME_COMPRESSION));
+}
+
+/** Сколько энергии постоянно ест «Сжатие времени». Удваивается с уровнем. */
+export function timeCompressionDrain(techs: TechLevels): number {
+  const level = Math.max(0, techs.TIME_COMPRESSION);
+  return level <= 0 ? 0 : TIME_COMPRESSION_BASE_DRAIN * Math.pow(2, level - 1);
+}
+
+/**
+ * Общее ускорение стройки зданий, кораблей и обороны.
+ * Отдельная функция, потому что зовут ее из четырех мест, и разъехавшиеся
+ * формулы дали бы разное время в карточке и в очереди.
+ */
+export function buildSpeedup(techs: TechLevels): number {
+  return roboticsSpeedup(techs) * timeCompressionSpeedup(techs);
+}
 
 export function techLabel(tech: TechnologyType): string {
   return TECHNOLOGIES[tech].label;
@@ -194,9 +262,14 @@ export function researchSeconds(
   const raw = definition.baseSeconds * Math.pow(definition.timeFactor, targetLevel - 1);
   const labSpeedup = 1 + Math.max(0, labLevel) * 0.5;
   const computingSpeedup = Math.max(0.5, 1 - techs.COMPUTING_TECH * 0.03);
+  // Науку ускоряет лаборатория, а не робототехника: автоматы собирают корпуса,
+  // а не ставят опыты. «Сжатие времени» действует и здесь — оно гнет само время.
   return Math.max(
     5,
-    Math.round((raw / labSpeedup) * computingSpeedup * modifiers.researchTimeMultiplier),
+    Math.round(
+      ((raw / labSpeedup) * computingSpeedup * modifiers.researchTimeMultiplier) /
+        timeCompressionSpeedup(techs),
+    ),
   );
 }
 

@@ -32,7 +32,9 @@ import {
 import {
   economyBonuses,
   missingTechRequirements,
+  buildSpeedup,
   researchCost,
+  timeCompressionDrain,
   researchSeconds,
   techDescription,
   techLabel,
@@ -192,6 +194,9 @@ export function accrue(state: BaseRuntimeState, techs: TechLevels, seconds: numb
     economyBonuses(techs),
     defenseEnergyUsage(state.defenses),
     systemModifiers(state.anomaly),
+    // Тот же расход, что и в снимке для клиента: иначе интерфейс показывал бы
+    // просевшую добычу, а тик начислял бы полную.
+    timeCompressionDrain(techs),
   );
 
   const mined = (perSecond.ore + perSecond.polymers + perSecond.plasma) * seconds;
@@ -223,8 +228,11 @@ export function toSnapshot(state: BaseRuntimeState, commander: CommanderRuntimeS
   const modifiers = systemModifiers(state.anomaly);
   const defenseDrain = defenseEnergyUsage(state.defenses);
   const output = energyOutput(state.levels, state.richness, bonuses);
-  const usage = energyUsage(state.levels, defenseDrain);
-  const efficiency = energyEfficiency(state.levels, state.richness, bonuses, defenseDrain);
+  // «Сжатие времени» ест энергию постоянно, наравне с постройками и обороной:
+  // без этого его ускорение было бы бесплатным, а оно должно упираться в добычу.
+  const techDrain = timeCompressionDrain(commander.techs);
+  const usage = energyUsage(state.levels, defenseDrain, techDrain);
+  const efficiency = energyEfficiency(state.levels, state.richness, bonuses, defenseDrain, techDrain);
   const storage = storageState(state.resources, storageCapacity(state.levels));
 
   return {
@@ -246,7 +254,7 @@ export function toSnapshot(state: BaseRuntimeState, commander: CommanderRuntimeS
       antimatter: Math.round(state.resources.antimatter * 1000) / 1000,
     },
     productionPerSecond: roundAll(
-      productionPerSecond(state.levels, state.richness, bonuses, defenseDrain, modifiers),
+      productionPerSecond(state.levels, state.richness, bonuses, defenseDrain, modifiers, techDrain),
     ),
     storage: {
       capacity: storage.capacity,
@@ -272,7 +280,7 @@ export function toSnapshot(state: BaseRuntimeState, commander: CommanderRuntimeS
           remainingSeconds: Math.max(0, Math.ceil((state.buildJob.finishesAt - now) / 1000)),
         }
       : null,
-    buildings: BUILDING_TYPES.map((type) => buildingCard(type, state)),
+    buildings: BUILDING_TYPES.map((type) => buildingCard(type, state, commander.techs)),
     technologies: TECHNOLOGY_TYPES.map((tech) => technologyCard(tech, state, commander)),
     ships: SHIP_TYPES.map((type) => shipCard(type, state, commander)),
     defenseCards: DEFENSE_TYPES.map((type) => defenseCard(type, state, commander)),
@@ -312,14 +320,19 @@ function defenseCard(
     description: defenseDescription(type),
     combat: defenseCombatProfile(type),
     cost,
-    unitSeconds: defenseUnitSeconds(type, state.levels.SHIPYARD, systemModifiers(state.anomaly)),
+    unitSeconds: defenseUnitSeconds(
+      type,
+      state.levels.SHIPYARD,
+      systemModifiers(state.anomaly),
+      buildSpeedup(commander.techs),
+    ),
     owned: state.defenses[type],
     canAfford: hasEnoughResources(state.resources, cost),
     requirements: missingDefenseRequirements(type, state.levels, commander.techs),
   };
 }
 
-function buildingCard(type: BuildingType, state: BaseRuntimeState): BuildingCard {
+function buildingCard(type: BuildingType, state: BaseRuntimeState, techs: TechLevels): BuildingCard {
   const nextLevel = state.levels[type] + 1;
   const cost = upgradeCost(type, nextLevel);
   const missing = missingBuildingRequirements(type, state.levels).map<Requirement>((item) => ({
@@ -335,7 +348,7 @@ function buildingCard(type: BuildingType, state: BaseRuntimeState): BuildingCard
     level: state.levels[type],
     nextLevel,
     cost,
-    seconds: buildSeconds(type, nextLevel, systemModifiers(state.anomaly)),
+    seconds: buildSeconds(type, nextLevel, systemModifiers(state.anomaly), buildSpeedup(techs)),
     canAfford: hasEnoughResources(state.resources, cost),
     requirements: missing,
     effect: buildingEffect(type, state.levels[type], nextLevel),
@@ -392,7 +405,12 @@ function shipCard(type: ShipType, state: BaseRuntimeState, commander: CommanderR
     description: shipDescription(type),
     combat: shipCombatProfile(type),
     cost,
-    unitSeconds: shipUnitSeconds(type, state.levels.SHIPYARD, systemModifiers(state.anomaly)),
+    unitSeconds: shipUnitSeconds(
+      type,
+      state.levels.SHIPYARD,
+      systemModifiers(state.anomaly),
+      buildSpeedup(commander.techs),
+    ),
     owned: state.ships[type],
     canAfford: hasEnoughResources(state.resources, cost),
     requirements: missingShipRequirements(type, state.levels, commander.techs),
