@@ -18,7 +18,7 @@
 `science_center`, `shipyard`, `antimatter_factory`, `storage`
 
 **ships:** `probe`, `transporter`, `light_fighter`, `heavy_cruiser`, `ion_frigate`,
-`recycler`
+`recycler`, `colony_ship`
 
 **defense:** `cannon_turret`, `laser_turret`
 
