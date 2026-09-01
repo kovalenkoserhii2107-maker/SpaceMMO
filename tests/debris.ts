@@ -50,8 +50,8 @@ check('доля обломков — 30% стоимости', DEBRIS_SHARE === 0
 }
 
 {
-  const cost = shipCost('HEAVY_CRUISER');
-  const debris = debrisFromLosses(fleet({ HEAVY_CRUISER: 10 }), fleet({}), emptyDefenseCounts());
+  const cost = shipCost('CRUISER');
+  const debris = debrisFromLosses(fleet({ CRUISER: 10 }), fleet({}), emptyDefenseCounts());
   check(
     'обломки считаются по стоимости постройки',
     debris.ore === Math.floor(cost.ore * 10 * DEBRIS_SHARE) &&
@@ -62,9 +62,9 @@ check('доля обломков — 30% стоимости', DEBRIS_SHARE === 0
 
 {
   // Ключевое: обломки дает и нападавший. Иначе выгодно было бы бросать флот.
-  const onlyAttacker = debrisFromLosses(fleet({ HEAVY_CRUISER: 4 }), fleet({}), emptyDefenseCounts());
-  const onlyDefender = debrisFromLosses(fleet({}), fleet({ HEAVY_CRUISER: 4 }), emptyDefenseCounts());
-  const both = debrisFromLosses(fleet({ HEAVY_CRUISER: 4 }), fleet({ HEAVY_CRUISER: 4 }), emptyDefenseCounts());
+  const onlyAttacker = debrisFromLosses(fleet({ CRUISER: 4 }), fleet({}), emptyDefenseCounts());
+  const onlyDefender = debrisFromLosses(fleet({}), fleet({ CRUISER: 4 }), emptyDefenseCounts());
+  const both = debrisFromLosses(fleet({ CRUISER: 4 }), fleet({ CRUISER: 4 }), emptyDefenseCounts());
 
   check(
     'потери нападавшего дают обломки наравне с потерями защитника',
@@ -87,7 +87,7 @@ check('доля обломков — 30% стоимости', DEBRIS_SHARE === 0
 
 {
   // Плазма в обломках не остается: топливо и реагент сгорают в бою.
-  const debris = debrisFromLosses(fleet({ ION_FRIGATE: 5 }), fleet({}), emptyDefenseCounts());
+  const debris = debrisFromLosses(fleet({ FRIGATE: 5 }), fleet({}), emptyDefenseCounts());
   check(
     'в обломках только руда и полимеры',
     Object.keys(debris).sort().join() === 'ore,polymers',
@@ -97,8 +97,8 @@ check('доля обломков — 30% стоимости', DEBRIS_SHARE === 0
 
 {
   const outcome = resolveBattle(
-    { ships: fleet({ HEAVY_CRUISER: 10 }), defenses: emptyDefenseCounts() },
-    { ships: fleet({ ION_FRIGATE: 13 }), defenses: { CANNON_TURRET: 5, LASER_TURRET: 0 } },
+    { ships: fleet({ CRUISER: 10 }), defenses: emptyDefenseCounts() },
+    { ships: fleet({ FRIGATE: 13 }), defenses: { CANNON: 5, LASER: 0 } },
   );
   check(
     'исход боя содержит поле обломков',
@@ -107,11 +107,11 @@ check('доля обломков — 30% стоимости', DEBRIS_SHARE === 0
   );
 
   const manual = debrisFromLosses(
-    fleet({ HEAVY_CRUISER: outcome.attackerLosses.find((l) => l.key === 'HEAVY_CRUISER')?.lost ?? 0 }),
-    fleet({ ION_FRIGATE: outcome.defenderLosses.find((l) => l.key === 'ION_FRIGATE')?.lost ?? 0 }),
+    fleet({ CRUISER: outcome.attackerLosses.find((l) => l.key === 'CRUISER')?.lost ?? 0 }),
+    fleet({ FRIGATE: outcome.defenderLosses.find((l) => l.key === 'FRIGATE')?.lost ?? 0 }),
     {
-      CANNON_TURRET: outcome.defenderLosses.find((l) => l.key === 'CANNON_TURRET')?.lost ?? 0,
-      LASER_TURRET: 0,
+      CANNON: outcome.defenderLosses.find((l) => l.key === 'CANNON')?.lost ?? 0,
+      LASER: 0,
     },
   );
   check(
@@ -139,8 +139,8 @@ check(
 );
 check(
   'переработка без переработчика отклонена',
-  validateComposition('HARVEST', fleet({ TRANSPORTER: 50 })) !== null,
-  validateComposition('HARVEST', fleet({ TRANSPORTER: 50 })) ?? '',
+  validateComposition('HARVEST', fleet({ SMALL_CARGO: 50 })) !== null,
+  validateComposition('HARVEST', fleet({ SMALL_CARGO: 50 })) ?? '',
 );
 check('переработка с переработчиком разрешена', validateComposition('HARVEST', fleet({ RECYCLER: 1 })) === null);
 
@@ -256,8 +256,8 @@ if (!token) {
     'POST',
     '/api/commander/simulate',
     {
-      attacker: { ships: { HEAVY_CRUISER: 10 } },
-      defender: { ships: { ION_FRIGATE: 13 }, defenses: {} },
+      attacker: { ships: { CRUISER: 10 } },
+      defender: { ships: { FRIGATE: 13 }, defenses: {} },
     },
     token,
   );

@@ -196,12 +196,22 @@
     TOXIC: 'Токсичная',
   };
 
+  /*
+   * Короткие подписи для полей состава и гарнизона: там нет места на позывное
+   * из карточки верфи. Порядок тот же, что в `SHIP_TYPES` на сервере — по нему
+   * строятся поля ввода, и переставлять его значит переставлять форму.
+   */
   const SHIP_LABELS = {
     PROBE: 'Зонды',
-    TRANSPORTER: 'Транспорты',
-    LIGHT_FIGHTER: 'Истребители',
-    HEAVY_CRUISER: 'Крейсера',
-    ION_FRIGATE: 'Фрегаты',
+    SMALL_CARGO: 'Малые транспорты',
+    LARGE_CARGO: 'Большие транспорты',
+    LIGHT_FIGHTER: 'Легкие истребители',
+    HEAVY_FIGHTER: 'Тяжелые истребители',
+    CRUISER: 'Крейсера',
+    FRIGATE: 'Фрегаты',
+    BOMBER: 'Бомбардировщики',
+    BATTLESHIP: 'Линкоры',
+    CARRIER: 'Авианосцы',
     RECYCLER: 'Переработчики',
     COLONY_SHIP: 'Колонизаторы',
   };
@@ -2336,17 +2346,17 @@
     const fleet = planet.colonized && planet.fleet
       ? pdSection('флот', [
           pdCell('зонды', planet.fleet.PROBE),
-          pdCell('трансп', planet.fleet.TRANSPORTER),
+          pdCell('трансп', planet.fleet.SMALL_CARGO),
           pdCell('истреб', planet.fleet.LIGHT_FIGHTER),
-          pdCell('крейс', planet.fleet.HEAVY_CRUISER),
-          pdCell('фрегат', planet.fleet.ION_FRIGATE),
+          pdCell('крейс', planet.fleet.CRUISER),
+          pdCell('фрегат', planet.fleet.FRIGATE),
         ])
       : '';
 
     const defenses = planet.defenses
       ? pdSection('оборона', [
-          pdCell('пушки', planet.defenses.CANNON_TURRET),
-          pdCell('лазеры', planet.defenses.LASER_TURRET),
+          pdCell('пушки', planet.defenses.CANNON),
+          pdCell('лазеры', planet.defenses.LASER),
         ])
       : '';
 
@@ -2614,7 +2624,7 @@
   const fleetInputs = {};
 
   function readComposition() {
-    const ships = { PROBE: 0, TRANSPORTER: 0, LIGHT_FIGHTER: 0 };
+    const ships = { PROBE: 0, SMALL_CARGO: 0, LIGHT_FIGHTER: 0 };
     for (const [type, refs] of Object.entries(fleetInputs)) {
       ships[type] = Math.max(0, Number(refs.input.value) || 0);
     }
@@ -3188,7 +3198,13 @@
 
   /* ---------- Оборона, бои, дипломатия ---------- */
 
-  const DEFENSE_LABELS = { CANNON_TURRET: 'Пушечные турели', LASER_TURRET: 'Лазерные турели' };
+  const DEFENSE_LABELS = {
+    CANNON: 'Турели «Град»',
+    LASER: 'Лазеры «Промінь»',
+    GAUSS: 'Гаусс-пушки «Скіф»',
+    PLASMA: 'Батареи «Сварог»',
+    SUPER_WEAPON: 'Излучатели «Перун»',
+  };
   const war = { data: null };
 
   async function loadWar() {
@@ -4247,7 +4263,7 @@
 
   const sim = { attacker: {}, defender: {}, defenses: {}, targets: [] };
 
-  const DEFENSE_SIM_LABELS = { CANNON_TURRET: 'Пушечные турели', LASER_TURRET: 'Лазерные турели' };
+  const DEFENSE_SIM_LABELS = { CANNON: 'Пушечные турели', LASER: 'Лазерные турели' };
 
   function buildCountInputs(container, labels, store) {
     if (container.childElementCount > 0) return;

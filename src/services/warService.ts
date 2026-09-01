@@ -15,7 +15,7 @@ export interface ExpeditionReportView {
   summary: string;
   loot: { ore: number; polymers: number; antimatter: number };
   losses: Array<{ label: string; lost: number; before: number }>;
-  pirates: { LIGHT_FIGHTER: number; TRANSPORTER: number } | null;
+  pirates: { LIGHT_FIGHTER: number; SMALL_CARGO: number } | null;
   createdAt: number;
 }
 
@@ -193,7 +193,7 @@ export async function getDiplomacy(commanderId: string): Promise<DiplomacyView> 
     expeditionSlots: { total: expeditionSlots(techLevels), used: activeExpeditions },
     expeditions: expeditions.map((report) => {
       const data = report.data as unknown as {
-        pirates: { LIGHT_FIGHTER: number; TRANSPORTER: number } | null;
+        pirates: { LIGHT_FIGHTER: number; SMALL_CARGO: number } | null;
         losses: Array<{ label: string; lost: number; before: number }>;
       };
       return {

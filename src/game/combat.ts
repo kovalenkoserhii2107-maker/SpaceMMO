@@ -60,9 +60,13 @@ export const DEFENCE_RECOVERY_CHANCE = 0.7;
  * по крейсеру стреляет ровно раз.
  */
 const RAPID_FIRE: Partial<Record<string, Partial<Record<string, number>>>> = {
-  HEAVY_CRUISER: { LIGHT_FIGHTER: 10, PROBE: 5, TRANSPORTER: 5 },
-  ION_FRIGATE: { LASER_TURRET: 8, PROBE: 5, TRANSPORTER: 5 },
-  LIGHT_FIGHTER: { CANNON_TURRET: 3 },
+  LIGHT_FIGHTER: { CANNON: 3 },
+  HEAVY_FIGHTER: { LIGHT_FIGHTER: 4, PROBE: 4, SMALL_CARGO: 4, LARGE_CARGO: 4 },
+  CRUISER: { LIGHT_FIGHTER: 10, HEAVY_FIGHTER: 4 },
+  FRIGATE: { LASER: 8 },
+  BOMBER: { CANNON: 15, LASER: 10, GAUSS: 5, PLASMA: 3 },
+  BATTLESHIP: { CRUISER: 6, BOMBER: 4 },
+  CARRIER: { LIGHT_FIGHTER: 15, HEAVY_FIGHTER: 10, CRUISER: 5 },
 };
 
 /**
@@ -101,10 +105,15 @@ export interface UnitStats {
  */
 const SHIP_COMBAT: Record<ShipType, UnitStats> = {
   PROBE: { attack: 0, shield: 0, hull: 10, shieldPiercing: 1 },
-  TRANSPORTER: { attack: 0, shield: 10, hull: 80, shieldPiercing: 1 },
+  SMALL_CARGO: { attack: 0, shield: 10, hull: 80, shieldPiercing: 1 },
+  LARGE_CARGO: { attack: 0, shield: 40, hull: 300, shieldPiercing: 1 },
   LIGHT_FIGHTER: { attack: 15, shield: 10, hull: 60, shieldPiercing: 1 },
-  HEAVY_CRUISER: { attack: 100, shield: 50, hull: 400, shieldPiercing: 1 },
-  ION_FRIGATE: { attack: 45, shield: 80, hull: 120, shieldPiercing: 2 },
+  HEAVY_FIGHTER: { attack: 45, shield: 30, hull: 150, shieldPiercing: 1 },
+  CRUISER: { attack: 150, shield: 70, hull: 600, shieldPiercing: 1 },
+  FRIGATE: { attack: 40, shield: 100, hull: 150, shieldPiercing: 2 },
+  BOMBER: { attack: 300, shield: 150, hull: 1200, shieldPiercing: 1 },
+  BATTLESHIP: { attack: 1000, shield: 400, hull: 3500, shieldPiercing: 1 },
+  CARRIER: { attack: 700, shield: 1000, hull: 8000, shieldPiercing: 1 },
   RECYCLER: { attack: 0, shield: 10, hull: 400, shieldPiercing: 1 },
   // Гражданское судно: ни оружия, ни щита. Корпус большой, но в бою это
   // просто мишень — колонизатор водят под конвоем, а не отправляют одного.
@@ -116,8 +125,16 @@ const SHIP_COMBAT: Record<ShipType, UnitStats> = {
  * Пушечная турель — массовый заслон, лазерная — дорогая и с хорошим щитом.
  */
 const DEFENSE_COMBAT: Record<DefenseType, UnitStats> = {
-  CANNON_TURRET: { attack: 40, shield: 20, hull: 200, shieldPiercing: 1 },
-  LASER_TURRET: { attack: 70, shield: 50, hull: 250, shieldPiercing: 1 },
+  CANNON: { attack: 30, shield: 15, hull: 200, shieldPiercing: 1 },
+  LASER: { attack: 70, shield: 50, hull: 250, shieldPiercing: 1 },
+  GAUSS: { attack: 250, shield: 100, hull: 1000, shieldPiercing: 1 },
+  PLASMA: { attack: 1500, shield: 500, hull: 5000, shieldPiercing: 1 },
+  /*
+   * «Перун» бьет раз в раунд, как и все: скорострела у обороны нет, и своей
+   * очереди по мелочи он не получает. «Редко, но насмерть» здесь выражено
+   * именно так — один залп в раунд, зато он снимает линкор целиком.
+   */
+  SUPER_WEAPON: { attack: 8000, shield: 3000, hull: 20000, shieldPiercing: 1 },
 };
 
 export function shipStats(type: ShipType): UnitStats {

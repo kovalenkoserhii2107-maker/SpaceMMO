@@ -56,7 +56,7 @@ console.log('\n=== 1. Системные отчеты ===');
 
 {
   const outcome = resolveBattle(
-    { ships: fleet({ HEAVY_CRUISER: 20, TRANSPORTER: 10 }), defenses: emptyDefenseCounts() },
+    { ships: fleet({ CRUISER: 20, SMALL_CARGO: 10 }), defenses: emptyDefenseCounts() },
     { ships: fleet({ LIGHT_FIGHTER: 2 }), defenses: emptyDefenseCounts() },
   );
   const plunder = plunderAmount(
@@ -135,7 +135,7 @@ console.log('\n=== 1. Системные отчеты ===');
   // Проигранная атака: трофеев нет ни в одном письме.
   const outcome = resolveBattle(
     { ships: fleet({ LIGHT_FIGHTER: 1 }), defenses: emptyDefenseCounts() },
-    { ships: fleet({ HEAVY_CRUISER: 30 }), defenses: emptyDefenseCounts() },
+    { ships: fleet({ CRUISER: 30 }), defenses: emptyDefenseCounts() },
   );
   const plunder = plunderAmount({ ore: 12000, polymers: 8000, plasma: 0 }, 10000, 0);
   const mail = buildBattleMail({
@@ -163,7 +163,7 @@ console.log('\n=== 1. Системные отчеты ===');
       loot: { ore: 2000, polymers: 0, antimatter: 0 },
       pirates: null,
       battle: null,
-      survivors: fleet({ TRANSPORTER: 2 }),
+      survivors: fleet({ SMALL_CARGO: 2 }),
       summary: 'Заброшенный груз: подняли на борт 2000 руды.',
     },
   });
@@ -193,8 +193,8 @@ console.log('\n=== 1. Системные отчеты ===');
       STORAGE: 3,
     },
     resources: { ore: 5000, polymers: 3000, plasma: 1000, antimatter: 10 },
-    fleet: fleet({ HEAVY_CRUISER: 20 }),
-    defenses: { CANNON_TURRET: 10, LASER_TURRET: 5 },
+    fleet: fleet({ CRUISER: 20 }),
+    defenses: { CANNON: 10, LASER: 5 },
   };
 
   const mail = buildSpyMail({
@@ -368,8 +368,8 @@ if (!alice || !bob) {
 console.log('\n=== Логистика: доставка, дислокация, возвращение ===');
 
 const roster = [
-  { key: 'TRANSPORTER', label: 'Малый транспорт', before: 6, lost: 0 },
-  { key: 'HEAVY_CRUISER', label: 'Тяжелый крейсер', before: 2, lost: 0 },
+  { key: 'SMALL_CARGO', label: 'Малый транспорт', before: 6, lost: 0 },
+  { key: 'CRUISER', label: 'Тяжелый крейсер', before: 2, lost: 0 },
 ];
 
 {

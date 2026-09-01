@@ -133,10 +133,15 @@ async function computeAll(): Promise<{ players: ScoreRow[]; syndicates: Syndicat
     for (const fleet of commander.fleets) {
       const ships: ShipCounts = emptyShipCounts();
       ships.PROBE = fleet.probes;
-      ships.TRANSPORTER = fleet.transporters;
+      ships.SMALL_CARGO = fleet.smallCargo;
+      ships.LARGE_CARGO = fleet.largeCargo;
       ships.LIGHT_FIGHTER = fleet.lightFighters;
-      ships.HEAVY_CRUISER = fleet.heavyCruisers;
-      ships.ION_FRIGATE = fleet.ionFrigates;
+      ships.HEAVY_FIGHTER = fleet.heavyFighters;
+      ships.CRUISER = fleet.cruisers;
+      ships.FRIGATE = fleet.frigates;
+      ships.BOMBER = fleet.bombers;
+      ships.BATTLESHIP = fleet.battleships;
+      ships.CARRIER = fleet.carriers;
       ships.RECYCLER = fleet.recyclers;
       ships.COLONY_SHIP = fleet.colonyShips;
       fleetValue += spentOnFleet(ships);

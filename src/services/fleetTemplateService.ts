@@ -98,10 +98,15 @@ interface TemplateRow {
   id: string;
   name: string;
   probes: number;
-  transporters: number;
+  smallCargo: number;
+  largeCargo: number;
   lightFighters: number;
-  heavyCruisers: number;
-  ionFrigates: number;
+  heavyFighters: number;
+  cruisers: number;
+  frigates: number;
+  bombers: number;
+  battleships: number;
+  carriers: number;
   recyclers: number;
   colonyShips: number;
 }
@@ -109,10 +114,15 @@ interface TemplateRow {
 function toView(row: TemplateRow): FleetTemplateView {
   const ships = emptyShipCounts();
   ships.PROBE = row.probes;
-  ships.TRANSPORTER = row.transporters;
+  ships.SMALL_CARGO = row.smallCargo;
+  ships.LARGE_CARGO = row.largeCargo;
   ships.LIGHT_FIGHTER = row.lightFighters;
-  ships.HEAVY_CRUISER = row.heavyCruisers;
-  ships.ION_FRIGATE = row.ionFrigates;
+  ships.HEAVY_FIGHTER = row.heavyFighters;
+  ships.CRUISER = row.cruisers;
+  ships.FRIGATE = row.frigates;
+  ships.BOMBER = row.bombers;
+  ships.BATTLESHIP = row.battleships;
+  ships.CARRIER = row.carriers;
   ships.RECYCLER = row.recyclers;
   ships.COLONY_SHIP = row.colonyShips;
 
@@ -122,10 +132,15 @@ function toView(row: TemplateRow): FleetTemplateView {
 function toColumns(ships: ShipCounts): Omit<TemplateRow, 'id' | 'name'> {
   return {
     probes: ships.PROBE,
-    transporters: ships.TRANSPORTER,
+    smallCargo: ships.SMALL_CARGO,
+    largeCargo: ships.LARGE_CARGO,
     lightFighters: ships.LIGHT_FIGHTER,
-    heavyCruisers: ships.HEAVY_CRUISER,
-    ionFrigates: ships.ION_FRIGATE,
+    heavyFighters: ships.HEAVY_FIGHTER,
+    cruisers: ships.CRUISER,
+    frigates: ships.FRIGATE,
+    bombers: ships.BOMBER,
+    battleships: ships.BATTLESHIP,
+    carriers: ships.CARRIER,
     recyclers: ships.RECYCLER,
     colonyShips: ships.COLONY_SHIP,
   };

@@ -4,7 +4,7 @@
  * пока туда не слетает зонд. Данные скана «стареют» и остаются снимком.
  */
 import { DEFENSE_TYPES, emptyDefenseCounts, type DefenseCounts } from './defenses.js';
-import type { BuildingLevels } from './rules.js';
+import { BUILDING_TYPES, emptyLevels, type BuildingLevels } from './rules.js';
 import { SHIP_TYPES, emptyShipCounts, type ShipCounts } from './ships.js';
 
 export type PlanetVisibility = 'OWN' | 'SCANNED' | 'UNKNOWN';
@@ -40,6 +40,21 @@ export function normalizeShips(source: Partial<ShipCounts> | null | undefined): 
   if (!source) return ships;
   for (const type of SHIP_TYPES) ships[type] = safeCount(source[type]);
   return ships;
+}
+
+/**
+ * Уровни построек из снимка разведки.
+ *
+ * Снимок лежит в БД как JSON и переживает изменения игры: в отчете, снятом
+ * до появления какого-нибудь здания, его ключа просто нет. Без нормализации
+ * такое поле доезжало до клиента как `undefined` и рисовалось в карточке
+ * планеты словом «undefined» — единственный снимок, который этого не проходил.
+ */
+export function normalizeBuildings(source: Partial<BuildingLevels> | null | undefined): BuildingLevels | null {
+  if (!source) return null;
+  const levels = emptyLevels();
+  for (const type of BUILDING_TYPES) levels[type] = safeCount(source[type]);
+  return levels;
 }
 
 export function normalizeDefenses(source: Partial<DefenseCounts> | null | undefined): DefenseCounts {
@@ -231,7 +246,7 @@ export function foreignPlanetView(
     owner: scan.data.owner,
     isOwn: false,
     richness: normalizeRichness(scan.data.richness),
-    buildings: scan.data.buildings,
+    buildings: normalizeBuildings(scan.data.buildings),
     resources: outdated ? null : normalizeStock(scan.data.resources),
     fleet: outdated ? null : normalizeShips(scan.data.fleet),
     defenses: outdated || !scan.data.defenses ? null : normalizeDefenses(scan.data.defenses),

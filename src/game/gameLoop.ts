@@ -705,10 +705,15 @@ class GameLoop {
         mission,
         status: 'OUTBOUND',
         probes: ships.PROBE,
-        transporters: ships.TRANSPORTER,
+        smallCargo: ships.SMALL_CARGO,
+        largeCargo: ships.LARGE_CARGO,
         lightFighters: ships.LIGHT_FIGHTER,
-        heavyCruisers: ships.HEAVY_CRUISER,
-        ionFrigates: ships.ION_FRIGATE,
+        heavyFighters: ships.HEAVY_FIGHTER,
+        cruisers: ships.CRUISER,
+        frigates: ships.FRIGATE,
+        bombers: ships.BOMBER,
+        battleships: ships.BATTLESHIP,
+        carriers: ships.CARRIER,
         recyclers: ships.RECYCLER,
         colonyShips: ships.COLONY_SHIP,
         oneWay,
@@ -1495,10 +1500,15 @@ class GameLoop {
           data: {
             status: 'RETURNING',
             probes: result.survivors.PROBE,
-            transporters: result.survivors.TRANSPORTER,
+            smallCargo: result.survivors.SMALL_CARGO,
+            largeCargo: result.survivors.LARGE_CARGO,
             lightFighters: result.survivors.LIGHT_FIGHTER,
-            heavyCruisers: result.survivors.HEAVY_CRUISER,
-            ionFrigates: result.survivors.ION_FRIGATE,
+            heavyFighters: result.survivors.HEAVY_FIGHTER,
+            cruisers: result.survivors.CRUISER,
+            frigates: result.survivors.FRIGATE,
+            bombers: result.survivors.BOMBER,
+            battleships: result.survivors.BATTLESHIP,
+            carriers: result.survivors.CARRIER,
             recyclers: result.survivors.RECYCLER,
             colonyShips: result.survivors.COLONY_SHIP,
             cargoOre: ore,
@@ -1648,7 +1658,7 @@ class GameLoop {
 
       const survivorCount =
         outcome.attackerSurvivors.PROBE +
-        outcome.attackerSurvivors.TRANSPORTER +
+        outcome.attackerSurvivors.SMALL_CARGO +
         outcome.attackerSurvivors.LIGHT_FIGHTER;
 
       if (survivorCount > 0) {
@@ -1657,10 +1667,15 @@ class GameLoop {
           data: {
             status: 'RETURNING',
             probes: outcome.attackerSurvivors.PROBE,
-            transporters: outcome.attackerSurvivors.TRANSPORTER,
+            smallCargo: outcome.attackerSurvivors.SMALL_CARGO,
+            largeCargo: outcome.attackerSurvivors.LARGE_CARGO,
             lightFighters: outcome.attackerSurvivors.LIGHT_FIGHTER,
-            heavyCruisers: outcome.attackerSurvivors.HEAVY_CRUISER,
-            ionFrigates: outcome.attackerSurvivors.ION_FRIGATE,
+            heavyFighters: outcome.attackerSurvivors.HEAVY_FIGHTER,
+            cruisers: outcome.attackerSurvivors.CRUISER,
+            frigates: outcome.attackerSurvivors.FRIGATE,
+            bombers: outcome.attackerSurvivors.BOMBER,
+            battleships: outcome.attackerSurvivors.BATTLESHIP,
+            carriers: outcome.attackerSurvivors.CARRIER,
             recyclers: outcome.attackerSurvivors.RECYCLER,
             colonyShips: outcome.attackerSurvivors.COLONY_SHIP,
             cargoOre: plunder.ore,
@@ -2361,10 +2376,15 @@ function toJson(payload: object): Prisma.InputJsonObject {
 function fleetShips(fleet: FleetRow): ShipCounts {
   const ships = emptyShipCounts();
   ships.PROBE = fleet.probes;
-  ships.TRANSPORTER = fleet.transporters;
+  ships.SMALL_CARGO = fleet.smallCargo;
+  ships.LARGE_CARGO = fleet.largeCargo;
   ships.LIGHT_FIGHTER = fleet.lightFighters;
-  ships.HEAVY_CRUISER = fleet.heavyCruisers;
-  ships.ION_FRIGATE = fleet.ionFrigates;
+  ships.HEAVY_FIGHTER = fleet.heavyFighters;
+  ships.CRUISER = fleet.cruisers;
+  ships.FRIGATE = fleet.frigates;
+  ships.BOMBER = fleet.bombers;
+  ships.BATTLESHIP = fleet.battleships;
+  ships.CARRIER = fleet.carriers;
   ships.RECYCLER = fleet.recyclers;
   ships.COLONY_SHIP = fleet.colonyShips;
   return ships;
@@ -2402,10 +2422,15 @@ function toFleetRuntime(row: FleetRow): FleetRuntimeState {
       (row.targetSystem ? `глубокий космос · ${row.targetSystem.name}` : 'неизвестно'),
     ships: {
       PROBE: row.probes,
-      TRANSPORTER: row.transporters,
+      SMALL_CARGO: row.smallCargo,
+      LARGE_CARGO: row.largeCargo,
       LIGHT_FIGHTER: row.lightFighters,
-      HEAVY_CRUISER: row.heavyCruisers,
-      ION_FRIGATE: row.ionFrigates,
+      HEAVY_FIGHTER: row.heavyFighters,
+      CRUISER: row.cruisers,
+      FRIGATE: row.frigates,
+      BOMBER: row.bombers,
+      BATTLESHIP: row.battleships,
+      CARRIER: row.carriers,
       RECYCLER: row.recyclers,
       COLONY_SHIP: row.colonyShips,
     },

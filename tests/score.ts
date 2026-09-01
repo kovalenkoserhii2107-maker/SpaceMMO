@@ -75,12 +75,12 @@ console.log('\n=== 3. Технологии, флот и оборона ===');
   const expected = costUnits(researchCost('ENERGY_TECH', 1)) + costUnits(researchCost('ENERGY_TECH', 2));
   check('технология считается по всем изученным уровням', spentOnResearch(techs({ ENERGY_TECH: 2 })) === expected);
 
-  const one = spentOnFleet(ships({ HEAVY_CRUISER: 1 }));
-  const ten = spentOnFleet(ships({ HEAVY_CRUISER: 10 }));
-  check('флот линеен по количеству', ten === one * 10 && one === costUnits(shipCost('HEAVY_CRUISER')));
+  const one = spentOnFleet(ships({ CRUISER: 1 }));
+  const ten = spentOnFleet(ships({ CRUISER: 10 }));
+  check('флот линеен по количеству', ten === one * 10 && one === costUnits(shipCost('CRUISER')));
 
-  const turrets = spentOnDefense(defenses({ CANNON_TURRET: 4 }));
-  check('оборона линейна по количеству', turrets === costUnits(defenseCost('CANNON_TURRET')) * 4);
+  const turrets = spentOnDefense(defenses({ CANNON: 4 }));
+  check('оборона линейна по количеству', turrets === costUnits(defenseCost('CANNON')) * 4);
 
   // Потерянный флот из счета уходит сам: считается наличие, а не история трат.
   check('нулевой флот не дает очков', spentOnFleet(emptyShipCounts()) === 0);
@@ -114,7 +114,7 @@ console.log('\n=== 5. Сумма и округление ===');
   const real = sealScore({
     resources: heldResources({ ore: 5000, polymers: 3000, plasma: 1000, antimatter: 12 }),
     fleet: spentOnFleet(ships({ LIGHT_FIGHTER: 20 })),
-    defense: spentOnDefense(defenses({ CANNON_TURRET: 5 })),
+    defense: spentOnDefense(defenses({ CANNON: 5 })),
     buildings: spentOnBuildings(levels({ ORE_MINE: 8, POWER_PLANT: 6 })),
     research: spentOnResearch(techs({ ENERGY_TECH: 3, MINING_TECH: 2 })),
   });

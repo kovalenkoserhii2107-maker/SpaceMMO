@@ -75,23 +75,23 @@ console.log('\n=== 2. Скорость и время ===');
 
 {
   // Скорость флота — по самому медленному кораблю: транспорт тормозит крейсера.
-  const fast = planFlight(fleet({ HEAVY_CRUISER: 5 }), techs(), HOME, NEIGHBOUR);
-  const slowed = planFlight(fleet({ HEAVY_CRUISER: 5, RECYCLER: 1 }), techs(), HOME, NEIGHBOUR);
+  const fast = planFlight(fleet({ CRUISER: 5 }), techs(), HOME, NEIGHBOUR);
+  const slowed = planFlight(fleet({ CRUISER: 5, RECYCLER: 1 }), techs(), HOME, NEIGHBOUR);
   check(
     'один тихоход замедляет весь флот',
     slowed.speed < fast.speed && slowed.flightSeconds > fast.flightSeconds,
     `${fast.speed} → ${slowed.speed}, время ${fast.flightSeconds} → ${slowed.flightSeconds} с`,
   );
 
-  const drive = planFlight(fleet({ HEAVY_CRUISER: 5 }), techs({ COMBUSTION_DRIVE: 6 }), HOME, NEIGHBOUR);
+  const drive = planFlight(fleet({ CRUISER: 5 }), techs({ COMBUSTION_DRIVE: 6 }), HOME, NEIGHBOUR);
   check(
     'реактивный двигатель ускоряет полет',
     drive.speed > fast.speed && drive.flightSeconds < fast.flightSeconds,
     `${fast.flightSeconds} с → ${drive.flightSeconds} с`,
   );
 
-  const near = planFlight(fleet({ TRANSPORTER: 3 }), techs(), HOME, { position: 4, system: HOME.system });
-  const far = planFlight(fleet({ TRANSPORTER: 3 }), techs(), HOME, NEIGHBOUR);
+  const near = planFlight(fleet({ SMALL_CARGO: 3 }), techs(), HOME, { position: 4, system: HOME.system });
+  const far = planFlight(fleet({ SMALL_CARGO: 3 }), techs(), HOME, NEIGHBOUR);
   check(
     'дальняя орбита дольше ближней',
     far.flightSeconds > near.flightSeconds && far.distance > near.distance,
@@ -100,7 +100,7 @@ console.log('\n=== 2. Скорость и время ===');
 
   check(
     'трюмы считаются по составу',
-    fleetCapacity(fleet({ TRANSPORTER: 3 })) === near.capacity && near.capacity > 0,
+    fleetCapacity(fleet({ SMALL_CARGO: 3 })) === near.capacity && near.capacity > 0,
     `${near.capacity}`,
   );
 }
@@ -110,8 +110,8 @@ console.log('\n=== 2. Скорость и время ===');
 console.log('\n=== 3. Межзвездный прыжок ===');
 
 {
-  const intra = planFlight(fleet({ HEAVY_CRUISER: 4 }), techs(), HOME, NEIGHBOUR);
-  const jump = planFlight(fleet({ HEAVY_CRUISER: 4 }), techs(), HOME, FAR_SYSTEM);
+  const intra = planFlight(fleet({ CRUISER: 4 }), techs(), HOME, NEIGHBOUR);
+  const jump = planFlight(fleet({ CRUISER: 4 }), techs(), HOME, FAR_SYSTEM);
 
   check('полет внутри системы идет на плазме', intra.kind === 'INTRA' && intra.fuel > 0 && intra.antimatter === 0);
   check(
@@ -125,7 +125,7 @@ console.log('\n=== 3. Межзвездный прыжок ===');
     `${intra.flightSeconds} с против ${jump.flightSeconds} с`,
   );
 
-  const hyper = planFlight(fleet({ HEAVY_CRUISER: 4 }), techs({ HYPERDRIVE: 5 }), HOME, FAR_SYSTEM);
+  const hyper = planFlight(fleet({ CRUISER: 4 }), techs({ HYPERDRIVE: 5 }), HOME, FAR_SYSTEM);
   check(
     'гипердвигатель ускоряет и удешевляет прыжок',
     hyper.flightSeconds < jump.flightSeconds && hyper.antimatter < jump.antimatter,
@@ -144,7 +144,7 @@ console.log('\n=== 3. Межзвездный прыжок ===');
 console.log('\n=== 4. Топливо в один конец ===');
 
 {
-  const ships = fleet({ HEAVY_CRUISER: 6, TRANSPORTER: 4 });
+  const ships = fleet({ CRUISER: 6, SMALL_CARGO: 4 });
 
   const round = planFlight(ships, techs(), HOME, NEIGHBOUR);
   const oneWay = planFlight(ships, techs(), HOME, NEIGHBOUR, { oneWay: true });
@@ -194,7 +194,7 @@ console.log('\n=== 4b. Рейс без возврата по выбору ===');
     !resolveOneWay('ATTACK', true) && !resolveOneWay('SCAN', true),
   );
 
-  const ships = fleet({ TRANSPORTER: 6 });
+  const ships = fleet({ SMALL_CARGO: 6 });
   const round = planFlight(ships, techs(), HOME, NEIGHBOUR);
   const gift = planFlight(ships, techs(), HOME, NEIGHBOUR, { oneWay: resolveOneWay('TRANSPORT', true) });
   check(
@@ -211,7 +211,7 @@ console.log('\n=== 5. Колонизация ===');
 {
   check(
     'без основателя колонизация не проходит',
-    validateComposition('COLONIZE', fleet({ TRANSPORTER: 10, HEAVY_CRUISER: 5 })) !== null,
+    validateComposition('COLONIZE', fleet({ SMALL_CARGO: 10, CRUISER: 5 })) !== null,
   );
   check(
     'с основателем состав принимается',
@@ -243,8 +243,8 @@ console.log('\n=== 5. Колонизация ===');
   );
 
   // Колонизатор тихоходен: он тормозит конвой, и это осознанная цена.
-  const escort = planFlight(fleet({ HEAVY_CRUISER: 4 }), techs(), HOME, NEIGHBOUR);
-  const withFounder = planFlight(fleet({ HEAVY_CRUISER: 4, COLONY_SHIP: 1 }), techs(), HOME, NEIGHBOUR);
+  const escort = planFlight(fleet({ CRUISER: 4 }), techs(), HOME, NEIGHBOUR);
+  const withFounder = planFlight(fleet({ CRUISER: 4, COLONY_SHIP: 1 }), techs(), HOME, NEIGHBOUR);
   check(
     'основатель замедляет конвой',
     withFounder.speed < escort.speed,
@@ -317,9 +317,9 @@ async function live(): Promise<void> {
       await fetch(`${BASE_URL}/api/admin/commanders/${me.commander.id}`, {
         method: 'PATCH',
         headers,
-        body: JSON.stringify({ bases: [{ baseId: base.baseId, ships: { TRANSPORTER: 2 } }] }),
+        body: JSON.stringify({ bases: [{ baseId: base.baseId, ships: { SMALL_CARGO: 2 } }] }),
       });
-      available = ['TRANSPORTER', 2];
+      available = ['SMALL_CARGO', 2];
     }
   }
 

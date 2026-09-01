@@ -5,8 +5,8 @@
 | Папка | Пример пути | Откуда берется имя |
 | --- | --- | --- |
 | `buildings/` | `/assets/buildings/ore_mine.webp` | значение `BuildingType` |
-| `ships/` | `/assets/ships/heavy_cruiser.webp` | значение `ShipType` |
-| `defense/` | `/assets/defense/cannon_turret.webp` | значение `DefenseType` |
+| `ships/` | `/assets/ships/cruiser.webp` | значение `ShipType` |
+| `defense/` | `/assets/defense/cannon.webp` | значение `DefenseType` |
 | `tech/` | `/assets/tech/mining_tech.webp` | значение `TechnologyType` |
 | `planets/` | `/assets/planets/ice.webp` | биом планеты (маппинг `PLANET_ART`) |
 | `systems/` | `/assets/systems/galaxy_1.webp` | номер варианта миниатюры |
@@ -17,10 +17,14 @@
 **buildings:** `ore_mine`, `polymer_plant`, `plasma_reactor`, `power_plant`,
 `science_center`, `shipyard`, `antimatter_factory`, `storage`
 
-**ships:** `probe`, `transporter`, `light_fighter`, `heavy_cruiser`, `ion_frigate`,
-`recycler`, `colony_ship`
+**ships:** `probe`, `small_cargo`, `large_cargo`, `light_fighter`, `heavy_fighter`,
+`cruiser`, `frigate`, `bomber`, `battleship`, `carrier`, `recycler`, `colony_ship`
 
-**defense:** `cannon_turret`, `laser_turret`
+Ждут картинки: `large_cargo`, `heavy_fighter`, `bomber`, `battleship`, `carrier`.
+
+**defense:** `cannon`, `laser`, `gauss`, `plasma`, `super_weapon`
+
+Ждут картинки: `gauss`, `plasma`, `super_weapon`.
 
 **tech:** `energy_tech`, `computing_tech`, `weapons_tech`, `shields_tech`,
 `armor_tech`, `mining_tech`, `combustion_drive`, `hyperspace_physics`, `hyperdrive`,

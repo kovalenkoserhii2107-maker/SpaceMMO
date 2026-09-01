@@ -147,8 +147,8 @@ if (!adminToken || !playerToken || onboarded?.status !== 200) {
           baseId: base.baseId,
           resources: { ore: 99000, plasma: 4000 },
           buildings: { SHIPYARD: 9 },
-          ships: { HEAVY_CRUISER: 12 },
-          defenses: { LASER_TURRET: 5 },
+          ships: { CRUISER: 12 },
+          defenses: { LASER: 5 },
         },
       ],
     },
@@ -165,9 +165,9 @@ if (!adminToken || !playerToken || onboarded?.status !== 200) {
     afterBase.resources.ore === 99000 &&
       afterBase.resources.plasma === 4000 &&
       afterBase.buildings.SHIPYARD === 9 &&
-      afterBase.ships.HEAVY_CRUISER === 12 &&
-      afterBase.defenses.LASER_TURRET === 5,
-    JSON.stringify({ res: afterBase.resources.ore, ship: afterBase.ships.HEAVY_CRUISER }),
+      afterBase.ships.CRUISER === 12 &&
+      afterBase.defenses.LASER === 5,
+    JSON.stringify({ res: afterBase.resources.ore, ship: afterBase.ships.CRUISER }),
   );
 
   /* ------------------------- 3. Синхронизация с тиком ------------------------- */
@@ -208,7 +208,7 @@ if (!adminToken || !playerToken || onboarded?.status !== 200) {
 
   const cases: Array<[string, unknown]> = [
     ['отрицательные ресурсы', { bases: [{ baseId: base.baseId, resources: { ore: -5 } }] }],
-    ['дробные корабли', { bases: [{ baseId: base.baseId, ships: { HEAVY_CRUISER: 1.5 } }] }],
+    ['дробные корабли', { bases: [{ baseId: base.baseId, ships: { CRUISER: 1.5 } }] }],
     ['неизвестный тип корабля', { bases: [{ baseId: base.baseId, ships: { DEATH_STAR: 1 } }] }],
     ['неизвестное здание', { bases: [{ baseId: base.baseId, buildings: { CASINO: 1 } }] }],
     ['неизвестная технология', { technologies: { WARP_DRIVE: 1 } }],
@@ -220,7 +220,7 @@ if (!adminToken || !playerToken || onboarded?.status !== 200) {
     ['null', { credits: null }],
     ['пустая строка', { credits: '' }],
     ['пустой массив', { bases: [{ baseId: base.baseId, resources: { ore: [] } }] }],
-    ['NaN-строка', { bases: [{ baseId: base.baseId, ships: { HEAVY_CRUISER: 'abc' } }] }],
+    ['NaN-строка', { bases: [{ baseId: base.baseId, ships: { CRUISER: 'abc' } }] }],
   ];
 
   for (const [label, body] of cases) {

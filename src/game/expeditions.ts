@@ -200,19 +200,34 @@ function resolveAmbush(ships: ShipCounts, capacity: number, level: number, rng: 
  * Астрофизика снижает силу засады: опытный штурман выбирает маршруты безопаснее.
  */
 function generatePirates(ships: ShipCounts, level: number, rng: Rng): ShipCounts {
+  /*
+   * Вес флота в «истребителях»: засада должна расти вместе с тем, что реально
+   * прилетело. Тяжелые классы считаются с множителем, иначе линкор выглядел бы
+   * для генератора не опаснее пары «Соколов».
+   */
   const playerFighters =
     ships.LIGHT_FIGHTER +
-    Math.floor(ships.TRANSPORTER / 2) +
-    ships.HEAVY_CRUISER * 3 +
-    ships.ION_FRIGATE * 2;
+    ships.HEAVY_FIGHTER * 2 +
+    Math.floor(ships.SMALL_CARGO / 2) +
+    ships.LARGE_CARGO +
+    ships.CRUISER * 3 +
+    ships.FRIGATE * 2 +
+    ships.BOMBER * 6 +
+    ships.BATTLESHIP * 15 +
+    ships.CARRIER * 30;
   const scale = randomBetween(0.4, 1.1, rng) * Math.max(0.4, 1 - level * 0.05);
 
   const pirates = emptyShipCounts();
   pirates.LIGHT_FIGHTER = Math.max(1, Math.round(playerFighters * scale));
-  pirates.TRANSPORTER = Math.floor(pirates.LIGHT_FIGHTER * randomBetween(0, 0.4, rng));
+  pirates.SMALL_CARGO = Math.floor(pirates.LIGHT_FIGHTER * randomBetween(0, 0.4, rng));
   // Серьезный флот встречает и серьезную засаду: у пиратов появляются крейсера.
   if (playerFighters > 12) {
-    pirates.HEAVY_CRUISER = Math.max(1, Math.round(playerFighters * scale * 0.15));
+    pirates.CRUISER = Math.max(1, Math.round(playerFighters * scale * 0.15));
+  }
+  // Против линейного флота пираты выводят собственные тяжелые корабли —
+  // иначе экспедиция на линкорах превращалась бы в бесплатную добычу.
+  if (playerFighters > 120) {
+    pirates.BATTLESHIP = Math.max(1, Math.round(playerFighters * scale * 0.01));
   }
   return pirates;
 }

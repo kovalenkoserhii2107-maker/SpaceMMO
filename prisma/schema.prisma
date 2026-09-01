@@ -501,8 +501,11 @@ model WarDeclaration {
 }
 
 enum DefenseType {
-  CANNON_TURRET
-  LASER_TURRET
+  CANNON
+  LASER
+  GAUSS
+  PLASMA
+  SUPER_WEAPON
 }
 
 enum BattleWinner {
@@ -549,10 +552,15 @@ model Fleet {
 
   /// Состав флота.
   probes        Int @default(0)
-  transporters  Int @default(0)
+  smallCargo    Int @default(0)
+  largeCargo    Int @default(0)
   lightFighters Int @default(0)
-  heavyCruisers Int @default(0)
-  ionFrigates   Int @default(0)
+  heavyFighters Int @default(0)
+  cruisers      Int @default(0)
+  frigates      Int @default(0)
+  bombers       Int @default(0)
+  battleships   Int @default(0)
+  carriers      Int @default(0)
   recyclers     Int @default(0)
   colonyShips   Int @default(0)
 
@@ -646,10 +654,15 @@ model FleetTemplate {
   name        String
 
   probes        Int @default(0)
-  transporters  Int @default(0)
+  smallCargo    Int @default(0)
+  largeCargo    Int @default(0)
   lightFighters Int @default(0)
-  heavyCruisers Int @default(0)
-  ionFrigates   Int @default(0)
+  heavyFighters Int @default(0)
+  cruisers      Int @default(0)
+  frigates      Int @default(0)
+  bombers       Int @default(0)
+  battleships   Int @default(0)
+  carriers      Int @default(0)
   recyclers     Int @default(0)
   colonyShips   Int @default(0)
 
@@ -820,10 +833,15 @@ enum TechnologyType {
 
 enum ShipType {
   PROBE
-  TRANSPORTER
+  SMALL_CARGO
+  LARGE_CARGO
   LIGHT_FIGHTER
-  HEAVY_CRUISER
-  ION_FRIGATE
+  HEAVY_FIGHTER
+  CRUISER
+  FRIGATE
+  BOMBER
+  BATTLESHIP
+  CARRIER
   RECYCLER
   COLONY_SHIP
 }

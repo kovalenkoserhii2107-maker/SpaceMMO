@@ -6,7 +6,7 @@ import { NEUTRAL_MODIFIERS, type BuildingLevels, type ResourceAmounts, type Syst
 import type { Requirement, TechLevels, TechnologyType } from './techTree.js';
 import { techLabel } from './techTree.js';
 
-export const DEFENSE_TYPES = ['CANNON_TURRET', 'LASER_TURRET'] as const;
+export const DEFENSE_TYPES = ['CANNON', 'LASER', 'GAUSS', 'PLASMA', 'SUPER_WEAPON'] as const;
 export type DefenseType = (typeof DEFENSE_TYPES)[number];
 export type DefenseCounts = Record<DefenseType, number>;
 
@@ -15,7 +15,7 @@ export function isDefenseType(value: unknown): value is DefenseType {
 }
 
 export function emptyDefenseCounts(): DefenseCounts {
-  return { CANNON_TURRET: 0, LASER_TURRET: 0 };
+  return { CANNON: 0, LASER: 0, GAUSS: 0, PLASMA: 0, SUPER_WEAPON: 0 };
 }
 
 interface DefenseDefinition {
@@ -29,9 +29,14 @@ interface DefenseDefinition {
   requires: Partial<Record<TechnologyType, number>>;
 }
 
+/*
+ * Оборона дешевле флота за единицу мощи, но не летает и обломков не дает.
+ * Линия построена по возрастанию: от массового заслона до одной установки,
+ * которая стоит дороже эскадры и требует под себя отдельную энергетику.
+ */
 const DEFENSES: Record<DefenseType, DefenseDefinition> = {
-  CANNON_TURRET: {
-    label: 'Пушечная турель',
+  CANNON: {
+    label: 'Турель «Град»',
     description: 'Дешевый заслон против легких кораблей.',
     cost: { ore: 200, polymers: 0, plasma: 0 },
     baseSeconds: 20,
@@ -39,14 +44,43 @@ const DEFENSES: Record<DefenseType, DefenseDefinition> = {
     shipyardLevel: 1,
     requires: {},
   },
-  LASER_TURRET: {
-    label: 'Лазерная турель',
+  LASER: {
+    label: 'Лазер «Промінь»',
     description: 'Мощная турель, требует энергетики.',
     cost: { ore: 300, polymers: 150, plasma: 0 },
     baseSeconds: 35,
     energyDrain: 1.2,
     shipyardLevel: 2,
     requires: { ENERGY_TECH: 1 },
+  },
+  GAUSS: {
+    label: 'Гаусс-пушка «Скіф»',
+    description: 'Рельсовое орудие: пробивает броню крейсеров, но прожорливо по энергии.',
+    cost: { ore: 1500, polymers: 800, plasma: 100 },
+    baseSeconds: 120,
+    energyDrain: 3.0,
+    shipyardLevel: 4,
+    requires: { ARMOR_TECH: 3 },
+  },
+  PLASMA: {
+    label: 'Плазменная батарея «Сварог»',
+    description: 'Тяжелая батарея планетарной обороны. Держит удар линейного флота.',
+    cost: { ore: 5000, polymers: 3000, plasma: 1000 },
+    baseSeconds: 400,
+    energyDrain: 8.0,
+    shipyardLevel: 6,
+    requires: { WEAPONS_TECH: 7 },
+  },
+  SUPER_WEAPON: {
+    label: 'Ионный излучатель «Перун»',
+    description:
+      'Ультимативная защита планеты. Бьет раз в раунд и только по одной цели — ' +
+      'зато залпа хватает, чтобы снять линкор. Требует энергетику целой колонии.',
+    cost: { ore: 20000, polymers: 15000, plasma: 5000 },
+    baseSeconds: 1200,
+    energyDrain: 50.0,
+    shipyardLevel: 8,
+    requires: { COMPUTING_TECH: 8 },
   },
 };
 

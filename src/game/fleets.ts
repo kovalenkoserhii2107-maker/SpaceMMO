@@ -84,11 +84,19 @@ interface FlightProfile {
 
 const FLIGHT_PROFILES: Record<ShipType, FlightProfile> = {
   PROBE: { speed: 200, cargo: 0, fuelPerSecond: 0.05, antimatterPerDistance: 0.2 },
-  TRANSPORTER: { speed: 100, cargo: 2000, fuelPerSecond: 0.4, antimatterPerDistance: 1.5 },
+  SMALL_CARGO: { speed: 100, cargo: 2000, fuelPerSecond: 0.4, antimatterPerDistance: 1.5 },
+  // «Чумак» быстрее «Чайки»: за шестикратный трюм платят не скоростью, а ценой
+  // постройки и расходом — иначе большой грузовик не имел бы смысла вовсе.
+  LARGE_CARGO: { speed: 140, cargo: 12000, fuelPerSecond: 1.2, antimatterPerDistance: 3.0 },
   LIGHT_FIGHTER: { speed: 150, cargo: 50, fuelPerSecond: 0.2, antimatterPerDistance: 0.8 },
+  HEAVY_FIGHTER: { speed: 130, cargo: 100, fuelPerSecond: 0.4, antimatterPerDistance: 1.2 },
   // Тяжелые классы медленнее и прожорливее: за огневую мощь платят логистикой.
-  HEAVY_CRUISER: { speed: 90, cargo: 300, fuelPerSecond: 0.8, antimatterPerDistance: 2.5 },
-  ION_FRIGATE: { speed: 120, cargo: 150, fuelPerSecond: 0.6, antimatterPerDistance: 2.0 },
+  CRUISER: { speed: 90, cargo: 300, fuelPerSecond: 0.8, antimatterPerDistance: 2.5 },
+  FRIGATE: { speed: 120, cargo: 150, fuelPerSecond: 0.6, antimatterPerDistance: 2.0 },
+  BOMBER: { speed: 70, cargo: 500, fuelPerSecond: 1.5, antimatterPerDistance: 4.0 },
+  BATTLESHIP: { speed: 85, cargo: 1500, fuelPerSecond: 2.5, antimatterPerDistance: 6.0 },
+  // Авианосец тормозит любой флот, в котором идет: это цена его залпа по мелочи.
+  CARRIER: { speed: 60, cargo: 2000, fuelPerSecond: 3.0, antimatterPerDistance: 8.0 },
   // Переработчик: гигантский трюм ценой скорости и расхода плазмы.
   // За один рейс он собирает больше, чем десяток транспортов, но ползет и жжет.
   RECYCLER: { speed: 40, cargo: 20000, fuelPerSecond: 3.0, antimatterPerDistance: 6.0 },

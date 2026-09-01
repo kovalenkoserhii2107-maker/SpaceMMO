@@ -41,7 +41,7 @@ function fleet(partial: Partial<ShipCounts>): ShipCounts {
 console.log('\n=== 1. Плазма возится в трюмах ===');
 
 {
-  const ships = fleet({ TRANSPORTER: 1 });
+  const ships = fleet({ SMALL_CARGO: 1 });
   const capacity = fleetCapacity(ships);
 
   check(
@@ -101,8 +101,8 @@ check(
       STORAGE: 3,
     },
     resources: { ore: 5000, polymers: 3000, plasma: 1000, antimatter: 10 },
-    fleet: fleet({ HEAVY_CRUISER: 20 }),
-    defenses: { CANNON_TURRET: 10, LASER_TURRET: 5 },
+    fleet: fleet({ CRUISER: 20 }),
+    defenses: { CANNON: 10, LASER: 5 },
   };
   const facts = { planetId: 'p1', name: 'Цель', position: 3, type: 'ROCKY', size: 150 };
   const now = Date.now();
@@ -146,7 +146,7 @@ check(
     richness: { ore: 1, polymers: 1, plasma: 1 },
     buildings: null,
     resources: null,
-    fleet: { PROBE: 1, TRANSPORTER: 2, LIGHT_FIGHTER: 3 },
+    fleet: { PROBE: 1, SMALL_CARGO: 2, LIGHT_FIGHTER: 3 },
   } as unknown as ScanPayload;
 
   const view = foreignPlanetView(
@@ -157,7 +157,7 @@ check(
 
   check(
     'старый снимок дополняется нулями, а не undefined',
-    view.fleet?.HEAVY_CRUISER === 0 && view.fleet?.ION_FRIGATE === 0,
+    view.fleet?.CRUISER === 0 && view.fleet?.FRIGATE === 0,
     JSON.stringify(view.fleet),
   );
   check(
@@ -228,7 +228,7 @@ if (!token) {
     'POST',
     '/api/commander/simulate',
     {
-      attacker: { ships: { HEAVY_CRUISER: 50, TRANSPORTER: 20 } },
+      attacker: { ships: { CRUISER: 50, SMALL_CARGO: 20 } },
       defender: { ships: { LIGHT_FIGHTER: 1 }, defenses: {} },
     },
     token,
@@ -244,7 +244,7 @@ if (!token) {
     '/api/commander/simulate',
     {
       attacker: { ships: { LIGHT_FIGHTER: 1 } },
-      defender: { ships: { HEAVY_CRUISER: 50 }, defenses: { LASER_TURRET: 20 } },
+      defender: { ships: { CRUISER: 50 }, defenses: { LASER: 20 } },
     },
     token,
   );
@@ -256,8 +256,8 @@ if (!token) {
     'POST',
     '/api/commander/simulate',
     {
-      attacker: { ships: { HEAVY_CRUISER: 10 } },
-      defender: { ships: { ION_FRIGATE: 13 }, defenses: {} },
+      attacker: { ships: { CRUISER: 10 } },
+      defender: { ships: { FRIGATE: 13 }, defenses: {} },
     },
     token,
   );
@@ -265,8 +265,8 @@ if (!token) {
     'POST',
     '/api/commander/simulate',
     {
-      attacker: { ships: { HEAVY_CRUISER: 10 } },
-      defender: { ships: { ION_FRIGATE: 13 }, defenses: {} },
+      attacker: { ships: { CRUISER: 10 } },
+      defender: { ships: { FRIGATE: 13 }, defenses: {} },
     },
     token,
   );
@@ -279,7 +279,7 @@ if (!token) {
     'POST',
     '/api/commander/simulate',
     {
-      attacker: { ships: { HEAVY_CRUISER: 50, TRANSPORTER: 20 } },
+      attacker: { ships: { CRUISER: 50, SMALL_CARGO: 20 } },
       defender: {
         ships: { LIGHT_FIGHTER: 1 },
         defenses: {},
@@ -316,7 +316,7 @@ if (!token) {
   const created = await api(
     'POST',
     '/api/commander/fleet-templates',
-    { name: 'Фарм-отряд', ships: { HEAVY_CRUISER: 10, TRANSPORTER: 5 } },
+    { name: 'Фарм-отряд', ships: { CRUISER: 10, SMALL_CARGO: 5 } },
     token,
   );
   check('шаблон создан', created.status === 200, JSON.stringify(created.data));
@@ -337,14 +337,14 @@ if (!token) {
   }
   check(
     'шаблон отдается с полным составом и размером',
-    saved?.ships?.HEAVY_CRUISER === 10 && saved?.ships?.PROBE === 0 && saved?.size === 15,
+    saved?.ships?.CRUISER === 10 && saved?.ships?.PROBE === 0 && saved?.size === 15,
     JSON.stringify(saved?.ships),
   );
 
   const updated = await api(
     'PUT',
     `/api/commander/fleet-templates/${saved.id}`,
-    { name: 'Фарм-отряд II', ships: { HEAVY_CRUISER: 20 } },
+    { name: 'Фарм-отряд II', ships: { CRUISER: 20 } },
     token,
   );
   check('шаблон обновлен', updated.status === 200, JSON.stringify(updated.data));

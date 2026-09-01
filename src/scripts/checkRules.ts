@@ -64,9 +64,9 @@ console.log('\n--- Логистика (реактивный двигатель �
 {
   const drive = { ...emptyTechLevels(), COMBUSTION_DRIVE: 1 };
   const cases: Array<[string, ShipCounts]> = [
-    ['1 зонд', { ...emptyShipCounts(), PROBE: 1, TRANSPORTER: 0, LIGHT_FIGHTER: 0 }],
-    ['2 транспорта', { ...emptyShipCounts(), PROBE: 0, TRANSPORTER: 2, LIGHT_FIGHTER: 0 }],
-    ['транспорт + 5 истребителей', { ...emptyShipCounts(), PROBE: 0, TRANSPORTER: 1, LIGHT_FIGHTER: 5 }],
+    ['1 зонд', { ...emptyShipCounts(), PROBE: 1, SMALL_CARGO: 0, LIGHT_FIGHTER: 0 }],
+    ['2 транспорта', { ...emptyShipCounts(), PROBE: 0, SMALL_CARGO: 2, LIGHT_FIGHTER: 0 }],
+    ['транспорт + 5 истребителей', { ...emptyShipCounts(), PROBE: 0, SMALL_CARGO: 1, LIGHT_FIGHTER: 5 }],
   ];
   for (const [label, ships] of cases) {
     for (const distance of [1, 3]) {
@@ -83,15 +83,16 @@ console.log('\n--- Логистика (реактивный двигатель �
 console.log('\n--- Бой: раунды, щиты и разброс исходов ---');
 {
   const fleet = (partial: Partial<ShipCounts>): ShipCounts => ({ ...emptyShipCounts(), ...partial });
+  const defense = (partial: Partial<DefenseCounts>): DefenseCounts => ({ ...emptyDefenseCounts(), ...partial });
   const noDefense = emptyDefenseCounts();
 
   const cases: Array<[string, ShipCounts, ShipCounts, DefenseCounts]> = [
-    ['крейсера против ионных фрегатов (равная цена)', fleet({ HEAVY_CRUISER: 10 }), fleet({ ION_FRIGATE: 13 }), emptyDefenseCounts()],
-    ['фрегаты против крейсеров (тот же бой наоборот)', fleet({ ION_FRIGATE: 13 }), fleet({ HEAVY_CRUISER: 10 }), emptyDefenseCounts()],
-    ['крейсера против лазерных турелей', fleet({ HEAVY_CRUISER: 6 }), fleet({}), { CANNON_TURRET: 0, LASER_TURRET: 12 }],
-    ['фрегаты против тех же турелей', fleet({ ION_FRIGATE: 8 }), fleet({}), { CANNON_TURRET: 0, LASER_TURRET: 12 }],
-    ['рой истребителей против пушечных турелей', fleet({ LIGHT_FIGHTER: 20 }), fleet({}), { CANNON_TURRET: 10, LASER_TURRET: 0 }],
-    ['одинокий крейсер против роя истребителей', fleet({ HEAVY_CRUISER: 1 }), fleet({ LIGHT_FIGHTER: 10 }), emptyDefenseCounts()],
+    ['крейсера против ионных фрегатов (равная цена)', fleet({ CRUISER: 10 }), fleet({ FRIGATE: 13 }), emptyDefenseCounts()],
+    ['фрегаты против крейсеров (тот же бой наоборот)', fleet({ FRIGATE: 13 }), fleet({ CRUISER: 10 }), emptyDefenseCounts()],
+    ['крейсера против лазерных турелей', fleet({ CRUISER: 6 }), fleet({}), defense({ CANNON: 0, LASER: 12 })],
+    ['фрегаты против тех же турелей', fleet({ FRIGATE: 8 }), fleet({}), defense({ CANNON: 0, LASER: 12 })],
+    ['рой истребителей против пушечных турелей', fleet({ LIGHT_FIGHTER: 20 }), fleet({}), defense({ CANNON: 10, LASER: 0 })],
+    ['одинокий крейсер против роя истребителей', fleet({ CRUISER: 1 }), fleet({ LIGHT_FIGHTER: 10 }), emptyDefenseCounts()],
   ];
 
   // Бой стал случайным, поэтому один прогон ничего не показывает: гоняем серию
@@ -140,8 +141,8 @@ console.log('\n--- Воспроизводимость при заданном з
     };
   };
 
-  const attacker = { ships: { ...emptyShipCounts(), HEAVY_CRUISER: 7, LIGHT_FIGHTER: 12 }, defenses: emptyDefenseCounts(), techs: emptyCombatTechs() };
-  const defender = { ships: { ...emptyShipCounts(), ION_FRIGATE: 9 }, defenses: { CANNON_TURRET: 5, LASER_TURRET: 4 }, techs: emptyCombatTechs() };
+  const attacker = { ships: { ...emptyShipCounts(), CRUISER: 7, LIGHT_FIGHTER: 12 }, defenses: emptyDefenseCounts(), techs: emptyCombatTechs() };
+  const defender = { ships: { ...emptyShipCounts(), FRIGATE: 9 }, defenses: { ...emptyDefenseCounts(), CANNON: 5, LASER: 4 }, techs: emptyCombatTechs() };
 
   const sameSeed = new Set(
     Array.from({ length: 20 }, () => JSON.stringify(simulateCombat(attacker, defender, seeded(2024)).attackerLosses)),
@@ -172,7 +173,7 @@ console.log('\n--- Антиматерия и аномалии ---');
 console.log('\n--- Гиперпрыжки ---');
 {
   const home = { position: 2, system: { galaxyX: 4, galaxyY: 4 } };
-  const fleet: ShipCounts = { ...emptyShipCounts(), PROBE: 0, TRANSPORTER: 3, LIGHT_FIGHTER: 2 };
+  const fleet: ShipCounts = { ...emptyShipCounts(), PROBE: 0, SMALL_CARGO: 3, LIGHT_FIGHTER: 2 };
   for (const [label, drive] of [['гипердвигатель ур.1', 1], ['гипердвигатель ур.4', 4]] as const) {
     const withDrive = { ...emptyTechLevels(), COMBUSTION_DRIVE: 1, HYPERDRIVE: drive };
     for (const target of [{ galaxyX: 7, galaxyY: 8 }, { galaxyX: 15, galaxyY: 16 }]) {
@@ -191,15 +192,15 @@ console.log('\n--- Искажение времени на верфи ---');
     const mods = systemModifiers(anomaly);
     console.log(
       `${label}: истребитель ${shipUnitSeconds('LIGHT_FIGHTER', 2, mods)} с, ` +
-        `транспорт ${shipUnitSeconds('TRANSPORTER', 2, mods)} с, ` +
-        `лазерное орудие ${defenseUnitSeconds('LASER_TURRET', 2, mods)} с`,
+        `транспорт ${shipUnitSeconds('SMALL_CARGO', 2, mods)} с, ` +
+        `лазерное орудие ${defenseUnitSeconds('LASER', 2, mods)} с`,
     );
   }
 }
 
 console.log('\n--- Экспедиции ---');
 {
-  const fleet: ShipCounts = { ...emptyShipCounts(), PROBE: 0, TRANSPORTER: 4, LIGHT_FIGHTER: 6 };
+  const fleet: ShipCounts = { ...emptyShipCounts(), PROBE: 0, SMALL_CARGO: 4, LIGHT_FIGHTER: 6 };
   const capacity = fleetCapacity(fleet);
 
   for (const level of [1, 4, 9]) {
@@ -233,8 +234,8 @@ console.log('\n--- Экспедиции ---');
 
 console.log('\n--- Все ветви событийного движка экспедиций ---');
 {
-  const strong: ShipCounts = { ...emptyShipCounts(), PROBE: 0, TRANSPORTER: 3, LIGHT_FIGHTER: 12 };
-  const weak: ShipCounts = { ...emptyShipCounts(), PROBE: 0, TRANSPORTER: 1, LIGHT_FIGHTER: 0 };
+  const strong: ShipCounts = { ...emptyShipCounts(), PROBE: 0, SMALL_CARGO: 3, LIGHT_FIGHTER: 12 };
+  const weak: ShipCounts = { ...emptyShipCounts(), PROBE: 0, SMALL_CARGO: 1, LIGHT_FIGHTER: 0 };
   const techs1 = { ...emptyTechLevels(), ASTROPHYSICS: 1 };
 
   /** Подсовываем заранее заданную последовательность бросков. */

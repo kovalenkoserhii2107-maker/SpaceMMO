@@ -211,14 +211,14 @@ async function testFleetValidation() {
 
   const bad = [
     ['нулевой флот с грузом', { targetHubId: ids.hubId, mission: 'HUB_DELIVERY', ships: {}, cargo: { ore: 1000, polymers: 1000 } }],
-    ['отрицательный груз', { targetHubId: ids.hubId, mission: 'HUB_DELIVERY', ships: { TRANSPORTER: 1 }, cargo: { ore: -5000, polymers: -5000 } }],
-    ['отрицательные корабли', { targetHubId: ids.hubId, mission: 'HUB_DELIVERY', ships: { TRANSPORTER: -3 }, cargo: { ore: 0, polymers: 0 } }],
-    ['дробные корабли', { targetHubId: ids.hubId, mission: 'HUB_DELIVERY', ships: { TRANSPORTER: 1.7 }, cargo: { ore: 10, polymers: 0 } }],
-    ['груз больше склада планеты', { targetHubId: ids.hubId, mission: 'HUB_DELIVERY', ships: { TRANSPORTER: 4 }, cargo: { ore: 999999, polymers: 0 } }],
-    ['вывоз с отрицательным объемом', { targetHubId: ids.hubId, mission: 'HUB_PICKUP', ships: { TRANSPORTER: 1 }, pickup: { ore: -1000, polymers: -1000 } }],
+    ['отрицательный груз', { targetHubId: ids.hubId, mission: 'HUB_DELIVERY', ships: { SMALL_CARGO: 1 }, cargo: { ore: -5000, polymers: -5000 } }],
+    ['отрицательные корабли', { targetHubId: ids.hubId, mission: 'HUB_DELIVERY', ships: { SMALL_CARGO: -3 }, cargo: { ore: 0, polymers: 0 } }],
+    ['дробные корабли', { targetHubId: ids.hubId, mission: 'HUB_DELIVERY', ships: { SMALL_CARGO: 1.7 }, cargo: { ore: 10, polymers: 0 } }],
+    ['груз больше склада планеты', { targetHubId: ids.hubId, mission: 'HUB_DELIVERY', ships: { SMALL_CARGO: 4 }, cargo: { ore: 999999, polymers: 0 } }],
+    ['вывоз с отрицательным объемом', { targetHubId: ids.hubId, mission: 'HUB_PICKUP', ships: { SMALL_CARGO: 1 }, pickup: { ore: -1000, polymers: -1000 } }],
     ['зонды без трюмов на хаб', { targetHubId: ids.hubId, mission: 'HUB_DELIVERY', ships: { PROBE: 1 }, cargo: { ore: 0, polymers: 0 } }],
-    ['неизвестная миссия', { targetHubId: ids.hubId, mission: 'PLUNDER', ships: { TRANSPORTER: 1 }, cargo: {} }],
-    ['полет в никуда', { mission: 'TRANSPORT', ships: { TRANSPORTER: 1 }, cargo: {} }],
+    ['неизвестная миссия', { targetHubId: ids.hubId, mission: 'PLUNDER', ships: { SMALL_CARGO: 1 }, cargo: {} }],
+    ['полет в никуда', { mission: 'TRANSPORT', ships: { SMALL_CARGO: 1 }, cargo: {} }],
   ];
 
   for (const [name, body] of bad) {
@@ -230,10 +230,10 @@ async function testFleetValidation() {
   const afterBase = after.bases[0];
   check(
     'ресурсы и ангар не пострадали от аномальных вылетов',
-    afterBase.fleet.TRANSPORTER === base.fleet.TRANSPORTER &&
+    afterBase.fleet.SMALL_CARGO === base.fleet.SMALL_CARGO &&
       afterBase.resources.ore >= base.resources.ore - 1 &&
       afterBase.resources.polymers >= base.resources.polymers - 1,
-    `транспорты ${base.fleet.TRANSPORTER} -> ${afterBase.fleet.TRANSPORTER}`,
+    `транспорты ${base.fleet.SMALL_CARGO} -> ${afterBase.fleet.SMALL_CARGO}`,
   );
   check(
     'флотов в полете не появилось',
@@ -277,7 +277,7 @@ async function testCombatGuards() {
   const badDefense = await api('POST', `/api/bases/${ids.admiralBase}/defenses`, ids.admiralToken, { type: 'DEATH_RAY', quantity: 1 });
   check('неизвестный тип обороны отклонен', badDefense.status >= 400, JSON.stringify(badDefense.data));
 
-  const negDefense = await api('POST', `/api/bases/${ids.admiralBase}/defenses`, ids.admiralToken, { type: 'CANNON_TURRET', quantity: -5 });
+  const negDefense = await api('POST', `/api/bases/${ids.admiralBase}/defenses`, ids.admiralToken, { type: 'CANNON', quantity: -5 });
   check('отрицательный заказ обороны отклонен', negDefense.status >= 400, JSON.stringify(negDefense.data));
 }
 
@@ -285,7 +285,7 @@ async function testCombatGuards() {
 async function testExpeditionGuards() {
   // У пилота астрофизики нет — экспедиция должна отклоняться.
   const noTech = await api('POST', `/api/bases/${ids.pilotBase}/fleets`, ids.pilotToken, {
-    mission: 'EXPEDITION', ships: { TRANSPORTER: 1 }, cargo: {},
+    mission: 'EXPEDITION', ships: { SMALL_CARGO: 1 }, cargo: {},
   });
   check('экспедиция без «Астрофизики» отклонена', noTech.status >= 400, JSON.stringify(noTech.data));
 
@@ -300,7 +300,7 @@ async function testExpeditionGuards() {
   check('экспедиция без кораблей отклонена', empty.status >= 400, JSON.stringify(empty.data));
 
   const negative = await api('POST', `/api/bases/${ids.admiralBase}/fleets`, ids.admiralToken, {
-    mission: 'EXPEDITION', ships: { TRANSPORTER: -2 }, cargo: {},
+    mission: 'EXPEDITION', ships: { SMALL_CARGO: -2 }, cargo: {},
   });
   check('экспедиция с отрицательным флотом отклонена', negative.status >= 400, JSON.stringify(negative.data));
 
@@ -320,30 +320,30 @@ async function testCombatClasses() {
 
   check(
     'новые классы доступны на верфи',
-    Boolean(byType.HEAVY_CRUISER && byType.ION_FRIGATE),
+    Boolean(byType.CRUISER && byType.FRIGATE),
     Object.keys(byType).join(', '),
   );
 
   check(
     'крейсер — танк: щит выше залпа истребителя, толстый корпус',
-    byType.HEAVY_CRUISER?.combat?.shield > byType.LIGHT_FIGHTER?.combat?.attack &&
-      byType.HEAVY_CRUISER?.combat?.hull > byType.LIGHT_FIGHTER?.combat?.hull * 5,
-    JSON.stringify(byType.HEAVY_CRUISER?.combat),
+    byType.CRUISER?.combat?.shield > byType.LIGHT_FIGHTER?.combat?.attack &&
+      byType.CRUISER?.combat?.hull > byType.LIGHT_FIGHTER?.combat?.hull * 5,
+    JSON.stringify(byType.CRUISER?.combat),
   );
   check(
     'ионный фрегат пробивает щиты и об этом сказано в карточке',
-    byType.ION_FRIGATE?.combat?.shieldPiercing > 1 && Boolean(byType.ION_FRIGATE?.combat?.note),
-    JSON.stringify(byType.ION_FRIGATE?.combat),
+    byType.FRIGATE?.combat?.shieldPiercing > 1 && Boolean(byType.FRIGATE?.combat?.note),
+    JSON.stringify(byType.FRIGATE?.combat),
   );
   check(
     'истребитель дешев и слаб: малый залп и тонкий корпус',
     byType.LIGHT_FIGHTER?.combat?.attack > 0 &&
-      byType.LIGHT_FIGHTER?.combat?.hull < byType.HEAVY_CRUISER?.combat?.hull,
+      byType.LIGHT_FIGHTER?.combat?.hull < byType.CRUISER?.combat?.hull,
     JSON.stringify(byType.LIGHT_FIGHTER?.combat),
   );
   check(
     'транспорт, зонд и переработчик без оружия',
-    byType.TRANSPORTER?.combat?.attack === 0 &&
+    byType.SMALL_CARGO?.combat?.attack === 0 &&
       byType.PROBE?.combat?.attack === 0 &&
       byType.RECYCLER?.combat?.attack === 0,
   );
@@ -351,16 +351,16 @@ async function testCombatClasses() {
   const defenses = Object.fromEntries(base.defenseCards.map((d) => [d.type, d]));
   check(
     'обе турели вооружены, у лазерной щит и залп сильнее',
-    defenses.CANNON_TURRET?.combat?.attack > 0 &&
-      defenses.LASER_TURRET?.combat?.attack > defenses.CANNON_TURRET?.combat?.attack &&
-      defenses.LASER_TURRET?.combat?.shield > 0,
-    JSON.stringify(defenses.LASER_TURRET?.combat),
+    defenses.CANNON?.combat?.attack > 0 &&
+      defenses.LASER?.combat?.attack > defenses.CANNON?.combat?.attack &&
+      defenses.LASER?.combat?.shield > 0,
+    JSON.stringify(defenses.LASER?.combat),
   );
 
   const map = (await api('GET', '/api/map', ids.admiralToken)).data;
   const enemy = map.planets.find((p) => !p.isOwn);
   const unarmed = await api('POST', `/api/bases/${ids.admiralBase}/fleets`, ids.admiralToken, {
-    targetPlanetId: enemy.planetId, mission: 'ATTACK', ships: { TRANSPORTER: 1 }, cargo: {},
+    targetPlanetId: enemy.planetId, mission: 'ATTACK', ships: { SMALL_CARGO: 1 }, cargo: {},
   });
   check(
     'атака безоружным флотом отклонена',

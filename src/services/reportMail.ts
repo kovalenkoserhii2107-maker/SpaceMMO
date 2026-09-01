@@ -215,11 +215,11 @@ export function buildSpyMail(input: SpyMailInput): OutgoingMessage[] {
   const buildings = payload.buildings;
 
   const fleetLine = fleet
-    ? `Флот на орбите: зонды ${fleet.PROBE}, транспорты ${fleet.TRANSPORTER}, ` +
-      `истребители ${fleet.LIGHT_FIGHTER}, крейсера ${fleet.HEAVY_CRUISER}, фрегаты ${fleet.ION_FRIGATE}.`
+    ? `Флот на орбите: зонды ${fleet.PROBE}, транспорты ${fleet.SMALL_CARGO}, ` +
+      `истребители ${fleet.LIGHT_FIGHTER}, крейсера ${fleet.CRUISER}, фрегаты ${fleet.FRIGATE}.`
     : 'Флот на орбите: данных нет.';
   const defenseLine = defenses
-    ? `Оборона: ракетных установок ${defenses.CANNON_TURRET}, лазерных орудий ${defenses.LASER_TURRET}.`
+    ? `Оборона: ракетных установок ${defenses.CANNON}, лазерных орудий ${defenses.LASER}.`
     : 'Оборона: данных нет.';
   const stockLine = stock
     ? `Склад: ${stock.ore} руды, ${stock.polymers} полимеров, ${stock.plasma} плазмы.`
