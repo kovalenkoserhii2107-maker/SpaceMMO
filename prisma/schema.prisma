@@ -98,11 +98,52 @@ model Commander {
   warsStarted      WarDeclaration[]       @relation("WarAggressor")
   warsAgainst      WarDeclaration[]       @relation("WarTarget")
   achievements     CommanderAchievement[]
+  bot              Bot?
 
   @@map("commanders")
 }
 
 /// Синдикат — объединение командиров с общим банком и дипломатией.
+/// Бот-командир: тот же командир, что и живой игрок, но решения за него
+/// принимает планировщик. Своей экономики у бота нет — он ходит теми же
+/// методами Game Loop, поэтому платит те же цены и ждет те же таймеры.
+model Bot {
+  id          String       @id @default(cuid())
+  commanderId String       @unique
+  character   BotCharacter
+
+  /// Пауза без удаления: бот остается в мире, но перестает принимать решения.
+  active Boolean @default(true)
+
+  /// Когда планировщику будить бота в следующий раз. Хранится в БД, а не в
+  /// памяти: перезапуск сервера не должен обнулять расписание и заставлять
+  /// всех ботов ходить одновременно.
+  nextDecisionAt DateTime @default(now())
+
+  /// Долгоживущие цели: какую планету бот наметил под колонию, кого выбрал
+  /// жертвой. Решение принимается за секунды, а исполняется за часы полета,
+  /// поэтому намерение переживает отдельный вызов планировщика.
+  memory Json @default("{}")
+
+  /// Что бот сделал последним — для админки, чтобы было видно, что он живой.
+  lastAction   String?
+  lastActionAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  commander Commander @relation(fields: [commanderId], references: [id], onDelete: Cascade)
+
+  @@map("bots")
+}
+
+/// Характер задает цель бота и то, куда он тратит доход.
+enum BotCharacter {
+  /// Колонизация всего космоса: экспансия и война.
+  AGGRESSOR
+  /// Капитал и неприступность: биржа, добыча, плотная оборона.
+  TRADER
+}
+
 model Syndicate {
   id       String @id @default(cuid())
   name     String @unique
@@ -234,6 +275,8 @@ model CommanderAchievement {
 enum UserRole {
   USER
   ADMIN
+  /// Учетная запись бота: игрового входа в нее нет ни паролем, ни через Google.
+  BOT
 }
 
 enum AuthProvider {

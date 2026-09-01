@@ -18,9 +18,18 @@ import {
   parsePatch,
   setAccountBlocked,
 } from '../services/adminService.js';
+import {
+  botCharacterCatalog,
+  createBot,
+  deleteBot,
+  listBots,
+  nudgeBot,
+  setBotActive,
+} from '../services/botService.js';
 import { currentAccount, requireAdmin, requireAuth } from './middleware.js';
 import type {
   ActionResponse,
+  AdminBotsResponse,
   AdminDashboardResponse,
   AdminDetailResponse,
   AdminListResponse,
@@ -118,5 +127,39 @@ adminRouter.post('/commanders/:id/message', async (req, res: Response<ActionResp
 adminRouter.delete('/commanders/:id', async (req, res: Response<ActionResponse | ErrorResponse>) => {
   const confirm = text((req.body as { confirm?: unknown } | undefined)?.confirm);
   const result = await deleteAccount(req.params.id, confirm);
+  res.status(result.ok ? 200 : result.status).json(result.ok ? result : { error: result.error });
+});
+
+
+/* ------------------------- Боты ------------------------- */
+
+/** Список ботов и каталог характеров: описания живут на сервере. */
+adminRouter.get('/bots', async (_req, res: Response<AdminBotsResponse>) => {
+  res.json({ bots: await listBots(), characters: botCharacterCatalog() });
+});
+
+/** Завести бота: позывной и характер. Стартовая колония выдается как игроку. */
+adminRouter.post('/bots', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const body = (req.body ?? {}) as { nickname?: unknown; character?: unknown };
+  const result = await createBot(body.nickname, body.character);
+  res.status(result.ok ? 200 : result.status).json(result.ok ? result : { error: result.error });
+});
+
+/** Пауза и возобновление: бот остается в мире, но перестает решать. */
+adminRouter.post('/bots/:id/active', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const active = (req.body as { active?: unknown } | undefined)?.active === true;
+  const result = await setBotActive(req.params.id, active);
+  res.status(result.ok ? 200 : result.status).json(result.ok ? result : { error: result.error });
+});
+
+/** Разбудить немедленно — чтобы не ждать расписания при проверке поведения. */
+adminRouter.post('/bots/:id/nudge', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const result = await nudgeBot(req.params.id);
+  res.status(result.ok ? 200 : result.status).json(result.ok ? result : { error: result.error });
+});
+
+/** Удаление: каскад уносит колонии и флоты, как и у живого аккаунта. */
+adminRouter.delete('/bots/:id', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const result = await deleteBot(req.params.id);
   res.status(result.ok ? 200 : result.status).json(result.ok ? result : { error: result.error });
 });

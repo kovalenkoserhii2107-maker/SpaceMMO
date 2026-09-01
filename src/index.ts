@@ -6,6 +6,7 @@ import { Server } from 'socket.io';
 import { env } from './config/env.js';
 import { disconnectPrisma, prisma } from './db/prisma.js';
 import { gameLoop, roomForCommander } from './game/gameLoop.js';
+import { botDirector } from './game/bot/director.js';
 import { authRouter } from './routes/auth.js';
 import { gameRouter } from './routes/game.js';
 import { marketRouter } from './routes/market.js';
@@ -112,10 +113,14 @@ httpServer.listen(env.port, () => {
     console.error('[achievements] не удалось синхронизировать каталог:', error),
   );
   gameLoop.start(io);
+  // Планировщик ботов идет следом за тиком: он ходит его же методами,
+  // и без запущенного тика ему не с чем работать.
+  botDirector.start();
 });
 
 async function shutdown(signal: string): Promise<void> {
   console.log(`[server] получен ${signal}, останавливаюсь...`);
+  botDirector.stop();
   await gameLoop.stop();
   io.close();
   httpServer.close();

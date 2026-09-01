@@ -127,6 +127,12 @@ export async function issuePasswordReset(
   const account = await accountOf(commanderId);
   if (!account) return { ok: false, error: 'Командир не найден', status: 404 };
 
+  // Боту код смены пароля не нужен и опасен: он превратил бы служебную
+  // учетную запись в обычную, вместе с ее колониями и флотом.
+  if (account.role === 'BOT') {
+    return { ok: false, error: 'Это бот: пароля и входа у него нет', status: 400 };
+  }
+
   const token = randomBytes(24).toString('hex');
   const expiresAt = new Date(Date.now() + authConfig.resetTtlMinutes * 60 * 1000);
   await prisma.user.update({

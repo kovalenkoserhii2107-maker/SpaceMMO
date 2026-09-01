@@ -9,6 +9,7 @@ import type { FleetTemplateView } from '../services/fleetTemplateService.js';
 import type { SimulationResult } from '../services/simulationService.js';
 import type { MailboxView } from '../services/mailService.js';
 import type { AdminDashboard, CommanderDetail, CommanderSummary } from '../services/adminService.js';
+import type { BotView } from '../services/botService.js';
 import type { LeaderboardView } from '../services/scoreService.js';
 import type { CommanderProfile } from '../services/commanderService.js';
 import type { MarketView } from '../services/marketService.js';
@@ -119,6 +120,12 @@ export interface AdminListResponse {
 export type AdminDetailResponse = CommanderDetail;
 
 export type AdminDashboardResponse = AdminDashboard;
+
+/** Список ботов и каталог характеров для формы создания. */
+export interface AdminBotsResponse {
+  bots: BotView[];
+  characters: Array<{ id: string; label: string; description: string }>;
+}
 
 /** Код смены пароля, выданный пультом: админ передает его игроку сам. */
 export interface AdminResetResponse {

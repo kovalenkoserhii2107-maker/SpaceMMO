@@ -115,6 +115,15 @@ export async function login(email: string, password: string): Promise<AuthResult
    */
   if (user.blockedAt) return blockedResult;
 
+  /*
+   * В учетную запись бота игрового входа нет. Пароля у нее и так не заведено,
+   * поэтому проверка выше уже отказала бы, — но отказ не должен держаться
+   * на одном лишь пустом хеше: выданный по ошибке код смены пароля превратил
+   * бы бота в обычный аккаунт с чужой колонией и чужим флотом. Текст тот же
+   * самый, чтобы по разнице ответов нельзя было опознать ботов.
+   */
+  if (user.role === 'BOT') return invalid;
+
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
   return { ok: true, token: issueToken(user), user };
 }
@@ -201,6 +210,9 @@ export async function loginWithProvider(
   });
   if (linked) {
     if (linked.blockedAt) return blockedResult;
+    // Провайдера у бота нет вовсе, но запрет ставится на всех входах разом:
+    // одна забытая ветка здесь стоила бы чужого аккаунта.
+    if (linked.role === 'BOT') return { ok: false, error: 'Провайдер отклонил токен', status: 401 };
     const updated = await prisma.user.update({
       where: { id: linked.id },
       data: { lastLoginAt: new Date() },
