@@ -274,7 +274,6 @@ export function buildingPlan(
 
   const modifiers = systemModifiers(base.anomaly);
   const before = productionPerSecond(levels, base.richness, bonuses, 0, modifiers, drain);
-  const beforeRate = before.ore + before.polymers + before.plasma;
 
   /*
    * Склад тянем заранее, а не когда он уже забит.
@@ -291,16 +290,20 @@ export function buildingPlan(
    * вечным первым пунктом и заслонил бы сами шахты.
    */
   /*
-   * Склады разделены, поэтому и решение поресурсное: тянем тот, который
-   * действительно жмет. Раньше приходилось гадать по общей сумме, и бот
-   * расширял хранилище, когда место кончалось вовсе не у того ресурса.
+   * Склад, который уже уперся в потолок, — единственный по-настоящему срочный:
+   * добыча этого ресурса встала прямо сейчас. Решение поресурсное, потому что
+   * склады раздельные: раньше приходилось гадать по общей сумме и бот расширял
+   * хранилище, когда место кончалось вовсе не у того ресурса.
+   *
+   * Склад «на вырост» сюда не попадает нарочно — он уходит в хвост плана.
+   * Слот стройки на базе один, а условие «вместимость меньше часа добычи»
+   * на высоких уровнях шахт верно почти всегда: стоя в начале очереди, склад
+   * монополизировал ее и не пускал ни лабораторию, ни верфь. Прогон месяца
+   * показал цену этой ошибки — колонизация на 19-е сутки вместо вторых
+   * и незакрытый лейтгейм.
    */
   for (const resource of STORED_RESOURCES) {
-    const building = STORAGE_FOR[resource];
-    const room = caps[resource];
-    const held = Math.max(0, base.resources[resource]);
-    const rate = before[resource];
-    if (held >= room * 0.9 || room < rate * 3600) want(building);
+    if (Math.max(0, base.resources[resource]) >= caps[resource] * 0.9) want(STORAGE_FOR[resource]);
   }
 
   // Просевшая энергия режет добычу на всех шахтах разом, поэтому станция
@@ -310,23 +313,66 @@ export function buildingPlan(
   if (levels.SCIENCE_CENTER === 0) want('SCIENCE_CENTER');
   if (levels.SHIPYARD === 0) want('SHIPYARD');
 
-  // Характер подтягивает свои здания, пока они отстают от шахт вдвое.
+  /*
+   * Характер подтягивает свои здания, пока они отстают от шахт.
+   *
+   * Отношение полтора, а не два. При двойном верфь упиралась в половину
+   * уровня шахты, а ворота контента требуют верфи одиннадцатой и двенадцатой —
+   * значит шахту двадцать вторую и двадцать четвертую. Прогон месяца показал
+   * цену: к тридцать пятым суткам верфь замирала на десятой, и ни линкор,
+   * ни авианосец, ни «Перун» не открывались вовсе. Ворота ставились не туда,
+   * куда бот идет, а туда, куда он попадет случайно.
+   */
   for (const focus of profile.buildingFocus) {
-    if (levels[focus] * 2 < levels.ORE_MINE) want(focus);
+    if (levels[focus] * 1.5 < levels.ORE_MINE) want(focus);
   }
 
-  // Шахты по окупаемости: во сколько ресурсов обходится единица прироста добычи.
+  /*
+   * Шахты по окупаемости, но прирост взвешен по дефициту.
+   *
+   * Раньше приросты складывались в штуках, и шестьдесят тысяч полимеров,
+   * которые некуда девать, весили столько же, сколько шестьдесят тысяч нужной
+   * руды. Живой бот на этом простоял шесть часов с плазменным реактором
+   * второго уровня при шахтах седьмого: реактор дороже шахты втрое и дает
+   * вдвое меньше единиц, поэтому по «штукам» он проигрывает всегда — и это
+   * верно ровно до того момента, когда плазма кончается и флот перестает
+   * летать. У бота к тому часу оставалось девяносто семь единиц плазмы.
+   *
+   * Вес — это свободное место на складе ресурса: забитый склад означает, что
+   * следующая добытая единица будет просто срезана потолком и не стоит ничего,
+   * а пустой — что ресурс в дефиците и каждая единица на счету.
+   */
   const ranked: Array<{ type: BuildingType; payback: number }> = [];
   for (const type of mines) {
     if (!available(type)) continue;
     const raised: BuildingLevels = { ...levels, [type]: levels[type] + 1 };
     const after = productionPerSecond(raised, base.richness, bonuses, 0, modifiers, drain);
-    const gain = after.ore + after.polymers + after.plasma - beforeRate;
-    if (gain <= 0) continue;
-    ranked.push({ type, payback: costUnits(upgradeCost(type, levels[type] + 1)) / gain });
+
+    let value = 0;
+    for (const resource of STORED_RESOURCES) {
+      const gain = after[resource] - before[resource];
+      if (gain <= 0) continue;
+      const room = caps[resource];
+      // Пол в 5% оставлен нарочно: даже забитый склад однажды разгрузится,
+      // и обнулять добычу совсем значило бы навсегда вычеркнуть ресурс.
+      const scarcity = Math.max(0.05, 1 - Math.max(0, base.resources[resource]) / Math.max(room, 1));
+      value += gain * scarcity;
+    }
+    if (value <= 0) continue;
+
+    ranked.push({ type, payback: costUnits(upgradeCost(type, levels[type] + 1)) / value });
   }
   ranked.sort((a, b) => a.payback - b.payback);
   for (const entry of ranked) want(entry.type);
+
+  /*
+   * Склады «на вырост»: вместимости уже меньше часа добычи, но потолок еще
+   * не достигнут. Это полезно и это стоит делать — но только когда очередь
+   * свободна от вещей, которые двигают игру вперед.
+   */
+  for (const resource of STORED_RESOURCES) {
+    if (caps[resource] < before[resource] * 3600) want(STORAGE_FOR[resource]);
+  }
 
   // Хвост запасных вариантов: они дешевле целей выше и всегда осмысленны,
   // поэтому боту есть чем заняться, пока он копит на главное.
