@@ -174,6 +174,8 @@ export type BotIntent =
   | { kind: 'SCAN'; baseId: string; planetId: string; why: string }
   /** Исполнить чужую заявку — сделка происходит сразу, а не когда-нибудь. */
   | { kind: 'TAKE'; orderId: string; amount: number; why: string }
+  /** Сделка со станцией: она берет всегда, но по своей невыгодной цене. */
+  | { kind: 'STATION'; side: 'BUY' | 'SELL'; resource: 'ORE' | 'POLYMERS'; amount: number; why: string }
   | {
       kind: 'ORDER';
       side: 'BUY' | 'SELL';
@@ -182,6 +184,13 @@ export type BotIntent =
       price: number;
       why: string;
     };
+
+/**
+ * Ресурсы, которыми торгует биржа. Список объявлен здесь, а не берется
+ * из directives.ts: тот модуль импортирует этот, и обратная ссылка замкнула бы
+ * модули в кольцо.
+ */
+const TRADED = ['ORE', 'POLYMERS'] as const;
 
 /* ------------------------- Кошельки ------------------------- */
 
@@ -1062,6 +1071,33 @@ function tradeIntents(snapshot: BotSnapshot, profile: BotPersonality): BotIntent
       why: `отдаем ${order.resource === 'ORE' ? 'руду' : 'полимеры'} по ${order.price} при справочной ${Math.round(reference.get(order.resource) ?? 0)}`,
     });
     onHand[order.resource] -= amount;
+  }
+
+  /* --- Станция: последняя инстанция --- */
+
+  /*
+   * Станция берет всегда, но по своей невыгодной цене — на четверть дешевле
+   * справочной. Поэтому к ней идут в последнюю очередь: сперва взять чужое,
+   * потом выставить свое, и только если товар лежит мертвым грузом — сдать
+   * его станции.
+   *
+   * Смысл в том, что это единственный источник криптогривны в игре. Бот,
+   * который никогда не продает станции, останется без денег и не сможет
+   * купить ничего — как и весь сервер, если так поступят все.
+   */
+  const idle = { ORE: onHand.ORE, POLYMERS: onHand.POLYMERS };
+  for (const resource of TRADED) {
+    const amount = Math.floor(idle[resource]);
+    // Порог: мелочь сдавать не стоит, рейс на хаб дороже выручки.
+    if (amount < 500) continue;
+    intents.push({
+      kind: 'STATION',
+      side: 'SELL',
+      resource,
+      amount,
+      why: 'лежит мертвым грузом, станция берет всегда',
+    });
+    idle[resource] = 0;
   }
 
   /* --- Выставляем свое --- */

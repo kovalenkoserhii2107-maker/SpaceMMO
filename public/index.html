@@ -448,6 +448,39 @@
           <h3 class="section-title">Биржевой стакан</h3>
           <div id="order-book" class="book"></div>
 
+          <!--
+            Станция — последняя инстанция и единственный источник криптогривны
+            в игре. Она берет всегда, но по невыгодной цене, поэтому и стоит
+            под стаканом: сперва торгуют друг с другом.
+          -->
+          <h3 class="section-title">Станция скупает и продает</h3>
+          <div id="station-desk" class="station-desk"></div>
+
+          <h3 class="section-title">Бартер: ресурс за ресурс</h3>
+          <div class="market-grid">
+            <section class="hub-card">
+              <div class="order-form">
+                <label class="field"><span>Отдаю</span>
+                  <div class="input-row">
+                    <select id="barter-give-res"><option value="ORE">Руда</option><option value="POLYMERS">Полимеры</option></select>
+                    <input id="barter-give-qty" type="number" min="1" value="1000">
+                  </div>
+                </label>
+                <label class="field"><span>Хочу взамен</span>
+                  <div class="input-row">
+                    <select id="barter-want-res"><option value="POLYMERS">Полимеры</option><option value="ORE">Руда</option></select>
+                    <input id="barter-want-qty" type="number" min="1" value="700">
+                  </div>
+                </label>
+              </div>
+              <div id="barter-hint" class="order-total"></div>
+              <button id="barter-offer" type="button" class="primary">Выставить обмен</button>
+            </section>
+            <section class="hub-card">
+              <div id="barter-list" class="queue"></div>
+            </section>
+          </div>
+
           <div class="market-grid">
             <section class="hub-card">
               <h3 class="section-title">Мои ордера</h3>

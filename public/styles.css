@@ -2462,3 +2462,43 @@ button.tiny { padding: 4px 10px; font-size: 11px; flex: none; }
   .bot-form { grid-template-columns: 1fr 1fr; }
   .bot-form button { grid-column: 1 / -1; }
 }
+
+/* ---------- Прилавок станции ---------- */
+
+/*
+ * Станция берет всегда, но по невыгодной цене, поэтому и стоит под стаканом:
+ * сперва торгуют друг с другом, к ней идут, когда больше некуда. Цены здесь
+ * фиксированы — это тот коридор, за который курс физически не выйдет.
+ */
+.station-desk { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 20px; }
+@media (max-width: 720px) { .station-desk { grid-template-columns: 1fr; } }
+
+.station-card {
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  display: grid;
+  gap: 8px;
+}
+.station-head { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.station-side {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12px;
+  color: var(--muted);
+}
+.station-side b { font-size: 14px; font-variant-numeric: tabular-nums; }
+.station-actions { display: flex; gap: 6px; margin-top: 2px; }
+.station-actions input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: rgba(8, 12, 24, 0.8);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}

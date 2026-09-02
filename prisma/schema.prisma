@@ -90,6 +90,7 @@ model Commander {
   scans            PlanetScan[]
   hubStorages      HubStorage[]
   orders           MarketOrder[]
+  barterOffers     BarterOffer[]
   purchases        Trade[]                @relation("TradeBuyer")
   sales            Trade[]                @relation("TradeSeller")
   expeditions      ExpeditionReport[]
@@ -750,6 +751,7 @@ model TradeHub {
   system   SolarSystem   @relation(fields: [systemId], references: [id], onDelete: Cascade)
   storages HubStorage[]
   orders   MarketOrder[]
+  barters  BarterOffer[]
   trades   Trade[]
   fleets   Fleet[]
 
@@ -798,6 +800,33 @@ model MarketOrder {
 }
 
 /// Журнал сделок — история биржи.
+/// Бартерное предложение: ресурс за ресурс, без криптогривны.
+///
+/// Нужен затем, что деньги в игре дефицитны по устройству, а обменять избыток
+/// полимеров на нужную руду хочется и без них. Берется целиком: дробить обмен
+/// незачем, а частичное исполнение усложнило бы расчет вдвое ради удобства,
+/// которое всегда достигается вторым предложением.
+model BarterOffer {
+  id          String @id @default(cuid())
+  commanderId String
+  hubId       String
+
+  /// Что отдаю: товар лежит в залоге на складе хаба, как и у обычной продажи.
+  giveResource TradeResource
+  giveQuantity Float
+  /// Что хочу взамен.
+  wantResource TradeResource
+  wantQuantity Float
+
+  createdAt DateTime @default(now())
+
+  commander Commander @relation(fields: [commanderId], references: [id], onDelete: Cascade)
+  hub       TradeHub  @relation(fields: [hubId], references: [id], onDelete: Cascade)
+
+  @@index([hubId, createdAt])
+  @@map("barter_offers")
+}
+
 model Trade {
   id       String @id @default(cuid())
   hubId    String

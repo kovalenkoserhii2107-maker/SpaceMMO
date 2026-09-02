@@ -37,6 +37,51 @@ export const RESOURCE_LABELS: Record<TradeResource, string> = {
 export const REFERENCE_PRICE: Record<TradeResource, number> = { ORE: 10, POLYMERS: 14 };
 
 /**
+ * Станция как маркетмейкер: она всегда готова купить и продать.
+ *
+ * Без нее у криптогривны нет ни источника, ни стока. Все сделки между игроками
+ * — переводы, денежная масса равна стартовой тысяче на командира и не растет
+ * никогда, а добыча растет экспоненциально. Курс гривны обязан улететь в небо,
+ * и торговля встанет: продавать некому, потому что покупать не на что.
+ *
+ * Станция это чинит с обеих сторон. Продал ей — деньги появились, купил у нее
+ * — исчезли. Масса растет вместе с добычей и сама сжимается, когда денег
+ * становится слишком много: тогда цены упираются в потолок и покупать
+ * у станции выгоднее, чем у игроков.
+ *
+ * Заодно коридор держит курс в берегах и дает ликвидность одиночке: продать
+ * можно всегда, даже когда на сервере больше никого нет.
+ *
+ * Замкнутого цикла нет по построению: купить у станции и продать ей же —
+ * всегда убыток в размере коридора.
+ */
+export const STATION_SPREAD = 0.2;
+
+/** Почем станция купит у игрока. Всегда ниже справочной. */
+export function stationBuyPrice(resource: TradeResource): number {
+  return Math.round(REFERENCE_PRICE[resource] * (1 - STATION_SPREAD) * 100) / 100;
+}
+
+/** Почем станция продаст игроку. Всегда выше справочной. */
+export function stationSellPrice(resource: TradeResource): number {
+  return Math.round(REFERENCE_PRICE[resource] * (1 + STATION_SPREAD) * 100) / 100;
+}
+
+/**
+ * Комиссия станции со сделок между игроками.
+ *
+ * Второй сток денег и единственный, который работает на больших оборотах:
+ * покупки у станции редки, а сделок между игроками со временем будет много.
+ * Процент намеренно мал — он не должен мешать торговать, только не давать
+ * массе раздуваться без предела.
+ */
+export const STATION_FEE = 0.01;
+
+export function stationFee(total: number): number {
+  return Math.round(total * STATION_FEE * 100) / 100;
+}
+
+/**
  * Сводка по ресурсу: по ней игрок понимает, что происходит с ценой.
  *
  * Голое число в стакане не с чем сравнить — ровно та же беда, что была
@@ -45,6 +90,9 @@ export const REFERENCE_PRICE: Record<TradeResource, number> = { ORE: 10, POLYMER
  */
 export interface Quote {
   reference: number;
+  /** Почем станция купит и продаст: коридор, за который цена не выйдет. */
+  stationBuy: number;
+  stationSell: number;
   /** Лучшая цена покупки: дороже всех готовы взять. */
   bestBuy: number | null;
   /** Лучшая цена продажи: дешевле всех готовы отдать. */
@@ -66,6 +114,8 @@ export function quote(
   const reference = REFERENCE_PRICE[resource];
   return {
     reference,
+    stationBuy: stationBuyPrice(resource),
+    stationSell: stationSellPrice(resource),
     bestBuy,
     bestSell,
     spread: bestBuy !== null && bestSell !== null ? Math.round((bestSell - bestBuy) * 100) / 100 : null,

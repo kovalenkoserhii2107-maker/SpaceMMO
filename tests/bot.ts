@@ -494,6 +494,49 @@ console.log('\n=== 4. Торговля: берем чужое, выставля�
   );
 }
 
+{
+  /*
+   * Станция — последняя инстанция и единственный источник криптогривны.
+   * Бот, который никогда ей не продает, останется без денег, а если так
+   * поступят все — денежная масса сервера не вырастет вовсе, и торговля
+   * встанет: продавать некому, потому что покупать не на что.
+   */
+  const idle = snapshotWith({
+    character: 'TRADER',
+    hubStorage: { ore: 4000, polymers: 0, free: 1000 },
+  });
+  const station = decide(idle).find((intent) => intent.kind === 'STATION');
+  check(
+    'мертвый груз сдается станции',
+    station?.kind === 'STATION' && station.side === 'SELL' && station.resource === 'ORE',
+    station?.kind === 'STATION' ? `${station.amount} ${station.resource}` : 'не сдал',
+  );
+}
+
+{
+  // Пока есть щедрый покупатель, станция не нужна: она платит меньше всех.
+  const better = snapshotWith({
+    character: 'TRADER',
+    hubStorage: { ore: 4000, polymers: 0, free: 1000 },
+    orderBook: [{ id: 'щедрый', side: 'BUY', resource: 'ORE', price: 12, amount: 4000, mine: false }],
+  });
+  const intents = decide(better);
+  check(
+    'при живом покупателе бот идет к нему, а не к станции',
+    intents.some((i) => i.kind === 'TAKE') && !intents.some((i) => i.kind === 'STATION'),
+    intents.map((i) => i.kind).join(', '),
+  );
+}
+
+{
+  // Мелочь сдавать не стоит: рейс на хаб дороже выручки.
+  const crumbs = snapshotWith({
+    character: 'TRADER',
+    hubStorage: { ore: 100, polymers: 0, free: 4900 },
+  });
+  check('мелочь станции не сдается', !decide(crumbs).some((i) => i.kind === 'STATION'));
+}
+
 /* ------------------------- 5. Прогон недели ------------------------- */
 
 console.log('\n=== 5. Неделя жизни бота ===');

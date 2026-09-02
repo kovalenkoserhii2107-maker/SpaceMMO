@@ -15,7 +15,7 @@
  */
 import { prisma } from '../../db/prisma.js';
 import { gameLoop, type ActionResult } from '../gameLoop.js';
-import { cancelOrder, fillOrder, placeOrder } from '../../services/marketService.js';
+import { cancelOrder, fillOrder, placeOrder, tradeWithStation } from '../../services/marketService.js';
 // Справочная цена одна на всех: бот держит коридор вокруг нее, а интерфейс
 // той же величиной показывает игроку, дорого сейчас или дешево.
 import { REFERENCE_PRICE } from '../market.js';
@@ -259,6 +259,12 @@ async function execute(commanderId: string, intent: BotIntent): Promise<ActionRe
         intent.ships,
         { ore: 0, polymers: 0, plasma: 0 },
       );
+
+    case 'STATION': {
+      // Станция берет всегда — это и делает ее последней инстанцией,
+      // и единственным источником криптогривны в игре.
+      return tradeWithStation(commanderId, intent.side, intent.resource, intent.amount);
+    }
 
     case 'TAKE': {
       // Сделка по чужой заявке. Отказ штатен: заявку могли разобрать

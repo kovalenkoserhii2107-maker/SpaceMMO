@@ -129,6 +129,14 @@
     orderMax: $('order-max'),
     orderMarket: $('order-market'),
     marketQuotes: $('market-quotes'),
+    stationDesk: $('station-desk'),
+    barterGiveRes: $('barter-give-res'),
+    barterGiveQty: $('barter-give-qty'),
+    barterWantRes: $('barter-want-res'),
+    barterWantQty: $('barter-want-qty'),
+    barterHint: $('barter-hint'),
+    barterOffer: $('barter-offer'),
+    barterList: $('barter-list'),
     placeOrderButton: $('place-order'),
     orderBook: $('order-book'),
     myOrders: $('my-orders'),
@@ -3183,6 +3191,8 @@
   function renderMarket() {
     if (!market.data) return;
     renderQuotes();
+    renderStation();
+    renderBarter();
     renderHubStorage();
     renderOrderBook();
     renderMyOrders();
@@ -3243,6 +3253,152 @@
 
       el.marketQuotes.appendChild(card);
     }
+  }
+
+  /**
+   * Прилавок станции.
+   *
+   * Она берет всегда и по фиксированной цене — это единственный источник
+   * и сток криптогривны в игре. Без нее денег в обороте было бы ровно столько,
+   * сколько выдано на старте, а добыча растет без предела: курс улетел бы
+   * в небо, и торговать стало бы не на что.
+   *
+   * Стоит под стаканом нарочно: сперва торгуют друг с другом, к станции идут,
+   * когда больше некуда.
+   */
+  function renderStation() {
+    const quotes = market.data.quotes || {};
+    const storage = market.data.storage;
+    el.stationDesk.innerHTML = '';
+
+    for (const resource of ['ORE', 'POLYMERS']) {
+      const q = quotes[resource];
+      if (!q) continue;
+
+      const have = storage ? (resource === 'ORE' ? storage.ore : storage.polymers) : 0;
+      const afford = q.stationSell > 0 ? Math.floor(market.data.credits / q.stationSell) : 0;
+
+      const card = document.createElement('div');
+      card.className = 'station-card';
+      card.innerHTML =
+        `<div class="station-head">${icon(RESOURCE_ICONS[resource])} <b>${RESOURCE_LABELS[resource]}</b></div>` +
+        `<div class="station-side"><span>станция купит по</span><b class="price-buy">${q.stationBuy.toFixed(2)}</b></div>` +
+        `<div class="station-side"><span>станция продаст по</span><b class="price-sell">${q.stationSell.toFixed(2)}</b></div>`;
+
+      const row = document.createElement('div');
+      row.className = 'station-actions';
+
+      const amount = document.createElement('input');
+      amount.type = 'number';
+      amount.min = '1';
+      amount.value = String(Math.max(1, Math.floor(have) || 100));
+
+      const sell = document.createElement('button');
+      sell.type = 'button';
+      sell.className = 'ghost tiny';
+      sell.textContent = 'Продать';
+      sell.disabled = have <= 0;
+      sell.title = `На складе станции ${fmt(have)}`;
+      sell.addEventListener('click', () => void stationTrade('SELL', resource, Number(amount.value)));
+
+      const buy = document.createElement('button');
+      buy.type = 'button';
+      buy.className = 'ghost tiny';
+      buy.textContent = 'Купить';
+      buy.disabled = afford <= 0;
+      buy.title = `Хватит на ${fmt(afford)}`;
+      buy.addEventListener('click', () => void stationTrade('BUY', resource, Number(amount.value)));
+
+      row.append(amount, sell, buy);
+      card.appendChild(row);
+      el.stationDesk.appendChild(card);
+    }
+  }
+
+  async function stationTrade(side, resource, quantity) {
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      showBuildMessage('Некорректный объем', false);
+      return;
+    }
+    await send('/api/market/station', { side, resource, quantity: Math.floor(quantity) });
+    await loadMarket();
+  }
+
+  /**
+   * Бартер: ресурс за ресурс, без денег.
+   *
+   * Криптогривна дефицитна по устройству — ее создает только станция, — а
+   * обменять избыток полимеров на нужную руду хочется и без нее. Предложение
+   * берется целиком: дробить обмен незачем.
+   */
+  function renderBarter() {
+    const offers = market.data.barters || [];
+    el.barterList.innerHTML = '';
+
+    if (!offers.length) {
+      const empty = document.createElement('div');
+      empty.className = 'queue-item muted';
+      empty.textContent = 'Обменов пока никто не предлагал.';
+      el.barterList.appendChild(empty);
+    }
+
+    for (const offer of offers) {
+      const item = document.createElement('div');
+      item.className = `queue-item${offer.mine ? ' mine' : ''}`;
+
+      const title = document.createElement('b');
+      title.innerHTML =
+        `${icon(RESOURCE_ICONS[offer.giveResource], 'sm')} ${fmt(offer.giveQuantity)} → ` +
+        `${icon(RESOURCE_ICONS[offer.wantResource], 'sm')} ${fmt(offer.wantQuantity)}` +
+        `<span class="muted"> · ${escapeHtml(offer.trader)}</span>`;
+
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'ghost tiny';
+      button.textContent = offer.mine ? 'Снять' : 'Принять';
+      button.addEventListener('click', async () => {
+        if (offer.mine) await sendDelete(`/api/market/barter/${offer.id}`);
+        else await send(`/api/market/barter/${offer.id}/accept`, {});
+        await loadMarket();
+      });
+
+      item.append(title, button);
+      el.barterList.appendChild(item);
+    }
+
+    syncBarterForm();
+  }
+
+  /** Курс обмена рядом со справочным: видно, честное предложение или нет. */
+  function syncBarterForm() {
+    const quotes = market.data.quotes || {};
+    const give = el.barterGiveRes.value;
+    const want = el.barterWantRes.value;
+    const giveQty = Math.max(0, Math.floor(Number(el.barterGiveQty.value) || 0));
+    const wantQty = Math.max(0, Math.floor(Number(el.barterWantQty.value) || 0));
+
+    if (give === want) {
+      el.barterHint.className = 'order-total lack';
+      el.barterHint.textContent = 'Менять ресурс на него же незачем.';
+      return;
+    }
+
+    const fair = quotes[give] && quotes[want] && wantQty > 0
+      ? (giveQty * quotes[give].reference) / (wantQty * quotes[want].reference)
+      : null;
+
+    const storage = market.data.storage;
+    const have = storage ? (give === 'ORE' ? storage.ore : storage.polymers) : 0;
+    const enough = giveQty <= have;
+
+    el.barterHint.className = `order-total${enough ? '' : ' lack'}`;
+    el.barterHint.innerHTML =
+      `Заблокирует <b>${fmt(giveQty)}</b> на складе станции. ` +
+      (enough ? `Там ${fmt(have)}.` : `<b>Там только ${fmt(have)}.</b>`) +
+      (fair === null
+        ? ''
+        : ` По справочным ценам это <b>${fair.toFixed(2)}</b> ` +
+          (fair > 1.05 ? '— щедро для берущего' : fair < 0.95 ? '— выгодно тебе' : '— честно'));
   }
 
   /**
@@ -3553,6 +3709,20 @@
       el.orderQuantity.value = price > 0 ? String(Math.floor(market.data.credits / price)) : '0';
     }
     syncOrderForm();
+  });
+
+  for (const node of [el.barterGiveRes, el.barterWantRes, el.barterGiveQty, el.barterWantQty]) {
+    node.addEventListener('input', syncBarterForm);
+    node.addEventListener('change', syncBarterForm);
+  }
+  el.barterOffer.addEventListener('click', async () => {
+    await send('/api/market/barter', {
+      giveResource: el.barterGiveRes.value,
+      giveQuantity: Number(el.barterGiveQty.value),
+      wantResource: el.barterWantRes.value,
+      wantQuantity: Number(el.barterWantQty.value),
+    });
+    await loadMarket();
   });
 
   el.orderMarket.addEventListener('click', () => {
