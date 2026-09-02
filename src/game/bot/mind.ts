@@ -22,9 +22,10 @@ import { askJson, askText, llmEnabled } from './llm.js';
 import { parsePlan, type BotPlan } from './plan.js';
 import { parseDirectives, type BotDirective } from './directives.js';
 import type { BotSnapshot } from './decide.js';
-import { SHIP_TYPES } from '../ships.js';
-import { DEFENSE_TYPES } from '../defenses.js';
-import { TECHNOLOGY_TYPES } from '../techTree.js';
+import { SHIP_TYPES, shipCost, shipDescription, shipLabel } from '../ships.js';
+import { DEFENSE_TYPES, defenseCost, defenseDescription, defenseLabel } from '../defenses.js';
+import { TECHNOLOGY_TYPES, techDescription, techLabel } from '../techTree.js';
+import { BUILDING_DESCRIPTIONS, BUILDING_LABELS, BUILDING_TYPES, type ResourceAmounts } from '../rules.js';
 
 export { llmEnabled };
 
@@ -84,16 +85,38 @@ export interface BotDecision {
   directives: BotDirective[];
 }
 
+/**
+ * Каталог собирается из игровых модулей, а не переписывается в промпт руками.
+ *
+ * Иначе он разъедется с игрой при первой же правке цен, а модель будет
+ * планировать по вчерашнему миру. И без описаний она выбирает вслепую:
+ * на живом заходе она поставила разведывательные зонды в половину боевого
+ * состава — просто потому, что видела идентификатор PROBE и ничего больше.
+ */
+const units = (cost: ResourceAmounts) => Math.round(cost.ore + cost.polymers + cost.plasma);
+
+const CATALOGUE = [
+  'ЗДАНИЯ:',
+  ...BUILDING_TYPES.map((t) => `${t} — ${BUILDING_LABELS[t]}. ${BUILDING_DESCRIPTIONS[t]}`),
+  '',
+  'ТЕХНОЛОГИИ:',
+  ...TECHNOLOGY_TYPES.map((t) => `${t} — ${techLabel(t)}. ${techDescription(t)}`),
+  '',
+  'КОРАБЛИ (цена в сумме ресурсов):',
+  ...SHIP_TYPES.map((t) => `${t} — ${shipLabel(t)}, ${units(shipCost(t))}. ${shipDescription(t)}`),
+  '',
+  'ОБОРОНА:',
+  ...DEFENSE_TYPES.map((t) => `${t} — ${defenseLabel(t)}, ${units(defenseCost(t))}. ${defenseDescription(t)}`),
+].join('\n');
+
 const STRATEGY_SYSTEM = `Ты — командир в космической экономической стратегии. Ты принимаешь решения за свою колонию: развиваешь ее, торгуешь, обороняешься и воюешь.
 
 Правила мира:
-- Ресурсы: руда (ore), полимеры (polymers), плазма (plasma). Общий лимит склада на все три.
-- Здания: ORE_MINE, POLYMER_PLANT, PLASMA_REACTOR, POWER_PLANT, SCIENCE_CENTER, SHIPYARD, ANTIMATTER_FACTORY, STORAGE.
+- Ресурсы: руда (ore), полимеры (polymers), плазма (plasma). У каждого свой склад и свой лимит: полный склад останавливает добычу только своего ресурса.
 - Нехватка энергии режет добычу всех шахт сразу.
-- Технологии: ${TECHNOLOGY_TYPES.join(', ')}.
-- Корабли: ${SHIP_TYPES.join(', ')}.
-- Оборона: ${DEFENSE_TYPES.join(', ')}.
-- Тяжелые корабли требуют высокого уровня верфи и профильных технологий. Ранний бот их не построит, как ни планируй.
+- Тяжелые корабли и оборона требуют высокого уровня верфи и профильных технологий. Рано их не построить, как ни планируй.
+
+${CATALOGUE}
 
 Отвечай ТОЛЬКО объектом JSON такого вида:
 {
