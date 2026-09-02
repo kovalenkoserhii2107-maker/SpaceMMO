@@ -271,9 +271,25 @@ export function buildingPlan(
   const capacity = storageCapacity(levels);
   const full = storedTotal(base.resources) >= capacity * 0.9;
 
-  // Полный склад останавливает добычу, и копить дальше физически некуда:
-  // пока он не расширен, любая другая цель недостижима в принципе.
-  if (full) want('STORAGE');
+  const modifiers = systemModifiers(base.anomaly);
+  const before = productionPerSecond(levels, base.richness, bonuses, 0, modifiers, drain);
+  const beforeRate = before.ore + before.polymers + before.plasma;
+
+  /*
+   * Склад тянем заранее, а не когда он уже забит.
+   *
+   * Реакция по факту переполнения — ловушка. На полном складе добыча режется
+   * пропорционально по всем трем ресурсам, поэтому руда, которой как раз
+   * и не хватает на расширение, перестает идти именно тогда, когда нужна.
+   * Живой бот просидел так час: семь тысяч полимеров при вместимости десять
+   * тысяч и восемьсот руды при цене расширения в тысячу с лишним.
+   *
+   * Час добычи — запас, которого хватает, чтобы не упереться в потолок между
+   * заходами. Больше брать нельзя: вместимость растет в полтора раза за
+   * уровень, а добыча быстрее, поэтому на поздних уровнях склад стал бы
+   * вечным первым пунктом и заслонил бы сами шахты.
+   */
+  if (full || capacity < beforeRate * 3600) want('STORAGE');
 
   // Просевшая энергия режет добычу на всех шахтах разом, поэтому станция
   // важнее любого следующего уровня шахты.
@@ -288,10 +304,6 @@ export function buildingPlan(
   }
 
   // Шахты по окупаемости: во сколько ресурсов обходится единица прироста добычи.
-  const modifiers = systemModifiers(base.anomaly);
-  const before = productionPerSecond(levels, base.richness, bonuses, 0, modifiers, drain);
-  const beforeRate = before.ore + before.polymers + before.plasma;
-
   const ranked: Array<{ type: BuildingType; payback: number }> = [];
   for (const type of mines) {
     if (!available(type)) continue;

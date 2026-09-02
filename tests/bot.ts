@@ -159,8 +159,16 @@ console.log('\n=== 2. Бот не встает в тупик ===');
 }
 
 {
-  // Просевшая энергия режет добычу на всех шахтах разом.
-  const levels = { ...emptyLevels(), ORE_MINE: 8, POLYMER_PLANT: 8, PLASMA_REACTOR: 6, POWER_PLANT: 1 };
+  // Просевшая энергия режет добычу на всех шахтах разом. Склад базе дан
+  // с запасом: иначе первым пунктом станет он, и проверка будет не про энергию.
+  const levels = {
+    ...emptyLevels(),
+    ORE_MINE: 8,
+    POLYMER_PLANT: 8,
+    PLASMA_REACTOR: 6,
+    POWER_PLANT: 1,
+    STORAGE: 12,
+  };
   check(
     'при нехватке энергии бот строит станцию',
     nextBuilding(testBase('b', { levels }), emptyTechLevels(), 'AGGRESSOR') === 'POWER_PLANT',
