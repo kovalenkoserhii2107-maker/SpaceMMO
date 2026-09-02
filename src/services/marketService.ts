@@ -14,6 +14,8 @@ import {
   validateOrder,
   type OrderSide,
   type TradeResource,
+  quote,
+  type Quote,
 } from '../game/market.js';
 
 export type MarketResult = { ok: true; message: string } | { ok: false; error: string };
@@ -32,6 +34,8 @@ export interface MarketView {
     nextCapacity: number;
   } | null;
   book: Record<TradeResource, { buy: PublicOrder[]; sell: PublicOrder[] }>;
+  /** Что происходит с ценой: справочная, лучшие заявки, спред, последняя сделка. */
+  quotes: Record<TradeResource, Quote>;
   myOrders: PublicOrder[];
   trades: Array<{
     id: string;
@@ -83,6 +87,10 @@ export async function getMarketView(commanderId: string): Promise<MarketView> {
       credits: commander?.credits ?? 0,
       storage: null,
       book: { ORE: { buy: [], sell: [] }, POLYMERS: { buy: [], sell: [] } },
+      quotes: {
+        ORE: quote('ORE', null, null, null),
+        POLYMERS: quote('POLYMERS', null, null, null),
+      },
       myOrders: [],
       trades: [],
     };
@@ -147,6 +155,11 @@ export async function getMarketView(commanderId: string): Promise<MarketView> {
       nextCapacity: storageCapacity(level + 1),
     },
     book,
+    // Считает сервер: цена — игровая величина, и клиент ее не выводит (правило 3).
+    quotes: {
+      ORE: quoteFor('ORE', book.ORE, trades),
+      POLYMERS: quoteFor('POLYMERS', book.POLYMERS, trades),
+    },
     myOrders: orders.filter((order) => order.commanderId === commanderId).map(toPublic),
     trades: trades.map((trade) => ({
       id: trade.id,
@@ -160,6 +173,19 @@ export async function getMarketView(commanderId: string): Promise<MarketView> {
       mine: trade.buyerId === commanderId || trade.sellerId === commanderId,
     })),
   };
+}
+
+/** Сводка по ресурсу из уже отсортированного стакана и списка сделок. */
+function quoteFor(
+  resource: TradeResource,
+  side: { buy: PublicOrder[]; sell: PublicOrder[] },
+  trades: Array<{ resource: string; pricePerUnit: number }>,
+): Quote {
+  // Стакан уже отсортирован: покупка по убыванию, продажа по возрастанию.
+  const bestBuy = side.buy[0]?.pricePerUnit ?? null;
+  const bestSell = side.sell[0]?.pricePerUnit ?? null;
+  const last = trades.find((trade) => trade.resource === resource)?.pricePerUnit ?? null;
+  return quote(resource, bestBuy, bestSell, last);
 }
 
 /** Расширение личного склада на хабе — платится товаром, который уже лежит на складе. */

@@ -126,6 +126,9 @@
     orderQuantity: $('order-quantity'),
     orderPrice: $('order-price'),
     orderHint: $('order-hint'),
+    orderMax: $('order-max'),
+    orderMarket: $('order-market'),
+    marketQuotes: $('market-quotes'),
     placeOrderButton: $('place-order'),
     orderBook: $('order-book'),
     myOrders: $('my-orders'),
@@ -3179,37 +3182,131 @@
 
   function renderMarket() {
     if (!market.data) return;
+    renderQuotes();
     renderHubStorage();
     renderOrderBook();
     renderMyOrders();
     renderTradeLog();
+    syncOrderForm();
   }
 
+  /**
+   * Курс по каждому ресурсу.
+   *
+   * Голая цена в стакане ни о чем не говорит: «14 за полимеры» — это дорого
+   * или дешево? Поэтому рядом справочная цена, лучшие заявки с обеих сторон
+   * и шкала, на которой видно отклонение последней сделки. Ровно тем же
+   * приемом чинилось «×0.61» у богатства недр.
+   */
+  function renderQuotes() {
+    const quotes = market.data.quotes || {};
+    el.marketQuotes.innerHTML = '';
+
+    for (const resource of ['ORE', 'POLYMERS']) {
+      const q = quotes[resource];
+      if (!q) continue;
+
+      const card = document.createElement('div');
+      card.className = 'quote';
+
+      // Шкала: справочная цена — середина, края — вдвое дешевле и вдвое дороже.
+      // Так отклонение видно глазом, а не считается в уме.
+      const mark = (price) =>
+        price === null ? null : Math.max(0, Math.min(1, price / (q.reference * 2)));
+      const last = mark(q.last);
+      const buy = mark(q.bestBuy);
+      const sell = mark(q.bestSell);
+
+      const drift =
+        q.drift === null
+          ? '<span class="muted">сделок не было</span>'
+          : `<span class="${q.drift > 0.05 ? 'up' : q.drift < -0.05 ? 'down' : ''}">` +
+            `${q.drift > 0 ? '+' : ''}${Math.round(q.drift * 100)}% к справочной</span>`;
+
+      card.innerHTML =
+        `<div class="quote-head">${icon(RESOURCE_ICONS[resource])} <b>${RESOURCE_LABELS[resource]}</b>` +
+        `<span class="quote-last">${q.last === null ? '—' : q.last.toFixed(2)} ${icon('credits', 'sm')}</span></div>` +
+        `<div class="quote-scale">` +
+        `<i class="quote-ref" style="left:50%"></i>` +
+        (buy !== null ? `<i class="quote-buy" style="left:${(buy * 100).toFixed(1)}%"></i>` : '') +
+        (sell !== null ? `<i class="quote-sell" style="left:${(sell * 100).toFixed(1)}%"></i>` : '') +
+        (last !== null ? `<i class="quote-mark" style="left:${(last * 100).toFixed(1)}%"></i>` : '') +
+        `</div>` +
+        `<div class="quote-legend">` +
+        `<span>покупают <b class="price-buy">${q.bestBuy === null ? '—' : q.bestBuy.toFixed(2)}</b></span>` +
+        `<span>справочная <b>${q.reference.toFixed(2)}</b></span>` +
+        `<span>продают <b class="price-sell">${q.bestSell === null ? '—' : q.bestSell.toFixed(2)}</b></span>` +
+        `</div>` +
+        `<div class="quote-foot">${drift}` +
+        (q.spread === null ? '' : ` · спред ${q.spread.toFixed(2)}`) +
+        `</div>`;
+
+      el.marketQuotes.appendChild(card);
+    }
+  }
+
+  /**
+   * Склад на станции.
+   *
+   * Главное, чего не хватало: он пуст у всех, и панель не говорила, почему.
+   * Товар на хаб не появляется сам — его привозит флот миссией «Доставка
+   * на хаб», и без этой строки биржа выглядит сломанной.
+   */
   function renderHubStorage() {
     const storage = market.data.storage;
     if (!market.data.hub || !storage) {
-      el.hubStorage.textContent = 'Торговый хаб недоступен';
-      el.upgradeStorage.disabled = true;
+      el.hubStorage.textContent = 'Торговый хаб недоступен: в твоей системе нет станции.';
+      el.upgradeStorage.hidden = true;
       return;
     }
 
-    el.hubStorage.innerHTML =
-      `<b>${market.data.hub.name}</b><br>` +
-      `${icon('ore', 'sm')} <b>${fmt(storage.ore)}</b> · ${icon('polymers', 'sm')} <b>${fmt(storage.polymers)}</b><br>` +
-      `занято ${fmt(storage.ore + storage.polymers)} из <b>${fmt(storage.capacity)}</b> ` +
-      `(свободно ${fmt(storage.free)})<br>` +
-      `уровень склада: <b>${storage.level}</b><br>` +
-      `расширение до ур. ${storage.nextLevel}: ${icon('ore', 'sm')} ${fmt(storage.upgradeCost.ore)} + ` +
-      `${icon('polymers', 'sm')} ${fmt(storage.upgradeCost.polymers)} со склада хаба → ${fmt(storage.nextCapacity)}`;
+    const used = storage.ore + storage.polymers;
+    const fill = storage.capacity > 0 ? used / storage.capacity : 0;
 
-    el.upgradeStorage.disabled =
-      storage.ore < storage.upgradeCost.ore || storage.polymers < storage.upgradeCost.polymers;
+    const rows = [
+      ['ore', 'Руда', storage.ore],
+      ['polymers', 'Полимеры', storage.polymers],
+    ]
+      .map(
+        ([key, label, value]) =>
+          `<div class="hub-row"><span>${icon(key, 'sm')} ${label}</span><b>${fmt(value)}</b></div>`,
+      )
+      .join('');
+
+    const hint = used === 0
+      ? '<p class="hub-hint">Склад пуст. Товар сюда привозит флот: отправь транспорт с базы миссией <b>«Доставка на хаб»</b> — торговать можно только тем, что лежит на станции.</p>'
+      : '';
+
+    el.hubStorage.innerHTML =
+      `<div class="hub-name">${escapeHtml(market.data.hub.name)} · склад ур. ${storage.level}</div>` +
+      rows +
+      `<div class="storage-bar"><i style="width:${(Math.min(1, fill) * 100).toFixed(1)}%"></i></div>` +
+      `<div class="hub-row muted"><span>занято ${fmt(used)} из ${fmt(storage.capacity)}</span>` +
+      `<span>свободно ${fmt(storage.free)}</span></div>` +
+      hint;
+
+    const affordable =
+      storage.ore >= storage.upgradeCost.ore && storage.polymers >= storage.upgradeCost.polymers;
+    el.upgradeStorage.hidden = false;
+    el.upgradeStorage.disabled = !affordable;
+    el.upgradeStorage.innerHTML =
+      `Расширить до ур. ${storage.nextLevel} → ${fmt(storage.nextCapacity)} · ` +
+      `${icon('ore', 'sm')} ${fmt(storage.upgradeCost.ore)} ${icon('polymers', 'sm')} ${fmt(storage.upgradeCost.polymers)}`;
   }
 
+  /**
+   * Стакан.
+   *
+   * Продажи идут сверху вниз к спреду, покупки — ниже: цена растет снизу вверх,
+   * как в любом стакане, и лучшие предложения обеих сторон сходятся в середине.
+   * Полоса под ценой показывает объем — по ней видно, где рынок толстый,
+   * а где одна случайная заявка.
+   */
   function renderOrderBook() {
     el.orderBook.innerHTML = '';
 
     for (const resource of ['ORE', 'POLYMERS']) {
+      const book = market.data.book[resource] || { buy: [], sell: [] };
       const side = document.createElement('div');
       side.className = 'book-side';
 
@@ -3217,46 +3314,65 @@
       title.innerHTML = `${icon(RESOURCE_ICONS[resource])} ${RESOURCE_LABELS[resource]}`;
       side.appendChild(title);
 
-      const book = market.data.book[resource] || { buy: [], sell: [] };
-      side.appendChild(buildOrderTable('Продажа', book.sell, resource));
-      side.appendChild(buildOrderTable('Покупка', book.buy, resource));
+      const depth = Math.max(
+        1,
+        ...book.sell.map((o) => o.remaining),
+        ...book.buy.map((o) => o.remaining),
+      );
+
+      // Продажи сверху в обратном порядке: дешевые ближе к середине.
+      side.appendChild(bookRows([...book.sell].reverse(), 'SELL', depth));
+
+      const spread = document.createElement('div');
+      spread.className = 'book-spread';
+      const q = market.data.quotes?.[resource];
+      spread.textContent =
+        q && q.spread !== null
+          ? `спред ${q.spread.toFixed(2)}`
+          : book.sell.length || book.buy.length
+            ? 'одна сторона пуста'
+            : 'заявок нет';
+      side.appendChild(spread);
+
+      side.appendChild(bookRows(book.buy, 'BUY', depth));
       el.orderBook.appendChild(side);
     }
   }
 
-  function buildOrderTable(caption, orders, resource) {
+  function bookRows(orders, kind, depth) {
     const wrap = document.createElement('div');
-    const table = document.createElement('table');
-    const isSell = caption === 'Продажа';
-
-    const head = document.createElement('tr');
-    head.innerHTML =
-      `<th>${caption}</th><th>цена ${icon('credits', 'sm')}</th><th>объем</th><th>сделка</th>`;
-    table.appendChild(head);
+    wrap.className = `book-rows ${kind === 'SELL' ? 'sells' : 'buys'}`;
 
     if (!orders.length) {
       const empty = document.createElement('div');
       empty.className = 'book-empty';
-      empty.textContent = `${caption}: ордеров нет`;
+      empty.textContent = kind === 'SELL' ? 'никто не продает' : 'никто не покупает';
       wrap.appendChild(empty);
       return wrap;
     }
 
     for (const order of orders) {
-      const row = document.createElement('tr');
-      if (order.mine) row.className = 'mine';
+      const row = document.createElement('div');
+      row.className = `book-row${order.mine ? ' mine' : ''}`;
 
-      const trader = document.createElement('td');
-      trader.textContent = order.mine ? 'мой ордер' : order.trader;
+      const bar = document.createElement('i');
+      bar.className = 'book-depth';
+      bar.style.width = `${Math.max(4, (order.remaining / depth) * 100).toFixed(1)}%`;
 
-      const price = document.createElement('td');
-      price.className = isSell ? 'price-sell' : 'price-buy';
+      const price = document.createElement('span');
+      price.className = `book-price ${kind === 'SELL' ? 'price-sell' : 'price-buy'}`;
       price.textContent = order.pricePerUnit.toFixed(2);
 
-      const volume = document.createElement('td');
+      const volume = document.createElement('span');
+      volume.className = 'book-volume';
       volume.textContent = fmt(order.remaining);
 
-      const action = document.createElement('td');
+      const who = document.createElement('span');
+      who.className = 'book-who';
+      who.textContent = order.mine ? 'мой' : order.trader;
+
+      const action = document.createElement('span');
+      action.className = 'book-action';
       if (!order.mine) {
         const amount = document.createElement('input');
         amount.type = 'number';
@@ -3267,17 +3383,15 @@
 
         const button = document.createElement('button');
         button.type = 'button';
-        button.textContent = isSell ? 'Купить' : 'Продать';
+        button.className = 'tiny';
+        button.textContent = kind === 'SELL' ? 'Купить' : 'Продать';
         button.addEventListener('click', () => void fillOrder(order, Number(amount.value)));
-
         action.append(amount, button);
       }
 
-      row.append(trader, price, volume, action);
-      table.appendChild(row);
+      row.append(bar, price, volume, who, action);
+      wrap.appendChild(row);
     }
-
-    wrap.appendChild(table);
     return wrap;
   }
 
@@ -3298,8 +3412,8 @@
 
     if (!orders.length) {
       const empty = document.createElement('div');
-      empty.className = 'queue-item';
-      empty.textContent = 'Своих ордеров нет';
+      empty.className = 'queue-item muted';
+      empty.textContent = 'Своих заявок нет.';
       el.myOrders.appendChild(empty);
       return;
     }
@@ -3308,15 +3422,16 @@
       const item = document.createElement('div');
       item.className = 'queue-item';
 
+      const filled = order.quantity - order.remaining;
       const title = document.createElement('b');
       title.innerHTML =
-        `${order.side === 'SELL' ? 'Продажа' : 'Покупка'}: ${icon(RESOURCE_ICONS[order.resource], 'sm')} ` +
-        `${fmt(order.remaining)} из ${fmt(order.quantity)} по ${order.pricePerUnit.toFixed(2)} ` +
-        `${icon('credits', 'sm')}`;
+        `${order.side === 'SELL' ? 'Продажа' : 'Покупка'} ${icon(RESOURCE_ICONS[order.resource], 'sm')} ` +
+        `${fmt(order.remaining)} по ${order.pricePerUnit.toFixed(2)}` +
+        (filled > 0 ? ` <span class="muted">· исполнено ${fmt(filled)}</span>` : '');
 
       const cancel = document.createElement('button');
       cancel.type = 'button';
-      cancel.className = 'ghost';
+      cancel.className = 'ghost tiny';
       cancel.textContent = 'Снять';
       cancel.addEventListener('click', async () => {
         await sendDelete(`/api/market/orders/${order.id}`);
@@ -3334,24 +3449,60 @@
 
     if (!trades.length) {
       const empty = document.createElement('div');
-      empty.className = 'queue-item';
-      empty.textContent = 'Сделок пока не было';
+      empty.className = 'queue-item muted';
+      empty.textContent = 'Сделок пока не было — рынок ждет первой.';
       el.tradeLog.appendChild(empty);
       return;
     }
 
     for (const trade of trades) {
       const item = document.createElement('div');
-      item.className = 'queue-item';
+      item.className = `queue-item${trade.mine ? ' mine' : ''}`;
       const title = document.createElement('b');
       title.innerHTML =
-        `${icon(RESOURCE_ICONS[trade.resource], 'sm')} ×${fmt(trade.quantity)} ` +
-        `по ${trade.pricePerUnit.toFixed(2)} = <b>${fmt(trade.total)}</b> ${icon('credits', 'sm')}`;
+        `${icon(RESOURCE_ICONS[trade.resource], 'sm')} ${fmt(trade.quantity)} по ${trade.pricePerUnit.toFixed(2)} ` +
+        `= ${fmt(trade.total)} ${icon('credits', 'sm')}`;
       const meta = document.createElement('span');
-      meta.textContent = `${trade.seller} → ${trade.buyer}${trade.mine ? ' · моя сделка' : ''}`;
+      meta.className = 'muted';
+      meta.textContent = `${trade.seller} → ${trade.buyer}`;
       item.append(title, meta);
       el.tradeLog.appendChild(item);
     }
+  }
+
+  /**
+   * Итог сделки до нажатия кнопки.
+   *
+   * Раньше форма молчала: цена по умолчанию стояла единица, и что именно
+   * спишется, игрок узнавал уже после. Теперь видно и сумму, и хватает ли
+   * товара на складе или криптогривны на счету.
+   */
+  function syncOrderForm() {
+    if (!market.data) return;
+
+    const side = el.orderSide.value;
+    const resource = el.orderResource.value;
+    const quantity = Math.max(0, Math.floor(Number(el.orderQuantity.value) || 0));
+    const price = Number(el.orderPrice.value) || 0;
+    const total = Math.round(quantity * price * 100) / 100;
+
+    const storage = market.data.storage;
+    const have = side === 'SELL'
+      ? (resource === 'ORE' ? storage?.ore ?? 0 : storage?.polymers ?? 0)
+      : market.data.credits;
+
+    const need = side === 'SELL' ? quantity : total;
+    const enough = need <= have;
+
+    el.orderHint.className = `order-total${enough ? '' : ' lack'}`;
+    // Родительный падеж: «100 руды», а не «100 руда».
+    const of = resource === 'ORE' ? 'руды' : 'полимеров';
+    el.orderHint.innerHTML = side === 'SELL'
+      ? `Заблокирует <b>${fmt(quantity)}</b> ${of} на складе станции, ` +
+        `выручка <b>${fmt(total)}</b> ${icon('credits', 'sm')}. ` +
+        (enough ? `На складе ${fmt(have)}.` : `<b>На складе только ${fmt(have)}.</b>`)
+      : `Спишет <b>${fmt(total)}</b> ${icon('credits', 'sm')} в залог. ` +
+        (enough ? `На счету ${fmt(have)}.` : `<b>На счету только ${fmt(have)}.</b>`);
   }
 
   async function placeOrder() {
@@ -3376,36 +3527,44 @@
     }
   }
 
-  function updateOrderHint() {
-    const storage = market.data && market.data.storage;
-    const quantity = Number(el.orderQuantity.value) || 0;
-    const price = Number(el.orderPrice.value) || 0;
-    const total = Math.round(quantity * price * 100) / 100;
-
-    if (el.orderSide.value === 'SELL') {
-      const available = storage
-        ? (el.orderResource.value === 'ORE' ? storage.ore : storage.polymers)
-        : 0;
-      el.orderHint.innerHTML =
-        `Продажа заблокирует <b>${fmt(quantity)}</b> со склада хаба (там ${fmt(available)}).<br>` +
-        `Выручка при полном исполнении: <b>${fmt(total)}</b> ${icon('credits', 'sm')}`;
-    } else {
-      el.orderHint.innerHTML =
-        `Покупка заблокирует <b>${fmt(total)}</b> ${icon('credits', 'sm')} ` +
-        `(баланс ${fmt(state.credits)}).<br>` +
-        `Товар придет на склад хаба — нужно место.`;
-    }
-  }
-
   el.placeOrderButton.addEventListener('click', () => void placeOrder());
   el.upgradeStorage.addEventListener('click', async () => {
     await send('/api/market/storage/upgrade', {});
     await loadMarket();
   });
   for (const node of [el.orderSide, el.orderResource, el.orderQuantity, el.orderPrice]) {
-    node.addEventListener('input', updateOrderHint);
-    node.addEventListener('change', updateOrderHint);
+    node.addEventListener('input', syncOrderForm);
+    node.addEventListener('change', syncOrderForm);
   }
+
+  /*
+   * «Всё» и «По рынку» — две кнопки, которые снимают почти всю арифметику
+   * с игрока. Раньше цена по умолчанию стояла единица, и заявку приходилось
+   * считать в уме, глядя в стакан.
+   */
+  el.orderMax.addEventListener('click', () => {
+    if (!market.data) return;
+    const storage = market.data.storage;
+    if (el.orderSide.value === 'SELL') {
+      const have = el.orderResource.value === 'ORE' ? storage?.ore ?? 0 : storage?.polymers ?? 0;
+      el.orderQuantity.value = String(Math.floor(have));
+    } else {
+      const price = Number(el.orderPrice.value) || 0;
+      el.orderQuantity.value = price > 0 ? String(Math.floor(market.data.credits / price)) : '0';
+    }
+    syncOrderForm();
+  });
+
+  el.orderMarket.addEventListener('click', () => {
+    if (!market.data) return;
+    const q = market.data.quotes?.[el.orderResource.value];
+    if (!q) return;
+    // Продаем по лучшей цене покупки, покупаем по лучшей цене продажи —
+    // так заявка исполняется сразу. Нет встречной стороны — берем справочную.
+    const target = el.orderSide.value === 'SELL' ? q.bestBuy : q.bestSell;
+    el.orderPrice.value = String(target ?? q.reference);
+    syncOrderForm();
+  });
 
 
   /* ---------- Оборона, бои, дипломатия ---------- */

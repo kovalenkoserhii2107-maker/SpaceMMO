@@ -22,6 +22,58 @@ export const RESOURCE_LABELS: Record<TradeResource, string> = {
   POLYMERS: 'Полимеры',
 };
 
+/**
+ * Справочная цена ресурса в криптогривне.
+ *
+ * Своей цены у игры нет — стакан целиком игрокский. Но без точки отсчета
+ * число в стакане ничего не значит: «14 за полимеры» дорого это или дешево,
+ * сказать не по чему. Отношение взято из относительной скорости добычи:
+ * полимеры добываются примерно в полтора раза медленнее руды, значит
+ * и стоить должны во столько же дороже.
+ *
+ * Той же величиной пользуется бот, когда держит свои заявки в коридоре, —
+ * и она должна быть одна на всех, иначе интерфейс и бот считают по-разному.
+ */
+export const REFERENCE_PRICE: Record<TradeResource, number> = { ORE: 10, POLYMERS: 14 };
+
+/**
+ * Сводка по ресурсу: по ней игрок понимает, что происходит с ценой.
+ *
+ * Голое число в стакане не с чем сравнить — ровно та же беда, что была
+ * у множителя богатства недр. Здесь сравнивать есть с чем: справочная цена,
+ * лучшие заявки с обеих сторон, спред и цена последней сделки.
+ */
+export interface Quote {
+  reference: number;
+  /** Лучшая цена покупки: дороже всех готовы взять. */
+  bestBuy: number | null;
+  /** Лучшая цена продажи: дешевле всех готовы отдать. */
+  bestSell: number | null;
+  /** Разрыв между ними. Пусто, если одной из сторон в стакане нет. */
+  spread: number | null;
+  /** Цена последней сделки — единственная цена, по которой реально сошлись. */
+  last: number | null;
+  /** Отклонение последней сделки от справочной, доля: 0.2 — на пятую часть дороже. */
+  drift: number | null;
+}
+
+export function quote(
+  resource: TradeResource,
+  bestBuy: number | null,
+  bestSell: number | null,
+  last: number | null,
+): Quote {
+  const reference = REFERENCE_PRICE[resource];
+  return {
+    reference,
+    bestBuy,
+    bestSell,
+    spread: bestBuy !== null && bestSell !== null ? Math.round((bestSell - bestBuy) * 100) / 100 : null,
+    last,
+    drift: last !== null && reference > 0 ? Math.round(((last - reference) / reference) * 100) / 100 : null,
+  };
+}
+
 /** Вместимость личного склада на хабе (общая на руду и полимеры). */
 export function storageCapacity(level: number): number {
   if (level <= 0) return 0;

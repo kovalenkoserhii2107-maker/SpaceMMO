@@ -395,14 +395,24 @@
 
         <section data-panel="market" hidden>
           <h3 class="panel-title">Хаб и биржа</h3>
-          <div class="market-top">
-            <div class="hub-card">
-              <h3 class="section-title">Торговый склад на хабе</h3>
+
+          <!--
+            Курс идет первым: без него числа в стакане не с чем сравнить.
+            Та же беда была у множителя богатства недр — голое «×0.61» ни о чем
+            не говорит, пока рядом нет шкалы.
+          -->
+          <div id="market-quotes" class="quotes"></div>
+
+          <div class="market-grid">
+            <!-- Склад: товар физически лежит на станции, и туда его надо привезти. -->
+            <section class="hub-card market-storage">
+              <h3 class="section-title">Склад на станции</h3>
               <div id="hub-storage" class="hub-storage">Хаб не найден</div>
               <button id="upgrade-storage" type="button" class="ghost">Расширить склад</button>
-            </div>
+            </section>
 
-            <div class="hub-card">
+            <!-- Форма: цена подставляется от рынка, итог сделки виден до нажатия. -->
+            <section class="hub-card market-order">
               <h3 class="section-title">Новый ордер</h3>
               <div class="order-form">
                 <label class="field"><span>Сторона</span>
@@ -417,22 +427,37 @@
                     <option value="POLYMERS">Полимеры</option>
                   </select>
                 </label>
-                <label class="field"><span>Объем</span><input id="order-quantity" type="number" min="1" value="100"></label>
-                <label class="field"><span>Цена за ед. <svg class="ico credits sm" role="img" aria-label="Криптогривна"><title>Криптогривна</title><use href="#ico-credits"/></svg></span><input id="order-price" type="number" min="0.01" step="0.01" value="1"></label>
+                <label class="field"><span>Объем</span>
+                  <div class="input-row">
+                    <input id="order-quantity" type="number" min="1" value="100">
+                    <button type="button" class="ghost tiny" id="order-max">Всё</button>
+                  </div>
+                </label>
+                <label class="field"><span>Цена за единицу</span>
+                  <div class="input-row">
+                    <input id="order-price" type="number" min="0.01" step="0.01" value="10">
+                    <button type="button" class="ghost tiny" id="order-market">По рынку</button>
+                  </div>
+                </label>
               </div>
-              <div id="order-hint" class="flight-plan">Продажа блокирует товар на складе, покупка — криптогривну.</div>
+              <div id="order-hint" class="order-total"></div>
               <button id="place-order" type="button" class="primary">Выставить ордер</button>
-            </div>
+            </section>
           </div>
 
           <h3 class="section-title">Биржевой стакан</h3>
           <div id="order-book" class="book"></div>
 
-          <h3 class="section-title">Мои ордера</h3>
-          <div id="my-orders" class="queue"></div>
-
-          <h3 class="section-title">Последние сделки</h3>
-          <div id="trade-log" class="queue"></div>
+          <div class="market-grid">
+            <section class="hub-card">
+              <h3 class="section-title">Мои ордера</h3>
+              <div id="my-orders" class="queue"></div>
+            </section>
+            <section class="hub-card">
+              <h3 class="section-title">Последние сделки</h3>
+              <div id="trade-log" class="queue"></div>
+            </section>
+          </div>
         </section>
 
         <section data-panel="war" hidden>

@@ -16,6 +16,9 @@
 import { prisma } from '../../db/prisma.js';
 import { gameLoop, type ActionResult } from '../gameLoop.js';
 import { cancelOrder, placeOrder } from '../../services/marketService.js';
+// Справочная цена одна на всех: бот держит коридор вокруг нее, а интерфейс
+// той же величиной показывает игроку, дорого сейчас или дешево.
+import { REFERENCE_PRICE } from '../market.js';
 import { deliver } from '../../services/mailService.js';
 import { SHIP_TYPES, emptyShipCounts, type ShipCounts } from '../ships.js';
 import { fleetCapacity } from '../fleets.js';
@@ -40,17 +43,6 @@ import { askReply, askStrategy, llmEnabled, type BotBrief } from './mind.js';
 import { hopeless, type BotDirective } from './directives.js';
 import { declarePeace } from '../../services/warService.js';
 import { PLAN_TTL_MS, readStoredPlan, withPlan, type BotPlan } from './plan.js';
-
-/**
- * Справочная цена ресурса в криптогривне.
- *
- * Своей цены у игры нет: стакан целиком игрокский. Но бот обязан от чего-то
- * отсчитывать коридор, иначе на пустом рынке он выставит первую попавшуюся
- * цену и станет либо бесплатным насосом, либо пылесосом. Отношение взято
- * из относительной скорости добычи: полимеры добываются примерно в полтора
- * раза медленнее руды, значит и стоить должны дороже во столько же.
- */
-const REFERENCE_PRICE: Record<'ORE' | 'POLYMERS', number> = { ORE: 10, POLYMERS: 14 };
 
 /** Сколько ботов планировщик обрабатывает за один заход. */
 const BATCH = 5;
