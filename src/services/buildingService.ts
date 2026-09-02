@@ -77,15 +77,20 @@ export async function getBuildingProjection(
   const baseOutput = outputAt(level);
   const baseEnergy = buildingEnergyUsage(type, level);
 
+  // Первой строкой идет текущий уровень: без точки отсчета приросты ниже
+  // не с чем сравнить, и таблица заставляет держать в голове то, что и так
+  // написано на карточке.
   const rows: BuildingProjectionRow[] = [];
-  for (let target = level + 1; target <= level + HORIZON; target += 1) {
+  for (let target = level; target <= level + HORIZON; target += 1) {
+    const current = target === level;
     const output = outputAt(target);
     const energy = buildingEnergyUsage(type, target);
 
     rows.push({
       level: target,
-      cost: upgradeCost(type, target),
-      seconds: buildSeconds(type, target, modifiers, buildSpeedup(commander.techs)),
+      current,
+      cost: current ? null : upgradeCost(type, target),
+      seconds: current ? null : buildSeconds(type, target, modifiers, buildSpeedup(commander.techs)),
       output: output === null ? null : Math.round(output),
       outputGain:
         output === null || baseOutput === null ? null : Math.round(output - baseOutput),

@@ -1587,26 +1587,35 @@
 
     const rows = data.rows
       .map((row, index) => {
-        const cost =
-          [
-            row.cost.ore ? `${icon('ore', 'sm')} ${fmt(row.cost.ore)}` : '',
-            row.cost.polymers ? `${icon('polymers', 'sm')} ${fmt(row.cost.polymers)}` : '',
-            row.cost.plasma ? `${icon('plasma', 'sm')} ${fmt(row.cost.plasma)}` : '',
-          ]
-            .filter(Boolean)
-            .join(' ') || '—';
+        // У текущего уровня цены и срока нет: он уже построен и уже оплачен.
+        const cost = row.cost
+          ? [
+              row.cost.ore ? `${icon('ore', 'sm')} ${fmt(row.cost.ore)}` : '',
+              row.cost.polymers ? `${icon('polymers', 'sm')} ${fmt(row.cost.polymers)}` : '',
+              row.cost.plasma ? `${icon('plasma', 'sm')} ${fmt(row.cost.plasma)}` : '',
+            ]
+              .filter(Boolean)
+              .join(' ') || '—'
+          : '—';
 
         const output = showOutput
           ? `<td>${fmt(row.output)}</td><td class="gain">${row.outputGain > 0 ? '+' + fmt(row.outputGain) : '—'}</td>`
           : '';
 
+        // Текущий уровень помечен, следующий подсвечен: это две разные вещи —
+        // «где я сейчас» и «что я строю кнопкой на карточке».
+        const marks = [row.current ? 'current' : '', index === 1 ? 'next' : ''].filter(Boolean);
+        const levelCell = row.current
+          ? `${row.level} <span class="badge-now">сейчас</span>`
+          : String(row.level);
+
         return (
-          `<tr class="${index === 0 ? 'next' : ''}">` +
-          `<td>${row.level}</td>` +
+          `<tr class="${marks.join(' ')}">` +
+          `<td>${levelCell}</td>` +
           output +
           `<td>${fmtEnergy(row.energy)}</td>` +
           `<td class="drain">${row.energyGain > 0 ? '+' + fmtEnergy(row.energyGain) : '—'}</td>` +
-          `<td>${cost}</td><td>${fmtTime(row.seconds)}</td></tr>`
+          `<td>${cost}</td><td>${row.seconds === null ? '—' : fmtTime(row.seconds)}</td></tr>`
         );
       })
       .join('');
