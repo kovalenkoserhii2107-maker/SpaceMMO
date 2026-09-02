@@ -17,7 +17,7 @@ import { prisma } from '../../db/prisma.js';
 import { gameLoop, type ActionResult } from '../gameLoop.js';
 import { placeOrder } from '../../services/marketService.js';
 import { deliver } from '../../services/mailService.js';
-import { emptyShipCounts, type ShipCounts } from '../ships.js';
+import { SHIP_TYPES, emptyShipCounts, type ShipCounts } from '../ships.js';
 import { fleetCapacity } from '../fleets.js';
 import { normalizeDefenses, normalizeShips } from '../fogOfWar.js';
 import { spentOnDefense, spentOnFleet } from '../score.js';
@@ -32,10 +32,13 @@ import {
 import {
   DECISION_INTERVAL_MS,
   DECISION_JITTER_MS,
+  NEWBIE_SHIELD_DAYS,
   isBotCharacter,
   type BotCharacter,
 } from './personality.js';
 import { askReply, askStrategy, llmEnabled, type BotBrief } from './mind.js';
+import { hopeless, type BotDirective } from './directives.js';
+import { declarePeace } from '../../services/warService.js';
 import { PLAN_TTL_MS, readStoredPlan, withPlan, type BotPlan } from './plan.js';
 
 /**
@@ -84,7 +87,7 @@ async function buildSnapshot(
   const home = bases[0]!;
   const homeGalaxy = home.galaxy;
 
-  const [freeRows, foreignRows, scans, orders] = await Promise.all([
+  const [freeRows, foreignRows, scans, orders, debrisRows] = await Promise.all([
     prisma.planet.findMany({
       where: { base: null },
       select: { id: true, systemId: true, system: { select: { galaxyX: true, galaxyY: true } } },
@@ -109,6 +112,18 @@ async function buildSnapshot(
     prisma.marketOrder.findMany({
       where: { commanderId: commander.commanderId, remaining: { gt: 0 } },
       select: { side: true, resource: true },
+    }),
+    // Поля обломков видны всем и туманом войны не скрываются — иначе гонка
+    // за крупным полем была бы невозможна.
+    prisma.planet.findMany({
+      where: { OR: [{ debrisOre: { gt: 0 } }, { debrisPolymers: { gt: 0 } }] },
+      select: {
+        id: true,
+        debrisOre: true,
+        debrisPolymers: true,
+        system: { select: { galaxyX: true, galaxyY: true } },
+      },
+      take: 20,
     }),
   ]);
 
@@ -163,6 +178,12 @@ async function buildSnapshot(
       { resource: 'ORE', reference: REFERENCE_PRICE.ORE },
       { resource: 'POLYMERS', reference: REFERENCE_PRICE.POLYMERS },
     ],
+    debrisFields: debrisRows.map((row) => ({
+      planetId: row.id,
+      ore: row.debrisOre,
+      polymers: row.debrisPolymers,
+      distance: distance(homeGalaxy, row.system),
+    })),
     openOrders: orders.map((order) => ({
       side: order.side as 'BUY' | 'SELL',
       resource: order.resource as 'ORE' | 'POLYMERS',
@@ -312,6 +333,7 @@ async function deliverToHub(
 async function buildBrief(
   commander: CommanderRuntimeState,
   snapshot: BotSnapshot,
+  memory: unknown,
 ): Promise<BotBrief> {
   const capital = snapshot.bases[0]!;
   const positive = (source: Record<string, number>) =>
@@ -334,10 +356,6 @@ async function buildBrief(
     select: { id: true, nickname: true },
     take: 10,
   });
-  const strength = new Map(
-    snapshot.raidTargets.map((target) => [target.commanderId, target.knownStrength ?? 0]),
-  );
-
   return {
     nickname: (await prisma.commander.findUnique({
       where: { id: commander.commanderId },
@@ -354,14 +372,114 @@ async function buildBrief(
     techs: positive(commander.techs as unknown as Record<string, number>),
     ships: positive(capital.ships as unknown as Record<string, number>),
     defenses: positive(capital.defenses as unknown as Record<string, number>),
-    neighbours: neighbours.map((row) => ({
-      nickname: row.nickname,
-      score: Math.round(strength.get(row.id) ?? 0),
-      atWar: enemies.has(row.id),
+    neighbours: neighbours.map((row) => {
+      const target = snapshot.raidTargets.find((item) => item.commanderId === row.id);
+      return {
+        id: row.id,
+        nickname: row.nickname,
+        strength: target?.knownStrength ?? null,
+        atWar: enemies.has(row.id),
+        planetId: target?.planetId ?? '',
+        distance: Math.round((target?.distance ?? 0) * 10) / 10,
+      };
+    }),
+    // Ближайшая десятка: список всех свободных планет галактики модели незачем,
+    // а платим мы за каждую строку.
+    freePlanets: [...snapshot.freePlanets]
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, 6)
+      .map((planet) => ({ planetId: planet.planetId, distance: Math.round(planet.distance * 10) / 10 })),
+    debris: snapshot.debrisFields.map((field) => ({
+      planetId: field.planetId,
+      ore: Math.round(field.ore),
+      polymers: Math.round(field.polymers),
+      distance: Math.round(field.distance * 10) / 10,
     })),
-    freePlanetsNearby: snapshot.freePlanets.length,
+    market: await marketBrief(commander.commanderId),
+    battles: await battleBrief(commander.commanderId),
     events: await recentEvents(commander.commanderId),
+    journal: readJournal(memory),
   };
+}
+
+/**
+ * Биржа глазами бота: свои заявки, чужой стакан и последние сделки.
+ *
+ * Без последних сделок цена — пустой звук: справочная стоит в коде, а живой
+ * рынок может уйти от нее в разы, и решать «продавать сейчас или ждать»
+ * не по чему.
+ */
+async function marketBrief(commanderId: string): Promise<BotBrief['market']> {
+  const [mine, book, trades] = await Promise.all([
+    prisma.marketOrder.findMany({
+      where: { commanderId, remaining: { gt: 0 } },
+      select: { side: true, resource: true, remaining: true, pricePerUnit: true },
+    }),
+    prisma.marketOrder.findMany({
+      where: { commanderId: { not: commanderId }, remaining: { gt: 0 } },
+      select: { side: true, resource: true, remaining: true, pricePerUnit: true },
+      orderBy: { createdAt: 'desc' },
+      take: 8,
+    }),
+    prisma.trade.findMany({
+      select: { resource: true, quantity: true, pricePerUnit: true },
+      orderBy: { createdAt: 'desc' },
+      take: 6,
+    }),
+  ]);
+
+  const row = (o: { side: string; resource: string; remaining: number; pricePerUnit: number }) => ({
+    side: o.side,
+    resource: o.resource,
+    amount: Math.round(o.remaining),
+    price: Math.round(o.pricePerUnit),
+  });
+
+  return {
+    myOrders: mine.map(row),
+    book: book.map(row),
+    lastTrades: trades.map((t) => ({
+      resource: t.resource,
+      amount: Math.round(t.quantity),
+      price: Math.round(t.pricePerUnit),
+    })),
+  };
+}
+
+/**
+ * Свои бои с исходом и добычей.
+ *
+ * Это единственное место, где модель узнает, чем кончились ее собственные
+ * решения: состояние показывает, что флота нет, а отчет — что его разбили
+ * и при какой попытке.
+ */
+async function battleBrief(commanderId: string): Promise<BotBrief['battles']> {
+  const rows = await prisma.battleReport.findMany({
+    where: { OR: [{ attackerId: commanderId }, { defenderId: commanderId }] },
+    select: {
+      attackerId: true,
+      winner: true,
+      plunderOre: true,
+      plunderPolymers: true,
+      plunderPlasma: true,
+      attacker: { select: { nickname: true } },
+      defender: { select: { nickname: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 5,
+  });
+
+  return rows.map((row) => {
+    const mine = row.attackerId === commanderId;
+    const won = (mine && row.winner === 'ATTACKER') || (!mine && row.winner === 'DEFENDER');
+    return {
+      role: mine ? 'нападал' : 'оборонялся',
+      against: mine ? row.defender.nickname : row.attacker.nickname,
+      // Ничьей в исходе нет: поле остается за защитником, и движок пишет его.
+      outcome: won ? 'победа' : 'поражение',
+      loot: Math.round(row.plunderOre + row.plunderPolymers + row.plunderPlasma),
+    };
+  });
 }
 
 /**
@@ -381,10 +499,33 @@ async function recentEvents(commanderId: string): Promise<string[]> {
   return rows.map((row) => row.subject);
 }
 
-async function savePlan(botId: string, plan: BotPlan): Promise<void> {
+/**
+ * Журнал решений: кольцевой буфер прямо в памяти бота.
+ *
+ * Отдельная таблица для двадцати строк не нужна, а без журнала модель видит
+ * только «как сейчас» и не может ответить на «сработало ли то, что я решила
+ * в прошлый раз». Состояние показывает, что флота нет; журнал — что его
+ * потеряли в набеге, который сама же и назначила.
+ */
+const JOURNAL_LIMIT = 20;
+
+function readJournal(memory: unknown): string[] {
+  if (typeof memory !== 'object' || memory === null) return [];
+  const rows = (memory as Record<string, unknown>)['journal'];
+  if (!Array.isArray(rows)) return [];
+  return rows.filter((row): row is string => typeof row === 'string').slice(-JOURNAL_LIMIT);
+}
+
+function appendJournal(memory: unknown, entries: string[]): string[] {
+  if (entries.length === 0) return readJournal(memory);
+  const stamp = new Date().toISOString().slice(11, 16);
+  return [...readJournal(memory), ...entries.map((entry) => `${stamp} ${entry}`)].slice(-JOURNAL_LIMIT);
+}
+
+async function savePlan(botId: string, plan: BotPlan, journal: string[]): Promise<void> {
   await prisma.bot.update({
     where: { id: botId },
-    data: { memory: { plan: plan as unknown as object, planMadeAt: Date.now() } },
+    data: { memory: { plan: plan as unknown as object, planMadeAt: Date.now(), journal } },
   });
 }
 
@@ -438,6 +579,168 @@ async function answerMail(commanderId: string, character: BotCharacter): Promise
   return sent;
 }
 
+/**
+ * Что вырвало бота из расписания.
+ *
+ * Модель зовется не только по будильнику: бой, объявленная война или потеря
+ * колонии — это ровно те нестандартные ситуации, ради которых она здесь.
+ * В спокойные часы функция возвращает null, и лишнего вызова не будет.
+ */
+async function recentShock(commanderId: string, since: number): Promise<string | null> {
+  const after = new Date(Math.max(since, Date.now() - 6 * 3600_000));
+
+  const battle = await prisma.battleReport.findFirst({
+    where: {
+      OR: [{ attackerId: commanderId }, { defenderId: commanderId }],
+      createdAt: { gt: after },
+    },
+    select: {
+      attackerId: true,
+      winner: true,
+      plunderOre: true,
+      plunderPolymers: true,
+      plunderPlasma: true,
+      attacker: { select: { nickname: true } },
+      defender: { select: { nickname: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  if (battle) {
+    const mine = battle.attackerId === commanderId;
+    const won = (mine && battle.winner === 'ATTACKER') || (!mine && battle.winner === 'DEFENDER');
+    const other = mine ? battle.defender.nickname : battle.attacker.nickname;
+    const loot = Math.round(battle.plunderOre + battle.plunderPolymers + battle.plunderPlasma);
+    return mine
+      ? `мой набег на «${other}» — ${won ? 'победа' : 'поражение'}, добыча ${loot}`
+      : `на меня напал «${other}» — ${won ? 'отбился' : 'разбит'}, унесли ${loot}`;
+  }
+
+  const war = await prisma.warDeclaration.findFirst({
+    where: { targetId: commanderId, declaredAt: { gt: after } },
+    select: { aggressor: { select: { nickname: true } } },
+    orderBy: { declaredAt: 'desc' },
+  });
+  if (war) return `«${war.aggressor.nickname}» объявил мне войну`;
+
+  return null;
+}
+
+/**
+ * Исполнение поручения модели.
+ *
+ * Каждое идет теми же методами, что и решения кода: правила не обходятся,
+ * ресурсы списываются, бой считает движок. Отказ здесь штатен — обстановка
+ * могла измениться между решением и исполнением, — и пишется в журнал наравне
+ * с успехом: модели полезно знать, что ее поручение не прошло.
+ */
+async function applyDirective(
+  commanderId: string,
+  snapshot: BotSnapshot,
+  directive: BotDirective,
+): Promise<{ line: string }> {
+  const note = (text: string) => ({ line: `${directive.kind}: ${text}` });
+
+  switch (directive.kind) {
+    case 'ATTACK': {
+      const target = snapshot.raidTargets.find((item) => item.planetId === directive.planetId);
+      if (!target) return note('цель пропала из виду');
+      if (target.accountAgeDays < NEWBIE_SHIELD_DAYS) return note('под щитом новичка — отказ');
+
+      const own = snapshot.bases.reduce((sum, base) => sum + spentOnFleet(base.ships), 0);
+      if (hopeless(own, target.knownStrength)) return note('безнадежно, флот бы не вернулся');
+
+      const striker = snapshot.bases.reduce((best, base) =>
+        spentOnFleet(base.ships) > spentOnFleet(best.ships) ? base : best,
+      );
+      const strike = emptyShipCounts();
+      for (const type of SHIP_TYPES) {
+        if (type === 'PROBE' || type === 'RECYCLER' || type === 'COLONY_SHIP') continue;
+        if (type === 'SMALL_CARGO') continue;
+        strike[type] = striker.ships[type];
+      }
+      strike.LARGE_CARGO = Math.floor(striker.ships.LARGE_CARGO / 2);
+      if (spentOnFleet(strike) <= 0) return note('нечем лететь');
+
+      const result = await gameLoop.sendFleet(
+        commanderId,
+        striker.id,
+        { planetId: directive.planetId },
+        'ATTACK',
+        strike,
+        { ore: 0, polymers: 0, plasma: 0 },
+      );
+      return note(result.ok ? `набег отправлен — ${directive.why}` : result.error);
+    }
+
+    case 'PEACE': {
+      const result = await declarePeace(commanderId, directive.commanderId);
+      return note(result.ok ? `мир предложен — ${directive.why}` : result.error);
+    }
+
+    case 'COLONIZE': {
+      const carrier = snapshot.bases.find((base) => base.ships.COLONY_SHIP > 0);
+      if (!carrier) return note('колониального корабля нет');
+      const ships = emptyShipCounts();
+      ships.COLONY_SHIP = 1;
+      const result = await gameLoop.sendFleet(
+        commanderId,
+        carrier.id,
+        { planetId: directive.planetId },
+        'COLONIZE',
+        ships,
+        { ore: 0, polymers: 0, plasma: 0 },
+      );
+      return note(result.ok ? `рейс к планете — ${directive.why}` : result.error);
+    }
+
+    case 'HARVEST': {
+      const yard = snapshot.bases.find((base) => base.ships.RECYCLER > 0);
+      if (!yard) return note('переработчика нет');
+      const ships = emptyShipCounts();
+      ships.RECYCLER = yard.ships.RECYCLER;
+      const result = await gameLoop.sendFleet(
+        commanderId,
+        yard.id,
+        { planetId: directive.planetId },
+        'HARVEST',
+        ships,
+        { ore: 0, polymers: 0, plasma: 0 },
+      );
+      return note(result.ok ? `сбор обломков — ${directive.why}` : result.error);
+    }
+
+    case 'SELL':
+    case 'BUY': {
+      const result = await placeOrder(commanderId, {
+        side: directive.kind,
+        resource: directive.resource,
+        quantity: directive.amount,
+        pricePerUnit: directive.price,
+      });
+      return note(result.ok ? `заявка выставлена — ${directive.why}` : result.error);
+    }
+
+    case 'MESSAGE': {
+      await deliver([
+        {
+          recipientId: directive.commanderId,
+          senderId: commanderId,
+          type: 'PLAYER',
+          subject: directive.subject,
+          body: directive.body,
+        },
+      ]);
+      return note(`письмо отправлено — ${directive.why}`);
+    }
+
+    default: {
+      const never: never = directive;
+      return note(`неизвестное поручение ${JSON.stringify(never)}`);
+    }
+  }
+}
+
 /* ------------------------- Заход бота ------------------------- */
 
 export interface BotTurn {
@@ -481,12 +784,37 @@ export async function runBotTurn(botId: string): Promise<BotTurn | null> {
    * почти два миллиона.
    */
   let plan = readStoredPlan(bot.memory, bot.character);
-  if (llmEnabled() && (!plan || Date.now() - plan.madeAt > PLAN_TTL_MS)) {
-    const fresh = await askStrategy(bot.character, await buildBrief(commander, snapshot));
-    if (fresh) {
-      plan = { plan: fresh, madeAt: Date.now() };
-      await savePlan(bot.id, fresh);
-      actions.push(`ПЛАН: ${fresh.note || 'стратегия обновлена'}`);
+  let journal = readJournal(bot.memory);
+
+  /*
+   * Модель зовется по расписанию или когда случилось нестандартное: бой,
+   * объявленная война, потерянная колония. В спокойные часы она молчит.
+   * Спрашивать ее на каждом заходе значило бы отдавать ей арифметику, которую
+   * код считает точнее, и платить в сотни раз больше.
+   */
+  const overdue = !plan || Date.now() - plan.madeAt > PLAN_TTL_MS;
+  const shock = await recentShock(bot.commanderId, plan?.madeAt ?? 0);
+  if (llmEnabled() && (overdue || shock !== null)) {
+    const brief = await buildBrief(commander, snapshot, bot.memory);
+    const answer = await askStrategy(bot.character, brief, snapshot, shock);
+
+    if (answer) {
+      plan = { plan: answer.plan, madeAt: Date.now() };
+      actions.push(`ПЛАН: ${answer.plan.note || 'стратегия обновлена'}`);
+      if (shock) journal = appendJournal({ journal }, [`повод: ${shock}`]);
+
+      /*
+       * Директивы — то, ради чего модель здесь. Исполняются они теми же
+       * методами, что и решения кода, поэтому правила остаются в силе:
+       * ресурсы списываются, требования проверяются, бой считает движок.
+       */
+      for (const directive of answer.directives) {
+        const done = await applyDirective(bot.commanderId, snapshot, directive);
+        actions.push(done.line);
+        journal = appendJournal({ journal }, [done.line]);
+      }
+
+      await savePlan(bot.id, answer.plan, journal);
     }
   }
 

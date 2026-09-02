@@ -20,6 +20,8 @@ import type { BotCharacter } from './personality.js';
 import { personality } from './personality.js';
 import { askJson, askText, llmEnabled } from './llm.js';
 import { parsePlan, type BotPlan } from './plan.js';
+import { parseDirectives, type BotDirective } from './directives.js';
+import type { BotSnapshot } from './decide.js';
 import { SHIP_TYPES } from '../ships.js';
 import { DEFENSE_TYPES } from '../defenses.js';
 import { TECHNOLOGY_TYPES } from '../techTree.js';
@@ -42,14 +44,47 @@ export interface BotBrief {
   techs: Record<string, number>;
   ships: Record<string, number>;
   defenses: Record<string, number>;
-  /** Соседи: позывной, счет и есть ли с ними война. */
-  neighbours: Array<{ nickname: string; score: number; atWar: boolean }>;
-  freePlanetsNearby: number;
+  /**
+   * Соседи: кого можно назвать в директиве.
+   *
+   * Идентификатор идет рядом с позывным нарочно: модель распоряжается только
+   * тем, что ей показали, и сверка директивы идет по этим самым спискам.
+   */
+  neighbours: Array<{
+    id: string;
+    nickname: string;
+    /** Оценка обороны по своей же разведке. null — цель не разведана. */
+    strength: number | null;
+    atWar: boolean;
+    /** Планета, по которой можно ударить. */
+    planetId: string;
+    distance: number;
+  }>;
+  /** Свободные планеты под колонию — ближайшие. */
+  freePlanets: Array<{ planetId: string; distance: number }>;
+  /** Поля обломков: кто первый долетел, того и добро. */
+  debris: Array<{ planetId: string; ore: number; polymers: number; distance: number }>;
+  /** Биржа: свои заявки, чужие заявки и последние сделки. */
+  market: {
+    myOrders: Array<{ side: string; resource: string; amount: number; price: number }>;
+    book: Array<{ side: string; resource: string; amount: number; price: number }>;
+    lastTrades: Array<{ resource: string; amount: number; price: number }>;
+  };
+  /** Свои бои: чем кончились и что принесли. */
+  battles: Array<{ role: string; against: string; outcome: string; loot: number }>;
   /** Что случилось с прошлого раза: набеги на бота, потери, прилеты. */
   events: string[];
+  /** Чем кончились прошлые решения — журнал, а не состояние. */
+  journal: string[];
 }
 
-const STRATEGY_SYSTEM = `Ты — командир в космической экономической стратегии. Твоя задача: написать план развития на ближайшие часы.
+/** Что модель вернула: курс и поступки. */
+export interface BotDecision {
+  plan: BotPlan;
+  directives: BotDirective[];
+}
+
+const STRATEGY_SYSTEM = `Ты — командир в космической экономической стратегии. Ты принимаешь решения за свою колонию: развиваешь ее, торгуешь, обороняешься и воюешь.
 
 Правила мира:
 - Ресурсы: руда (ore), полимеры (polymers), плазма (plasma). Общий лимит склада на все три.
@@ -64,19 +99,36 @@ const STRATEGY_SYSTEM = `Ты — командир в космической э�
 {
   "budget": {"economy": 0.4, "research": 0.2, "fleet": 0.3, "defense": 0.1},
   "researchOrder": ["ENERGY_TECH", "MINING_TECH"],
+  "buildingFocus": ["PLASMA_REACTOR", "SHIPYARD"],
   "fleetMix": {"LIGHT_FIGHTER": 0.4, "CRUISER": 0.6},
   "defenseMix": {"CANNON": 0.7, "LASER": 0.3},
   "colonyAmbition": 3,
   "raidAdvantage": 1.8,
-  "note": "одна фраза о замысле"
+  "note": "одна фраза о замысле",
+  "directives": []
 }
 
-budget — доли дохода по направлениям, в сумме около единицы. На развитие (economy) нельзя меньше трети: флот, съевший собственную экономику, останавливает бота насовсем.
+КУРС — он держится до следующего решения:
+budget — доли дохода по направлениям, в сумме около единицы. На развитие (economy) нельзя меньше трети: флот, съевший собственную экономику, останавливает насовсем.
 researchOrder — приоритет веток: первая качается выше остальных.
+buildingFocus — какие здания тянуть вперед прочих. Смотри на перекосы: если какого-то ресурса почти нет, а его добыча отстает — это сюда.
 fleetMix и defenseMix — желаемые пропорции по стоимости.
 colonyAmbition — сколько колоний хочешь всего.
-raidAdvantage — во сколько раз твой флот должен превосходить цель, чтобы лететь. Меньше 1.5 — риск потерять все.
-note — по-русски, коротко.`;
+raidAdvantage — во сколько раз твой флот должен превосходить цель, чтобы лететь.
+
+ПОСТУПКИ — разовые, в поле directives. Максимум четыре за раз, можно ноль:
+{"kind":"ATTACK","planetId":"...","why":"..."} — набег на разведанную цель
+{"kind":"PEACE","commanderId":"...","why":"..."} — предложить мир
+{"kind":"COLONIZE","planetId":"...","why":"..."} — занять свободную планету
+{"kind":"HARVEST","planetId":"...","why":"..."} — собрать поле обломков
+{"kind":"SELL","resource":"ORE","amount":1000,"price":12,"why":"..."} — выставить на продажу
+{"kind":"BUY","resource":"POLYMERS","amount":500,"price":9,"why":"..."} — купить
+{"kind":"MESSAGE","commanderId":"...","subject":"...","body":"...","why":"..."} — написать игроку
+
+Называть можно ТОЛЬКО то, что есть в сводке: planetId из neighbours, freePlanets или debris, commanderId из neighbours. Выдуманное будет отброшено.
+Рисковать можно — иногда проиграть не страшно. Но лететь на цель, которая сильнее втрое, бессмысленно.
+Писать игрокам стоит по поводу: объявил войну, предлагаешь мир или сделку, отвечаешь на разгром. Не чаще пары писем в сутки одному.
+note и все why — по-русски, коротко.`;
 
 /** Характер задает не только числа, но и тон: он уходит в промпт отдельно. */
 function characterBrief(character: BotCharacter): string {
@@ -90,14 +142,30 @@ function characterBrief(character: BotCharacter): string {
 export async function askStrategy(
   character: BotCharacter,
   brief: BotBrief,
-): Promise<BotPlan | null> {
+  snapshot: BotSnapshot,
+  /** Что вырвало модель из расписания: бой, война, потеря. Пусто — плановый заход. */
+  shock: string | null,
+): Promise<BotDecision | null> {
   if (!llmEnabled()) return null;
+
+  const occasion = shock
+    ? `Случилось: ${shock}. Реши, что с этим делать.`
+    : 'Плановый пересмотр. Если менять нечего, оставь курс и не выдумывай поступков.';
 
   const raw = await askJson(
     `${STRATEGY_SYSTEM}\n\n${characterBrief(character)}`,
-    `Мое положение:\n${JSON.stringify(brief)}\n\nНапиши план.`,
+    `Мое положение:\n${JSON.stringify(brief)}\n\n${occasion}`,
   );
-  return parsePlan(raw, character);
+  if (raw === null) return null;
+
+  const plan = parsePlan(raw, character);
+  if (!plan) return null;
+
+  const directives = parseDirectives(
+    (raw as Record<string, unknown>)['directives'],
+    snapshot,
+  );
+  return { plan, directives };
 }
 
 const DIPLOMAT_SYSTEM = `Ты — командир в космической экономической стратегии, отвечаешь на письмо другого игрока.

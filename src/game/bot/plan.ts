@@ -12,6 +12,7 @@
  * приоритеты, а цены, сроки и бой остаются на сервере (правило 3). Худшее,
  * что может сделать испорченный план, — заставить бота играть глупо.
  */
+import { BUILDING_TYPES, type BuildingType } from '../rules.js';
 import { DEFENSE_TYPES, type DefenseType } from '../defenses.js';
 import { SHIP_TYPES, type ShipType } from '../ships.js';
 import { TECHNOLOGY_TYPES, type TechnologyType } from '../techTree.js';
@@ -21,6 +22,15 @@ import { personality, type BotCharacter, type BotPersonality } from './personali
 export interface BotPlan {
   budget: BotPersonality['budget'];
   researchOrder: TechnologyType[];
+  /**
+   * Какие здания тянуть вперед прочих.
+   *
+   * Рычаг, которого модели не хватало: обе поломки, найденные наблюдением, —
+   * мертвый плазменный реактор и застрявшая верфь — сидели именно в выборе
+   * здания, куда план не дотягивался. Модель видела оба факта в сводке
+   * и не могла сделать с ними ничего.
+   */
+  buildingFocus: BuildingType[];
   fleetMix: Partial<Record<ShipType, number>>;
   defenseMix: Partial<Record<DefenseType, number>>;
   colonyAmbition: number;
@@ -150,6 +160,7 @@ export function parsePlan(raw: unknown, character: BotCharacter): BotPlan | null
   return {
     budget: normalizeBudget(source['budget'], base.budget),
     researchOrder: knownList(source['researchOrder'], TECHNOLOGY_TYPES, base.researchOrder),
+    buildingFocus: knownList(source['buildingFocus'], BUILDING_TYPES, base.buildingFocus),
     fleetMix: knownMix(source['fleetMix'], SHIP_TYPES, base.fleetMix),
     defenseMix: knownMix(source['defenseMix'], DEFENSE_TYPES, base.defenseMix),
     // Потолок амбиций жесткий: слоты колоний все равно ограничены астрофизикой,
@@ -172,6 +183,7 @@ export function withPlan(character: BotCharacter, plan: BotPlan | null): BotPers
     ...base,
     budget: plan.budget,
     researchOrder: plan.researchOrder,
+    buildingFocus: plan.buildingFocus,
     fleetMix: plan.fleetMix,
     defenseMix: plan.defenseMix,
     colonyAmbition: plan.colonyAmbition,

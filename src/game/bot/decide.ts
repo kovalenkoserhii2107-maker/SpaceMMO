@@ -110,6 +110,14 @@ export interface BotMarketRef {
   reference: number;
 }
 
+/** Поле обломков над планетой: их видно всем и туманом войны не скрывается. */
+export interface BotDebrisField {
+  planetId: string;
+  ore: number;
+  polymers: number;
+  distance: number;
+}
+
 export interface BotSnapshot {
   character: BotCharacter;
   credits: number;
@@ -122,6 +130,8 @@ export interface BotSnapshot {
   freePlanets: BotFreePlanet[];
   raidTargets: BotRaidTarget[];
   market: BotMarketRef[];
+  /** Поля обломков поблизости — цель для переработчика. */
+  debrisFields: BotDebrisField[];
   /**
    * Заявки бота, которые уже стоят в стакане.
    *
@@ -984,6 +994,7 @@ export function emptyBotSnapshot(character: BotCharacter): BotSnapshot {
     freePlanets: [],
     raidTargets: [],
     market: [],
+    debrisFields: [],
     openOrders: [],
     colonizing: false,
   };

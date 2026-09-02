@@ -21,6 +21,7 @@ import {
 } from '../src/game/bot/decide.js';
 import { NEWBIE_SHIELD_DAYS, BOT_PERSONALITIES, personality } from '../src/game/bot/personality.js';
 import { parsePlan, withPlan } from '../src/game/bot/plan.js';
+import { hopeless, parseDirectives } from '../src/game/bot/directives.js';
 import {
   buildSeconds,
   emptyLevels,
@@ -989,6 +990,88 @@ console.log('\n=== 7. План модели проверяется как нед
     'без плана бот играет по статичному характеру',
     JSON.stringify(empty) === JSON.stringify(personality('TRADER')),
   );
+}
+
+/* ------------------------- 8. Директивы модели ------------------------- */
+
+console.log('\n=== 8. Поручения модели проверяются по сводке ===');
+
+{
+  const world = snapshotWith({
+    raidTargets: [
+      { planetId: 'враг-1', commanderId: 'сосед-1', accountAgeDays: 30, knownStrength: 500, distance: 2 },
+    ],
+    freePlanets: [{ planetId: 'пустая-1', systemId: 's1', distance: 3 }],
+    debrisFields: [{ planetId: 'враг-1', ore: 5000, polymers: 3000, distance: 2 }],
+  });
+
+  /*
+   * Главное свойство: модель распоряжается только тем, что ей показали.
+   * Выдуманная планета не доедет до боя, потому что ее не с чем сопоставить.
+   */
+  const invented = parseDirectives(
+    [
+      { kind: 'ATTACK', planetId: 'планета-которой-нет', why: 'хочу' },
+      { kind: 'PEACE', commanderId: 'кто-то-выдуманный', why: 'хочу' },
+      { kind: 'COLONIZE', planetId: 'тоже-выдумка', why: 'хочу' },
+      { kind: 'MESSAGE', commanderId: 'призрак', subject: 'привет', body: 'текст', why: 'хочу' },
+    ],
+    world,
+  );
+  check('выдуманные цели и адресаты отброшены', invented.length === 0, `осталось ${invented.length}`);
+
+  const real = parseDirectives(
+    [
+      { kind: 'ATTACK', planetId: 'враг-1', why: 'слабее меня' },
+      { kind: 'COLONIZE', planetId: 'пустая-1', why: 'рядом' },
+      { kind: 'HARVEST', planetId: 'враг-1', why: 'поле обломков' },
+      { kind: 'MESSAGE', commanderId: 'сосед-1', subject: 'Ультиматум', body: 'Уходи', why: 'давлю' },
+    ],
+    world,
+  );
+  check('названное в сводке проходит', real.length === 4, real.map((d) => d.kind).join(', '));
+}
+
+{
+  const world = snapshotWith({
+    raidTargets: [
+      { planetId: 'p', commanderId: 'c', accountAgeDays: 30, knownStrength: 100, distance: 1 },
+    ],
+  });
+  const many = parseDirectives(
+    Array.from({ length: 12 }, () => ({ kind: 'ATTACK', planetId: 'p', why: 'еще' })),
+    world,
+  );
+  check('список поручений ограничен', many.length <= 4, `${many.length} штук`);
+}
+
+{
+  const world = snapshotWith({});
+  const junk = parseDirectives(
+    [
+      { kind: 'SELL', resource: 'ЗОЛОТО', amount: 100, price: 5, why: '' },
+      { kind: 'SELL', resource: 'ORE', amount: -50, price: 5, why: '' },
+      { kind: 'SELL', resource: 'ORE', amount: 100, price: 0, why: '' },
+      { kind: 'ВЗОРВАТЬ_ВСЕ', why: '' },
+      'не объект',
+    ],
+    world,
+  );
+  check('мусор в заявках не проходит', junk.length === 0, `${junk.length} штук`);
+
+  const good = parseDirectives([{ kind: 'SELL', resource: 'ORE', amount: 100, price: 12, why: 'излишек' }], world);
+  check('корректная заявка проходит', good.length === 1 && good[0]?.kind === 'SELL');
+}
+
+{
+  /*
+   * Риск модели позволен — игрок тоже рискует, и бот, который никогда
+   * не проигрывает, выглядит машиной. Но пол есть.
+   */
+  check('втрое сильнее — безнадежно', hopeless(1000, 3001));
+  check('вдвое сильнее — можно рискнуть', !hopeless(1000, 2000));
+  check('без флота лететь нельзя', hopeless(0, 1));
+  check('неразведанная цель безнадежна по определению', hopeless(1_000_000, null));
 }
 
 /* ------------------------- Итог ------------------------- */
