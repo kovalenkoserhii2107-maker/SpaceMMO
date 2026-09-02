@@ -20,7 +20,7 @@ import { cancelOrder, fillOrder, placeOrder, tradeWithStation } from '../../serv
 // той же величиной показывает игроку, дорого сейчас или дешево.
 import { REFERENCE_PRICE } from '../market.js';
 import { deliver } from '../../services/mailService.js';
-import { SHIP_TYPES, emptyShipCounts, type ShipCounts } from '../ships.js';
+import { SHIP_TYPES, SQUADRON_TYPES, emptyShipCounts, type ShipCounts } from '../ships.js';
 import { fleetCapacity } from '../fleets.js';
 import { storageCapacities } from '../rules.js';
 import { storageCapacity as hubCapacity } from '../market.js';
@@ -435,6 +435,16 @@ async function buildBrief(
       polymers: Math.round(field.polymers),
       distance: Math.round(field.distance * 10) / 10,
     })),
+    ready: {
+      colonyShip: capital.ships.COLONY_SHIP,
+      recycler: capital.ships.RECYCLER,
+      warships: SQUADRON_TYPES.reduce((sum, type) => sum + capital.ships[type], 0),
+    },
+    hub: {
+      ore: Math.round(snapshot.hubStorage.ore),
+      polymers: Math.round(snapshot.hubStorage.polymers),
+      free: Math.round(snapshot.hubStorage.free),
+    },
     market: await marketBrief(commander.commanderId),
     battles: await battleBrief(commander.commanderId),
     events: await recentEvents(commander.commanderId),
