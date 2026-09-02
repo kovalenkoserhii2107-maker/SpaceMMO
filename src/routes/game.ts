@@ -9,8 +9,10 @@ import { buildGalaxyMap, buildSystemMap } from '../services/mapService.js';
 import { prisma } from '../db/prisma.js';
 import { attackWarning } from '../services/warService.js';
 import { getLeaderboard } from '../services/scoreService.js';
+import { getBuildingProjection } from '../services/buildingService.js';
 import { currentCommander, requireAuth, requireCommander } from './middleware.js';
 import { amountsOrNull, cargoOrNull, positiveInt, shipCountsOrNull } from './validation.js';
+import type { BuildingProjection } from '../types/socket.js';
 import type {
   ActionResponse,
   ErrorResponse,
@@ -41,6 +43,30 @@ gameRouter.get('/state', async (req, res: Response<StateResponse | ErrorResponse
 });
 
 /** Поставить здание в стройку. */
+/**
+ * Подробности постройки: описание и десять уровней вперед.
+ *
+ * Отдельным запросом, а не полем снимка: таблица нужна только на открытой
+ * карточке, а снимок уходит в сокет каждую секунду.
+ */
+gameRouter.get(
+  '/bases/:baseId/buildings/:type',
+  async (req, res: Response<BuildingProjection | ErrorResponse>) => {
+    const type = req.params.type;
+    if (!isBuildingType(type)) {
+      res.status(400).json({ error: 'Неизвестная постройка' });
+      return;
+    }
+
+    const projection = await getBuildingProjection(currentCommander(req).id, req.params.baseId, type);
+    if (!projection) {
+      res.status(404).json({ error: 'База не найдена' });
+      return;
+    }
+    res.json(projection);
+  },
+);
+
 gameRouter.post('/bases/:baseId/build', async (req, res: Response<ActionResponse | ErrorResponse>) => {
   const type = (req.body as { type?: unknown } | undefined)?.type;
   if (!isBuildingType(type)) {

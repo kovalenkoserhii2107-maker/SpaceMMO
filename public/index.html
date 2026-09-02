@@ -680,6 +680,26 @@
     </div>
   </section>
 
+  <!--
+    Подробности постройки: большой арт, описание и десять уровней вперед.
+    Не модальное окно браузера, а обычная панель поверх страницы — правило
+    интерфейса запрещает alert/confirm/prompt, а не наложение.
+  -->
+  <div class="detail-scrim" id="detail-scrim" hidden>
+    <section class="detail-panel" role="dialog" aria-modal="true" aria-labelledby="detail-title">
+      <header class="detail-head">
+        <div class="detail-art" id="detail-art"></div>
+        <div class="detail-intro">
+          <h3 id="detail-title"></h3>
+          <p class="detail-level" id="detail-level"></p>
+          <p class="detail-desc" id="detail-desc"></p>
+        </div>
+        <button type="button" class="detail-close" id="detail-close" aria-label="Закрыть">✕</button>
+      </header>
+      <div class="detail-body" id="detail-body"></div>
+    </section>
+  </div>
+
   <script src="/socket.io/socket.io.js"></script>
   <script src="/app.js"></script>
 </body>

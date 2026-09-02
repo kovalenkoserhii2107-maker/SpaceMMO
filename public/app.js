@@ -20,6 +20,13 @@
   const $ = (id) => document.getElementById(id);
   const el = {
     dashboard: $('dashboard'),
+    detailScrim: $('detail-scrim'),
+    detailArt: $('detail-art'),
+    detailTitle: $('detail-title'),
+    detailLevel: $('detail-level'),
+    detailDesc: $('detail-desc'),
+    detailBody: $('detail-body'),
+    detailClose: $('detail-close'),
     layout: document.querySelector('.layout'),
     sidebar: $('sidebar'),
     navToggle: $('nav-toggle'),
@@ -231,6 +238,16 @@
     credits: 'Криптогривна',
     efficiency: 'Эффективность шахт',
   };
+
+  /**
+   * Энергия печатается с десятыми, пока их видно.
+   * Расход шахты первого уровня — 1.1, и округление до единицы стирало бы
+   * разницу между первым и вторым уровнем целиком.
+   */
+  function fmtEnergy(value) {
+    const number = Number(value) || 0;
+    return Math.abs(number) < 10 ? number.toFixed(1).replace('.', ',') : fmt(Math.round(number));
+  }
 
   function icon(name, extraClass = '') {
     const label = RESOURCE_NAMES[name] || name;
@@ -895,7 +912,11 @@
     el.resOre.textContent = fmt(base.resources.ore);
     el.resPolymers.textContent = fmt(base.resources.polymers);
     el.resPlasma.textContent = fmt(base.resources.plasma);
-    el.resEnergy.textContent = fmt(base.energy.available);
+    // Показываем расход, а не остаток. Остаток вел себя наоборот интуиции:
+    // новая шахта увеличивает потребление, а число на экране падало — и это
+    // читалось как «шахты уменьшают расход». Расход растет вместе с базой,
+    // и по нему сразу видно, когда пора ставить станцию.
+    el.resEnergy.textContent = fmt(base.energy.usage);
 
     // На полном складе шахты стоят: показывать их проектную скорость —
     // значит спорить с надписью «добыча остановлена» прямо над ней.
@@ -911,6 +932,10 @@
     el.resAntimatter.textContent = fmt(base.resources.antimatter);
     el.rateAntimatter.textContent = `+${base.productionPerSecond.antimatter.toFixed(3)}/с`;
     el.rateEnergy.textContent = `из ${fmt(base.energy.output)}`;
+
+    // Те же три состояния, что и у полосы склада: запас, впритык, дефицит.
+    const load = base.energy.output > 0 ? base.energy.usage / base.energy.output : 0;
+    el.resEnergy.style.color = load >= 1 ? 'var(--err)' : load >= 0.85 ? 'var(--warn)' : '';
 
     const efficiency = Math.round(base.energy.efficiency * 100);
     el.resEfficiency.textContent = `${efficiency}%`;
@@ -1142,8 +1167,23 @@
       el.defenses.innerHTML = '';
 
       for (const building of base.buildings) {
-        cards.buildings.set(building.type, createActionCard(el.buildings, building.label, '', () =>
-          send(`/api/bases/${base.baseId}/build`, { type: building.type }), building.type, 'building'));
+        const card = createActionCard(el.buildings, building.label, '', () =>
+          send(`/api/bases/${base.baseId}/build`, { type: building.type }), building.type, 'building');
+        // Обложка открывает подробности, кнопка строит. Разные действия
+        // на одной карточке, поэтому кликом различаются и зоны.
+        card.article.classList.add('detailed');
+        card.cover.tabIndex = 0;
+        card.cover.setAttribute('role', 'button');
+        card.cover.setAttribute('aria-label', `${building.label}: подробности`);
+        const open = () => openBuildingDetail(base.baseId, building.type);
+        card.cover.addEventListener('click', open);
+        card.cover.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            open();
+          }
+        });
+        cards.buildings.set(building.type, card);
       }
       for (const tech of base.technologies) {
         cards.technologies.set(tech.tech, createActionCard(el.technologies, tech.label, tech.description, () =>
@@ -1206,16 +1246,20 @@
     const combat = document.createElement('div');
     combat.className = 'combat-line';
 
+    const energy = document.createElement('div');
+    energy.className = 'energy-line';
+    energy.hidden = true;
+
     const time = document.createElement('div');
     time.className = 'time';
 
     const reqs = document.createElement('div');
     reqs.className = 'reqs';
 
-    article.append(header, desc, combat, cost, time, reqs);
+    article.append(header, desc, combat, energy, cost, time, reqs);
     container.appendChild(article);
 
-    return { article, level, costOre, costPolymers, costPlasma, combat, time, reqs };
+    return { article, cover: header, level, costOre, costPolymers, costPlasma, combat, energy, time, reqs };
   }
 
   function createActionCard(container, title, description, onClick, type, kind) {
@@ -1299,6 +1343,28 @@
     card.level.textContent = `Ур. ${building.level}`;
     // Тем же местом, что и боевой профиль у кораблей: короткая строка эффекта.
     card.combat.textContent = building.effect || '';
+
+    /*
+     * Расход энергии показываем всегда и у всех — даже там, где он нулевой,
+     * и даже у станции, которая энергию только дает. Строка занимает место
+     * в любом случае: если у одной карточки ее не будет, у нее уедут вверх
+     * цена и время, и сравнивать соседние карточки станет нечем.
+     *
+     * Дефицит энергии режет добычу на всех шахтах разом, поэтому цена решения
+     * должна быть видна до постройки, а не после того, как просел КПД.
+     */
+    if (card.energy) {
+      const { usage, nextUsage } = building.energy;
+      const grow = nextUsage - usage;
+      // Оболочка карточки прячет строку по умолчанию: она есть только
+      // у построек, у кораблей и техники своего расхода нет.
+      card.energy.hidden = false;
+      card.energy.innerHTML =
+        nextUsage <= 0
+          ? `${icon('energy', 'sm')} <span>энергию не потребляет</span>`
+          : `${icon('energy', 'sm')} <span>расход ${fmtEnergy(usage)} → ${fmtEnergy(nextUsage)}</span>` +
+            (grow > 0 ? ` <span class="grow">+${fmtEnergy(grow)}</span>` : '');
+    }
     fillCost(card, building.cost, base.resources);
     card.time.textContent = `Время постройки: ${fmtTime(building.seconds)}`;
     fillRequirements(card, building.requirements);
@@ -1475,6 +1541,96 @@
   function renderQueue(base) {
     renderUnitQueue(el.shipQueue, base.shipQueue, 'Очередь верфи пуста');
   }
+
+  /* ------------------------- Подробности постройки ------------------------- */
+
+  /*
+   * Таблица на десять уровней вперед. Приросты в ней считаются от текущего
+   * уровня, а не от предыдущей строки: игрок решает «стоит ли идти на три
+   * уровня вверх», и ему нужен итог этого решения целиком, а не разница
+   * между двумя одинаково гипотетическими будущими.
+   *
+   * Данные приходят отдельным запросом, а не в снимке: снимок уходит каждую
+   * секунду, а таблица нужна, только пока карточка открыта.
+   */
+  async function openBuildingDetail(baseId, type) {
+    el.detailScrim.hidden = false;
+    el.detailBody.innerHTML = '<p class="detail-note">Считаю…</p>';
+    el.detailTitle.textContent = '';
+    el.detailLevel.textContent = '';
+    el.detailDesc.textContent = '';
+    el.detailArt.innerHTML = '';
+    el.detailClose.focus();
+
+    const { ok, data } = await api(`/api/bases/${baseId}/buildings/${type}`);
+    // Панель могли закрыть, пока считался ответ, — тогда рисовать нечего.
+    if (el.detailScrim.hidden) return;
+    if (!ok) {
+      el.detailBody.innerHTML = `<p class="detail-note">${data.error || 'Не удалось загрузить'}</p>`;
+      return;
+    }
+
+    el.detailTitle.textContent = data.label;
+    el.detailLevel.textContent =
+      data.level > 0 ? `Сейчас уровень ${data.level}` : 'Еще не построено';
+    el.detailDesc.textContent = data.description;
+    el.detailArt.appendChild(artNode(data.type, data.label, 'building'));
+    el.detailBody.innerHTML = detailTable(data);
+  }
+
+  function detailTable(data) {
+    const showOutput = data.outputLabel !== null;
+    const head =
+      '<tr><th>Уровень</th>' +
+      (showOutput ? `<th>${data.outputLabel}</th><th>прирост</th>` : '') +
+      '<th>энергия</th><th>прирост</th><th>цена</th><th>время</th></tr>';
+
+    const rows = data.rows
+      .map((row, index) => {
+        const cost =
+          [
+            row.cost.ore ? `${icon('ore', 'sm')} ${fmt(row.cost.ore)}` : '',
+            row.cost.polymers ? `${icon('polymers', 'sm')} ${fmt(row.cost.polymers)}` : '',
+            row.cost.plasma ? `${icon('plasma', 'sm')} ${fmt(row.cost.plasma)}` : '',
+          ]
+            .filter(Boolean)
+            .join(' ') || '—';
+
+        const output = showOutput
+          ? `<td>${fmt(row.output)}</td><td class="gain">${row.outputGain > 0 ? '+' + fmt(row.outputGain) : '—'}</td>`
+          : '';
+
+        return (
+          `<tr class="${index === 0 ? 'next' : ''}">` +
+          `<td>${row.level}</td>` +
+          output +
+          `<td>${fmtEnergy(row.energy)}</td>` +
+          `<td class="drain">${row.energyGain > 0 ? '+' + fmtEnergy(row.energyGain) : '—'}</td>` +
+          `<td>${cost}</td><td>${fmtTime(row.seconds)}</td></tr>`
+        );
+      })
+      .join('');
+
+    return (
+      `<div class="detail-scroll"><table class="detail-table"><thead>${head}</thead><tbody>${rows}</tbody></table></div>` +
+      '<p class="detail-note">Приросты показаны относительно текущего уровня, а не предыдущей строки: ' +
+      'так видно итог всего скачка, а не шаг между двумя будущими.</p>'
+    );
+  }
+
+  function closeBuildingDetail() {
+    el.detailScrim.hidden = true;
+    el.detailBody.innerHTML = '';
+  }
+
+  el.detailClose.addEventListener('click', closeBuildingDetail);
+  // Клик мимо панели закрывает ее — так же, как затемнение под меню на телефоне.
+  el.detailScrim.addEventListener('click', (event) => {
+    if (event.target === el.detailScrim) closeBuildingDetail();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !el.detailScrim.hidden) closeBuildingDetail();
+  });
 
   async function send(url, body, method = 'POST') {
     try {

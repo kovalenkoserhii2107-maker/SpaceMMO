@@ -16,8 +16,39 @@ export interface BuildingCard {
   requirements: Requirement[];
   /** Что даст следующий уровень: заполнено там, где эффект неочевиден. */
   effect: string | null;
+  /**
+   * Энергия: сколько постройка ест сейчас и сколько станет есть уровнем выше.
+   * Отдельным полем, а не строкой в `effect`, потому что показывается всегда
+   * и у всех — расход есть даже у тех зданий, чей эффект описать нечем.
+   */
+  energy: { usage: number; nextUsage: number };
   /** На базе уже идет стройка. */
   busy: boolean;
+}
+
+/** Строка таблицы «что будет дальше»: один уровень постройки. */
+export interface BuildingProjectionRow {
+  level: number;
+  cost: ResourceAmounts;
+  seconds: number;
+  /** Добыча в час на этом уровне: пусто у зданий, которые ничего не добывают. */
+  output: number | null;
+  /** Прирост добычи относительно текущего уровня, а не предыдущего в таблице. */
+  outputGain: number | null;
+  energy: number;
+  /** Прирост расхода относительно текущего уровня. */
+  energyGain: number;
+}
+
+/** Карточка постройки в подробностях: описание, арт и десять уровней вперед. */
+export interface BuildingProjection {
+  type: BuildingType;
+  label: string;
+  description: string;
+  level: number;
+  /** Единица измерения выработки: «руда в час», «энергия», «вместимость». */
+  outputLabel: string | null;
+  rows: BuildingProjectionRow[];
 }
 
 export interface TechnologyCard {

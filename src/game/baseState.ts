@@ -15,6 +15,7 @@ import {
   systemModifiers,
   type BaseStock,
   energyEfficiency,
+  buildingEnergyUsage,
   energyOutput,
   energyUsage,
   hasEnoughResources,
@@ -356,6 +357,10 @@ function buildingCard(
     canAfford: hasEnoughResources(state.resources, cost),
     requirements: missing,
     effect: buildingEffect(type, state, commander, nextLevel),
+    energy: {
+      usage: round(buildingEnergyUsage(type, state.levels[type])),
+      nextUsage: round(buildingEnergyUsage(type, nextLevel)),
+    },
     busy: state.buildJob !== null,
   };
 }
@@ -404,14 +409,16 @@ function buildingEffect(
     // иначе «ускорение ×1.25» ничего не говорит о реальном сроке.
     const now = researchSeconds('ENERGY_TECH', commander.techs.ENERGY_TECH + 1, level, commander.techs, modifiers);
     const after = researchSeconds('ENERGY_TECH', commander.techs.ENERGY_TECH + 1, nextLevel, commander.techs, modifiers);
-    return `исследования быстрее: ${fmtSeconds(now)} → ${fmtSeconds(after)}`;
+    return `исследования: ${fmtSeconds(now)} → ${fmtSeconds(after)}`;
   }
 
   if (type === 'SHIPYARD') {
     const speedup = buildSpeedup(commander.techs);
     const now = shipUnitSeconds('LIGHT_FIGHTER', level, modifiers, speedup);
     const after = shipUnitSeconds('LIGHT_FIGHTER', nextLevel, modifiers, speedup);
-    return `сборка быстрее: истребитель ${fmtSeconds(now)} → ${fmtSeconds(after)}`;
+    // Формулировка короткая намеренно: в три строки она ломала выравнивание
+    // ряда карточек, а мерится эффект все равно на истребителе.
+    return `сборка кораблей: ${fmtSeconds(now)} → ${fmtSeconds(after)}`;
   }
 
   const production = (levels: BuildingLevels) =>
