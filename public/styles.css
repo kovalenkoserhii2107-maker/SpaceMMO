@@ -2126,8 +2126,8 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 }
 
 .detail-panel {
-  width: min(860px, 100%);
-  max-height: min(86vh, 900px);
+  width: min(980px, 100%);
+  max-height: min(90vh, 960px);
   display: flex;
   flex-direction: column;
   border: 1px solid var(--line);
@@ -2145,15 +2145,20 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 
 .detail-head {
   display: grid;
-  grid-template-columns: 132px 1fr auto;
-  gap: 16px;
+  /*
+   * Иллюстрация крупная: это детальная панорама объекта, и в маленьком
+   * квадрате она читалась серым пятном — рассмотреть в ней было нечего.
+   * Подпись занимает остаток строки, кнопка закрытия прижата к краю.
+   */
+  grid-template-columns: minmax(220px, 300px) 1fr auto;
+  gap: 20px;
   align-items: start;
-  padding: 18px;
+  padding: 20px;
   border-bottom: 1px solid var(--line);
   background: linear-gradient(135deg, rgba(77, 210, 255, 0.07), rgba(157, 123, 255, 0.07));
 }
 
-/* Тот же строгий квадрат, что и на карточке, только крупнее. */
+/* Тот же строгий квадрат, что и на карточке, только заметно крупнее. */
 .detail-art {
   aspect-ratio: 1 / 1;
   border: 1px solid var(--line);
@@ -2225,8 +2230,28 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .detail-table .drain { color: var(--warn); }
 .detail-note { margin: 12px 0 0; font-size: 12px; color: var(--muted); }
 
+/*
+ * На невысоком экране крупная иллюстрация съедает место у таблицы, ради
+ * которой панель и открывают: на 620 пикселях высоты видно пять строк
+ * из одиннадцати. Ширина здесь ни при чем, поэтому уступка по высоте.
+ */
+@media (max-height: 760px) {
+  .detail-head { grid-template-columns: minmax(150px, 190px) 1fr auto; padding: 16px; }
+}
+
 @media (max-width: 640px) {
   .detail-scrim { padding: 12px; }
-  .detail-head { grid-template-columns: 84px 1fr auto; gap: 12px; padding: 14px; }
+  /*
+   * На узком экране картинка встает над текстом во всю ширину, а не жмется
+   * в колонку: 84 пикселя не дают рассмотреть ничего, а ширины хватает.
+   * Кнопка закрытия уезжает в первую строку рядом с иллюстрацией.
+   */
+  .detail-head {
+    grid-template-columns: 1fr auto;
+    gap: 14px;
+    padding: 14px;
+  }
+  .detail-art { grid-column: 1 / -1; max-height: 46vh; }
+  .detail-art img { object-position: center; }
   .detail-body { padding: 12px; }
 }
