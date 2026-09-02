@@ -115,6 +115,14 @@ export interface BotSnapshot {
   freePlanets: BotFreePlanet[];
   raidTargets: BotRaidTarget[];
   market: BotMarketRef[];
+  /**
+   * Заявки бота, которые уже стоят в стакане.
+   *
+   * Без них бот выставлял бы одну и ту же заявку каждые сорок пять секунд:
+   * условие «запас ниже четверти склада» держится часами, а ордер его
+   * не меняет. За сутки это десятки одинаковых заявок и вся касса в залоге.
+   */
+  openOrders: Array<{ side: 'BUY' | 'SELL'; resource: 'ORE' | 'POLYMERS' }>;
   /** Уже отправлен ли колониальный рейс: два на одну планету не нужны. */
   colonizing: boolean;
 }
@@ -711,6 +719,10 @@ function tradeIntents(snapshot: BotSnapshot, capital: BotBaseSnapshot): BotInten
   const capacity = storageCapacity(capital.levels);
   const stock = capital.resources;
 
+  /** Заявка этой стороны по этому ресурсу уже стоит в стакане. */
+  const standing = (side: 'BUY' | 'SELL', resource: 'ORE' | 'POLYMERS'): boolean =>
+    snapshot.openOrders.some((order) => order.side === side && order.resource === resource);
+
   for (const ref of snapshot.market) {
     if (ref.reference <= 0) continue;
     const held = ref.resource === 'ORE' ? stock.ore : stock.polymers;
@@ -718,7 +730,7 @@ function tradeIntents(snapshot: BotSnapshot, capital: BotBaseSnapshot): BotInten
     // Продаем то, чего накопилось больше половины склада: это уже излишек,
     // и он рискует упереться в потолок и остановить добычу.
     const surplus = held - capacity * 0.5;
-    if (surplus > 0) {
+    if (surplus > 0 && !standing('SELL', ref.resource)) {
       const amount = Math.floor(surplus * profile.trade.sellShare);
       if (amount > 0) {
         intents.push({
@@ -734,7 +746,7 @@ function tradeIntents(snapshot: BotSnapshot, capital: BotBaseSnapshot): BotInten
 
     // Покупаем на криптогривну то, чего меньше четверти склада, — но только
     // в пределах трети баланса, чтобы один ордер не выгреб всю кассу.
-    if (held < capacity * 0.25 && snapshot.credits > 0) {
+    if (held < capacity * 0.25 && snapshot.credits > 0 && !standing('BUY', ref.resource)) {
       const price = Math.round(ref.reference * (1 - profile.trade.margin));
       const amount = Math.floor(Math.min(snapshot.credits / 3 / Math.max(price, 1), capacity * 0.25));
       if (amount > 0 && price > 0) {
@@ -767,6 +779,7 @@ export function emptyBotSnapshot(character: BotCharacter): BotSnapshot {
     freePlanets: [],
     raidTargets: [],
     market: [],
+    openOrders: [],
     colonizing: false,
   };
 }

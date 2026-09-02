@@ -140,8 +140,12 @@ adminRouter.get('/bots', async (_req, res: Response<AdminBotsResponse>) => {
 
 /** Завести бота: позывной и характер. Стартовая колония выдается как игроку. */
 adminRouter.post('/bots', async (req, res: Response<ActionResponse | ErrorResponse>) => {
-  const body = (req.body ?? {}) as { nickname?: unknown; character?: unknown };
-  const result = await createBot(body.nickname, body.character);
+  const body = (req.body ?? {}) as {
+    nickname?: unknown;
+    character?: unknown;
+    systemId?: unknown;
+  };
+  const result = await createBot(body.nickname, body.character, body.systemId);
   res.status(result.ok ? 200 : result.status).json(result.ok ? result : { error: result.error });
 });
 

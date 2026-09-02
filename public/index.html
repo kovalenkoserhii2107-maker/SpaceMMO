@@ -570,6 +570,40 @@
               <p class="storage-note">Выбери игрока в таблице, чтобы открыть его профиль.</p>
             </aside>
           </div>
+
+          <!-- Боты: обычные командиры, за которых ходит планировщик. -->
+          <h3 class="panel-title">Боты</h3>
+          <p class="storage-note">
+            Бот живет по тем же правилам, что и игрок: те же цены, те же сроки, то же место
+            в рейтинге. Войти в его учетную запись нельзя. Новичков младше трех суток
+            бот не атакует.
+          </p>
+
+          <div class="bot-form">
+            <label class="field">
+              <span>Позывной</span>
+              <input id="bot-nickname" type="text" placeholder="например, Хижак">
+            </label>
+            <label class="field">
+              <span>Характер</span>
+              <select id="bot-character"></select>
+            </label>
+            <label class="field">
+              <span>Система</span>
+              <select id="bot-system"></select>
+            </label>
+            <button type="button" class="primary" id="bot-create">Завести бота</button>
+          </div>
+          <p class="storage-note" id="bot-character-hint"></p>
+
+          <div class="admin-table-wrap">
+            <table class="admin-table">
+              <thead>
+                <tr><th>Позывной</th><th>Характер</th><th>Колоний</th><th>Счет</th><th>Последнее действие</th><th></th></tr>
+              </thead>
+              <tbody id="bot-rows"></tbody>
+            </table>
+          </div>
         </section>
 
         <!-- Управление шаблонами флотов -->

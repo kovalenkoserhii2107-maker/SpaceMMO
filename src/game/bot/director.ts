@@ -80,7 +80,7 @@ async function buildSnapshot(
   const home = bases[0]!;
   const homeGalaxy = home.galaxy;
 
-  const [freeRows, foreignRows, scans] = await Promise.all([
+  const [freeRows, foreignRows, scans, orders] = await Promise.all([
     prisma.planet.findMany({
       where: { base: null },
       select: { id: true, systemId: true, system: { select: { galaxyX: true, galaxyY: true } } },
@@ -99,6 +99,12 @@ async function buildSnapshot(
     prisma.planetScan.findMany({
       where: { commanderId: commander.commanderId },
       select: { planetId: true, data: true },
+    }),
+    // Открытые заявки: без них бот выставлял бы одну и ту же каждые
+    // сорок пять секунд — условие, которое ее породило, держится часами.
+    prisma.marketOrder.findMany({
+      where: { commanderId: commander.commanderId, remaining: { gt: 0 } },
+      select: { side: true, resource: true },
     }),
   ]);
 
@@ -153,6 +159,10 @@ async function buildSnapshot(
       { resource: 'ORE', reference: REFERENCE_PRICE.ORE },
       { resource: 'POLYMERS', reference: REFERENCE_PRICE.POLYMERS },
     ],
+    openOrders: orders.map((order) => ({
+      side: order.side as 'BUY' | 'SELL',
+      resource: order.resource as 'ORE' | 'POLYMERS',
+    })),
     colonizing: commander.fleets.some((fleet) => fleet.mission === 'COLONIZE'),
   };
 }

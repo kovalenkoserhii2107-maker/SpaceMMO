@@ -96,7 +96,18 @@ export async function listBots(): Promise<BotView[]> {
  * ни паролем, ни через Google. Стартовая колония выдается тем же способом,
  * что и живому игроку: бот начинает с нуля и по тем же правилам.
  */
-export async function createBot(rawNickname: unknown, rawCharacter: unknown): Promise<BotResult> {
+export async function createBot(
+  rawNickname: unknown,
+  rawCharacter: unknown,
+  /**
+   * Куда селить. Пусто — первая свободная планета галактики.
+   *
+   * Выбор системы нужен не для красоты: бот интересен рядом с живым игроком,
+   * а на другом конце карты он просто копит ресурсы, и проверить его поведение
+   * в бою и торговле нечем.
+   */
+  rawSystemId?: unknown,
+): Promise<BotResult> {
   const nickname = normalizeNickname(rawNickname);
   if (!nickname) {
     return { ok: false, error: 'Позывной: 3–24 символа, буквы, цифры, пробел, дефис', status: 400 };
@@ -108,15 +119,18 @@ export async function createBot(rawNickname: unknown, rawCharacter: unknown): Pr
   const taken = await prisma.commander.findUnique({ where: { nickname } });
   if (taken) return { ok: false, error: 'Позывной уже занят', status: 409 };
 
+  const systemId = typeof rawSystemId === 'string' && rawSystemId ? rawSystemId : null;
   const planet = await prisma.planet.findFirst({
-    where: { base: null },
+    where: { base: null, ...(systemId ? { systemId } : {}) },
     orderBy: [{ system: { galaxyX: 'asc' } }, { position: 'asc' }],
   });
   if (!planet) {
     return {
       ok: false,
-      error: 'В галактике нет свободных планет. Запустите генерацию: npm run generate',
-      status: 503,
+      error: systemId
+        ? 'В этой системе нет свободных планет'
+        : 'В галактике нет свободных планет. Запустите генерацию: npm run generate',
+      status: systemId ? 409 : 503,
     };
   }
 

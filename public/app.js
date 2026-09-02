@@ -143,6 +143,12 @@
     ratingRows: $('rating-rows'),
     adminDashboard: $('admin-dashboard'),
     adminRows: $('admin-rows'),
+    botNickname: $('bot-nickname'),
+    botCharacter: $('bot-character'),
+    botSystem: $('bot-system'),
+    botCreate: $('bot-create'),
+    botCharacterHint: $('bot-character-hint'),
+    botRows: $('bot-rows'),
     adminDetail: $('admin-detail'),
     mailButton: $('mail-button'),
     mailBadge: $('mail-badge'),
@@ -766,6 +772,7 @@
     if (name === 'admin') {
       void loadAdminList();
       void loadAdminDashboard();
+      void loadBots();
     }
     if (name === 'mail') {
       void loadMail();
@@ -5253,6 +5260,133 @@
     { key: 'fleetsInFlight', label: 'флотов в полете' },
     { key: 'syndicates', label: 'синдикатов' },
   ];
+
+  /* ------------------------- Боты ------------------------- */
+
+  const bots = { characters: [], systems: [] };
+
+  /**
+   * Список ботов и справочники к форме.
+   *
+   * Характеры приходят с сервера вместе с описаниями: клиент не должен знать,
+   * чем агрессор отличается от торговца, — это игровое правило, а не верстка.
+   */
+  async function loadBots() {
+    const result = await api('/api/admin/bots');
+    if (!result.ok) return;
+
+    bots.characters = result.data.characters || [];
+    if (!el.botCharacter.options.length) {
+      for (const item of bots.characters) {
+        const option = document.createElement('option');
+        option.value = item.id;
+        option.textContent = item.label;
+        el.botCharacter.appendChild(option);
+      }
+      syncBotHint();
+    }
+
+    // Системы берем с карты галактики: отдельного справочника для этого
+    // заводить незачем, а координаты игроку нужны, чтобы поселить бота рядом.
+    if (!bots.systems.length) {
+      const galaxy = await api('/api/galaxy');
+      if (galaxy.ok) {
+        bots.systems = galaxy.data.systems || [];
+        el.botSystem.innerHTML = '<option value="">Любая свободная планета</option>';
+        for (const system of bots.systems) {
+          const option = document.createElement('option');
+          option.value = system.systemId;
+          option.textContent =
+            `${system.name} (${system.galaxyX}:${system.galaxyY})` + (system.isHome ? ' — твоя' : '');
+          el.botSystem.appendChild(option);
+        }
+      }
+    }
+
+    renderBotRows(result.data.bots || []);
+  }
+
+  function syncBotHint() {
+    const chosen = bots.characters.find((item) => item.id === el.botCharacter.value);
+    el.botCharacterHint.textContent = chosen ? chosen.description : '';
+  }
+
+  function renderBotRows(list) {
+    el.botRows.innerHTML = '';
+    if (!list.length) {
+      const row = document.createElement('tr');
+      row.innerHTML = '<td colspan="6">Ботов пока нет</td>';
+      el.botRows.appendChild(row);
+      return;
+    }
+
+    for (const bot of list) {
+      const row = document.createElement('tr');
+      const when = bot.lastActionAt ? fmtTime(Math.round((Date.now() - bot.lastActionAt) / 1000)) : null;
+      row.innerHTML =
+        `<td>${escapeHtml(bot.nickname)}${bot.active ? '' : ' <span class="admin-role">пауза</span>'}</td>` +
+        `<td>${escapeHtml(bot.characterLabel)}</td>` +
+        `<td>${bot.colonies}</td>` +
+        `<td>${fmt(bot.score)}</td>` +
+        `<td>${bot.lastAction ? escapeHtml(bot.lastAction) + (when ? ` — ${when} назад` : '') : '—'}</td>`;
+
+      const actions = document.createElement('td');
+      actions.className = 'bot-actions';
+
+      const nudge = document.createElement('button');
+      nudge.type = 'button';
+      nudge.className = 'ghost';
+      nudge.textContent = 'Ход';
+      nudge.title = 'Разбудить немедленно, не дожидаясь расписания';
+      nudge.addEventListener('click', () => void botAction(`/api/admin/bots/${bot.id}/nudge`, {}));
+
+      const pause = document.createElement('button');
+      pause.type = 'button';
+      pause.className = 'ghost';
+      pause.textContent = bot.active ? 'Пауза' : 'Пуск';
+      pause.addEventListener('click', () =>
+        void botAction(`/api/admin/bots/${bot.id}/active`, { active: !bot.active }));
+
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'ghost danger';
+      remove.textContent = 'Удалить';
+      // Подтверждение встроенное: вторым кликом по той же кнопке.
+      // Модальные окна браузера в клиенте запрещены.
+      remove.addEventListener('click', () => {
+        if (remove.dataset.armed !== 'yes') {
+          remove.dataset.armed = 'yes';
+          remove.textContent = 'Точно?';
+          setTimeout(() => {
+            remove.dataset.armed = '';
+            remove.textContent = 'Удалить';
+          }, 4000);
+          return;
+        }
+        void botAction(`/api/admin/bots/${bot.id}`, undefined, 'DELETE');
+      });
+
+      actions.append(nudge, pause, remove);
+      row.appendChild(actions);
+      el.botRows.appendChild(row);
+    }
+  }
+
+  async function botAction(url, body, method = 'POST') {
+    await send(url, body, method);
+    await loadBots();
+  }
+
+  el.botCharacter.addEventListener('change', syncBotHint);
+  el.botCreate.addEventListener('click', async () => {
+    await send('/api/admin/bots', {
+      nickname: el.botNickname.value.trim(),
+      character: el.botCharacter.value,
+      systemId: el.botSystem.value || undefined,
+    });
+    el.botNickname.value = '';
+    await loadBots();
+  });
 
   async function loadAdminDashboard() {
     const result = await api('/api/admin/dashboard');

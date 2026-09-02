@@ -355,6 +355,41 @@ console.log('\n=== 4. Ордера в коридоре ===');
 }
 
 {
+  // Условие «запас ниже четверти склада» держится часами, а ордер его не меняет.
+  // Без учета уже стоящих заявок бот выставлял бы новую каждые сорок пять секунд
+  // и за сутки замораживал в залоге всю кассу — проверено на живом стенде.
+  const levels = { ...emptyLevels(), STORAGE: 3 };
+  const capacity = storageCapacity(levels);
+  const situation = {
+    character: 'TRADER' as const,
+    credits: 100_000,
+    bases: [
+      testBase('home', {
+        levels,
+        resources: { ore: capacity * 0.8, polymers: capacity * 0.05, plasma: 0 },
+      }),
+    ],
+  };
+
+  const fresh = decide(snapshotWith(situation)).filter((intent) => intent.kind === 'ORDER');
+  const repeat = decide(
+    snapshotWith({
+      ...situation,
+      openOrders: [
+        { side: 'SELL', resource: 'ORE' },
+        { side: 'BUY', resource: 'POLYMERS' },
+      ],
+    }),
+  ).filter((intent) => intent.kind === 'ORDER');
+
+  check(
+    'заявка, которая уже стоит в стакане, не дублируется',
+    fresh.length > 0 && repeat.length === 0,
+    `без заявок ${fresh.length}, с заявками ${repeat.length}`,
+  );
+}
+
+{
   // Кассы нет — покупать не на что, и бот не должен выставлять пустой ордер.
   const levels = { ...emptyLevels(), STORAGE: 3 };
   const broke = snapshotWith({

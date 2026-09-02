@@ -2255,3 +2255,32 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   .detail-art img { object-position: center; }
   .detail-body { padding: 12px; }
 }
+
+/* ---------- Боты в пульте ---------- */
+
+/*
+ * Форма в строку: позывной, характер, система и кнопка. Полей мало и они
+ * короткие — колонка растянула бы их на всю ширину пульта без всякой пользы.
+ */
+.bot-form {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(140px, 1fr) minmax(180px, 1.4fr) auto;
+  gap: 12px;
+  align-items: end;
+  margin: 14px 0 8px;
+}
+.bot-form button { height: 38px; }
+
+.bot-actions { white-space: nowrap; }
+.bot-actions button {
+  margin-left: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+.bot-actions button.danger { color: var(--err); border-color: rgba(248, 113, 113, 0.35); }
+.bot-actions button.danger:hover { background: rgba(248, 113, 113, 0.12); }
+
+@media (max-width: 900px) {
+  .bot-form { grid-template-columns: 1fr 1fr; }
+  .bot-form button { grid-column: 1 / -1; }
+}
