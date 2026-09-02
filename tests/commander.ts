@@ -98,7 +98,9 @@ check(
       SCIENCE_CENTER: 4,
       SHIPYARD: 5,
       ANTIMATTER_FACTORY: 1,
-      STORAGE: 3,
+      ORE_STORAGE: 3,
+      POLYMER_STORAGE: 3,
+      PLASMA_STORAGE: 3,
     },
     resources: { ore: 5000, polymers: 3000, plasma: 1000, antimatter: 10 },
     fleet: fleet({ CRUISER: 20 }),
@@ -289,9 +291,15 @@ if (!token) {
     token,
   );
   const plunder = withStock.data['plunder'];
+  /*
+   * Защита считается по каждому складу отдельно: склад первого уровня прячет
+   * 3 150 своего ресурса, а не 9 000 общих. Двенадцать тысяч руды прикрыты
+   * только рудным хранилищем, и пустой плазменный склад свою защиту им
+   * не одалживает — в этом и смысл разделения.
+   */
   check(
     'добыча считается по механике сейфа',
-    plunder && plunder.protectedAmount === 9000 && plunder.surplus === 11000,
+    plunder && plunder.protectedAmount === 6300 && plunder.surplus === 13700,
     JSON.stringify(plunder),
   );
 

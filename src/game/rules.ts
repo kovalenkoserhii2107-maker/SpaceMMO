@@ -11,7 +11,9 @@ export const BUILDING_TYPES = [
   'SCIENCE_CENTER',
   'SHIPYARD',
   'ANTIMATTER_FACTORY',
-  'STORAGE',
+  'ORE_STORAGE',
+  'POLYMER_STORAGE',
+  'PLASMA_STORAGE',
 ] as const;
 
 export type BuildingType = (typeof BUILDING_TYPES)[number];
@@ -134,7 +136,15 @@ const COSTS: Record<BuildingType, ResourceAmounts & { factor: number }> = {
   SCIENCE_CENTER: { ore: 260, polymers: 380, plasma: 0, factor: 2.3 },
   SHIPYARD: { ore: 320, polymers: 160, plasma: 0, factor: 2.3 },
   ANTIMATTER_FACTORY: { ore: 6000, polymers: 4500, plasma: 2400, factor: 2.3 },
-  STORAGE: { ore: 700, polymers: 350, plasma: 0, factor: 1.65 },
+  /*
+   * Склады разделены по ресурсам, и цена каждого — примерно треть прежней
+   * общей. Суммарное вложение и суммарный объем остались как были: три склада
+   * первого уровня стоят столько же и вмещают столько же, сколько вмещал один.
+   * Изменилось другое — обильный ресурс больше не отнимает место у дефицитного.
+   */
+  ORE_STORAGE: { ore: 240, polymers: 120, plasma: 0, factor: 1.65 },
+  POLYMER_STORAGE: { ore: 240, polymers: 120, plasma: 0, factor: 1.65 },
+  PLASMA_STORAGE: { ore: 240, polymers: 120, plasma: 0, factor: 1.65 },
 };
 
 /** Потребление энергии постройками. Солнечная станция энергию не тратит. */
@@ -148,7 +158,10 @@ const ENERGY_DRAIN: Record<BuildingType, number> = {
   // Фабрика антиматерии — самый прожорливый объект базы.
   ANTIMATTER_FACTORY: 8,
   // Климат-контроль ангаров: хранилище почти не ест энергию.
-  STORAGE: 0.3,
+  // Складов теперь три, поэтому расход каждого втрое меньше прежнего.
+  ORE_STORAGE: 0.1,
+  POLYMER_STORAGE: 0.1,
+  PLASMA_STORAGE: 0.1,
 };
 
 /** Требования к уровню других построек. */
@@ -166,7 +179,9 @@ export const BUILDING_LABELS: Record<BuildingType, string> = {
   SCIENCE_CENTER: 'Научный центр',
   SHIPYARD: 'Верфь',
   ANTIMATTER_FACTORY: 'Фабрика антиматерии',
-  STORAGE: 'Склад ресурсов',
+  ORE_STORAGE: 'Рудный склад',
+  POLYMER_STORAGE: 'Склад полимеров',
+  PLASMA_STORAGE: 'Плазмохранилище',
 };
 
 /**
@@ -187,8 +202,11 @@ export const BUILDING_DESCRIPTIONS: Record<BuildingType, string> = {
   SHIPYARD: 'Орбитальные стапели. Каждый уровень ускоряет сборку кораблей и оборонных установок.',
   ANTIMATTER_FACTORY:
     'Ловушки для антивещества. Самый прожорливый объект колонии, но без антиматерии нет гиперпрыжков.',
-  STORAGE:
-    'Ангары и резервуары. Задают общий лимит на руду, полимеры и плазму и прячут часть запаса от грабежа.',
+  ORE_STORAGE: 'Отвалы и бункеры под породу. Держат лимит руды и прячут часть запаса от грабежа.',
+  POLYMER_STORAGE:
+    'Климатические ангары. Держат лимит полимеров и прячут часть запаса от грабежа.',
+  PLASMA_STORAGE:
+    'Криогенные резервуары. Держат лимит плазмы и прячут часть запаса от грабежа.',
 };
 
 /**
@@ -210,7 +228,9 @@ export function emptyLevels(): BuildingLevels {
     SCIENCE_CENTER: 0,
     SHIPYARD: 0,
     ANTIMATTER_FACTORY: 0,
-    STORAGE: 0,
+    ORE_STORAGE: 0,
+    POLYMER_STORAGE: 0,
+    PLASMA_STORAGE: 0,
   };
 }
 
@@ -377,8 +397,16 @@ function mineOutput(
  * колония успела отстроить первое хранилище. Дальше вместимость растет по
  * экспоненте: 10 000 → 15 000 → 22 500 → …
  */
-export const BASE_STORAGE_CAPACITY = 5_000;
-const STORAGE_LEVEL_ONE_CAPACITY = 10_000;
+/**
+ * Колониальный резерв: место под ресурс, пока склад не построен.
+ *
+ * Две с половиной тысячи, а не треть прежних общих пяти: стартовый запас руды
+ * — полторы тысячи, и при резерве в 1 700 новая колония открывалась с рудным
+ * складом, забитым на 88%. Первое, что видел игрок, — предупреждение
+ * о переполнении.
+ */
+export const BASE_STORAGE_CAPACITY = 2_500;
+const STORAGE_LEVEL_ONE_CAPACITY = 3_500;
 const STORAGE_GROWTH = 1.5;
 
 /** Доля вместимости, которую хранилище прячет от грабежа. */
@@ -389,8 +417,39 @@ export function storageCapacityForLevel(level: number): number {
   return Math.floor(STORAGE_LEVEL_ONE_CAPACITY * Math.pow(STORAGE_GROWTH, level - 1));
 }
 
+/** Ресурсы, у которых есть свой склад. Антиматерия хранится вне лимитов. */
+export const STORED_RESOURCES = ['ore', 'polymers', 'plasma'] as const;
+export type StoredResource = (typeof STORED_RESOURCES)[number];
+
+/** Какой склад держит какой ресурс. */
+export const STORAGE_FOR: Record<StoredResource, BuildingType> = {
+  ore: 'ORE_STORAGE',
+  polymers: 'POLYMER_STORAGE',
+  plasma: 'PLASMA_STORAGE',
+};
+
+export type StorageCapacities = Record<StoredResource, number>;
+
+/**
+ * Вместимость по каждому ресурсу отдельно.
+ *
+ * Общий лимит на три ресурса создавал тупик без выхода: обильный ресурс
+ * вытеснял дефицитный, на полном складе добыча вставала сразу по всем трем,
+ * и дефицитный уже не мог появиться никогда — а все постройки требовали
+ * именно его. Раздельные лимиты убирают саму возможность такого состояния.
+ */
+export function storageCapacities(levels: BuildingLevels): StorageCapacities {
+  return {
+    ore: storageCapacityForLevel(levels.ORE_STORAGE),
+    polymers: storageCapacityForLevel(levels.POLYMER_STORAGE),
+    plasma: storageCapacityForLevel(levels.PLASMA_STORAGE),
+  };
+}
+
+/** Суммарная вместимость всех трех складов — для сводок и оценок. */
 export function storageCapacity(levels: BuildingLevels): number {
-  return storageCapacityForLevel(levels.STORAGE);
+  const caps = storageCapacities(levels);
+  return caps.ore + caps.polymers + caps.plasma;
 }
 
 /** Сколько «тоннажа» занято: антиматерия в лимит не входит. */
@@ -398,18 +457,27 @@ export function storedTotal(stock: ResourceAmounts): number {
   return Math.max(0, stock.ore) + Math.max(0, stock.polymers) + Math.max(0, stock.plasma);
 }
 
-export interface StorageState {
+/** Состояние одного склада. */
+export interface ResourceStorageState {
   capacity: number;
   used: number;
   free: number;
   /** Заполненность 0..1; больше 1, если склад успели переполнить извне. */
   fill: number;
-  /** Добыча остановлена: свободного места не осталось. */
+  /** Добыча этого ресурса остановлена: свободного места не осталось. */
   full: boolean;
   /** Несгораемый объем — его грабеж не достает. */
   protectedAmount: number;
   /** Излишек сверх несгораемого объема: именно он уязвим при поражении. */
   vulnerable: number;
+}
+
+export interface StorageState extends Record<StoredResource, ResourceStorageState> {
+  /** Суммарные числа — для сводок, рейтинга и коротких строк интерфейса. */
+  capacity: number;
+  used: number;
+  /** Хотя бы один склад полон: добыча этого ресурса встала. */
+  anyFull: boolean;
 }
 
 /**
@@ -419,18 +487,33 @@ export interface StorageState {
  * возврат залога с биржи или трофеи экспедиции могут занести ресурсы сверх лимита.
  * Такой излишек не исчезает, но и не защищен.
  */
-export function storageState(stock: ResourceAmounts, capacity: number): StorageState {
-  const used = storedTotal(stock);
-  const protectedAmount = Math.min(used, capacity * PROTECTED_STORAGE_SHARE);
+function oneStorage(used: number, capacity: number): ResourceStorageState {
+  const held = Math.max(0, used);
+  const protectedAmount = Math.min(held, capacity * PROTECTED_STORAGE_SHARE);
 
   return {
     capacity,
-    used,
-    free: Math.max(0, capacity - used),
-    fill: capacity > 0 ? used / capacity : 1,
-    full: used >= capacity,
+    used: held,
+    free: Math.max(0, capacity - held),
+    fill: capacity > 0 ? held / capacity : 1,
+    full: held >= capacity,
     protectedAmount,
-    vulnerable: Math.max(0, used - protectedAmount),
+    vulnerable: Math.max(0, held - protectedAmount),
+  };
+}
+
+export function storageState(stock: ResourceAmounts, capacities: StorageCapacities): StorageState {
+  const ore = oneStorage(stock.ore, capacities.ore);
+  const polymers = oneStorage(stock.polymers, capacities.polymers);
+  const plasma = oneStorage(stock.plasma, capacities.plasma);
+
+  return {
+    ore,
+    polymers,
+    plasma,
+    capacity: capacities.ore + capacities.polymers + capacities.plasma,
+    used: ore.used + polymers.used + plasma.used,
+    anyFull: ore.full || polymers.full || plasma.full,
   };
 }
 

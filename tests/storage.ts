@@ -16,8 +16,9 @@ import { emptyTechLevels } from '../src/game/techTree.js';
 import {
   emptyLevels,
   productionPerSecond,
+  storageCapacities,
+  storageCapacity,
   storageCapacityForLevel,
-  storedTotal,
   type BuildingLevels,
 } from '../src/game/rules.js';
 
@@ -47,6 +48,13 @@ function makeBase(levels: Partial<BuildingLevels>, stock: Partial<BaseRuntimeSta
 }
 
 /** Развитая колония: шахты качают быстрее, чем влезает в маленький склад. */
+/** Все три склада первого уровня: базовый набор для проверок добычи. */
+const FULL_STORAGE: Partial<BuildingLevels> = {
+  ORE_STORAGE: 1,
+  POLYMER_STORAGE: 1,
+  PLASMA_STORAGE: 1,
+};
+
 const MINES: Partial<BuildingLevels> = {
   ORE_MINE: 10,
   POLYMER_PLANT: 10,
@@ -59,21 +67,21 @@ const WEEK = 7 * DAY;
 
 /* ------------------------- 1. Вместимость ------------------------- */
 
-console.log('\n=== 1. Вместимость хранилища ===');
+console.log('\n=== 1. Вместимость хранилищ ===');
 
 check(
-  'уровень 0 дает колониальный резерв',
-  storageCapacityForLevel(0) === 5000,
+  'уровень 0 дает колониальный резерв на каждый ресурс',
+  storageCapacityForLevel(0) === 2500,
   `${storageCapacityForLevel(0)}`,
 );
 check(
-  'уровень 1 дает базовую вместимость 10 000',
-  storageCapacityForLevel(1) === 10000,
+  'уровень 1 дает 3 500 на свой ресурс',
+  storageCapacityForLevel(1) === 3500,
   `${storageCapacityForLevel(1)}`,
 );
 check(
   'вместимость растет по экспоненте ×1.5',
-  storageCapacityForLevel(2) === 15000 && storageCapacityForLevel(3) === 22500,
+  storageCapacityForLevel(2) === 5250 && storageCapacityForLevel(3) === 7875,
   `ур.2 ${storageCapacityForLevel(2)}, ур.3 ${storageCapacityForLevel(3)}`,
 );
 check(
@@ -81,107 +89,145 @@ check(
   storageCapacityForLevel(-5) === storageCapacityForLevel(0),
 );
 
-/* ------------------------- 2. Ограничение добычи ------------------------- */
-
-console.log('\n=== 2. Добыча упирается в потолок ===');
-
 {
-  const base = makeBase({ ...MINES, STORAGE: 1 }, { ore: 500, polymers: 300, plasma: 100 });
-  const capacity = storageCapacityForLevel(1);
-  accrue(base, techs, WEEK);
-  const used = storedTotal(base.resources);
-
+  // Три склада первого уровня в сумме дают примерно то же, что давал один
+  // общий: разделение убрало ловушку, а не раздало место даром.
+  const levels = { ...emptyLevels(), ORE_STORAGE: 1, POLYMER_STORAGE: 1, PLASMA_STORAGE: 1 };
   check(
-    'неделя офлайна не переполняет склад',
-    Math.round(used) === capacity,
-    `занято ${Math.round(used)} из ${capacity}`,
+    'суммарный объем трех складов сопоставим с прежним общим',
+    storageCapacity(levels) === 10500,
+    `${storageCapacity(levels)} против прежних 10 000`,
   );
 }
 
 {
-  // Тот же потолок, но набранный шагами: Game Loop дробит офлайн на отрезки
-  // по завершенным стройкам, и каждый отрезок проходит через accrue отдельно.
-  const base = makeBase({ ...MINES, STORAGE: 1 }, { ore: 500, polymers: 300, plasma: 100 });
+  const levels = { ...emptyLevels(), ORE_STORAGE: 3, POLYMER_STORAGE: 1, PLASMA_STORAGE: 0 };
+  const caps = storageCapacities(levels);
+  check(
+    'склады качаются вразнобой и считаются независимо',
+    caps.ore === 7875 && caps.polymers === 3500 && caps.plasma === 2500,
+    `руда ${caps.ore}, полимеры ${caps.polymers}, плазма ${caps.plasma}`,
+  );
+}
+
+/* ------------------------- 2. Ограничение добычи ------------------------- */
+
+console.log('\n=== 2. Добыча упирается в свой потолок ===');
+
+{
+  const base = makeBase({ ...MINES, ...FULL_STORAGE }, { ore: 500, polymers: 300, plasma: 100 });
+  const caps = storageCapacities(base.levels);
+  accrue(base, techs, WEEK);
+
+  check(
+    'неделя офлайна упирает каждый ресурс в его собственный потолок',
+    Math.round(base.resources.ore) === caps.ore &&
+      Math.round(base.resources.polymers) === caps.polymers &&
+      Math.round(base.resources.plasma) === caps.plasma,
+    `руда ${Math.round(base.resources.ore)}/${caps.ore}, полимеры ${Math.round(base.resources.polymers)}/${caps.polymers}, плазма ${Math.round(base.resources.plasma)}/${caps.plasma}`,
+  );
+}
+
+{
+  // Game Loop дробит офлайн на отрезки по завершенным стройкам, и каждый
+  // отрезок проходит через accrue отдельно.
+  const base = makeBase({ ...MINES, ...FULL_STORAGE }, { ore: 500, polymers: 300, plasma: 100 });
   for (let i = 0; i < 7; i += 1) accrue(base, techs, DAY);
-  const used = storedTotal(base.resources);
+  const caps = storageCapacities(base.levels);
 
   check(
     'догон по отрезкам дает тот же потолок, что и один вызов',
-    Math.round(used) === storageCapacityForLevel(1),
-    `занято ${Math.round(used)}`,
+    Math.round(base.resources.ore) === caps.ore &&
+      Math.round(base.resources.polymers) === caps.polymers,
+    `руда ${Math.round(base.resources.ore)}, полимеры ${Math.round(base.resources.polymers)}`,
   );
 }
 
 {
-  const base = makeBase({ ...MINES, STORAGE: 1 }, { ore: 6000, polymers: 4000, plasma: 0 });
+  /*
+   * Ради этого свойства склады и разделили.
+   *
+   * Раньше лимит был общим, и полный склад полимеров останавливал добычу руды
+   * вместе со своей. Игрок с восемью тысячами полимеров и пятью сотнями руды
+   * не мог добыть руду ни при каких условиях, а все постройки требовали именно
+   * ее — состояние без выхода. Теперь полный склад останавливает только свой
+   * ресурс.
+   */
+  const levels = { ...MINES, ...FULL_STORAGE };
+  const caps = storageCapacities(levels);
+  const base = makeBase(levels, { ore: 10, polymers: caps.polymers, plasma: 0 });
+  const oreBefore = base.resources.ore;
+  accrue(base, techs, 600);
+
+  check(
+    'полный склад полимеров не останавливает добычу руды',
+    base.resources.ore > oreBefore,
+    `руда ${Math.round(oreBefore)} → ${Math.round(base.resources.ore)}`,
+  );
+  check(
+    'а сами полимеры при этом стоят на потолке',
+    Math.round(base.resources.polymers) === caps.polymers,
+    `${Math.round(base.resources.polymers)}/${caps.polymers}`,
+  );
+}
+
+{
+  const levels = { ...MINES, ...FULL_STORAGE };
+  const caps = storageCapacities(levels);
+  const base = makeBase(levels, { ore: caps.ore, polymers: caps.polymers, plasma: caps.plasma });
   const before = { ...base.resources };
   accrue(base, techs, DAY);
 
   check(
-    'на полном складе добыча полностью остановлена',
+    'когда полны все три, добыча остановлена полностью',
     base.resources.ore === before.ore &&
       base.resources.polymers === before.polymers &&
       base.resources.plasma === before.plasma,
-    `руда ${base.resources.ore}`,
+    `руда ${Math.round(base.resources.ore)}`,
   );
 }
 
 {
   // Переполнить склад может возвратный рейс или отмена ордера — добыча при этом
   // стоит, но уже лежащие сверх лимита ресурсы никуда не пропадают.
-  const base = makeBase({ ...MINES, STORAGE: 1 }, { ore: 20000, polymers: 8000, plasma: 0 });
+  const levels = { ...MINES, ...FULL_STORAGE };
+  const base = makeBase(levels, { ore: 90000, polymers: 80000, plasma: 0 });
   accrue(base, techs, DAY);
 
   check(
     'переполненный склад не растет и не усыхает',
-    base.resources.ore === 20000 && base.resources.polymers === 8000,
+    base.resources.ore === 90000 && base.resources.polymers === 80000,
     `${base.resources.ore} / ${base.resources.polymers}`,
   );
 }
 
 {
-  const base = makeBase({ ...MINES, STORAGE: 1 }, { ore: 500, polymers: 300, plasma: 100 });
+  const levels = { ...MINES, ...FULL_STORAGE };
+  const base = makeBase(levels, { ore: 500, polymers: 300, plasma: 100 });
   const perSecond = productionPerSecond(base.levels, richness, undefined, 0);
 
   // Минута добычи заведомо влезает в свободное место, поэтому обрезать нечего
   // и начисление должно совпасть с формулой до последнего знака.
   const seconds = 60;
-  const mined = (perSecond.ore + perSecond.polymers + perSecond.plasma) * seconds;
-  const free = storageCapacityForLevel(1) - storedTotal(base.resources);
   accrue(base, techs, seconds);
-
   const expectedOre = 500 + perSecond.ore * seconds;
+
   check(
     'пока место есть, добыча идет в полную силу',
-    mined < free && Math.abs(base.resources.ore - expectedOre) < 0.000001,
-    `${base.resources.ore.toFixed(2)} против ${expectedOre.toFixed(2)} (добыто ${Math.round(mined)} при свободных ${Math.round(free)})`,
-  );
-}
-
-{
-  // Обрезка одинаковой долей: иначе быстрый руда вытеснил бы плазма.
-  const base = makeBase({ ...MINES, STORAGE: 1 }, { ore: 0, polymers: 0, plasma: 0 });
-  const perSecond = productionPerSecond(base.levels, richness, undefined, 0);
-  const mix = perSecond.ore / perSecond.plasma;
-  accrue(base, techs, WEEK);
-  const gotMix = base.resources.ore / base.resources.plasma;
-
-  check(
-    'обрезка сохраняет пропорцию между ресурсами',
-    Math.abs(mix - gotMix) < 0.001,
-    `ожидали ${mix.toFixed(3)}, получили ${gotMix.toFixed(3)}`,
+    Math.abs(base.resources.ore - expectedOre) < 0.000001,
+    `${base.resources.ore.toFixed(2)} против ${expectedOre.toFixed(2)}`,
   );
 }
 
 {
   const base = makeBase(
-    { ...MINES, ANTIMATTER_FACTORY: 4, SCIENCE_CENTER: 3, STORAGE: 1 },
-    { ore: 6000, polymers: 4000, plasma: 0, antimatter: 0 },
+    { ...MINES, ...FULL_STORAGE, ANTIMATTER_FACTORY: 4, SCIENCE_CENTER: 3 },
+    { ore: 90000, polymers: 80000, plasma: 90000, antimatter: 0 },
   );
   accrue(base, techs, DAY);
 
   check(
-    'антиматерия копится и на полном складе',
+    'антиматерия копится и на полных складах',
     base.resources.antimatter > 0,
     `${base.resources.antimatter.toFixed(3)}`,
   );
@@ -192,9 +238,10 @@ console.log('\n=== 2. Добыча упирается в потолок ===');
   accrue(base, techs, WEEK);
 
   check(
-    'база без хранилища упирается в колониальный резерв',
-    Math.round(storedTotal(base.resources)) === storageCapacityForLevel(0),
-    `занято ${Math.round(storedTotal(base.resources))}`,
+    'база без хранилищ упирается в колониальный резерв по каждому ресурсу',
+    Math.round(base.resources.ore) === storageCapacityForLevel(0) &&
+      Math.round(base.resources.polymers) === storageCapacityForLevel(0),
+    `руда ${Math.round(base.resources.ore)}, полимеры ${Math.round(base.resources.polymers)}`,
   );
 }
 
@@ -202,132 +249,76 @@ console.log('\n=== 2. Добыча упирается в потолок ===');
 
 console.log('\n=== 3. Грабеж: несгораемый объем ===');
 
-const CAPACITY = storageCapacityForLevel(1);
+const CAPS = { ore: 3500, polymers: 3500, plasma: 3500 };
 const HOLDS = 1_000_000;
 
 {
-  const loot = plunderAmount({ ore: 3000, polymers: 2000, plasma: 0 }, CAPACITY, HOLDS);
+  const loot = plunderAmount({ ore: 1000, polymers: 800, plasma: 0 }, CAPS, HOLDS);
   check(
-    'полупустой склад не теряет ничего',
+    'полупустые склады не теряют ничего',
     loot.ore === 0 && loot.polymers === 0 && loot.surplus === 0,
-    `защищено ${loot.protectedAmount}`,
+    `защищено ${Math.round(loot.protectedAmount)}`,
   );
 }
 
 {
-  const loot = plunderAmount({ ore: 5400, polymers: 3600, plasma: 0 }, CAPACITY, HOLDS);
+  // 90% от 3 500 — это 3 150 на каждый склад.
+  const loot = plunderAmount({ ore: 3150, polymers: 3150, plasma: 0 }, CAPS, HOLDS);
   check(
     'ровно на границе 90% вместимости грабить нечего',
     loot.ore === 0 && loot.polymers === 0,
-    `лежало ${loot.stored}, излишек ${loot.surplus}`,
+    `лежало ${Math.round(loot.stored)}, излишек ${Math.round(loot.surplus)}`,
   );
 }
 
 {
-  const loot = plunderAmount({ ore: 6000, polymers: 4000, plasma: 0 }, CAPACITY, HOLDS);
+  /*
+   * Защита теперь поресурсная, и это меняет исход по существу. По общему лимиту
+   * полный склад полимеров прикрывал собой руду, которой почти не было, —
+   * ограбить ее было нельзя. Теперь пустой рудный склад свою защиту полимерам
+   * не одалживает.
+   */
+  const loot = plunderAmount({ ore: 0, polymers: 3500, plasma: 0 }, CAPS, HOLDS);
   check(
-    'полный склад отдает 90% от последних 10% вместимости',
-    loot.surplus === 1000 && loot.ore === 540 && loot.polymers === 360,
-    `излишек ${loot.surplus} → ${loot.ore} Ti + ${loot.polymers} Si`,
+    'полный склад полимеров грабится, даже когда руды нет вовсе',
+    loot.polymers > 0,
+    `увезли полимеров ${loot.polymers}`,
   );
 }
 
 {
-  const loot = plunderAmount({ ore: 12000, polymers: 8000, plasma: 0 }, CAPACITY, HOLDS);
+  const loot = plunderAmount({ ore: 3500, polymers: 3500, plasma: 3500 }, CAPS, HOLDS);
   check(
-    'переполненный склад отдает 90% всего излишка',
-    loot.surplus === 11000 && loot.ore + loot.polymers === 9900,
-    `излишек ${loot.surplus} → ${loot.ore + loot.polymers}`,
-  );
-  check(
-    'вывоз пропорционален долям ресурсов на складе',
-    loot.ore === 5940 && loot.polymers === 3960,
-    `${loot.ore} Ti + ${loot.polymers} Si при складе 12000/8000`,
+    'с полных складов забирают 90% излишка сверх защиты',
+    loot.ore > 0 && loot.polymers > 0 && loot.plasma > 0,
+    `${loot.ore} Ti + ${loot.polymers} Si + ${loot.plasma} Tr`,
   );
 }
 
 {
-  const loot = plunderAmount({ ore: 0, polymers: 20000, plasma: 0 }, CAPACITY, HOLDS);
+  const loot = plunderAmount({ ore: 30000, polymers: 20000, plasma: 0 }, CAPS, 1000);
   check(
-    'склад из одних полимеров отдает только полимеры',
-    loot.ore === 0 && loot.polymers === 9900,
-    `${loot.polymers} Si`,
+    'трюмы ограничивают вывоз',
+    loot.ore + loot.polymers + loot.plasma === 1000 && loot.cargoLimited,
+    `увезли ${loot.ore + loot.polymers + loot.plasma}`,
   );
 }
 
 {
-  // Плазма занимает место в хранилище и вывозится наравне с остальными:
-  // трюмы транспортов принимают его как обычный груз.
-  const loot = plunderAmount({ ore: 5000, polymers: 0, plasma: 5000 }, CAPACITY, HOLDS);
-  check(
-    'плазма считается в лимите склада',
-    loot.stored === 10000 && loot.surplus === 1000,
-    `лежало ${loot.stored}, излишек ${loot.surplus}`,
-  );
-  check(
-    'плазма вывозится наравне с рудой и полимерами',
-    loot.ore === 450 && loot.plasma === 450 && loot.polymers === 0,
-    `${loot.ore} Ti + ${loot.plasma} Tr`,
-  );
-  check(
-    'суммарно увезли 90% излишка',
-    loot.ore + loot.polymers + loot.plasma === 900,
-    `${loot.ore + loot.polymers + loot.plasma} из излишка ${loot.surplus}`,
-  );
-}
-
-{
-  // Трюмы забиваются по порядку, поэтому при нехватке места плазма грузят
-  // последним — но склад защитника теряет ровно то, что уехало.
-  const loot = plunderAmount({ ore: 6000, polymers: 6000, plasma: 8000 }, CAPACITY, 900);
-  check(
-    'при нехватке трюмов плазма грузится последним',
-    loot.ore === 900 && loot.polymers === 0 && loot.plasma === 0 && loot.cargoLimited,
-    `${loot.ore} Ti + ${loot.polymers} Si + ${loot.plasma} Tr при трюмах 900`,
-  );
-}
-
-{
-  const loot = plunderAmount({ ore: 0, polymers: 0, plasma: 20000 }, CAPACITY, HOLDS);
-  check(
-    'склад из одного плазмы отдает плазма',
-    loot.plasma === 9900 && loot.ore === 0,
-    `${loot.plasma} Tr`,
-  );
-}
-
-{
-  const loot = plunderAmount({ ore: 12000, polymers: 8000, plasma: 0 }, CAPACITY, 1000);
-  check(
-    'трюмы уцелевших жестко ограничивают вывоз',
-    loot.ore + loot.polymers === 1000 && loot.cargoLimited,
-    `увезли ${loot.ore + loot.polymers} из ${loot.takeable}`,
-  );
-}
-
-{
-  const loot = plunderAmount({ ore: 12000, polymers: 8000, plasma: 0 }, CAPACITY, 0);
-  check(
-    'без уцелевших трюмов не увозится ничего',
-    loot.ore === 0 && loot.polymers === 0 && loot.cargoLimited,
-    `могли взять ${loot.takeable}`,
-  );
-}
-
-{
-  const big = plunderAmount({ ore: 12000, polymers: 8000, plasma: 0 }, storageCapacityForLevel(3), HOLDS);
-  check(
-    'хранилище побольше прячет больше',
-    big.protectedAmount === 20000 && big.ore + big.polymers === 0,
-    `вместимость 22500 защитила всё (${big.protectedAmount})`,
-  );
-}
-
-{
-  const loot = plunderAmount({ ore: -5, polymers: 0, plasma: 0 }, CAPACITY, HOLDS);
+  const loot = plunderAmount({ ore: -100, polymers: -50, plasma: 0 }, CAPS, HOLDS);
   check(
     'отрицательный склад не создает добычу из воздуха',
-    loot.ore === 0 && loot.polymers === 0 && loot.stored === 0,
+    loot.ore === 0 && loot.polymers === 0 && loot.plasma === 0,
+  );
+}
+
+{
+  const big = { ore: 100000, polymers: 100000, plasma: 100000 };
+  const loot = plunderAmount({ ore: 20000, polymers: 0, plasma: 0 }, big, HOLDS);
+  check(
+    'склад побольше прячет больше',
+    loot.ore === 0,
+    `вместимость ${big.ore} защитила все ${20000}`,
   );
 }
 
@@ -364,11 +355,18 @@ if (registered.status !== 200 && registered.status !== 201) {
   check('сервер отдает состояние склада', Boolean(base?.storage), JSON.stringify(base?.storage));
 
   if (base?.storage) {
-    const expected = storageCapacityForLevel(0);
+    const perResource = storageCapacityForLevel(0);
     check(
-      'вместимость новой колонии совпадает с формулой',
-      base.storage.capacity === expected,
-      `${base.storage.capacity} против ${expected}`,
+      'сервер отдает вместимость по каждому ресурсу',
+      base.storage.ore?.capacity === perResource &&
+        base.storage.polymers?.capacity === perResource &&
+        base.storage.plasma?.capacity === perResource,
+      `руда ${base.storage.ore?.capacity}, полимеры ${base.storage.polymers?.capacity}`,
+    );
+    check(
+      'суммарная вместимость равна сумме трех складов',
+      base.storage.capacity === perResource * 3,
+      `${base.storage.capacity} против ${perResource * 3}`,
     );
     check(
       'занятый объем равен сумме руды, полимеров и плазмы',
@@ -379,20 +377,28 @@ if (registered.status !== 200 && registered.status !== 201) {
     );
     check(
       'новая колония еще не под угрозой грабежа',
-      base.storage.vulnerable === 0 && !base.storage.full,
-      `уязвимо ${base.storage.vulnerable}`,
+      base.storage.ore.vulnerable === 0 && !base.storage.anyFull,
+      `уязвимо ${base.storage.ore.vulnerable}`,
     );
   }
 
-  const storage = (base?.buildings as any[])?.find((item) => item.type === 'STORAGE');
-  check('хранилище доступно к постройке с первого уровня', Boolean(storage) && storage.requirements.length === 0);
+  const cards = (base?.buildings as any[]) ?? [];
+  const storages = ['ORE_STORAGE', 'POLYMER_STORAGE', 'PLASMA_STORAGE'].map((type) =>
+    cards.find((item) => item.type === type),
+  );
   check(
-    'карточка хранилища объясняет прирост вместимости',
+    'все три склада доступны к постройке с первого уровня',
+    storages.every((card) => card && card.requirements.length === 0),
+    storages.map((card) => card?.type ?? 'нет').join(', '),
+  );
+  check(
+    'карточка склада объясняет прирост вместимости',
     // Карточка печатает числа с разрядными пробелами, поэтому сверяем цифры,
     // а не форматирование.
-    typeof storage?.effect === 'string' &&
-      storage.effect.replace(/\s/gu, '').includes('10000'),
-    storage?.effect,
+    storages.every(
+      (card) => typeof card?.effect === 'string' && card.effect.replace(/\s/gu, '').includes('3500'),
+    ),
+    storages[0]?.effect,
   );
 }
 

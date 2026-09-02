@@ -376,7 +376,9 @@ model Base {
   antimatterFactoryLevel Int @default(0)
 
   /// Склад ресурсов: общий лимит на руду, полимеры и плазму.
-  storageLevel Int @default(0)
+  oreStorageLevel     Int @default(0)
+  polymerStorageLevel Int @default(0)
+  plasmaStorageLevel  Int @default(0)
 
   /// Время последнего начисления ресурсов тиком (для догона офлайн-периода).
   lastTickAt DateTime @default(now())
@@ -860,7 +862,12 @@ enum BuildingType {
   SCIENCE_CENTER
   SHIPYARD
   ANTIMATTER_FACTORY
-  STORAGE
+  /// Склады раздельные: у каждого ресурса свой лимит и свой уровень.
+  /// Общий лимит создавал тупик — обильный ресурс вытеснял дефицитный,
+  /// добыча вставала совсем, и выбраться из этого было нечем.
+  ORE_STORAGE
+  POLYMER_STORAGE
+  PLASMA_STORAGE
 }
 
 enum TechnologyType {

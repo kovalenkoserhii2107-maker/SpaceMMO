@@ -94,7 +94,9 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
               SCIENCE_CENTER: ownBase.scienceCenterLevel,
               SHIPYARD: ownBase.shipyardLevel,
               ANTIMATTER_FACTORY: ownBase.antimatterFactoryLevel,
-              STORAGE: ownBase.storageLevel,
+              ORE_STORAGE: ownBase.oreStorageLevel,
+              POLYMER_STORAGE: ownBase.polymerStorageLevel,
+              PLASMA_STORAGE: ownBase.plasmaStorageLevel,
             },
         resources: live
           ? {
@@ -249,7 +251,15 @@ export async function listEspionageTargets(commanderId: string): Promise<Espiona
         ore: data.resources?.ore ?? 0,
         polymers: data.resources?.polymers ?? 0,
         plasma: data.resources?.plasma ?? 0,
-        storageLevel: data.buildings?.STORAGE ?? 0,
+        /*
+         * Снимок разведки переживает изменения игры (правило 8): до разделения
+         * складов в нем лежал один STORAGE, теперь три. Берем рудный, а если
+         * снимок старый — прежнее общее поле.
+         */
+        storageLevel:
+          data.buildings?.ORE_STORAGE ??
+          (data.buildings as { STORAGE?: number } | undefined)?.STORAGE ??
+          0,
       },
     });
   }

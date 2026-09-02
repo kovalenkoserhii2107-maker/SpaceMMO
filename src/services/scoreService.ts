@@ -72,7 +72,9 @@ const BUILDING_COLUMNS: Record<BuildingType, string> = {
   SCIENCE_CENTER: 'scienceCenterLevel',
   SHIPYARD: 'shipyardLevel',
   ANTIMATTER_FACTORY: 'antimatterFactoryLevel',
-  STORAGE: 'storageLevel',
+  ORE_STORAGE: 'oreStorageLevel',
+  POLYMER_STORAGE: 'polymerStorageLevel',
+  PLASMA_STORAGE: 'plasmaStorageLevel',
 };
 
 function levelsOf(base: Record<string, unknown>): BuildingLevels {

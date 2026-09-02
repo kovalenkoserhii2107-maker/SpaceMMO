@@ -226,7 +226,7 @@ export function buildSpyMail(input: SpyMailInput): OutgoingMessage[] {
     : 'Склад: данных нет.';
   const buildLine = buildings
     ? `Инфраструктура: шахты ${buildings.ORE_MINE}/${buildings.POLYMER_PLANT}/${buildings.PLASMA_REACTOR}, ` +
-      `верфь ${buildings.SHIPYARD}, хранилище ${buildings.STORAGE}.`
+      `верфь ${buildings.SHIPYARD}, склады ${buildings.ORE_STORAGE}/${buildings.POLYMER_STORAGE}/${buildings.PLASMA_STORAGE}.`
     : 'Инфраструктура: данных нет.';
 
   return [

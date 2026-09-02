@@ -288,7 +288,9 @@ class GameLoop {
       levels.SCIENCE_CENTER = base.scienceCenterLevel;
       levels.SHIPYARD = base.shipyardLevel;
       levels.ANTIMATTER_FACTORY = base.antimatterFactoryLevel;
-      levels.STORAGE = base.storageLevel;
+      levels.ORE_STORAGE = base.oreStorageLevel;
+      levels.POLYMER_STORAGE = base.polymerStorageLevel;
+      levels.PLASMA_STORAGE = base.plasmaStorageLevel;
 
       commander.bases.set(base.id, {
         id: base.id,
@@ -1627,7 +1629,11 @@ class GameLoop {
       // и только в пределах трюмов уцелевших кораблей.
       const plunder = plunderAmount(
         { ore: base.ore, polymers: base.polymers, plasma: base.plasma },
-        storageCapacityForLevel(base.storageLevel),
+        {
+          ore: storageCapacityForLevel(base.oreStorageLevel),
+          polymers: storageCapacityForLevel(base.polymerStorageLevel),
+          plasma: storageCapacityForLevel(base.plasmaStorageLevel),
+        },
         outcome.winner === 'ATTACKER' ? fleetCapacity(outcome.attackerSurvivors) : 0,
       );
 
@@ -2154,7 +2160,9 @@ class GameLoop {
             SCIENCE_CENTER: planet.base.scienceCenterLevel,
             SHIPYARD: planet.base.shipyardLevel,
             ANTIMATTER_FACTORY: planet.base.antimatterFactoryLevel,
-            STORAGE: planet.base.storageLevel,
+            ORE_STORAGE: planet.base.oreStorageLevel,
+            POLYMER_STORAGE: planet.base.polymerStorageLevel,
+            PLASMA_STORAGE: planet.base.plasmaStorageLevel,
           };
       const resources = live
         ? { ...live.resources }
@@ -2240,7 +2248,9 @@ class GameLoop {
             scienceCenterLevel: base.levels.SCIENCE_CENTER,
             shipyardLevel: base.levels.SHIPYARD,
             antimatterFactoryLevel: base.levels.ANTIMATTER_FACTORY,
-            storageLevel: base.levels.STORAGE,
+            oreStorageLevel: base.levels.ORE_STORAGE,
+            polymerStorageLevel: base.levels.POLYMER_STORAGE,
+            plasmaStorageLevel: base.levels.PLASMA_STORAGE,
             lastTickAt: new Date(base.lastTickAt),
           },
         }),

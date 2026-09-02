@@ -21,10 +21,10 @@ import {
   hasEnoughResources,
   missingBuildingRequirements,
   productionPerSecond,
-  storageCapacity,
+  storageCapacities,
+  type ResourceStorageState,
   storageCapacityForLevel,
   storageState,
-  storedTotal,
   upgradeCost,
   type BuildingLevels,
   type BuildingType,
@@ -200,14 +200,23 @@ export function accrue(state: BaseRuntimeState, techs: TechLevels, seconds: numb
     timeCompressionDrain(techs),
   );
 
-  const mined = (perSecond.ore + perSecond.polymers + perSecond.plasma) * seconds;
-  const free = Math.max(0, storageCapacity(state.levels) - storedTotal(state.resources));
-  const fit = mined > free ? free / mined : 1;
+  /*
+   * Каждый ресурс упирается в свой собственный потолок.
+   *
+   * Пропорциональная обрезка по общему лимиту создавала тупик без выхода:
+   * обильный ресурс занимал место, дефицитный переставал добываться вместе
+   * с ним, а все постройки требовали именно дефицитного. Теперь полный склад
+   * полимеров останавливает только полимеры — руда идет дальше.
+   */
+  const caps = storageCapacities(state.levels);
+  const capped = (held: number, rate: number, capacity: number) =>
+    Math.min(Math.max(held, capacity), held + rate * seconds);
 
   const next: BaseStock = {
-    ore: state.resources.ore + perSecond.ore * seconds * fit,
-    polymers: state.resources.polymers + perSecond.polymers * seconds * fit,
-    plasma: state.resources.plasma + perSecond.plasma * seconds * fit,
+    ore: capped(state.resources.ore, perSecond.ore, caps.ore),
+    polymers: capped(state.resources.polymers, perSecond.polymers, caps.polymers),
+    plasma: capped(state.resources.plasma, perSecond.plasma, caps.plasma),
+    // Антиматерия хранится вне складов: у нее магнитные ловушки, а не ангары.
     antimatter: state.resources.antimatter + perSecond.antimatter * seconds,
   };
 
@@ -234,7 +243,7 @@ export function toSnapshot(state: BaseRuntimeState, commander: CommanderRuntimeS
   const techDrain = timeCompressionDrain(commander.techs);
   const usage = energyUsage(state.levels, defenseDrain, techDrain);
   const efficiency = energyEfficiency(state.levels, state.richness, bonuses, defenseDrain, techDrain);
-  const storage = storageState(state.resources, storageCapacity(state.levels));
+  const storage = storageState(state.resources, storageCapacities(state.levels));
 
   return {
     baseId: state.id,
@@ -260,11 +269,12 @@ export function toSnapshot(state: BaseRuntimeState, commander: CommanderRuntimeS
     storage: {
       capacity: storage.capacity,
       used: round(storage.used),
-      free: round(storage.free),
-      fill: Math.round(storage.fill * 1000) / 1000,
-      full: storage.full,
-      protectedAmount: round(storage.protectedAmount),
-      vulnerable: round(storage.vulnerable),
+      anyFull: storage.anyFull,
+      // По ресурсам — то, ради чего склады и разделены: игроку нужно видеть,
+      // какой именно из трех уперся в потолок, а не что «место кончилось».
+      ore: shortStorage(storage.ore),
+      polymers: shortStorage(storage.polymers),
+      plasma: shortStorage(storage.plasma),
     },
     energy: {
       output: round(output),
@@ -392,7 +402,7 @@ function buildingEffect(
   const next = { ...state.levels, [type]: nextLevel };
   const perHour = (value: number) => Math.round(value * 3600).toLocaleString('ru-RU');
 
-  if (type === 'STORAGE') {
+  if (type === 'ORE_STORAGE' || type === 'POLYMER_STORAGE' || type === 'PLASMA_STORAGE') {
     const now = storageCapacityForLevel(level);
     const after = storageCapacityForLevel(nextLevel);
     return `вместимость ${Math.round(now).toLocaleString('ru-RU')} → ${Math.round(after).toLocaleString('ru-RU')}`;
@@ -437,6 +447,19 @@ function buildingEffect(
     return `добыча ${perHour(now)} → ${perHour(after)} в час`;
   }
   return null;
+}
+
+/** Состояние одного склада для клиента: округленное и без лишних знаков. */
+function shortStorage(state: ResourceStorageState) {
+  return {
+    capacity: state.capacity,
+    used: round(state.used),
+    free: round(state.free),
+    fill: Math.round(state.fill * 1000) / 1000,
+    full: state.full,
+    protectedAmount: round(state.protectedAmount),
+    vulnerable: round(state.vulnerable),
+  };
 }
 
 /** Короткая длительность для строки эффекта: минуты и часы, без секунд там, где их не читают. */

@@ -25,6 +25,7 @@ import {
   buildSeconds,
   emptyLevels,
   productionPerSecond,
+  storageCapacities,
   storageCapacity,
   storedTotal,
   upgradeCost,
@@ -150,12 +151,17 @@ console.log('\n=== 2. Бот не встает в тупик ===');
 {
   // Полный склад останавливает добычу — расширение важнее любой шахты.
   const levels = { ...emptyLevels(), ORE_MINE: 4, POLYMER_PLANT: 4, PLASMA_REACTOR: 3, POWER_PLANT: 9 };
-  const capacity = storageCapacity(levels);
+  const caps = storageCapacities(levels);
   const base = testBase('b', {
     levels,
-    resources: { ore: capacity * 0.95, polymers: 0, plasma: 0 },
+    // Полон именно рудный склад — его бот и должен тянуть.
+    resources: { ore: caps.ore * 0.95, polymers: 0, plasma: 0 },
   });
-  check('на полном складе бот расширяет хранилище', nextBuilding(base, emptyTechLevels(), 'TRADER') === 'STORAGE');
+  check(
+    'полный склад руды бот расширяет именно рудным хранилищем',
+    nextBuilding(base, emptyTechLevels(), 'TRADER') === 'ORE_STORAGE',
+    `${nextBuilding(base, emptyTechLevels(), 'TRADER')}`,
+  );
 }
 
 {
@@ -167,7 +173,9 @@ console.log('\n=== 2. Бот не встает в тупик ===');
     POLYMER_PLANT: 8,
     PLASMA_REACTOR: 6,
     POWER_PLANT: 1,
-    STORAGE: 12,
+    ORE_STORAGE: 12,
+    POLYMER_STORAGE: 12,
+    PLASMA_STORAGE: 12,
   };
   check(
     'при нехватке энергии бот строит станцию',
@@ -333,7 +341,7 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
 console.log('\n=== 4. Ордера в коридоре ===');
 
 {
-  const levels = { ...emptyLevels(), STORAGE: 3 };
+  const levels = { ...emptyLevels(), ORE_STORAGE: 3, POLYMER_STORAGE: 3, PLASMA_STORAGE: 3 };
   const capacity = storageCapacity(levels);
   const rich = snapshotWith({
     character: 'TRADER',
@@ -369,7 +377,7 @@ console.log('\n=== 4. Ордера в коридоре ===');
   // Условие «запас ниже четверти склада» держится часами, а ордер его не меняет.
   // Без учета уже стоящих заявок бот выставлял бы новую каждые сорок пять секунд
   // и за сутки замораживал в залоге всю кассу — проверено на живом стенде.
-  const levels = { ...emptyLevels(), STORAGE: 3 };
+  const levels = { ...emptyLevels(), ORE_STORAGE: 3, POLYMER_STORAGE: 3, PLASMA_STORAGE: 3 };
   const capacity = storageCapacity(levels);
   const situation = {
     character: 'TRADER' as const,
@@ -402,7 +410,7 @@ console.log('\n=== 4. Ордера в коридоре ===');
 
 {
   // Кассы нет — покупать не на что, и бот не должен выставлять пустой ордер.
-  const levels = { ...emptyLevels(), STORAGE: 3 };
+  const levels = { ...emptyLevels(), ORE_STORAGE: 3, POLYMER_STORAGE: 3, PLASMA_STORAGE: 3 };
   const broke = snapshotWith({
     character: 'TRADER',
     credits: 0,
@@ -725,16 +733,19 @@ console.log('\n=== 6. Эскадра не вырождается ===');
   );
 }
 
-/* ------------------------- 6б. Тупик забитого склада ------------------------- */
+/* ------------------------- 6б. Полный склад ------------------------- */
 
-console.log('\n=== 6б. Из полного склада есть выход ===');
+console.log('\n=== 6б. Полный склад лечится своим хранилищем ===');
 
 {
   /*
-   * Положение, в котором живой бот встал намертво: склад забит под завязку
-   * полимерами, дефицитной руды меньше, чем стоит самое дешевое здание,
-   * а на полном складе добыча равна нулю по всем трем ресурсам сразу —
-   * значит руда не появится уже никогда.
+   * Прежний тупик: склад забит полимерами, дефицитной руды меньше, чем стоит
+   * самое дешевое здание, а добыча на полном складе равнялась нулю сразу
+   * по всем трем ресурсам — значит руда не появилась бы уже никогда.
+   *
+   * С раздельными складами такого состояния не существует: полный склад
+   * полимеров останавливает только полимеры. Проверяем, что бот при этом
+   * делает осмысленное — расширяет то хранилище, которое действительно жмет.
    */
   const levels = {
     ...emptyLevels(),
@@ -744,40 +755,68 @@ console.log('\n=== 6б. Из полного склада есть выход ===
     POWER_PLANT: 3,
     SCIENCE_CENTER: 2,
     SHIPYARD: 2,
-    STORAGE: 1,
+    // Рудный и плазменный с запасом: иначе бот справедливо возьмется за них —
+    // они малы для его же добычи, — и проверка будет не про полный склад.
+    ORE_STORAGE: 8,
+    POLYMER_STORAGE: 1,
+    PLASMA_STORAGE: 8,
   };
-  const capacity = storageCapacity(levels);
+  const caps = storageCapacities(levels);
+  const base = testBase('home', {
+    levels,
+    resources: { ore: 576, polymers: caps.polymers, plasma: 1025 },
+  });
+
+  check(
+    'бот расширяет именно тот склад, который полон',
+    nextBuilding(base, emptyTechLevels(), 'TRADER') === 'POLYMER_STORAGE',
+    `${nextBuilding(base, emptyTechLevels(), 'TRADER')}`,
+  );
+
+  const intents = decide(snapshotWith({ character: 'TRADER', researching: true, bases: [base] }));
+  check(
+    'и делает это, а не стоит',
+    intents.some((intent) => intent.kind === 'BUILD' && intent.building === 'POLYMER_STORAGE'),
+    intents.map((i) => i.kind).join(', ') || 'ничего',
+  );
+}
+
+{
+  /*
+   * Аварийный выход остается на случай, когда даже нужное хранилище не по
+   * карману: склад высокого уровня стоит десятки тысяч, а дефицитного ресурса
+   * несколько сотен. Само по себе это больше не тупик — добыча идет, — но
+   * стоять сложа руки бот не должен, раз может потратить излишек.
+   */
+  const levels = {
+    ...emptyLevels(),
+    ORE_MINE: 4,
+    POLYMER_PLANT: 12,
+    PLASMA_REACTOR: 1,
+    POWER_PLANT: 3,
+    SCIENCE_CENTER: 2,
+    SHIPYARD: 2,
+    // Все три склада высокого уровня: следующий стоит десятки тысяч руды,
+    // а ее несколько сотен — расширяться боту нечем.
+    ORE_STORAGE: 10,
+    POLYMER_STORAGE: 10,
+    PLASMA_STORAGE: 10,
+  };
+  const caps = storageCapacities(levels);
   const stuck = snapshotWith({
     character: 'TRADER',
-    // Ровно тот набор, что был у живого бота: зонду нужна вычислительная
-    // техника, и без нее выхода из тупика действительно не существует.
+    // Тот же набор, что был у живого бота: зонду нужна вычислительная техника.
     techs: { ...emptyTechLevels(), ENERGY_TECH: 2, COMBUSTION_DRIVE: 3, COMPUTING_TECH: 2, MINING_TECH: 1 },
-    // Лаборатория занята — именно так и было у живого бота. Исследование тоже
-    // тратит ресурсы и размыкает тупик, поэтому без этой строки проверка
-    // ловила бы не аварийный выход, а обычный ход науки.
     researching: true,
     bases: [
       testBase('home', {
         levels,
-        // Ровно потолок: добыча остановлена, руды не хватает ни на что.
-        resources: { ore: 576, polymers: capacity - 576 - 1025, plasma: 1025 },
+        resources: { ore: 576, polymers: caps.polymers, plasma: 1025 },
       }),
     ],
   });
 
-  const intents = decide(stuck);
-  const spending = intents.filter((intent) => intent.kind !== 'ORDER');
-  check(
-    'на забитом складе бот находит, чем освободить место',
-    spending.length > 0,
-    spending.length
-      ? spending.map((i) => (i.kind === 'SHIPS' ? `${i.kind}:${i.ship}` : i.kind)).join(', ')
-      : 'бот не делает ничего — тупик',
-  );
-
-  // Дешевле зонда в каталоге ничего нет, и он не входит в состав торговца:
-  // выход обязан искаться вне плана, иначе его бы не нашлось.
-  const escape = intents.find((intent) => intent.kind === 'SHIPS');
+  const escape = decide(stuck).find((intent) => intent.kind === 'SHIPS');
   check(
     'выход ищется вне состава эскадры',
     escape?.kind === 'SHIPS' && escape.ship === 'PROBE',

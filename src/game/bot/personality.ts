@@ -157,7 +157,7 @@ export const BOT_PERSONALITIES: Record<BotCharacter, BotPersonality> = {
     // Верфь торговцу нужна не меньше склада: без нее он строит первый уровень
     // и застревает на нем навсегда, а крейсеры и фрегаты из его же состава
     // требуют пятого и выше. Флот и оборона у него сдерживающие, но они есть.
-    buildingFocus: ['STORAGE', 'SCIENCE_CENTER', 'SHIPYARD'],
+    buildingFocus: ['ORE_STORAGE', 'POLYMER_STORAGE', 'SCIENCE_CENTER', 'SHIPYARD'],
     fleetMix: {
       LARGE_CARGO: 0.3,
       SMALL_CARGO: 0.1,

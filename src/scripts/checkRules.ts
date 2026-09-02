@@ -296,12 +296,13 @@ console.log('\n--- Грабеж: механика сейфа ---');
   ];
 
   for (const [label, stock, cargo] of cases) {
-    const loot = plunderAmount(stock, capacity, cargo);
-    const state = storageState(stock, capacity);
+    const caps = { ore: capacity, polymers: capacity, plasma: capacity };
+    const loot = plunderAmount(stock, caps, cargo);
+    const state = storageState(stock, caps);
     console.log(
       `${label}: лежало ${Math.round(loot.stored)}, защищено ${Math.round(loot.protectedAmount)}, ` +
         `излишек ${Math.round(loot.surplus)} → увезли ${loot.ore} Ti + ${loot.polymers} Si + ${loot.plasma} Tr` +
-        `${loot.cargoLimited ? ' (обрезали трюмы)' : ''}, уязвимо по снимку ${Math.round(state.vulnerable)}`,
+        `${loot.cargoLimited ? ' (обрезали трюмы)' : ''}, уязвимо по снимку ${Math.round(state.ore.vulnerable + state.polymers.vulnerable + state.plasma.vulnerable)}`,
     );
   }
 }

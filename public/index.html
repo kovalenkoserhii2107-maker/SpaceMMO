@@ -320,12 +320,16 @@
               </div>
             </div>
 
+            <!--
+              Складов три, по одному на ресурс: полный склад полимеров больше
+              не останавливает добычу руды. Строки собираются скриптом.
+            -->
             <div class="storage" id="storage">
               <div class="storage-head">
-                <span>Хранилище</span>
+                <span>Хранилища</span>
                 <b id="storage-text">0 / 0</b>
               </div>
-              <div class="storage-bar"><i id="storage-fill"></i></div>
+              <div class="storage-rows" id="storage-rows"></div>
               <p class="storage-note" id="storage-note"></p>
             </div>
           </div>
@@ -496,7 +500,7 @@
                 <label class="field"><span><svg class="ico ore sm" role="img" aria-label="Руда"><title>Руда</title><use href="#ico-ore"/></svg> Руда</span><input id="sim-stock-ore" type="number" min="0" value="0"></label>
                 <label class="field"><span><svg class="ico polymers sm" role="img" aria-label="Полимеры"><title>Полимеры</title><use href="#ico-polymers"/></svg> Полимеры</span><input id="sim-stock-polymers" type="number" min="0" value="0"></label>
                 <label class="field"><span><svg class="ico plasma sm" role="img" aria-label="Плазма"><title>Плазма</title><use href="#ico-plasma"/></svg> Плазма</span><input id="sim-stock-plasma" type="number" min="0" value="0"></label>
-                <label class="field"><span>Ур. хранилища</span><input id="sim-stock-storage" type="number" min="0" value="0"></label>
+                <label class="field" title="Одно число на все три склада: разведка стареет, и предпросмотр отвечает на вопрос «стоит ли лететь», а не считает добычу до килограмма"><span>Ур. складов</span><input id="sim-stock-storage" type="number" min="0" value="0"></label>
               </div>
             </div>
           </div>

@@ -37,7 +37,9 @@ const OUTPUT_LABEL: Partial<Record<BuildingType, string>> = {
   PLASMA_REACTOR: 'плазма в час',
   ANTIMATTER_FACTORY: 'антиматерия в час',
   POWER_PLANT: 'выработка энергии',
-  STORAGE: 'вместимость склада',
+  ORE_STORAGE: 'вместимость по руде',
+  POLYMER_STORAGE: 'вместимость по полимерам',
+  PLASMA_STORAGE: 'вместимость по плазме',
 };
 
 export async function getBuildingProjection(
@@ -61,7 +63,9 @@ export async function getBuildingProjection(
   /** Выработка здания на уровне — в тех единицах, в которых ее и показываем. */
   const outputAt = (target: number): number | null => {
     const levels: BuildingLevels = { ...base.levels, [type]: target };
-    if (type === 'STORAGE') return storageCapacityForLevel(target);
+    if (type === 'ORE_STORAGE' || type === 'POLYMER_STORAGE' || type === 'PLASMA_STORAGE') {
+      return storageCapacityForLevel(target);
+    }
     if (type === 'POWER_PLANT') return energyOutput(levels, base.richness, bonuses);
 
     const production = productionPerSecond(levels, base.richness, bonuses, drain, modifiers, techDrain);

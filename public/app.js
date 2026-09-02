@@ -76,7 +76,7 @@
     garrisonDefenseTotal: $('garrison-defense-total'),
     storage: $('storage'),
     storageText: $('storage-text'),
-    storageFill: $('storage-fill'),
+    storageRows: $('storage-rows'),
     storageNote: $('storage-note'),
     tabs: $('tabs'),
     buildJob: $('build-job'),
@@ -925,16 +925,17 @@
     // и по нему сразу видно, когда пора ставить станцию.
     el.resEnergy.textContent = fmt(base.energy.usage);
 
-    // На полном складе шахты стоят: показывать их проектную скорость —
-    // значит спорить с надписью «добыча остановлена» прямо над ней.
-    const mining = base.storage && base.storage.full ? 0 : null;
-    for (const [node, rate] of [
-      [el.rateOre, base.productionPerSecond.ore],
-      [el.ratePolymers, base.productionPerSecond.polymers],
-      [el.ratePlasma, base.productionPerSecond.plasma],
+    // На полном складе шахта стоит: показывать ее проектную скорость — значит
+    // спорить с надписью «добыча остановлена». Склады раздельные, поэтому
+    // и надпись адресная: встала руда — молчит только руда.
+    for (const [node, rate, key] of [
+      [el.rateOre, base.productionPerSecond.ore, 'ore'],
+      [el.ratePolymers, base.productionPerSecond.polymers, 'polymers'],
+      [el.ratePlasma, base.productionPerSecond.plasma, 'plasma'],
     ]) {
-      node.textContent = mining === null ? fmtRate(rate) : 'склад полон';
-      node.style.color = mining === null ? '' : 'var(--err)';
+      const stopped = Boolean(base.storage && base.storage[key] && base.storage[key].full);
+      node.textContent = stopped ? 'склад полон' : fmtRate(rate);
+      node.style.color = stopped ? 'var(--err)' : '';
     }
     el.resAntimatter.textContent = fmt(base.resources.antimatter);
     el.rateAntimatter.textContent = `+${base.productionPerSecond.antimatter.toFixed(3)}/с`;
@@ -1095,39 +1096,78 @@
     return total;
   }
 
+  /** Три склада: у каждого ресурса свой лимит и своя полоса. */
+  const STORAGE_ROWS = [
+    { key: 'ore', label: 'Руда' },
+    { key: 'polymers', label: 'Полимеры' },
+    { key: 'plasma', label: 'Плазма' },
+  ];
+
   /**
-   * Заполненность склада. Полный склад — не косметика: добыча встает,
-   * поэтому предупреждение выводим тем же местом, где показан сам лимит.
+   * Заполненность складов.
+   *
+   * Полный склад — не косметика: добыча этого ресурса встает. Раньше лимит был
+   * общий, и одна полоса отвечала за все три ресурса разом — по ней нельзя было
+   * понять, какой именно уперся в потолок. Теперь полоса на каждый.
    */
   function renderStorage(storage) {
     if (!storage) return;
 
-    const fill = Math.max(0, Math.min(1, storage.fill));
-    el.storageFill.style.width = `${(fill * 100).toFixed(1)}%`;
-    el.storageText.textContent = `Занято: ${fmt(storage.used)} / ${fmt(storage.capacity)}`;
+    if (!el.storageRows.firstChild) {
+      el.storageRows.innerHTML = STORAGE_ROWS.map(
+        (row) =>
+          `<div class="storage-row" data-res="${row.key}">` +
+          `<span class="storage-name">${icon(row.key, 'sm')} ${row.label}</span>` +
+          `<b class="storage-amount"></b>` +
+          `<div class="storage-bar"><i></i></div>` +
+          `</div>`,
+      ).join('');
+    }
 
-    const overflow = storage.used > storage.capacity;
-    const near = !storage.full && storage.fill >= 0.85;
-    el.storage.classList.toggle('full', storage.full);
+    let full = false;
+    let near = false;
+    const risky = [];
+
+    for (const row of STORAGE_ROWS) {
+      const one = storage[row.key];
+      if (!one) continue;
+
+      const node = el.storageRows.querySelector(`[data-res="${row.key}"]`);
+      const fill = Math.max(0, Math.min(1, one.fill));
+      node.querySelector('.storage-bar i').style.width = `${(fill * 100).toFixed(1)}%`;
+      node.querySelector('.storage-amount').textContent = `${fmt(one.used)} / ${fmt(one.capacity)}`;
+
+      const rowNear = !one.full && one.fill >= 0.85;
+      node.classList.toggle('full', one.full);
+      node.classList.toggle('near', rowNear);
+
+      full = full || one.full;
+      near = near || rowNear;
+      if (one.vulnerable > 0) risky.push(`${row.label.toLowerCase()} ${fmt(one.vulnerable)}`);
+
+      // Та же метка уходит на строку ресурсов в шапке — но теперь адресно,
+      // на тот ресурс, у которого кончилось место, а не на всю строку разом.
+      const chip = el[`res${row.key[0].toUpperCase()}${row.key.slice(1)}`];
+      const cell = chip ? chip.closest('.res') : null;
+      if (cell) {
+        cell.classList.toggle('full', one.full);
+        cell.classList.toggle('near', rowNear);
+      }
+    }
+
+    el.storageText.textContent = `Занято: ${fmt(storage.used)} / ${fmt(storage.capacity)}`;
+    el.storage.classList.toggle('full', full);
     el.storage.classList.toggle('near', near);
 
-    // Те же две метки уходят на строку ресурсов: полный склад останавливает
-    // добычу, и узнавать об этом, открыв карточку базы, поздно.
-    el.resourceBar.classList.toggle('full', storage.full);
-    el.resourceBar.classList.toggle('near', near);
-
     // Уязвимый излишек появляется только за порогом 90% вместимости,
-    // поэтому на полупустом складе про грабеж молчим — там терять нечего.
-    const risk = storage.vulnerable > 0 ? ` Под грабеж попадает ${fmt(storage.vulnerable)}.` : '';
+    // поэтому на полупустых складах про грабеж молчим — там терять нечего.
+    const risk = risky.length ? ` Под грабеж попадает: ${risky.join(', ')}.` : '';
+    const filled = STORAGE_ROWS.filter((row) => storage[row.key] && storage[row.key].full)
+      .map((row) => row.label.toLowerCase());
 
-    if (storage.full) {
-      el.storageNote.textContent =
-        'Склады переполнены. Добыча остановлена.' +
-        (overflow ? ` Сверх лимита лежит ${fmt(storage.used - storage.capacity)}.` : '') +
-        risk;
-    } else {
-      el.storageNote.textContent = `Свободно ${fmt(storage.free)}.` + risk;
-    }
+    el.storageNote.textContent = filled.length
+      ? `Склад заполнен: ${filled.join(', ')}. Добыча ${filled.length > 1 ? 'этих ресурсов остановлена' : 'этого ресурса остановлена'}.${risk}`
+      : `Место есть во всех трех хранилищах.${risk}`;
   }
 
   function renderJobBanner(node, job) {

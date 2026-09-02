@@ -19,8 +19,10 @@ import {
   missingBuildingRequirements,
   multiplyResources,
   productionPerSecond,
+  STORAGE_FOR,
+  STORED_RESOURCES,
+  storageCapacities,
   storageCapacity,
-  storedTotal,
   systemModifiers,
   upgradeCost,
   type BuildingLevels,
@@ -268,8 +270,7 @@ export function buildingPlan(
 
   const bonuses = economyBonuses(techs);
   const drain = timeCompressionDrain(techs);
-  const capacity = storageCapacity(levels);
-  const full = storedTotal(base.resources) >= capacity * 0.9;
+  const caps = storageCapacities(levels);
 
   const modifiers = systemModifiers(base.anomaly);
   const before = productionPerSecond(levels, base.richness, bonuses, 0, modifiers, drain);
@@ -289,7 +290,18 @@ export function buildingPlan(
    * уровень, а добыча быстрее, поэтому на поздних уровнях склад стал бы
    * вечным первым пунктом и заслонил бы сами шахты.
    */
-  if (full || capacity < beforeRate * 3600) want('STORAGE');
+  /*
+   * Склады разделены, поэтому и решение поресурсное: тянем тот, который
+   * действительно жмет. Раньше приходилось гадать по общей сумме, и бот
+   * расширял хранилище, когда место кончалось вовсе не у того ресурса.
+   */
+  for (const resource of STORED_RESOURCES) {
+    const building = STORAGE_FOR[resource];
+    const room = caps[resource];
+    const held = Math.max(0, base.resources[resource]);
+    const rate = before[resource];
+    if (held >= room * 0.9 || room < rate * 3600) want(building);
+  }
 
   // Просевшая энергия режет добычу на всех шахтах разом, поэтому станция
   // важнее любого следующего уровня шахты.
@@ -318,25 +330,29 @@ export function buildingPlan(
 
   // Хвост запасных вариантов: они дешевле целей выше и всегда осмысленны,
   // поэтому боту есть чем заняться, пока он копит на главное.
-  want('STORAGE');
+  want('ORE_STORAGE');
+  want('POLYMER_STORAGE');
+  want('PLASMA_STORAGE');
   want('SCIENCE_CENTER');
   want('SHIPYARD');
   want('POWER_PLANT');
 
   /*
    * Если на главную цель не хватит даже полного склада, узкое место — сам склад,
-   * и копить бессмысленно: лимит общий на три ресурса, а цены перекошены в руду,
-   * поэтому невостребованная плазма отъедает место, которое нужно руде. Бот
-   * может простоять так двое суток, ожидая суммы, которая физически не влезает.
-   * Половина вместимости взята порогом потому, что вторую половину занимает
-   * все остальное, что база копит одновременно.
+   * и копить бессмысленно: нужной суммы просто некуда положить. Ставим вперед
+   * то хранилище, которого не хватает, — теперь это видно точно, по ресурсу.
    */
   const primary = plan[0];
-  if (primary && primary !== 'STORAGE' && available('STORAGE')) {
+  if (primary) {
     const cost = upgradeCost(primary, levels[primary] + 1);
-    const cramped =
-      cost.ore > capacity * 0.5 || cost.polymers > capacity * 0.5 || cost.plasma > capacity * 0.5;
-    if (cramped) plan.unshift('STORAGE');
+    for (const resource of STORED_RESOURCES) {
+      const building = STORAGE_FOR[resource];
+      if (primary === building || !available(building)) continue;
+      if (cost[resource] > caps[resource]) {
+        plan.unshift(building);
+        break;
+      }
+    }
   }
 
   return plan;
@@ -637,15 +653,13 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
     const capacity = storageCapacity(base.levels);
 
     /*
-     * Порог, за которым копить уже бессмысленно.
-     *
-     * Лимит склада общий на три ресурса, а цены перекошены в руду — поэтому
-     * невостребованная плазма занимает место, которое нужно руде. На забитом
-     * складе добыча встает совсем, и недостающая руда не появится уже никогда:
-     * бот замирает навсегда перед целью, до которой ему остались считанные
-     * проценты.
+     * Порог, за которым копить уже бессмысленно: хотя бы один склад у потолка,
+     * и добыча этого ресурса встала. Раз склады раздельные, смотрим по каждому:
+     * полный склад полимеров при пустом рудном — это не «места нет», а вполне
+     * рабочее положение, и объявлять аврал из-за него незачем.
      */
-    const pressure = storedTotal(stock) >= capacity * 0.9;
+    const caps = storageCapacities(base.levels);
+    const pressure = STORED_RESOURCES.some((resource) => stock[resource] >= caps[resource] * 0.9);
     const share = (direction: Direction) => (pressure ? 1 : profile.budget[direction]);
 
     /* --- Стройка --- */

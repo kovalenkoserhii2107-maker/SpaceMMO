@@ -5,6 +5,21 @@ import type { FleetMission } from '../game/fleets.js';
 import type { DefenseCounts, DefenseType } from '../game/defenses.js';
 import type { PlanetView } from '../game/fogOfWar.js';
 
+/** Один склад: у каждого ресурса свой лимит и свой уровень постройки. */
+export interface ResourceStorage {
+  capacity: number;
+  used: number;
+  free: number;
+  /** Заполненность 0..1; больше 1, если склад переполнили извне. */
+  fill: number;
+  /** Добыча этого ресурса остановлена: свободного места нет. */
+  full: boolean;
+  /** Несгораемый объем — его грабеж не достает. */
+  protectedAmount: number;
+  /** Излишек сверх несгораемого объема: он уязвим при поражении. */
+  vulnerable: number;
+}
+
 export interface BuildingCard {
   type: BuildingType;
   label: string;
@@ -131,17 +146,14 @@ export interface BaseSnapshot {
   productionPerSecond: BaseStock;
   /** Склад ресурсов: общий лимит на руду, полимеры и плазму. */
   storage: {
+    /** Сумма по трем складам — для коротких строк и сводок. */
     capacity: number;
     used: number;
-    free: number;
-    /** Заполненность 0..1; больше 1, если склад переполнили извне. */
-    fill: number;
-    /** Добыча остановлена: свободного места нет. */
-    full: boolean;
-    /** Несгораемый объем — его грабеж не достает. */
-    protectedAmount: number;
-    /** Излишек сверх несгораемого объема: он уязвим при поражении. */
-    vulnerable: number;
+    /** Хотя бы один склад полон: добыча этого ресурса встала. */
+    anyFull: boolean;
+    ore: ResourceStorage;
+    polymers: ResourceStorage;
+    plasma: ResourceStorage;
   };
   energy: {
     output: number;

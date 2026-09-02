@@ -23,7 +23,11 @@ import {
   type DefenseCounts,
   type DefenseType,
 } from './defenses.js';
-import { PROTECTED_STORAGE_SHARE } from './rules.js';
+import {
+  PROTECTED_STORAGE_SHARE,
+  STORED_RESOURCES,
+  type StorageCapacities,
+} from './rules.js';
 import {
   emptyShipCounts,
   SHIP_TYPES,
@@ -602,21 +606,36 @@ export interface PlunderResult {
  */
 export function plunderAmount(
   stock: { ore: number; polymers: number; plasma: number },
-  storageCapacity: number,
+  capacities: StorageCapacities,
   cargoCapacity: number,
 ): PlunderResult {
-  const ore = Math.max(0, stock.ore);
-  const polymers = Math.max(0, stock.polymers);
-  const plasma = Math.max(0, stock.plasma);
-  const stored = ore + polymers + plasma;
+  /*
+   * Несгораемый объем считается по каждому складу отдельно.
+   *
+   * По общему лимиту получалось несправедливо в обе стороны: полный склад
+   * полимеров прикрывал собой руду, которой почти не было, а пустой рудный
+   * склад «отдавал» свою защиту полимерам. Теперь каждый ресурс защищен
+   * ровно своим хранилищем.
+   */
+  const held = {
+    ore: Math.max(0, stock.ore),
+    polymers: Math.max(0, stock.polymers),
+    plasma: Math.max(0, stock.plasma),
+  };
+  const stored = held.ore + held.polymers + held.plasma;
 
-  const protectedAmount = Math.min(stored, Math.max(0, storageCapacity) * PROTECTED_STORAGE_SHARE);
+  let protectedAmount = 0;
+  const available = { ore: 0, polymers: 0, plasma: 0 };
+  for (const resource of STORED_RESOURCES) {
+    const safe = Math.min(held[resource], Math.max(0, capacities[resource]) * PROTECTED_STORAGE_SHARE);
+    protectedAmount += safe;
+    available[resource] = Math.floor(Math.max(0, held[resource] - safe) * RAID_SHARE);
+  }
+
   const surplus = Math.max(0, stored - protectedAmount);
-
-  const share = stored > 0 ? (RAID_SHARE * surplus) / stored : 0;
-  const availableOre = Math.floor(ore * share);
-  const availablePolymers = Math.floor(polymers * share);
-  const availablePlasma = Math.floor(plasma * share);
+  const availableOre = available.ore;
+  const availablePolymers = available.polymers;
+  const availablePlasma = available.plasma;
   const takeable = availableOre + availablePolymers + availablePlasma;
 
   // Трюмы забиваются по порядку: сперва руда, затем полимеры, потом плазма.
@@ -631,7 +650,7 @@ export function plunderAmount(
     ore: takenOre,
     polymers: takenPolymers,
     plasma: takenPlasma,
-    storageCapacity,
+    storageCapacity: capacities.ore + capacities.polymers + capacities.plasma,
     stored,
     protectedAmount,
     surplus,

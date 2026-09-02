@@ -23,6 +23,12 @@ export interface SimulationStock {
   ore: number;
   polymers: number;
   plasma: number;
+  /**
+   * Уровень складов защитника — оценка, а не точное знание: снимок разведки
+   * стареет, а три склада игрок качает вразнобой. Здесь одно число на все три,
+   * потому что предпросмотр отвечает на вопрос «стоит ли лететь», а не считает
+   * добычу до килограмма.
+   */
   storageLevel: number;
 }
 
@@ -108,7 +114,15 @@ export function simulateBattle(
   const survivingCapacity = fleetCapacity(outcome.attackerSurvivors);
   const plunder =
     stock && outcome.winner === 'ATTACKER'
-      ? plunderAmount(stock, storageCapacityForLevel(stock.storageLevel), survivingCapacity)
+      ? plunderAmount(
+          stock,
+          {
+            ore: storageCapacityForLevel(stock.storageLevel),
+            polymers: storageCapacityForLevel(stock.storageLevel),
+            plasma: storageCapacityForLevel(stock.storageLevel),
+          },
+          survivingCapacity,
+        )
       : null;
 
   return {

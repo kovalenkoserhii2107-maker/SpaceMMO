@@ -385,7 +385,9 @@ export async function getCommanderDetail(commanderId: string): Promise<Commander
           SCIENCE_CENTER: base.scienceCenterLevel,
           SHIPYARD: base.shipyardLevel,
           ANTIMATTER_FACTORY: base.antimatterFactoryLevel,
-          STORAGE: base.storageLevel,
+          ORE_STORAGE: base.oreStorageLevel,
+          POLYMER_STORAGE: base.polymerStorageLevel,
+          PLASMA_STORAGE: base.plasmaStorageLevel,
         },
         ships,
         defenses,
@@ -416,7 +418,9 @@ const BUILDING_COLUMNS: Record<BuildingType, string> = {
   SCIENCE_CENTER: 'scienceCenterLevel',
   SHIPYARD: 'shipyardLevel',
   ANTIMATTER_FACTORY: 'antimatterFactoryLevel',
-  STORAGE: 'storageLevel',
+  ORE_STORAGE: 'oreStorageLevel',
+  POLYMER_STORAGE: 'polymerStorageLevel',
+  PLASMA_STORAGE: 'plasmaStorageLevel',
 };
 
 /** Разбор патча из тела запроса: чужие ключи и мусорные числа не проходят. */
