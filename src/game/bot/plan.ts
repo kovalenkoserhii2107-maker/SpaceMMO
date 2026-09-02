@@ -192,10 +192,26 @@ export function withPlan(character: BotCharacter, plan: BotPlan | null): BotPers
    */
   const focus = [...plan.buildingFocus, ...base.buildingFocus.filter((b) => !plan.buildingFocus.includes(b))];
 
+  /*
+   * Наука сводится так же и по той же причине.
+   *
+   * Замена целиком стоила Купцю всего флота: модель назвала три ветки —
+   * энергетику, добычу и вычисления, — и вместе с остальными из списка исчез
+   * реактивный двигатель, ворота под любой базовый корабль. Бот простоял
+   * с 92 000 ₴, четырнадцатью тысячами полимеров и пустым ангаром, не имея
+   * даже грузовика, чтобы вывезти товар на хаб. Модель этого не выбирала —
+   * она перечислила то, что считала срочным, не подозревая, что остальное
+   * при этом исчезает.
+   */
+  const research = [
+    ...plan.researchOrder,
+    ...base.researchOrder.filter((tech) => !plan.researchOrder.includes(tech)),
+  ];
+
   return {
     ...base,
     budget: plan.budget,
-    researchOrder: plan.researchOrder,
+    researchOrder: research,
     buildingFocus: focus,
     fleetMix: plan.fleetMix,
     defenseMix: plan.defenseMix,

@@ -381,6 +381,34 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
   );
 }
 
+{
+  /*
+   * Список модели дополняет характерный, а не заменяет его. Замена целиком
+   * стоила живому боту всего флота: назвав три ветки, модель выбросила
+   * реактивный двигатель — ворота под любой базовый корабль, — и Купець
+   * простоял с 92 000 ₴ и пустым ангаром, не имея даже грузовика.
+   */
+  const plan = parsePlan(
+    { researchOrder: ['ENERGY_TECH', 'MINING_TECH', 'COMPUTING_TECH'], buildingFocus: ['ORE_MINE'] },
+    'TRADER',
+  );
+  const merged = withPlan('TRADER', plan);
+  check(
+    'приоритеты модели идут первыми',
+    merged.researchOrder.slice(0, 3).join() === 'ENERGY_TECH,MINING_TECH,COMPUTING_TECH',
+    merged.researchOrder.slice(0, 3).join(' → '),
+  );
+  check(
+    'но ворота под корабли из списка не исчезают',
+    merged.researchOrder.includes('COMBUSTION_DRIVE'),
+    merged.researchOrder.join(' → '),
+  );
+  check(
+    'повторов при сведении не появляется',
+    new Set(merged.researchOrder).size === merged.researchOrder.length,
+  );
+}
+
 /* ------------------------- 4. Биржа ------------------------- */
 
 console.log('\n=== 4. Торговля: берем чужое, выставляем свое ===');
