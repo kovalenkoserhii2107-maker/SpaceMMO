@@ -755,7 +755,27 @@ export interface BotTurn {
  * Экспортируется отдельно от планировщика, чтобы админка могла разбудить
  * бота вручную и сразу показать, что он сделал.
  */
+/**
+ * Боты, чей ход идет прямо сейчас.
+ *
+ * Заход бота длится секунды — в нем поход к модели и несколько записей в БД, —
+ * и за это время его может подхватить кто-то еще: планировщик просыпается
+ * каждые десять секунд, а кнопка «Ход» в пульте зовет тот же метод напрямую.
+ * Два параллельных хода исполнили бы поручения модели дважды.
+ */
+const busy = new Set<string>();
+
 export async function runBotTurn(botId: string): Promise<BotTurn | null> {
+  if (busy.has(botId)) return null;
+  busy.add(botId);
+  try {
+    return await turn(botId);
+  } finally {
+    busy.delete(botId);
+  }
+}
+
+async function turn(botId: string): Promise<BotTurn | null> {
   const bot = await prisma.bot.findUnique({
     where: { id: botId },
     select: {

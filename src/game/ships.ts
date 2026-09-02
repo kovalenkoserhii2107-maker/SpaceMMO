@@ -32,6 +32,23 @@ export type ShipType = (typeof SHIP_TYPES)[number];
 
 export type ShipCounts = Record<ShipType, number>;
 
+/**
+ * Классы, из которых складывается эскадра.
+ *
+ * Зонд, переработчик и колонизатор сюда не входят: это инструменты под задачу,
+ * а не доля постоянного состава. Их заказывают, когда нужно разведать, собрать
+ * поле или занять планету, — держать их «в пропорции» бессмысленно.
+ *
+ * Различие не косметическое. Языковой модели показывают текущий состав флота,
+ * и она зеркалит его в желаемый: увидев полсотни зондов, она ставит зондам
+ * половину доли, код честно достраивает до нее, в следующей сводке зондов
+ * становится больше — петля кормит сама себя. Живой бот довел так до девяноста
+ * четырех штук.
+ */
+export const SQUADRON_TYPES = SHIP_TYPES.filter(
+  (type) => type !== 'PROBE' && type !== 'RECYCLER' && type !== 'COLONY_SHIP',
+);
+
 export function isShipType(value: unknown): value is ShipType {
   return typeof value === 'string' && (SHIP_TYPES as readonly string[]).includes(value);
 }

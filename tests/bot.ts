@@ -992,6 +992,47 @@ console.log('\n=== 7. План модели проверяется как нед
   );
 }
 
+/* ------------------------- 7б. Состав эскадры ------------------------- */
+
+console.log('\n=== 7б. Инструменты не входят в состав эскадры ===');
+
+{
+  /*
+   * Петля, которую поймало наблюдение. Модели показывают текущий состав флота,
+   * и она зеркалит его в желаемый: увидев полсотни зондов, ставит зондам
+   * половину доли, код достраивает до нее, в следующей сводке зондов больше.
+   * Живой бот дошел так до девяноста четырех разведывательных дронов
+   * при пустом боевом составе.
+   */
+  const mirrored = parsePlan(
+    { fleetMix: { PROBE: 0.5, SMALL_CARGO: 0.5, RECYCLER: 0.3, COLONY_SHIP: 0.2 } },
+    'TRADER',
+  );
+  check(
+    'зонд, переработчик и колонизатор в состав не попадают',
+    mirrored !== null &&
+      !('PROBE' in mirrored.fleetMix) &&
+      !('RECYCLER' in mirrored.fleetMix) &&
+      !('COLONY_SHIP' in mirrored.fleetMix),
+    mirrored ? Object.keys(mirrored.fleetMix).join(', ') : 'плана нет',
+  );
+  check(
+    'а грузовик остается',
+    mirrored !== null && mirrored.fleetMix.SMALL_CARGO === 0.5,
+    mirrored ? JSON.stringify(mirrored.fleetMix) : '',
+  );
+}
+
+{
+  // Состав из одних инструментов равносилен пустому: откатываемся к характеру.
+  const onlyTools = parsePlan({ fleetMix: { PROBE: 1, RECYCLER: 1 } }, 'AGGRESSOR');
+  check(
+    'состав из одних инструментов откатывается к характеру',
+    onlyTools !== null &&
+      JSON.stringify(onlyTools.fleetMix) === JSON.stringify(personality('AGGRESSOR').fleetMix),
+  );
+}
+
 /* ------------------------- 8. Директивы модели ------------------------- */
 
 console.log('\n=== 8. Поручения модели проверяются по сводке ===');
