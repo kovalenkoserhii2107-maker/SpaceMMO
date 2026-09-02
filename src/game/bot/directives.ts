@@ -27,6 +27,13 @@ export type BotDirective =
   /** Мир с игроком: войну объявляет и отменяет тоже она. */
   | { kind: 'PEACE'; commanderId: string; why: string }
   | { kind: 'SELL'; resource: TradeResource; amount: number; price: number; why: string }
+  /**
+   * Снять свои заявки по ресурсу.
+   *
+   * Без этого торговля упирается в потолок открытых заявок: на пустом рынке
+   * ничего не исполняется, пять заявок висят, и цену уже не поменять.
+   */
+  | { kind: 'CANCEL'; resource: TradeResource; why: string }
   | { kind: 'BUY'; resource: TradeResource; amount: number; price: number; why: string }
   | { kind: 'COLONIZE'; planetId: string; why: string }
   /** Сбор поля обломков над планетой. */
@@ -102,6 +109,11 @@ export function parseDirectives(raw: unknown, snapshot: BotSnapshot): BotDirecti
         if (res && amount > 0 && price > 0) {
           out.push({ kind: row['kind'] === 'SELL' ? 'SELL' : 'BUY', resource: res, amount, price, why });
         }
+        break;
+      }
+      case 'CANCEL': {
+        const res = resource(row['resource']);
+        if (res) out.push({ kind: 'CANCEL', resource: res, why });
         break;
       }
       case 'MESSAGE': {

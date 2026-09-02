@@ -181,11 +181,22 @@ export function withPlan(character: BotCharacter, plan: BotPlan | null): BotPers
   const base = personality(character);
   if (!plan) return base;
 
+  /*
+   * Приоритеты модели идут впереди характерных, но не вместо них.
+   *
+   * Полная замена выглядела логично и вышла боком: назвав три здания, модель
+   * молча выбрасывала из приоритетов лабораторию и верфь, и живой бот простоял
+   * с ними на четвертом уровне при шахтах седьмого несколько часов. Она этого
+   * не выбирала — просто перечислила то, что считала срочным, не подозревая,
+   * что остальное при этом исчезает.
+   */
+  const focus = [...plan.buildingFocus, ...base.buildingFocus.filter((b) => !plan.buildingFocus.includes(b))];
+
   return {
     ...base,
     budget: plan.budget,
     researchOrder: plan.researchOrder,
-    buildingFocus: plan.buildingFocus,
+    buildingFocus: focus,
     fleetMix: plan.fleetMix,
     defenseMix: plan.defenseMix,
     colonyAmbition: plan.colonyAmbition,

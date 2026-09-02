@@ -15,7 +15,7 @@
  */
 import { prisma } from '../../db/prisma.js';
 import { gameLoop, type ActionResult } from '../gameLoop.js';
-import { placeOrder } from '../../services/marketService.js';
+import { cancelOrder, placeOrder } from '../../services/marketService.js';
 import { deliver } from '../../services/mailService.js';
 import { SHIP_TYPES, emptyShipCounts, type ShipCounts } from '../ships.js';
 import { fleetCapacity } from '../fleets.js';
@@ -710,8 +710,41 @@ async function applyDirective(
       return note(result.ok ? `сбор обломков — ${directive.why}` : result.error);
     }
 
+    case 'CANCEL': {
+      const mine = await prisma.marketOrder.findMany({
+        where: { commanderId, resource: directive.resource, remaining: { gt: 0 } },
+        select: { id: true },
+      });
+      let cut = 0;
+      for (const order of mine) {
+        const result = await cancelOrder(commanderId, order.id);
+        if (result.ok) cut += 1;
+      }
+      return note(cut > 0 ? `снято заявок ${cut} — ${directive.why}` : 'снимать нечего');
+    }
+
     case 'SELL':
     case 'BUY': {
+      /*
+       * Дубли не выставляем. Заявки кода такую проверку проходят, а директивы
+       * шли мимо нее: живой бот набрал три продажи полимеров, две из них
+       * по одной цене, потому что рынок пуст и ни одна не исполнялась.
+       * Пять открытых заявок — потолок: дальше это уже не торговля,
+       * а замороженный в залоге склад.
+       */
+      const standing = await prisma.marketOrder.findMany({
+        where: { commanderId, remaining: { gt: 0 } },
+        select: { side: true, resource: true, pricePerUnit: true },
+      });
+      if (standing.length >= 5) return note('открытых заявок и так пять');
+      const same = standing.some(
+        (order) =>
+          order.side === directive.kind &&
+          order.resource === directive.resource &&
+          Math.round(order.pricePerUnit) === directive.price,
+      );
+      if (same) return note('такая заявка уже стоит');
+
       const result = await placeOrder(commanderId, {
         side: directive.kind,
         resource: directive.resource,

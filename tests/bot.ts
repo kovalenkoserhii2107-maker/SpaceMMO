@@ -983,6 +983,29 @@ console.log('\n=== 7. План модели проверяется как нед
 }
 
 {
+  /*
+   * Приоритеты модели идут впереди характерных, но не вместо них. Полная
+   * замена выглядела логично и вышла боком: назвав три здания, модель молча
+   * выбрасывала лабораторию и верфь, и живой бот простоял с ними
+   * на четвертом уровне при шахтах седьмого несколько часов.
+   */
+  const plan = parsePlan({ buildingFocus: ['PLASMA_REACTOR', 'POWER_PLANT'] }, 'TRADER');
+  const profile = withPlan('TRADER', plan);
+  const base = personality('TRADER').buildingFocus;
+
+  check(
+    'названное моделью идет первым',
+    profile.buildingFocus[0] === 'PLASMA_REACTOR' && profile.buildingFocus[1] === 'POWER_PLANT',
+    profile.buildingFocus.join(', '),
+  );
+  check(
+    'а приоритеты характера не пропадают',
+    base.every((building) => profile.buildingFocus.includes(building)),
+    `характер: ${base.join(', ')} → итог: ${profile.buildingFocus.join(', ')}`,
+  );
+}
+
+{
   // Без плана поведение обязано остаться ровно прежним: ИИ — надстройка,
   // а не условие работы бота.
   const empty = withPlan('TRADER', null);
