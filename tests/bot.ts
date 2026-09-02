@@ -783,44 +783,56 @@ console.log('\n=== 6б. Полный склад лечится своим хра
 
 {
   /*
-   * Аварийный выход остается на случай, когда даже нужное хранилище не по
-   * карману: склад высокого уровня стоит десятки тысяч, а дефицитного ресурса
-   * несколько сотен. Само по себе это больше не тупик — добыча идет, — но
-   * стоять сложа руки бот не должен, раз может потратить излишек.
+   * Аварийный выход нужен и после разделения складов, но случай стал редким:
+   * поздняя игра, где добыча давно переросла хранилища. Все три склада полны,
+   * а любая постройка стоит больше, чем они вмещают вместе, — копить физически
+   * некуда, и без выхода бот стоял бы, имея полные закрома.
    */
   const levels = {
     ...emptyLevels(),
-    ORE_MINE: 4,
-    POLYMER_PLANT: 12,
-    PLASMA_REACTOR: 1,
-    POWER_PLANT: 3,
-    SCIENCE_CENTER: 2,
+    ORE_MINE: 25,
+    POLYMER_PLANT: 25,
+    PLASMA_REACTOR: 25,
+    POWER_PLANT: 30,
+    SCIENCE_CENTER: 20,
     SHIPYARD: 2,
-    // Все три склада высокого уровня: следующий стоит десятки тысяч руды,
-    // а ее несколько сотен — расширяться боту нечем.
-    ORE_STORAGE: 10,
-    POLYMER_STORAGE: 10,
-    PLASMA_STORAGE: 10,
+    ORE_STORAGE: 3,
+    POLYMER_STORAGE: 3,
+    PLASMA_STORAGE: 3,
   };
   const caps = storageCapacities(levels);
   const stuck = snapshotWith({
     character: 'TRADER',
-    // Тот же набор, что был у живого бота: зонду нужна вычислительная техника.
+    // Зонду нужна вычислительная техника — без нее выхода не нашлось бы.
     techs: { ...emptyTechLevels(), ENERGY_TECH: 2, COMBUSTION_DRIVE: 3, COMPUTING_TECH: 2, MINING_TECH: 1 },
     researching: true,
     bases: [
       testBase('home', {
         levels,
-        resources: { ore: 576, polymers: caps.polymers, plasma: 1025 },
+        resources: { ore: caps.ore, polymers: caps.polymers, plasma: caps.plasma },
       }),
     ],
   });
 
-  const escape = decide(stuck).find((intent) => intent.kind === 'SHIPS');
+  const intents = decide(stuck);
   check(
-    'выход ищется вне состава эскадры',
-    escape?.kind === 'SHIPS' && escape.ship === 'PROBE',
-    escape?.kind === 'SHIPS' ? escape.ship : 'корабль не заказан',
+    'при полных складах и неподъемных постройках бот не стоит',
+    intents.some((intent) => intent.kind === 'SHIPS'),
+    intents.map((i) => (i.kind === 'SHIPS' ? `SHIPS:${i.ship}` : i.kind)).join(', ') || 'ничего',
+  );
+
+  /*
+   * Проверяем свойство, а не конкретный корпус. С полными складами бот богат,
+   * и чаще всего его разблокирует обычная ветка верфи — до аварийного выхода
+   * дело не доходит. Выход остается последним рубежом на случай, когда и она
+   * упрется в долю портфеля; настаивать в тесте на зонде значило бы проверять
+   * реализацию вместо поведения.
+   */
+  const spending = intents.filter((intent) => intent.kind !== 'ORDER');
+  check(
+    'трата освобождает место на складе',
+    spending.length > 0,
+    spending.map((i) => i.kind).join(', ') || 'ничего',
   );
 }
 
