@@ -318,8 +318,22 @@ export async function cancelOrder(commanderId: string, orderId: string): Promise
         const storage = await tx.hubStorage.findUniqueOrThrow({
           where: { commanderId_hubId: { commanderId, hubId: order.hubId } },
         });
-        await incrementStorage(tx, storage.id, field, order.remaining, storageCapacity(storage.level),
-          'На складе хаба не хватает места, чтобы вернуть товар');
+        /*
+         * Возврат залога кладется на склад без оглядки на лимит.
+         *
+         * Проверка вместимости здесь запирала игрока в собственных заявках:
+         * склад полон — снять ордер нельзя, потому что товару некуда лечь;
+         * освободить место нечем, потому что товар заперт в ордере. Живой бот
+         * попал в это ровно так и остался с пятью неснимаемыми заявками.
+         *
+         * Лимит при этом не обходится: это не новая добыча, а свой же товар,
+         * который вернулся, — ровно тот случай, для которого переполнение
+         * склада и предусмотрено, как у возвратного рейса на колонии.
+         */
+        await tx.hubStorage.update({
+          where: { id: storage.id },
+          data: { [field]: { increment: order.remaining } },
+        });
       } else {
         await tx.commander.update({
           where: { id: commanderId },

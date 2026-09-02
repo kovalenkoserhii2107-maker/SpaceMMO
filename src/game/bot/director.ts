@@ -22,6 +22,7 @@ import { REFERENCE_PRICE } from '../market.js';
 import { deliver } from '../../services/mailService.js';
 import { SHIP_TYPES, emptyShipCounts, type ShipCounts } from '../ships.js';
 import { fleetCapacity } from '../fleets.js';
+import { storageCapacities } from '../rules.js';
 import { normalizeDefenses, normalizeShips } from '../fogOfWar.js';
 import { spentOnDefense, spentOnFleet } from '../score.js';
 import type { CommanderRuntimeState } from '../baseState.js';
@@ -292,9 +293,21 @@ async function deliverToHub(
   const hold = fleetCapacity(ships);
   if (hold <= 0) return null;
 
-  // Больше сорока процентов не увозим: остальное нужно самой базе на стройку.
-  let ore = Math.floor(base.resources.ore * 0.4);
-  let polymers = Math.floor(base.resources.polymers * 0.4);
+  /*
+   * Вывозим только излишек — то, чего накопилось больше половины своего склада.
+   *
+   * Раньше в рейс уходило по сорок процентов и руды, и полимеров, независимо
+   * от того, много их или мало. Бот на этом сам себя обкрадывал: полимеров
+   * у него было под завязку, а руды на четверть склада, и именно руду он
+   * увозил на станцию — ту самую, которой не хватало на лабораторию.
+   * Живой бот простоял так с лабораторией четвертого уровня при шахтах
+   * седьмого несколько часов.
+   */
+  const caps = storageCapacities(base.levels);
+  const surplus = (held: number, cap: number) => Math.max(0, held - cap * 0.5);
+
+  let ore = Math.floor(surplus(base.resources.ore, caps.ore) * 0.8);
+  let polymers = Math.floor(surplus(base.resources.polymers, caps.polymers) * 0.8);
   if (ore + polymers > hold) {
     // Режем пропорционально, чтобы не вывезти один ресурс целиком.
     const scale = hold / (ore + polymers);
