@@ -18,6 +18,7 @@ import { gameLoop, type ActionResult } from '../gameLoop.js';
 import { placeOrder } from '../../services/marketService.js';
 import { deliver } from '../../services/mailService.js';
 import { emptyShipCounts, type ShipCounts } from '../ships.js';
+import { fleetCapacity } from '../fleets.js';
 import { normalizeDefenses, normalizeShips } from '../fogOfWar.js';
 import { spentOnDefense, spentOnFleet } from '../score.js';
 import type { CommanderRuntimeState } from '../baseState.js';
@@ -264,15 +265,30 @@ async function deliverToHub(
   const cargoShips = base.ships.LARGE_CARGO + base.ships.SMALL_CARGO;
   if (cargoShips === 0) return null;
 
-  // Везем половину излишка руды и полимеров: остальное нужно самой базе
-  // на стройку, и вывезти все значило бы встать без материалов.
-  const ore = Math.floor(base.resources.ore * 0.4);
-  const polymers = Math.floor(base.resources.polymers * 0.4);
-  if (ore + polymers < 1000) return null;
-
   const ships = emptyShipCounts();
   ships.LARGE_CARGO = base.ships.LARGE_CARGO;
   ships.SMALL_CARGO = base.ships.SMALL_CARGO;
+
+  /*
+   * Везем долю излишка, но не больше, чем влезает в трюмы.
+   *
+   * Без этой обрезки рейс просто не улетал: доля считалась от склада, легко
+   * перекрывала вместимость одного транспорта, и sendFleet отвечал отказом.
+   * Молча — потому что отказ здесь штатен, — и торговля бота не работала вовсе.
+   */
+  const hold = fleetCapacity(ships);
+  if (hold <= 0) return null;
+
+  // Больше сорока процентов не увозим: остальное нужно самой базе на стройку.
+  let ore = Math.floor(base.resources.ore * 0.4);
+  let polymers = Math.floor(base.resources.polymers * 0.4);
+  if (ore + polymers > hold) {
+    // Режем пропорционально, чтобы не вывезти один ресурс целиком.
+    const scale = hold / (ore + polymers);
+    ore = Math.floor(ore * scale);
+    polymers = Math.floor(polymers * scale);
+  }
+  if (ore + polymers < 100) return null;
 
   const result = await gameLoop.sendFleet(
     commanderId,

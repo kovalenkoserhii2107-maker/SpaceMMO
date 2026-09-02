@@ -537,6 +537,30 @@ function laggingDefense(
   return { defense: worst, count: Math.max(1, Math.min(10, affordable)) };
 }
 
+/**
+ * Самый дешевый доступный корабль — размыкатель тупика на полном складе.
+ *
+ * Считаем по сумме ресурсов, а не по дефицитному: цель не «сэкономить»,
+ * а освободить место минимальной тратой того, чего меньше всего.
+ */
+function cheapestAffordable(base: BotBaseSnapshot, techs: TechLevels): ShipType | null {
+  if (base.levels.SHIPYARD <= 0) return null;
+
+  let best: ShipType | null = null;
+  let bestCost = Infinity;
+  for (const type of SHIP_TYPES) {
+    if (missingShipRequirements(type, base.levels, techs).length > 0) continue;
+    const cost = shipCost(type);
+    if (!hasEnoughResources(base.resources, cost)) continue;
+    const units = costUnits(cost);
+    if (units < bestCost) {
+      bestCost = units;
+      best = type;
+    }
+  }
+  return best;
+}
+
 /* ------------------------- Набег ------------------------- */
 
 /**
@@ -661,6 +685,32 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
           ship: order.ship,
           count: order.count,
           why: 'класс отстает от состава эскадры',
+        });
+      }
+    }
+
+    /* --- Аварийный выход из забитого склада --- */
+    if (pressure && !intents.some((intent) => 'baseId' in intent && intent.baseId === base.id)) {
+      /*
+       * Склад полон, добыча стоит, и ни одна цель по карману не проходит.
+       * Это не редкость, а тупик без выхода: на полном складе добыча равна
+       * нулю по всем трем ресурсам сразу, поэтому дефицитный ресурс уже
+       * никогда не появится, а все постройки требуют именно его. Живой бот
+       * простоял так с восемью тысячами полимеров и пятьюстами рудой,
+       * когда самое дешевое здание стоило шестьсот.
+       *
+       * Выход один — потратить хоть что-нибудь и освободить место. Берем
+       * самое дешевое, что вообще доступно, не глядя на состав эскадры:
+       * зонд в плане торговца не значится, но именно он размыкает тупик.
+       */
+      const escape = cheapestAffordable(base, snapshot.techs);
+      if (escape) {
+        intents.push({
+          kind: 'SHIPS',
+          baseId: base.id,
+          ship: escape,
+          count: 1,
+          why: 'склад забит, нужно освободить место',
         });
       }
     }
