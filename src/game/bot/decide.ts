@@ -21,6 +21,7 @@ import {
   productionPerSecond,
   STORAGE_FOR,
   STORED_RESOURCES,
+  type StoredResource,
   storageCapacities,
   storageCapacity,
   systemModifiers,
@@ -238,6 +239,11 @@ function portfolio(snapshot: BotSnapshot): Portfolio {
   }
   const research = spentOnResearch(snapshot.techs);
   return { economy, research, fleet, defense, total: economy + research + fleet + defense };
+}
+
+/** Требует ли покупка ресурс, отложенный под стройку. */
+function needsReserved(cost: ResourceAmounts, reserved: Set<StoredResource>): boolean {
+  return STORED_RESOURCES.some((resource) => reserved.has(resource) && cost[resource] > 0);
 }
 
 /* ------------------------- Экономика ------------------------- */
@@ -499,7 +505,7 @@ function laggingShip(
   levels: BuildingLevels,
   techs: TechLevels,
   stock: ResourceAmounts,
-  budget: { capacity: number; share: number },
+  budget: { capacity: number; share: number; reserved: Set<StoredResource> },
 ): { ship: ShipType; count: number } | null {
   const purse = wallet(stock, budget.share);
   const totalValue = spentOnFleet(ships);
@@ -510,6 +516,7 @@ function laggingShip(
     const share = mix[type];
     if (!share) continue;
     if (missingShipRequirements(type, levels, techs).length > 0) continue;
+    if (needsReserved(shipCost(type), budget.reserved)) continue;
     if (!canAfford(stock, budget.capacity, budget.share, shipCost(type))) continue;
 
     const have = ships[type] * costUnits(shipCost(type));
@@ -562,7 +569,7 @@ function laggingDefense(
   levels: BuildingLevels,
   techs: TechLevels,
   stock: ResourceAmounts,
-  budget: { capacity: number; share: number },
+  budget: { capacity: number; share: number; reserved: Set<StoredResource> },
 ): { defense: DefenseType; count: number } | null {
   const purse = wallet(stock, budget.share);
   const totalValue = spentOnDefense(defenses);
@@ -573,6 +580,7 @@ function laggingDefense(
     const share = mix[type];
     if (!share) continue;
     if (missingDefenseRequirements(type, levels, techs).length > 0) continue;
+    if (needsReserved(defenseCost(type), budget.reserved)) continue;
     if (!canAfford(stock, budget.capacity, budget.share, defenseCost(type))) continue;
 
     const have = defenses[type] * costUnits(defenseCost(type));
@@ -727,6 +735,9 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
      * ему как раз и не хватало на расширение полимерного склада.
      */
     const pressure = STORED_RESOURCES.every((resource) => stock[resource] >= caps[resource] * 0.9);
+
+    /** Ресурсы, которые база копит на постройку и потому не тратит на флот. */
+    const reserved = new Set<StoredResource>();
     const share = (direction: Direction) => (pressure ? 1 : profile.budget[direction]);
 
     /* --- Стройка --- */
@@ -769,6 +780,27 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
           building,
           why: pressure ? 'склад полон, копить некуда' : 'развитие базы',
         });
+      } else if (plan[0]) {
+        /*
+         * Копим на здание — значит не тратим то, чего для него не хватает.
+         *
+         * Кошельки считаются от текущего запаса, и направления тратят
+         * одновременно. Дорогая постройка из-за этого не накапливалась никогда:
+         * пока лаборатория ждала семь тысяч руды, флот со своей долей спокойно
+         * покупал истребителей по полторы, и руда не поднималась выше порога.
+         * Живой бот простоял так с лабораторией и верфью четвертого уровня
+         * при шахтах седьмого полсуток. Оговорка: прогон месяца разницы почти
+         * не показал — в нем нет вывоза товара на хаб, и руды там хватает.
+         * Правило бьет по живому дефициту, и подтвердить его может только
+         * живой бот.
+         *
+         * Резерв снимается сам, как только на постройку хватило: это не запрет
+         * на флот, а очередь — сначала то, что дороже и ждет дольше.
+         */
+        const cost = upgradeCost(plan[0], base.levels[plan[0]] + 1);
+        for (const resource of STORED_RESOURCES) {
+          if (cost[resource] > 0 && stock[resource] < cost[resource]) reserved.add(resource);
+        }
       }
     }
 
@@ -777,6 +809,7 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
       const order = laggingShip(base.ships, profile.fleetMix, base.levels, snapshot.techs, stock, {
         capacity,
         share: share('fleet'),
+        reserved,
       });
       if (order) {
         intents.push({
@@ -817,6 +850,7 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
       const order = laggingDefense(base.defenses, profile.defenseMix, base.levels, snapshot.techs, stock, {
         capacity,
         share: share('defense'),
+        reserved,
       });
       if (order) {
         intents.push({
