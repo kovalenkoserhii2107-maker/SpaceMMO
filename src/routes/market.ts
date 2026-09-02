@@ -8,7 +8,6 @@ import {
   getMarketView,
   offerBarter,
   placeOrder,
-  tradeWithStation,
   upgradeStorage,
 } from '../services/marketService.js';
 import { currentCommander, requireAuth, requireCommander } from './middleware.js';
@@ -87,26 +86,6 @@ marketRouter.delete('/orders/:orderId', async (req, res: Response<ActionResponse
   res.status(result.ok ? 200 : 409).json(result);
 });
 
-
-/**
- * Сделка со станцией. Она всегда готова купить и продать по своему коридору —
- * это единственный источник и сток криптогривны в игре.
- */
-marketRouter.post('/station', async (req, res: Response<ActionResponse | ErrorResponse>) => {
-  const body = (req.body ?? {}) as { side?: unknown; resource?: unknown; quantity?: unknown };
-  if (!isOrderSide(body.side) || !isTradeResource(body.resource)) {
-    res.status(400).json({ error: 'Некорректная сделка' });
-    return;
-  }
-  const quantity = positiveInt(body.quantity);
-  if (quantity === null) {
-    res.status(400).json({ error: 'Объем должен быть больше нуля' });
-    return;
-  }
-
-  const result = await tradeWithStation(currentCommander(req).id, body.side, body.resource, quantity);
-  res.status(result.ok ? 200 : 400).json(result.ok ? result : { error: result.error });
-});
 
 /** Выставить обмен ресурса на ресурс. Отдаваемое блокируется на складе. */
 marketRouter.post('/barter', async (req, res: Response<ActionResponse | ErrorResponse>) => {

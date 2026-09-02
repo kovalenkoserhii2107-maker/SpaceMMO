@@ -15,10 +15,10 @@
  */
 import { prisma } from '../../db/prisma.js';
 import { gameLoop, type ActionResult } from '../gameLoop.js';
-import { cancelOrder, fillOrder, placeOrder, tradeWithStation } from '../../services/marketService.js';
+import { cancelOrder, fillOrder, placeOrder } from '../../services/marketService.js';
 // Справочная цена одна на всех: бот держит коридор вокруг нее, а интерфейс
 // той же величиной показывает игроку, дорого сейчас или дешево.
-import { REFERENCE_PRICE } from '../market.js';
+import { marketPrice } from '../market.js';
 import { deliver } from '../../services/mailService.js';
 import { SHIP_TYPES, SQUADRON_TYPES, emptyShipCounts, type ShipCounts } from '../ships.js';
 import { fleetCapacity } from '../fleets.js';
@@ -81,7 +81,7 @@ async function buildSnapshot(
   const home = bases[0]!;
   const homeGalaxy = home.galaxy;
 
-  const [freeRows, foreignRows, scans, orders, debrisRows, hubStock] = await Promise.all([
+  const [freeRows, foreignRows, scans, orders, debrisRows, recentTrades, hubStock] = await Promise.all([
     prisma.planet.findMany({
       where: { base: null },
       select: { id: true, systemId: true, system: { select: { galaxyX: true, galaxyY: true } } },
@@ -121,6 +121,12 @@ async function buildSnapshot(
         system: { select: { galaxyX: true, galaxyY: true } },
       },
       take: 20,
+    }),
+    // Последние сделки: цену ресурса назначает рынок, а не константа.
+    prisma.trade.findMany({
+      orderBy: { createdAt: 'desc' },
+      select: { resource: true, pricePerUnit: true, quantity: true },
+      take: 60,
     }),
     prisma.hubStorage.findFirst({
       where: { commanderId: commander.commanderId },
@@ -175,10 +181,26 @@ async function buildSnapshot(
     fleetsInFlight: commander.fleets.length,
     freePlanets,
     raidTargets,
-    market: [
-      { resource: 'ORE', reference: REFERENCE_PRICE.ORE },
-      { resource: 'POLYMERS', reference: REFERENCE_PRICE.POLYMERS },
-    ],
+    // Цену назначает рынок: она средневзвешенная по последним сделкам,
+    // а перекос стакана говорит, чего не хватает и во что стоит вкладываться.
+    market: (['ORE', 'POLYMERS'] as const).map((resource) => {
+      const side = (want: 'BUY' | 'SELL') =>
+        orders
+          .filter((order) => order.resource === resource && order.side === want)
+          .reduce((sum, order) => sum + order.remaining, 0);
+      const demand = side('BUY');
+      const supply = side('SELL');
+      const both = demand + supply;
+      const { price, seeded } = marketPrice(resource, recentTrades);
+      return {
+        resource,
+        reference: price,
+        seeded,
+        demand: Math.round(demand),
+        supply: Math.round(supply),
+        skew: both > 0 ? Math.round(((demand - supply) / both) * 100) / 100 : null,
+      };
+    }),
     debrisFields: debrisRows.map((row) => ({
       planetId: row.id,
       ore: row.debrisOre,
@@ -259,12 +281,6 @@ async function execute(commanderId: string, intent: BotIntent): Promise<ActionRe
         intent.ships,
         { ore: 0, polymers: 0, plasma: 0 },
       );
-
-    case 'STATION': {
-      // Станция берет всегда — это и делает ее последней инстанцией,
-      // и единственным источником криптогривны в игре.
-      return tradeWithStation(commanderId, intent.side, intent.resource, intent.amount);
-    }
 
     case 'TAKE': {
       // Сделка по чужой заявке. Отказ штатен: заявку могли разобрать
@@ -445,7 +461,7 @@ async function buildBrief(
       polymers: Math.round(snapshot.hubStorage.polymers),
       free: Math.round(snapshot.hubStorage.free),
     },
-    market: await marketBrief(commander.commanderId),
+    market: await marketBrief(commander.commanderId, snapshot.market),
     battles: await battleBrief(commander.commanderId),
     events: await recentEvents(commander.commanderId),
     journal: readJournal(memory),
@@ -459,7 +475,10 @@ async function buildBrief(
  * рынок может уйти от нее в разы, и решать «продавать сейчас или ждать»
  * не по чему.
  */
-async function marketBrief(commanderId: string): Promise<BotBrief['market']> {
+async function marketBrief(
+  commanderId: string,
+  prices: BotSnapshot['market'],
+): Promise<BotBrief['market']> {
   const [mine, book, trades] = await Promise.all([
     prisma.marketOrder.findMany({
       where: { commanderId, remaining: { gt: 0 } },
@@ -487,6 +506,14 @@ async function marketBrief(commanderId: string): Promise<BotBrief['market']> {
   });
 
   return {
+    prices: prices.map((ref) => ({
+      resource: ref.resource,
+      price: ref.reference,
+      seeded: ref.seeded,
+      demand: ref.demand,
+      supply: ref.supply,
+      skew: ref.skew,
+    })),
     myOrders: mine.map(row),
     book: book.map((order) => ({ orderId: order.id, ...row(order) })),
     lastTrades: trades.map((t) => ({

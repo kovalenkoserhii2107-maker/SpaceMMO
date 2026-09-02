@@ -16,12 +16,10 @@ import {
   type OrderSide,
   type TradeResource,
   quote,
-  stationBuyPrice,
   buyerEscrow,
   buyerFee,
   matchPrice,
   sellerFee,
-  stationSellPrice,
   type Quote,
 } from '../game/market.js';
 
@@ -343,93 +341,24 @@ export async function cancelBarter(commanderId: string, offerId: string): Promis
   return { ok: true, message: 'Обмен снят, товар вернулся' };
 }
 
-/**
- * Сделка со станцией: она всегда готова купить и продать по своему коридору.
- *
- * Это единственный источник и сток криптогривны в игре. Все сделки между
- * игроками — переводы, и без станции денежная масса равнялась бы стартовой
- * тысяче на командира навсегда, а добыча растет экспоненциально: курс гривны
- * улетел бы в небо, и торговать стало бы не на что.
- *
- * Наживы на станции не сделать: она покупает дешевле справочной и продает
- * дороже, поэтому цикл «купил у нее — продал ей» всегда убыточен ровно
- * на ширину коридора.
- */
-export async function tradeWithStation(
-  commanderId: string,
-  side: OrderSide,
-  resource: TradeResource,
-  quantity: number,
-): Promise<MarketResult> {
-  if (!Number.isFinite(quantity) || quantity <= 0) {
-    return { ok: false, error: 'Объем должен быть больше нуля' };
-  }
-  const amount = Math.floor(quantity);
-
-  const hub = await findHubForUser(commanderId);
-  if (!hub) return { ok: false, error: 'Торговый хаб не найден' };
-  await ensureStorage(commanderId, hub.id);
-
-  const field = resource === 'ORE' ? 'ore' : 'polymers';
-  const price = side === 'SELL' ? stationBuyPrice(resource) : stationSellPrice(resource);
-  const total = tradeTotal(amount, price);
-
-  try {
-    await prisma.$transaction(async (tx) => {
-      const storage = await tx.hubStorage.findUniqueOrThrow({
-        where: { commanderId_hubId: { commanderId, hubId: hub.id } },
-      });
-
-      if (side === 'SELL') {
-        // Продаем станции: товар уходит со склада, деньги появляются из ниоткуда.
-        const shipped = await tx.hubStorage.updateMany({
-          where: { id: storage.id, [field]: { gte: amount } },
-          data: { [field]: { decrement: amount } },
-        });
-        if (shipped.count === 0) {
-          throw new MarketError(`На складе хаба только ${Math.floor(storage[field])}`);
-        }
-        await tx.commander.update({
-          where: { id: commanderId },
-          data: { credits: { increment: total } },
-        });
-      } else {
-        // Покупаем у станции: деньги исчезают, товар ложится на склад.
-        const cost = total + buyerFee(total);
-        const paid = await tx.commander.updateMany({
-          where: { id: commanderId, credits: { gte: cost } },
-          data: { credits: { decrement: cost } },
-        });
-        if (paid.count === 0) throw new MarketError(`Не хватает криптогривны: нужно ${cost} ₴`);
-
-        await incrementStorage(tx, storage.id, field, amount, storageCapacity(storage.level),
-          `На складе хаба свободно только ${Math.floor(storageCapacity(storage.level) - storageUsed(storage))}`);
-      }
-    });
-  } catch (error) {
-    return toError(error, 'Станция отказала в сделке');
-  }
-
-  await syncCredits(commanderId);
-  return {
-    ok: true,
-    message: side === 'SELL'
-      ? `Станция забрала ${amount} по ${price} — получено ${total} ₴`
-      : `Станция отгрузила ${amount} по ${price} — списано ${total} ₴`,
-  };
-}
-
 /** Сводка по ресурсу из уже отсортированного стакана и списка сделок. */
 function quoteFor(
   resource: TradeResource,
   side: { buy: PublicOrder[]; sell: PublicOrder[] },
-  trades: Array<{ resource: string; pricePerUnit: number }>,
+  trades: Array<{ resource: string; pricePerUnit: number; quantity: number }>,
 ): Quote {
   // Стакан уже отсортирован: покупка по убыванию, продажа по возрастанию.
   const bestBuy = side.buy[0]?.pricePerUnit ?? null;
   const bestSell = side.sell[0]?.pricePerUnit ?? null;
   const last = trades.find((trade) => trade.resource === resource)?.pricePerUnit ?? null;
-  return quote(resource, bestBuy, bestSell, last);
+  // Спрос и предложение — весь стакан по сторонам, а не только лучшие цены:
+  // перекос считается по объему, и одна дорогая заявка на сто единиц
+  // не должна весить столько же, сколько десять тысяч по рыночной.
+  const volume = (rows: PublicOrder[]) => rows.reduce((sum, row) => sum + row.remaining, 0);
+  return quote(resource, bestBuy, bestSell, last, trades, {
+    demand: volume(side.buy),
+    supply: volume(side.sell),
+  });
 }
 
 /** Расширение личного склада на хабе — платится товаром, который уже лежит на складе. */

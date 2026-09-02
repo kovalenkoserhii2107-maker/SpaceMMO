@@ -212,11 +212,12 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
     ...emptyBotSnapshot('AGGRESSOR'),
     techs: emptyTechLevels(),
     bases: [testBase('home', { resources: { ore: 5000, polymers: 3000, plasma: 1500 } })],
-    // Справочные цены бот получает от планировщика: без них коридора нет
-    // и торговать он не станет вовсе.
+    // Цену бот получает от планировщика: она средневзвешенная по последним
+    // сделкам между игроками. Без нее коридора нет и торговать он не станет.
+    // Стакан по умолчанию пуст, поэтому перекоса нет и коридор не сдвинут.
     market: [
-      { resource: 'ORE', reference: 10 },
-      { resource: 'POLYMERS', reference: 14 },
+      { resource: 'ORE', reference: 10, seeded: false, demand: 0, supply: 0, skew: null },
+      { resource: 'POLYMERS', reference: 14, seeded: false, demand: 0, supply: 0, skew: null },
     ],
     ...overrides,
   };
@@ -406,6 +407,41 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
   check(
     'повторов при сведении не появляется',
     new Set(merged.researchOrder).size === merged.researchOrder.length,
+  );
+}
+
+{
+  /*
+   * Ради этого на рынок и ходят. Полимеров вдоволь, а целевое здание требует
+   * руды, и добыть ее быстрее нельзя — шахта уже стоит. Продать избыток
+   * и купить недостающее.
+   */
+  const lopsided = snapshotWith({
+    character: 'TRADER',
+    credits: 100_000,
+    // Руды почти нет, полимеров полный склад: на постройку не хватает руды.
+    bases: [testBase('home', { resources: { ore: 5, polymers: 6000, plasma: 1500 } })],
+    hubStorage: { ore: 0, polymers: 4000, free: 2000 },
+    orderBook: [
+      { id: 'руда', side: 'SELL', resource: 'ORE', price: 10, amount: 500, mine: false },
+      { id: 'полимеры', side: 'BUY', resource: 'POLYMERS', price: 14, amount: 500, mine: false },
+    ],
+  });
+  const intents = decide(lopsided);
+  const takes = intents.filter((i) => i.kind === 'TAKE').map((i) => (i.kind === 'TAKE' ? i.orderId : ''));
+  check(
+    'недостающую руду бот покупает',
+    takes.includes('руда'),
+    takes.join(', ') || 'ничего',
+  );
+  check(
+    'а избыточные полимеры продает',
+    takes.includes('полимеры') ||
+      intents.some((i) => i.kind === 'ORDER' && i.side === 'SELL' && i.resource === 'POLYMERS'),
+  );
+  check(
+    'и полимеры при этом не покупает',
+    !intents.some((i) => i.kind === 'ORDER' && i.side === 'BUY' && i.resource === 'POLYMERS'),
   );
 }
 
@@ -689,20 +725,46 @@ console.log('\n=== 4. Торговля: берем чужое, выставля�
 
 {
   /*
-   * Станция — последняя инстанция и единственный источник криптогривны.
-   * Бот, который никогда ей не продает, останется без денег, а если так
-   * поступят все — денежная масса сервера не вырастет вовсе, и торговля
-   * встанет: продавать некому, потому что покупать не на что.
+   * Рынок двигает цену перекосом стакана. Пока цена была прибита к константе,
+   * коридор бота стоял намертво: он не дал бы за руду больше 10.6, как бы ее
+   * ни не хватало, — то есть спроса и предложения не возникало вовсе.
    */
-  const idle = snapshotWith({
+  const hungry = snapshotWith({
     character: 'TRADER',
-    hubStorage: { ore: 4000, polymers: 0, free: 1000 },
+    credits: 100_000,
+    bases: [testBase('home', { resources: { ore: 200, polymers: 3000, plasma: 1500 } })],
+    hubStorage: { ore: 0, polymers: 0, free: 5000 },
+    // Одни покупатели: перекос предельный, руду рвут из рук.
+    market: [
+      { resource: 'ORE', reference: 10, seeded: false, demand: 9000, supply: 0, skew: 1 },
+      { resource: 'POLYMERS', reference: 14, seeded: false, demand: 0, supply: 0, skew: null },
+    ],
+    orderBook: [{ id: 'дорогая-руда', side: 'SELL', resource: 'ORE', price: 11, amount: 400, mine: false }],
   });
-  const station = decide(idle).find((intent) => intent.kind === 'STATION');
+  const take = decide(hungry).find((intent) => intent.kind === 'TAKE');
   check(
-    'мертвый груз сдается станции',
-    station?.kind === 'STATION' && station.side === 'SELL' && station.resource === 'ORE',
-    station?.kind === 'STATION' ? `${station.amount} ${station.resource}` : 'не сдал',
+    'при дефиците бот платит выше прежнего потолка',
+    take?.kind === 'TAKE' && take.orderId === 'дорогая-руда',
+    take?.kind === 'TAKE' ? `взял по 11` : 'не взял',
+  );
+}
+
+{
+  const glut = snapshotWith({
+    character: 'TRADER',
+    credits: 100_000,
+    bases: [testBase('home', { resources: { ore: 200, polymers: 3000, plasma: 1500 } })],
+    hubStorage: { ore: 0, polymers: 0, free: 5000 },
+    // Одни продавцы: товара завались, переплачивать незачем.
+    market: [
+      { resource: 'ORE', reference: 10, seeded: false, demand: 0, supply: 9000, skew: -1 },
+      { resource: 'POLYMERS', reference: 14, seeded: false, demand: 0, supply: 0, skew: null },
+    ],
+    orderBook: [{ id: 'дорогая-руда', side: 'SELL', resource: 'ORE', price: 11, amount: 400, mine: false }],
+  });
+  check(
+    'при избытке на рынке бот ту же цену не платит',
+    !decide(glut).some((intent) => intent.kind === 'TAKE'),
   );
 }
 

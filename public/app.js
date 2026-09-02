@@ -129,7 +129,6 @@
     orderMax: $('order-max'),
     orderMarket: $('order-market'),
     marketQuotes: $('market-quotes'),
-    stationDesk: $('station-desk'),
     barterGiveRes: $('barter-give-res'),
     barterGiveQty: $('barter-give-qty'),
     barterWantRes: $('barter-want-res'),
@@ -3191,7 +3190,6 @@
   function renderMarket() {
     if (!market.data) return;
     renderQuotes();
-    renderStation();
     renderBarter();
     renderHubStorage();
     renderOrderBook();
@@ -3219,7 +3217,7 @@
       const card = document.createElement('div');
       card.className = 'quote';
 
-      // Шкала: справочная цена — середина, края — вдвое дешевле и вдвое дороже.
+      // Шкала: рыночная цена — середина, края — вдвое дешевле и вдвое дороже.
       // Так отклонение видно глазом, а не считается в уме.
       const mark = (price) =>
         price === null ? null : Math.max(0, Math.min(1, price / (q.reference * 2)));
@@ -3231,7 +3229,23 @@
         q.drift === null
           ? '<span class="muted">сделок не было</span>'
           : `<span class="${q.drift > 0.05 ? 'up' : q.drift < -0.05 ? 'down' : ''}">` +
-            `${q.drift > 0 ? '+' : ''}${Math.round(q.drift * 100)}% к справочной</span>`;
+            `${q.drift > 0 ? '+' : ''}${Math.round(q.drift * 100)}% к рыночной</span>`;
+
+      /*
+       * Перекос спроса — то, ради чего стакан вообще читают.
+       *
+       * Цену назначает только рынок: никто не выкупает товар по гарантированной
+       * цене. Поэтому важно не само число, а в какую сторону оно поедет, —
+       * а это говорит соотношение спроса и предложения.
+       */
+      const skew =
+        q.skew === null
+          ? '<span class="muted">стакан пуст</span>'
+          : q.skew > 0.15
+            ? `<span class="up">спрос выше предложения на ${Math.round(q.skew * 100)}%</span>`
+            : q.skew < -0.15
+              ? `<span class="down">предложение выше спроса на ${Math.round(-q.skew * 100)}%</span>`
+              : '<span>спрос и предложение в равновесии</span>';
 
       card.innerHTML =
         `<div class="quote-head">${icon(RESOURCE_ICONS[resource])} <b>${RESOURCE_LABELS[resource]}</b>` +
@@ -3244,11 +3258,14 @@
         `</div>` +
         `<div class="quote-legend">` +
         `<span>покупают <b class="price-buy">${q.bestBuy === null ? '—' : q.bestBuy.toFixed(2)}</b></span>` +
-        `<span>справочная <b>${q.reference.toFixed(2)}</b></span>` +
+        `<span>${q.seeded ? 'оценочная' : 'рыночная'} <b>${q.reference.toFixed(2)}</b></span>` +
         `<span>продают <b class="price-sell">${q.bestSell === null ? '—' : q.bestSell.toFixed(2)}</b></span>` +
         `</div>` +
         `<div class="quote-foot">${drift}` +
         (q.spread === null ? '' : ` · спред ${q.spread.toFixed(2)}`) +
+        `</div>` +
+        `<div class="quote-foot">${skew}` +
+        (q.skew === null ? '' : ` · хотят купить ${fmt(q.demand)}, продать ${fmt(q.supply)}`) +
         `</div>`;
 
       el.marketQuotes.appendChild(card);
@@ -3256,78 +3273,9 @@
   }
 
   /**
-   * Прилавок станции.
-   *
-   * Она берет всегда и по фиксированной цене — это единственный источник
-   * и сток криптогривны в игре. Без нее денег в обороте было бы ровно столько,
-   * сколько выдано на старте, а добыча растет без предела: курс улетел бы
-   * в небо, и торговать стало бы не на что.
-   *
-   * Стоит под стаканом нарочно: сперва торгуют друг с другом, к станции идут,
-   * когда больше некуда.
-   */
-  function renderStation() {
-    const quotes = market.data.quotes || {};
-    const storage = market.data.storage;
-    el.stationDesk.innerHTML = '';
-
-    for (const resource of ['ORE', 'POLYMERS']) {
-      const q = quotes[resource];
-      if (!q) continue;
-
-      const have = storage ? (resource === 'ORE' ? storage.ore : storage.polymers) : 0;
-      const afford = q.stationSell > 0 ? Math.floor(market.data.credits / q.stationSell) : 0;
-
-      const card = document.createElement('div');
-      card.className = 'station-card';
-      card.innerHTML =
-        `<div class="station-head">${icon(RESOURCE_ICONS[resource])} <b>${RESOURCE_LABELS[resource]}</b></div>` +
-        `<div class="station-side"><span>станция купит по</span><b class="price-buy">${q.stationBuy.toFixed(2)}</b></div>` +
-        `<div class="station-side"><span>станция продаст по</span><b class="price-sell">${q.stationSell.toFixed(2)}</b></div>`;
-
-      const row = document.createElement('div');
-      row.className = 'station-actions';
-
-      const amount = document.createElement('input');
-      amount.type = 'number';
-      amount.min = '1';
-      amount.value = String(Math.max(1, Math.floor(have) || 100));
-
-      const sell = document.createElement('button');
-      sell.type = 'button';
-      sell.className = 'ghost tiny';
-      sell.textContent = 'Продать';
-      sell.disabled = have <= 0;
-      sell.title = `На складе станции ${fmt(have)}`;
-      sell.addEventListener('click', () => void stationTrade('SELL', resource, Number(amount.value)));
-
-      const buy = document.createElement('button');
-      buy.type = 'button';
-      buy.className = 'ghost tiny';
-      buy.textContent = 'Купить';
-      buy.disabled = afford <= 0;
-      buy.title = `Хватит на ${fmt(afford)}`;
-      buy.addEventListener('click', () => void stationTrade('BUY', resource, Number(amount.value)));
-
-      row.append(amount, sell, buy);
-      card.appendChild(row);
-      el.stationDesk.appendChild(card);
-    }
-  }
-
-  async function stationTrade(side, resource, quantity) {
-    if (!Number.isFinite(quantity) || quantity <= 0) {
-      showBuildMessage('Некорректный объем', false);
-      return;
-    }
-    await send('/api/market/station', { side, resource, quantity: Math.floor(quantity) });
-    await loadMarket();
-  }
-
-  /**
    * Бартер: ресурс за ресурс, без денег.
    *
-   * Криптогривна дефицитна по устройству — ее создает только станция, — а
+   * Криптогривна дефицитна по устройству — ее дает только крипто-ферма, — а
    * обменять избыток полимеров на нужную руду хочется и без нее. Предложение
    * берется целиком: дробить обмен незачем.
    */

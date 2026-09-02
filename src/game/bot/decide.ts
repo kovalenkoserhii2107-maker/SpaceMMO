@@ -107,8 +107,15 @@ export interface BotRaidTarget {
 
 export interface BotMarketRef {
   resource: 'ORE' | 'POLYMERS';
-  /** Справочная цена, вокруг которой бот держит свой коридор. */
+  /** Рыночная цена: средневзвешенная по последним сделкам между игроками. */
   reference: number;
+  /** Сделок еще не было — цена взята из затравки и рынком не подтверждена. */
+  seeded: boolean;
+  /** Сколько единиц хотят купить и сколько продать: весь стакан по сторонам. */
+  demand: number;
+  supply: number;
+  /** Перекос спроса от -1 (одни продавцы) до +1 (одни покупатели). */
+  skew: number | null;
 }
 
 /** Заявка в стакане — своя или чужая. */
@@ -174,8 +181,6 @@ export type BotIntent =
   | { kind: 'SCAN'; baseId: string; planetId: string; why: string }
   /** Исполнить чужую заявку — сделка происходит сразу, а не когда-нибудь. */
   | { kind: 'TAKE'; orderId: string; amount: number; why: string }
-  /** Сделка со станцией: она берет всегда, но по своей невыгодной цене. */
-  | { kind: 'STATION'; side: 'BUY' | 'SELL'; resource: 'ORE' | 'POLYMERS'; amount: number; why: string }
   /** Снять собственную заявку: она больше не отвечает намерениям бота. */
   | { kind: 'DROP'; orderId: string; why: string }
   | {
@@ -772,6 +777,16 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
   const saturated = (direction: Direction): boolean =>
     held.total > 0 && held[direction] >= held.total * profile.budget[direction];
 
+  /*
+   * Чего боту не хватает на его же ближайшие цели.
+   *
+   * Это то, ради чего он идет на рынок. Ситуация обычная: полимеров вдоволь,
+   * а целевое здание требует руды, и добыть ее быстрее нельзя — шахта уже
+   * стоит. Продать избыток и купить недостающее — единственный способ
+   * не встать на месте, и именно это отличает торговлю от накопительства.
+   */
+  const shortfall = new Set<StoredResource>();
+
   /* --- Наука: одна на командира, поэтому считается от столицы --- */
   if (!snapshot.researching) {
     const purse = wallet(capital.resources, profile.budget.research);
@@ -783,6 +798,20 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
         tech,
         why: `по плану характера «${profile.label}»`,
       });
+    } else {
+      /*
+       * Технология не выбрана — либо ворота закрыты, либо не хватает ресурсов.
+       * Второе рынок лечит, первое нет, поэтому ищем первую ветку, которой
+       * мешают именно ресурсы, и записываем недостающее.
+       */
+      for (const candidate of profile.researchOrder) {
+        if (missingTechRequirements(candidate, capital.levels, snapshot.techs).length > 0) continue;
+        const cost = researchCost(candidate, snapshot.techs[candidate] + 1);
+        for (const resource of STORED_RESOURCES) {
+          if (cost[resource] > capital.resources[resource]) shortfall.add(resource);
+        }
+        break;
+      }
     }
   }
 
@@ -879,7 +908,11 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
          */
         const cost = upgradeCost(plan[0], base.levels[plan[0]] + 1);
         for (const resource of STORED_RESOURCES) {
-          if (cost[resource] > 0 && stock[resource] < cost[resource]) reserved.add(resource);
+          if (cost[resource] > 0 && stock[resource] < cost[resource]) {
+            reserved.add(resource);
+            // То же самое, но на весь снимок: за недостающим бот пойдет на рынок.
+            shortfall.add(resource);
+          }
         }
       }
     }
@@ -1025,7 +1058,7 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
 
   /* --- Биржа --- */
   if (profile.trade.active) {
-    intents.push(...tradeIntents(snapshot, profile));
+    intents.push(...tradeIntents(snapshot, profile, shortfall));
   }
 
   return intents;
@@ -1051,7 +1084,12 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
  * лучше, чем ждать у моря погоды: сделка происходит сразу, а заявка может
  * провисеть сутки.
  */
-function tradeIntents(snapshot: BotSnapshot, profile: BotPersonality): BotIntent[] {
+function tradeIntents(
+  snapshot: BotSnapshot,
+  profile: BotPersonality,
+  /** Ресурсы, которых не хватает на ближайшую постройку или технологию. */
+  shortfall: ReadonlySet<StoredResource>,
+): BotIntent[] {
   const intents: BotIntent[] = [];
   const hub = snapshot.hubStorage;
   const reference = new Map(snapshot.market.map((ref) => [ref.resource, ref.reference]));
@@ -1060,15 +1098,25 @@ function tradeIntents(snapshot: BotSnapshot, profile: BotPersonality): BotIntent
   /*
    * Что считать выгодным.
    *
-   * Коридор тот же, что бот держит для своих заявок: покупаем не дороже
-   * справочной с наценкой, продаем не дешевле справочной со скидкой. Внутри
-   * коридора сделка выгодна обеим сторонам, и бот не превращается ни
-   * в бесплатный насос, ни в пылесос.
+   * Коридор строится вокруг рыночной цены — средневзвешенной по последним
+   * сделкам между игроками, — а не вокруг константы. Это принципиально:
+   * пока цена была прибита к справочным десяти, бот не дал бы за руду больше
+   * 10.6, как бы ее ни не хватало, и спроса с предложением не возникало
+   * вовсе — был бы фиксированный курс без станции, которая его держит.
+   *
+   * Коридор целиком сдвигается перекосом стакана. Спрос больше предложения —
+   * покупатель вынужден платить дороже, а продавец может не спешить, и обе
+   * границы едут вверх; завались товара — вниз. Сдвиг ограничен той же
+   * маржой, поэтому цена ходит, но не улетает с одной сделки.
    */
+  const shift = (resource: 'ORE' | 'POLYMERS') => {
+    const ref = snapshot.market.find((item) => item.resource === resource);
+    return 1 + (ref?.skew ?? 0) * profile.trade.margin;
+  };
   const buyCeiling = (resource: 'ORE' | 'POLYMERS') =>
-    (reference.get(resource) ?? 0) * (1 + profile.trade.margin);
+    (reference.get(resource) ?? 0) * (1 + profile.trade.margin) * shift(resource);
   const sellFloor = (resource: 'ORE' | 'POLYMERS') =>
-    (reference.get(resource) ?? 0) * (1 - profile.trade.margin);
+    (reference.get(resource) ?? 0) * (1 - profile.trade.margin) * shift(resource);
 
   /*
    * По каждому ресурсу бот выбирает одну сторону: он либо продавец, либо
@@ -1094,18 +1142,30 @@ function tradeIntents(snapshot: BotSnapshot, profile: BotPersonality): BotIntent
    */
   const fill = new Map<'ORE' | 'POLYMERS', number>();
   for (const resource of TRADED) {
-    const stored = resource === 'ORE' ? 'ore' : 'polymers';
+    const field = resource === 'ORE' ? 'ore' : 'polymers';
     let held = 0;
     let capacity = 0;
     for (const base of snapshot.bases) {
-      held += Math.max(0, base.resources[stored]);
-      capacity += storageCapacities(base.levels)[stored];
+      held += Math.max(0, base.resources[field]);
+      capacity += storageCapacities(base.levels)[field];
     }
     fill.set(resource, capacity > 0 ? held / capacity : 0);
   }
 
-  /** Склады полны наполовину — значит ресурс в избытке, и мы его продаем. */
-  const selling = (resource: 'ORE' | 'POLYMERS') => (fill.get(resource) ?? 0) >= 0.5;
+  /*
+   * Сторону решает нужда, и только потом запас.
+   *
+   * Ресурс, которого не хватает на ближайшую цель, бот покупает, даже если
+   * склады им полны наполовину: полный склад полимеров ничего не значит,
+   * когда целевое здание требует руды, а рудная шахта уже стоит и быстрее
+   * добывать не станет. Ровно за этим на рынок и ходят — продать одно
+   * и купить другое, а не копить то, чего и так вдоволь.
+   *
+   * Остальное решает запас: половина склада — избыток, его продаем.
+   */
+  const stored = (resource: 'ORE' | 'POLYMERS') => (resource === 'ORE' ? 'ore' : 'polymers') as StoredResource;
+  const selling = (resource: 'ORE' | 'POLYMERS') =>
+    !shortfall.has(stored(resource)) && (fill.get(resource) ?? 0) >= 0.5;
 
   /* --- Берем чужое --- */
 
@@ -1154,33 +1214,6 @@ function tradeIntents(snapshot: BotSnapshot, profile: BotPersonality): BotIntent
       why: `отдаем ${order.resource === 'ORE' ? 'руду' : 'полимеры'} по ${order.price} при справочной ${Math.round(reference.get(order.resource) ?? 0)}`,
     });
     onHand[order.resource] -= amount;
-  }
-
-  /* --- Станция: последняя инстанция --- */
-
-  /*
-   * Станция берет всегда, но по своей невыгодной цене — на четверть дешевле
-   * справочной. Поэтому к ней идут в последнюю очередь: сперва взять чужое,
-   * потом выставить свое, и только если товар лежит мертвым грузом — сдать
-   * его станции.
-   *
-   * Смысл в том, что это единственный источник криптогривны в игре. Бот,
-   * который никогда не продает станции, останется без денег и не сможет
-   * купить ничего — как и весь сервер, если так поступят все.
-   */
-  const idle = { ORE: onHand.ORE, POLYMERS: onHand.POLYMERS };
-  for (const resource of TRADED) {
-    const amount = Math.floor(idle[resource]);
-    // Порог: мелочь сдавать не стоит, рейс на хаб дороже выручки.
-    if (amount < 500) continue;
-    intents.push({
-      kind: 'STATION',
-      side: 'SELL',
-      resource,
-      amount,
-      why: 'лежит мертвым грузом, станция берет всегда',
-    });
-    idle[resource] = 0;
   }
 
   /* --- Выставляем свое --- */
