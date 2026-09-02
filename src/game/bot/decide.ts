@@ -54,7 +54,12 @@ import {
   type TechnologyType,
 } from '../techTree.js';
 import { costUnits, spentOnBuildings, spentOnDefense, spentOnFleet, spentOnResearch } from '../score.js';
-import { NEWBIE_SHIELD_DAYS, personality, type BotCharacter } from './personality.js';
+import {
+  NEWBIE_SHIELD_DAYS,
+  personality,
+  type BotCharacter,
+  type BotPersonality,
+} from './personality.js';
 
 /* ------------------------- Снимок мира ------------------------- */
 
@@ -244,8 +249,10 @@ export function buildingPlan(
   base: BotBaseSnapshot,
   techs: TechLevels,
   character: BotCharacter,
+  /** План от языковой модели, если он есть: иначе статичный характер. */
+  override?: BotPersonality,
 ): BuildingType[] {
-  const profile = personality(character);
+  const profile = override ?? personality(character);
   const levels = base.levels;
   const available = (type: BuildingType) => missingBuildingRequirements(type, levels).length === 0;
 
@@ -328,8 +335,9 @@ export function nextBuilding(
   base: BotBaseSnapshot,
   techs: TechLevels,
   character: BotCharacter,
+  override?: BotPersonality,
 ): BuildingType | null {
-  return buildingPlan(base, techs, character)[0] ?? null;
+  return buildingPlan(base, techs, character, override)[0] ?? null;
 }
 
 /* ------------------------- Наука ------------------------- */
@@ -354,8 +362,9 @@ export function nextResearch(
   levels: BuildingLevels,
   character: BotCharacter,
   purse: ResourceAmounts,
+  override?: BotPersonality,
 ): TechnologyType | null {
-  const order = personality(character).researchOrder;
+  const order = (override ?? personality(character)).researchOrder;
   if (order.length === 0) return null;
 
   const lead = techs[order[0]!];
@@ -377,11 +386,15 @@ export function nextResearch(
   const leader = order[0]!;
   if (affordable(leader)) return leader;
 
-  // На ведущую не хватает: берем любую отставшую, до которой хватает денег, —
-  // копить в простое, когда есть что изучать, бот не должен.
+  /*
+   * На ведущую не хватает или она закрыта требованиями — берем первую
+   * доступную из порядка. Лесенка задает приоритет, а не запрет: без этого
+   * шага бот, чья ведущая ветка уперлась в непройденный пререквизит, не изучал
+   * бы вообще ничего и держал лабораторию пустой при полном складе.
+   */
   for (let index = 1; index < order.length; index += 1) {
     const tech = order[index]!;
-    if (techs[tech] < lead && affordable(tech)) return tech;
+    if (affordable(tech)) return tech;
   }
 
   return null;
@@ -420,6 +433,26 @@ function laggingShip(
     const gap = (want - have) / want;
     if (gap > worstGap) {
       worstGap = gap;
+      worst = type;
+    }
+  }
+
+  /*
+   * Отстающих нет — значит пропорции уже сошлись, но это не повод перестать
+   * строить: сколько флота держать, решает доля портфеля, а состав отвечает
+   * только на вопрос «чего именно». Без этой ветки флот замирал на первом же
+   * сошедшемся составе, и агрессор всю неделю строил турели вместо кораблей,
+   * потому что доступные ему классы были «в норме», а недостающие доли висели
+   * на бомбардировщике и линкоре, до которых он еще не дорос.
+   */
+  if (!worst) {
+    let heaviest = 0;
+    for (const type of SHIP_TYPES) {
+      const share = mix[type];
+      if (!share || share <= heaviest) continue;
+      if (missingShipRequirements(type, levels, techs).length > 0) continue;
+      if (!canAfford(stock, budget.capacity, budget.share, shipCost(type))) continue;
+      heaviest = share;
       worst = type;
     }
   }
@@ -467,6 +500,20 @@ function laggingDefense(
     }
   }
 
+  // Та же логика, что и у флота: пропорции сошлись — растем дальше по самой
+  // весомой доступной позиции. Объем ограничивает доля портфеля, а не состав.
+  if (!worst) {
+    let heaviest = 0;
+    for (const type of DEFENSE_TYPES) {
+      const share = mix[type];
+      if (!share || share <= heaviest) continue;
+      if (missingDefenseRequirements(type, levels, techs).length > 0) continue;
+      if (!canAfford(stock, budget.capacity, budget.share, defenseCost(type))) continue;
+      heaviest = share;
+      worst = type;
+    }
+  }
+
   if (!worst) return null;
 
   const unit = defenseCost(worst);
@@ -493,8 +540,9 @@ export function pickRaidTarget(
   targets: BotRaidTarget[],
   ownFleetValue: number,
   character: BotCharacter,
+  override?: BotPersonality,
 ): BotRaidTarget | null {
-  const profile = personality(character);
+  const profile = override ?? personality(character);
   if (!profile.raids) return null;
 
   const reachable = targets
@@ -518,8 +566,13 @@ export function pickRaidTarget(
  * и отправить флот — это разные очереди, и занимать их по одной значило бы
  * развиваться втрое медленнее живого игрока при тех же ценах.
  */
-export function decide(snapshot: BotSnapshot): BotIntent[] {
-  const profile = personality(snapshot.character);
+export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotIntent[] {
+  /*
+   * План от языковой модели заменяет числа характера, но не подменяет правила:
+   * он задает приоритеты, а цены, сроки и бой по-прежнему считает сервер.
+   * Испорченный план может заставить бота играть глупо — и только.
+   */
+  const profile = override ?? personality(snapshot.character);
   const intents: BotIntent[] = [];
   if (snapshot.bases.length === 0) return intents;
 
@@ -532,7 +585,7 @@ export function decide(snapshot: BotSnapshot): BotIntent[] {
   /* --- Наука: одна на командира, поэтому считается от столицы --- */
   if (!snapshot.researching) {
     const purse = wallet(capital.resources, profile.budget.research);
-    const tech = nextResearch(snapshot.techs, capital.levels, snapshot.character, purse);
+    const tech = nextResearch(snapshot.techs, capital.levels, snapshot.character, purse, profile);
     if (tech) {
       intents.push({
         kind: 'RESEARCH',
@@ -561,7 +614,7 @@ export function decide(snapshot: BotSnapshot): BotIntent[] {
 
     /* --- Стройка --- */
     if (!base.building) {
-      const plan = buildingPlan(base, snapshot.techs, snapshot.character);
+      const plan = buildingPlan(base, snapshot.techs, snapshot.character, profile);
       const affordable = (type: BuildingType) =>
         canAfford(stock, capacity, share('economy'), upgradeCost(type, base.levels[type] + 1));
 
@@ -655,7 +708,7 @@ export function decide(snapshot: BotSnapshot): BotIntent[] {
 
   /* --- Набег --- */
   const ownFleet = snapshot.bases.reduce((sum, base) => sum + spentOnFleet(base.ships), 0);
-  const target = pickRaidTarget(snapshot.raidTargets, ownFleet, snapshot.character);
+  const target = pickRaidTarget(snapshot.raidTargets, ownFleet, snapshot.character, profile);
   if (target) {
     const striker = snapshot.bases.reduce((best, base) =>
       spentOnFleet(base.ships) > spentOnFleet(best.ships) ? base : best,
@@ -699,7 +752,7 @@ export function decide(snapshot: BotSnapshot): BotIntent[] {
 
   /* --- Биржа --- */
   if (profile.trade.active) {
-    intents.push(...tradeIntents(snapshot, capital));
+    intents.push(...tradeIntents(snapshot, capital, profile));
   }
 
   return intents;
@@ -713,8 +766,11 @@ export function decide(snapshot: BotSnapshot): BotIntent[] {
  * либо пылесосом, высасывающим стакан. Продает излишек сверх собственных
  * нужд, покупает то, чего не хватает на ближайшую цель.
  */
-function tradeIntents(snapshot: BotSnapshot, capital: BotBaseSnapshot): BotIntent[] {
-  const profile = personality(snapshot.character);
+function tradeIntents(
+  snapshot: BotSnapshot,
+  capital: BotBaseSnapshot,
+  profile: BotPersonality,
+): BotIntent[] {
   const intents: BotIntent[] = [];
   const capacity = storageCapacity(capital.levels);
   const stock = capital.resources;

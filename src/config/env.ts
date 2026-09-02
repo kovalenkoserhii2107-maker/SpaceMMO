@@ -24,4 +24,19 @@ export const env = {
    * `.env` не должен превращаться в дыру.
    */
   exposeResetToken: nodeEnv !== 'production' && process.env['AUTH_EXPOSE_RESET_TOKEN'] === 'true',
+
+  /**
+   * Ключ Gemini для ботов. Пусто — боты играют по статичным характерам.
+   *
+   * Отсутствие ключа не ошибка и не должно ронять сервер: ИИ здесь надстройка
+   * над рабочим ботом, а не условие его работы.
+   */
+  geminiKey: process.env['GEMINI_API_KEY'] ?? '',
+
+  /**
+   * Модель. Вынесена в переменную, потому что Google меняет и снимает
+   * идентификаторы быстрее, чем стоит править код: смена модели не должна
+   * требовать пересборки.
+   */
+  geminiModel: process.env['GEMINI_MODEL'] ?? 'gemini-3.5-flash-lite',
 } as const;

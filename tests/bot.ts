@@ -20,6 +20,7 @@ import {
   type BotSnapshot,
 } from '../src/game/bot/decide.js';
 import { NEWBIE_SHIELD_DAYS, BOT_PERSONALITIES, personality } from '../src/game/bot/personality.js';
+import { parsePlan, withPlan } from '../src/game/bot/plan.js';
 import {
   buildSeconds,
   emptyLevels,
@@ -50,6 +51,8 @@ function check(name: string, passed: boolean, detail?: string): void {
 }
 
 const RICHNESS = { ore: 1, polymers: 1, plasma: 1, energy: 1, antimatter: 1 };
+
+const fmtUnits = (value: number) => Math.round(value).toLocaleString('ru-RU');
 
 /* ------------------------- 1. Щит новичка ------------------------- */
 
@@ -426,6 +429,7 @@ function simulate(character: 'AGGRESSOR' | 'TRADER', days: number) {
   let stall = 0;
   let worstStall = 0;
   let midway: BuildingLevels | null = null;
+  let midwayTechs = 0;
   const ships = emptyShipCounts();
   const defenses = emptyDefenseCounts();
   const step = 30;
@@ -574,10 +578,13 @@ function simulate(character: 'AGGRESSOR' | 'TRADER', days: number) {
       if (stall > worstStall) worstStall = stall;
     }
 
-    if (midway === null && time >= (days * 86400) / 2) midway = { ...levels };
+    if (midway === null && time >= (days * 86400) / 2) {
+      midway = { ...levels };
+      midwayTechs = Object.values(techs).reduce((sum, level) => sum + level, 0);
+    }
   }
 
-  return { levels, techs, ships, defenses, idle, time, worstStall, midway: midway ?? levels };
+  return { levels, techs, ships, defenses, idle, time, worstStall, midway: midway ?? levels, midwayTechs };
 }
 
 /** Суммарный уровень всей инфраструктуры — по нему видно, растет ли база. */
@@ -611,17 +618,27 @@ for (const character of ['AGGRESSOR', 'TRADER'] as const) {
   // Простой сам по себе ни о чем не говорит: на восемнадцатом уровне шахты
   // следующий стоит часов добычи, и живой игрок ждет ровно так же. Важно
   // другое — что бот не встал насовсем.
+  // Прогресс — это не только застройка: бот, ушедший во второй половине
+  // недели в науку и флот, не стоит на месте. Замирание насмерть ловит
+  // отдельная проверка ниже, по самому долгому простою.
+  const midway = totalLevels(run.midway) + run.midwayTechs;
+  const finish = totalLevels(run.levels) + Object.values(run.techs).reduce((a, b) => a + b, 0);
   check(
     `${label}: продолжает расти во второй половине недели`,
-    totalLevels(run.levels) > totalLevels(run.midway),
-    `${totalLevels(run.midway)} → ${totalLevels(run.levels)} уровней`,
+    finish > midway,
+    `${midway} → ${finish} уровней всего`,
   );
-  // Порог не «сколько ждать не обидно», а «не замер ли бот насовсем».
-  // На девятнадцатом уровне шахты один апгрейд стоит больше суток добычи,
-  // так что ожидание в сутки-полтора — норма; сто часов подряд были тупиком.
+  /*
+   * Порог не «сколько ждать не обидно», а «не замер ли бот насовсем».
+   * На восемнадцатом уровне шахты один апгрейд стоит десятки часов добычи,
+   * а направление тратит только свою долю — умножьте одно на другое, и пауза
+   * в двое суток окажется обычной арифметикой. Настоящие тупики, которые эта
+   * проверка ловила, выглядели иначе: сто с лишним часов подряд и нулевой
+   * прирост за половину недели.
+   */
   check(
     `${label}: не замирает насовсем`,
-    run.worstStall < 48 * 3600,
+    run.worstStall < 72 * 3600,
     `худший простой ${(run.worstStall / 3600).toFixed(1)} ч, всего ${Math.round((run.idle / run.time) * 100)}%`,
   );
 }
@@ -630,10 +647,12 @@ for (const character of ['AGGRESSOR', 'TRADER'] as const) {
   // Характеры должны расходиться, иначе смысла в выборе нет.
   const aggro = simulate('AGGRESSOR', 7);
   const trader = simulate('TRADER', 7);
+  // Уровень верфи у обоих доходит до потолка, который задает экономика,
+  // поэтому характер виден не в нем, а в том, сколько вложено во флот.
   check(
-    'агрессор уходит в верфь дальше торговца',
-    aggro.levels.SHIPYARD > trader.levels.SHIPYARD,
-    `верфь ${aggro.levels.SHIPYARD} против ${trader.levels.SHIPYARD}`,
+    'агрессор вкладывает во флот больше торговца',
+    spentOnFleet(aggro.ships) > spentOnFleet(trader.ships),
+    `${fmtUnits(spentOnFleet(aggro.ships))} против ${fmtUnits(spentOnFleet(trader.ships))}`,
   );
   check(
     'торговец все же поднимает верфь выше первого уровня',
@@ -695,6 +714,141 @@ console.log('\n=== 6. Эскадра не вырождается ===');
     'оценка силы эскадры считается по стоимости',
     spentOnFleet(ships) > 0,
     `${spentOnFleet(ships)} ед.`,
+  );
+}
+
+/* ------------------------- 7. План от языковой модели ------------------------- */
+
+console.log('\n=== 7. План модели проверяется как недоверенные данные ===');
+
+{
+  const base = personality('AGGRESSOR');
+
+  check('мусор вместо объекта отвергается', parsePlan('привет', 'AGGRESSOR') === null);
+  check('null отвергается', parsePlan(null, 'AGGRESSOR') === null);
+}
+
+{
+  // Выдуманные названия — самый вероятный способ уронить исполнителя:
+  // несуществующий класс корабля дошел бы до orderShips и до БД.
+  const plan = parsePlan(
+    {
+      researchOrder: ['ВЫДУМАННАЯ_ТЕХНОЛОГИЯ', 'ENERGY_TECH', 'МАГИЯ'],
+      fleetMix: { ЗВЕЗДА_СМЕРТИ: 0.9, CRUISER: 0.1 },
+      defenseMix: { ЩИТ_ПЛАНЕТЫ: 1 },
+    },
+    'AGGRESSOR',
+  );
+
+  check(
+    'неизвестные технологии отброшены, известная осталась',
+    plan !== null && plan.researchOrder.length === 1 && plan.researchOrder[0] === 'ENERGY_TECH',
+    plan ? plan.researchOrder.join(', ') : 'плана нет',
+  );
+  check(
+    'выдуманный класс корабля не проходит',
+    plan !== null && !Object.keys(plan.fleetMix).includes('ЗВЕЗДА_СМЕРТИ'),
+    plan ? Object.keys(plan.fleetMix).join(', ') : '',
+  );
+  check(
+    'состав обороны без единого известного класса откатывается к характеру',
+    plan !== null &&
+      JSON.stringify(plan.defenseMix) === JSON.stringify(personality('AGGRESSOR').defenseMix),
+  );
+}
+
+{
+  // Доли обязаны сводиться к единице: сумма больше означала бы, что каждое
+  // направление считает себя недофинансированным всегда, и бот не копил бы ни на что.
+  const plan = parsePlan(
+    { budget: { economy: 5, research: 5, fleet: 5, defense: 5 } },
+    'TRADER',
+  );
+  const sum = plan ? plan.budget.economy + plan.budget.research + plan.budget.fleet + plan.budget.defense : 0;
+  check('доли бюджета сводятся к единице', Math.abs(sum - 1) < 0.0001, `сумма ${sum.toFixed(4)}`);
+}
+
+{
+  const plan = parsePlan(
+    { budget: { economy: -3, research: null, fleet: 'много', defense: Infinity } },
+    'TRADER',
+  );
+  const ok =
+    plan !== null &&
+    Object.values(plan.budget).every((value) => Number.isFinite(value) && value >= 0 && value <= 1);
+  check('отрицательные, пустые и бесконечные доли не проходят', ok, JSON.stringify(plan?.budget));
+}
+
+{
+  // Перевес меньше единицы — это не смелость, а слив флота, который бот копил неделю.
+  const reckless = parsePlan({ raidAdvantage: 0.1, colonyAmbition: 9999 }, 'AGGRESSOR');
+  check(
+    'порог набега не опускается ниже единицы',
+    reckless !== null && reckless.raidAdvantage >= 1,
+    `${reckless?.raidAdvantage}`,
+  );
+  check(
+    'амбиции по колониям зажаты',
+    reckless !== null && reckless.colonyAmbition <= 12,
+    `${reckless?.colonyAmbition}`,
+  );
+}
+
+{
+  // Осмысленный план должен доезжать до решений целиком.
+  const plan = parsePlan(
+    {
+      budget: { economy: 0.5, research: 0.2, fleet: 0.2, defense: 0.1 },
+      researchOrder: ['MINING_TECH', 'ENERGY_TECH'],
+      fleetMix: { LARGE_CARGO: 1 },
+      defenseMix: { CANNON: 1 },
+      colonyAmbition: 4,
+      raidAdvantage: 2,
+      note: 'Копим экономику, воевать не спешим.',
+    },
+    'AGGRESSOR',
+  );
+  const profile = withPlan('AGGRESSOR', plan);
+
+  // Доли сравниваем с допуском: они проходят нормировку, и 0.5 после деления
+  // на сумму дробей — это 0.5000000000000001.
+  check(
+    'план заменяет числа характера',
+    Math.abs(profile.budget.economy - 0.5) < 0.001 &&
+      profile.colonyAmbition === 4 &&
+      profile.raidAdvantage === 2,
+    `экономика ${profile.budget.economy.toFixed(3)}, колоний ${profile.colonyAmbition}`,
+  );
+  check(
+    'но не трогает то, чего в нем нет',
+    profile.label === personality('AGGRESSOR').label && profile.raids === personality('AGGRESSOR').raids,
+  );
+
+  // «Горное дело» требует энергетику первого уровня, поэтому по плану,
+  // ведущему с него, бот сперва берет пререквизит — и это правильно:
+  // порядок задает приоритет, а не право обойти требования.
+  const levels = { ...emptyLevels(), SCIENCE_CENTER: 3 };
+  const rich = { ore: 1e9, polymers: 1e9, plasma: 1e9 };
+  const gated = nextResearch(emptyTechLevels(), levels, 'AGGRESSOR', rich, profile);
+  check('закрытая требованиями ветка не стопорит бота', gated === 'ENERGY_TECH', `${gated}`);
+
+  const opened = nextResearch(
+    { ...emptyTechLevels(), ENERGY_TECH: 1 },
+    levels,
+    'AGGRESSOR',
+    rich,
+    profile,
+  );
+  check('как только требование выполнено, план ведет свою ветку', opened === 'MINING_TECH', `${opened}`);
+}
+
+{
+  // Без плана поведение обязано остаться ровно прежним: ИИ — надстройка,
+  // а не условие работы бота.
+  const empty = withPlan('TRADER', null);
+  check(
+    'без плана бот играет по статичному характеру',
+    JSON.stringify(empty) === JSON.stringify(personality('TRADER')),
   );
 }
 

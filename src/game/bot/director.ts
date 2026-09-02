@@ -16,6 +16,7 @@
 import { prisma } from '../../db/prisma.js';
 import { gameLoop, type ActionResult } from '../gameLoop.js';
 import { placeOrder } from '../../services/marketService.js';
+import { deliver } from '../../services/mailService.js';
 import { emptyShipCounts, type ShipCounts } from '../ships.js';
 import { normalizeDefenses, normalizeShips } from '../fogOfWar.js';
 import { spentOnDefense, spentOnFleet } from '../score.js';
@@ -33,6 +34,8 @@ import {
   isBotCharacter,
   type BotCharacter,
 } from './personality.js';
+import { askReply, askStrategy, llmEnabled, type BotBrief } from './mind.js';
+import { PLAN_TTL_MS, readStoredPlan, withPlan, type BotPlan } from './plan.js';
 
 /**
  * Справочная цена ресурса в криптогривне.
@@ -282,6 +285,143 @@ async function deliverToHub(
   return result.ok ? `отвез в хаб ${ore + polymers}` : null;
 }
 
+/* ------------------------- Роли языковой модели ------------------------- */
+
+/**
+ * Короткая сводка для стратега.
+ *
+ * Только то, от чего зависит стратегия: полный снимок базы это сотни чисел,
+ * из которых модели нужны единицы, а платим мы за каждое.
+ */
+async function buildBrief(
+  commander: CommanderRuntimeState,
+  snapshot: BotSnapshot,
+): Promise<BotBrief> {
+  const capital = snapshot.bases[0]!;
+  const positive = (source: Record<string, number>) =>
+    Object.fromEntries(Object.entries(source).filter(([, value]) => value > 0));
+
+  // Соседи глазами бота: позывной, сила и есть ли война. Точный состав чужой
+  // обороны сюда не идет — его бот знает только по своей же разведке.
+  const wars = await prisma.warDeclaration.findMany({
+    // Мир снимает саму запись, поэтому отдельного признака «война окончена»
+    // в ней нет: есть строка — есть война.
+    where: { OR: [{ aggressorId: commander.commanderId }, { targetId: commander.commanderId }] },
+    select: { aggressorId: true, targetId: true },
+  });
+  const enemies = new Set(
+    wars.flatMap((war) => [war.aggressorId, war.targetId]).filter((id) => id !== commander.commanderId),
+  );
+
+  const neighbours = await prisma.commander.findMany({
+    where: { id: { in: [...new Set(snapshot.raidTargets.map((target) => target.commanderId))] } },
+    select: { id: true, nickname: true },
+    take: 10,
+  });
+  const strength = new Map(
+    snapshot.raidTargets.map((target) => [target.commanderId, target.knownStrength ?? 0]),
+  );
+
+  return {
+    nickname: (await prisma.commander.findUnique({
+      where: { id: commander.commanderId },
+      select: { nickname: true },
+    }))?.nickname ?? 'бот',
+    colonies: snapshot.bases.length,
+    credits: Math.round(commander.credits),
+    stock: {
+      ore: Math.round(capital.resources.ore),
+      polymers: Math.round(capital.resources.polymers),
+      plasma: Math.round(capital.resources.plasma),
+    },
+    levels: positive(capital.levels as unknown as Record<string, number>),
+    techs: positive(commander.techs as unknown as Record<string, number>),
+    ships: positive(capital.ships as unknown as Record<string, number>),
+    defenses: positive(capital.defenses as unknown as Record<string, number>),
+    neighbours: neighbours.map((row) => ({
+      nickname: row.nickname,
+      score: Math.round(strength.get(row.id) ?? 0),
+      atWar: enemies.has(row.id),
+    })),
+    freePlanetsNearby: snapshot.freePlanets.length,
+    events: await recentEvents(commander.commanderId),
+  };
+}
+
+/**
+ * Что случилось с ботом за последние часы — по его же почтовому ящику.
+ *
+ * Отдельного журнала для этого заводить незачем: все, что с ботом происходит,
+ * и так приходит ему письмом, как приходило бы живому игроку.
+ */
+async function recentEvents(commanderId: string): Promise<string[]> {
+  const since = new Date(Date.now() - PLAN_TTL_MS);
+  const rows = await prisma.message.findMany({
+    where: { recipientId: commanderId, createdAt: { gte: since } },
+    select: { subject: true },
+    orderBy: { createdAt: 'desc' },
+    take: 8,
+  });
+  return rows.map((row) => row.subject);
+}
+
+async function savePlan(botId: string, plan: BotPlan): Promise<void> {
+  await prisma.bot.update({
+    where: { id: botId },
+    data: { memory: { plan: plan as unknown as object, planMadeAt: Date.now() } },
+  });
+}
+
+/**
+ * Ответить на письма живых игроков.
+ *
+ * Отвечаем только на личные письма и только на непрочитанные: системные отчеты
+ * бот получает пачками, и отвечать на собственный боевой отчет незачем.
+ * Письмо помечается прочитанным в любом случае — молчание модели не должно
+ * приводить к тому, что бот пытается ответить на него снова и снова.
+ */
+async function answerMail(commanderId: string, character: BotCharacter): Promise<number> {
+  if (!llmEnabled()) return 0;
+
+  const letters = await prisma.message.findMany({
+    where: { recipientId: commanderId, isRead: false, type: 'PLAYER', senderId: { not: null } },
+    select: { id: true, subject: true, body: true, senderId: true, sender: { select: { nickname: true } } },
+    orderBy: { createdAt: 'asc' },
+    // Потолок на заход: если бота завалили письмами, отвечать на все разом
+    // значит и заход растянуть, и токены сжечь.
+    take: 3,
+  });
+  if (letters.length === 0) return 0;
+
+  await prisma.message.updateMany({
+    where: { id: { in: letters.map((letter) => letter.id) }, recipientId: commanderId },
+    data: { isRead: true },
+  });
+
+  let sent = 0;
+  for (const letter of letters) {
+    const text = await askReply(
+      character,
+      letter.sender?.nickname ?? 'неизвестный',
+      letter.subject,
+      letter.body,
+    );
+    if (!text || !letter.senderId) continue;
+
+    await deliver([
+      {
+        recipientId: letter.senderId,
+        senderId: commanderId,
+        type: 'PLAYER',
+        subject: `Re: ${letter.subject}`.slice(0, 120),
+        body: text,
+      },
+    ]);
+    sent += 1;
+  }
+  return sent;
+}
+
 /* ------------------------- Заход бота ------------------------- */
 
 export interface BotTurn {
@@ -303,6 +443,7 @@ export async function runBotTurn(botId: string): Promise<BotTurn | null> {
       id: true,
       character: true,
       commanderId: true,
+      memory: true,
       commander: { select: { nickname: true } },
     },
   });
@@ -315,10 +456,33 @@ export async function runBotTurn(botId: string): Promise<BotTurn | null> {
   if (!snapshot) return null;
 
   const actions: string[] = [];
-  for (const intent of decide(snapshot)) {
+
+  /*
+   * Стратегию бот переосмысливает редко — раз в несколько часов. Спрашивать
+   * модель на каждом заходе значило бы отдавать ей арифметику, которую код
+   * считает точнее, и платить за это в сотни раз больше: план раз в шесть
+   * часов стоит около четырех тысяч токенов в сутки, вызов на каждый заход —
+   * почти два миллиона.
+   */
+  let plan = readStoredPlan(bot.memory, bot.character);
+  if (llmEnabled() && (!plan || Date.now() - plan.madeAt > PLAN_TTL_MS)) {
+    const fresh = await askStrategy(bot.character, await buildBrief(commander, snapshot));
+    if (fresh) {
+      plan = { plan: fresh, madeAt: Date.now() };
+      await savePlan(bot.id, fresh);
+      actions.push(`ПЛАН: ${fresh.note || 'стратегия обновлена'}`);
+    }
+  }
+
+  const profile = withPlan(bot.character, plan?.plan ?? null);
+  for (const intent of decide(snapshot, profile)) {
     const result = await execute(bot.commanderId, intent);
     if (result.ok) actions.push(`${intent.kind}: ${intent.why}`);
   }
+
+  // Дипломат: ответы на письма живых игроков.
+  const replied = await answerMail(bot.commanderId, bot.character);
+  if (replied > 0) actions.push(`ОТВЕТ: писем ${replied}`);
 
   // Торговый рейс идет после решений: ордера бот выставляет с того, что уже
   // лежит в хабе, а этот рейс наполняет хаб к следующему заходу.
