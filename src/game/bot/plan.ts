@@ -54,12 +54,23 @@ function clamp(value: unknown, min: number, max: number, fallback: number): numb
  * недофинансированным всегда, — бот тратил бы все подряд и не копил ни на что.
  */
 function normalizeBudget(raw: unknown, fallback: BotPersonality['budget']): BotPersonality['budget'] {
+  /*
+   * Границы не вкусовые, а замеренные. Прогон недели показал: при доле
+   * экономики 0.3 и флота 0.5 бот к седьмому дню застревает на двенадцатом
+   * уровне шахт вместо восемнадцатого и перестает расти вообще — флот
+   * съедает базу, которая его кормит. Модель, если ей позволить, выбирает
+   * именно такой перекос: в первом же живом ответе она запросила 0.2 на
+   * экономику и 0.6 на флот.
+   *
+   * Поэтому стратегический выбор ей оставлен широкий, но не самоубийственный:
+   * треть дохода на развитие — тот минимум, ниже которого бот ломает сам себя.
+   */
   const source = (raw ?? {}) as Record<string, unknown>;
   const budget = {
-    economy: clamp(source['economy'], 0.05, 0.8, fallback.economy),
-    research: clamp(source['research'], 0.05, 0.5, fallback.research),
-    fleet: clamp(source['fleet'], 0, 0.7, fallback.fleet),
-    defense: clamp(source['defense'], 0, 0.5, fallback.defense),
+    economy: clamp(source['economy'], 0.33, 0.8, fallback.economy),
+    research: clamp(source['research'], 0.08, 0.5, fallback.research),
+    fleet: clamp(source['fleet'], 0, 0.45, fallback.fleet),
+    defense: clamp(source['defense'], 0, 0.4, fallback.defense),
   };
 
   const total = budget.economy + budget.research + budget.fleet + budget.defense;

@@ -780,6 +780,26 @@ console.log('\n=== 7. План модели проверяется как нед
 }
 
 {
+  /*
+   * Самоубийственный бюджет модель выбирает охотно: в первом же живом ответе
+   * она запросила 0.2 на экономику и 0.6 на флот — ровно ту конфигурацию,
+   * при которой бот к седьмому дню застревает на двенадцатом уровне шахт
+   * и перестает расти. Границы должны это вылавливать.
+   */
+  const suicidal = parsePlan(
+    { budget: { economy: 0.2, research: 0.1, fleet: 0.6, defense: 0.1 } },
+    'AGGRESSOR',
+  );
+  check(
+    'флот не может съесть экономику бота',
+    suicidal !== null && suicidal.budget.economy >= 0.3 && suicidal.budget.fleet <= 0.5,
+    suicidal
+      ? `экономика ${suicidal.budget.economy.toFixed(2)}, флот ${suicidal.budget.fleet.toFixed(2)}`
+      : 'плана нет',
+  );
+}
+
+{
   // Перевес меньше единицы — это не смелость, а слив флота, который бот копил неделю.
   const reckless = parsePlan({ raidAdvantage: 0.1, colonyAmbition: 9999 }, 'AGGRESSOR');
   check(
