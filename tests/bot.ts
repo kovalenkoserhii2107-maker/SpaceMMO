@@ -445,6 +445,54 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
   );
 }
 
+{
+  /*
+   * Дефляционная ловушка, которую открыло удаление станции: криптогривна
+   * берется единственным способом — с фермы, — а ферма в общем плане стоит
+   * последней из десяти при одном слоте стройки. У трех живых ботов она была
+   * нулевого уровня при шахтах до седьмого, то есть до нее не доходила
+   * очередь никогда.
+   */
+  const levels = {
+    ...emptyLevels(),
+    ORE_MINE: 10, POLYMER_PLANT: 10, PLASMA_REACTOR: 8, POWER_PLANT: 14,
+    SCIENCE_CENTER: 7, SHIPYARD: 7, ORE_STORAGE: 10, POLYMER_STORAGE: 10, PLASMA_STORAGE: 8,
+  };
+  // Руды не хватает на следующий уровень шахты, зато хватает на ферму:
+  // купить недостающее не на что, а добыть быстрее нельзя.
+  const broke = snapshotWith({
+    character: 'TRADER',
+    credits: 0,
+    bases: [testBase('home', { levels, resources: { ore: 10_000, polymers: 30_000, plasma: 12_000 } })],
+  });
+  const build = decide(broke).find((i) => i.kind === 'BUILD');
+  check(
+    'без денег на покупку недостающего бот строит ферму',
+    build?.kind === 'BUILD' && build.building === 'CRYPTO_FARM',
+    build?.kind === 'BUILD' ? build.building : 'не строит',
+  );
+}
+
+{
+  // С деньгами покупка закрывает дефицит, и ферма ждет своей очереди.
+  const levels = {
+    ...emptyLevels(),
+    ORE_MINE: 10, POLYMER_PLANT: 10, PLASMA_REACTOR: 8, POWER_PLANT: 14,
+    SCIENCE_CENTER: 7, SHIPYARD: 7, ORE_STORAGE: 10, POLYMER_STORAGE: 10, PLASMA_STORAGE: 8,
+  };
+  const rich = snapshotWith({
+    character: 'TRADER',
+    credits: 10_000_000,
+    bases: [testBase('home', { levels, resources: { ore: 10_000, polymers: 30_000, plasma: 12_000 } })],
+  });
+  const build = decide(rich).find((i) => i.kind === 'BUILD');
+  check(
+    'с деньгами ферма очередь не занимает: недостающее проще купить',
+    !(build?.kind === 'BUILD' && build.building === 'CRYPTO_FARM'),
+    build?.kind === 'BUILD' ? build.building : 'копит на цель',
+  );
+}
+
 /* ------------------------- 4. Биржа ------------------------- */
 
 console.log('\n=== 4. Торговля: берем чужое, выставляем свое ===');

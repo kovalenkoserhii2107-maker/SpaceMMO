@@ -880,14 +880,52 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
        * посильное» дал «Перун» на 34-е сутки против 12-х: бот расползался
        * по дешевым шахтам вместо того, чтобы дойти до ворот контента.
        */
-      const building = pressure ? plan.find(affordable) : plan[0] && affordable(plan[0]) ? plan[0] : undefined;
+      let building = pressure ? plan.find(affordable) : plan[0] && affordable(plan[0]) ? plan[0] : undefined;
+
+      /*
+       * Денег нет, а без них не обойтись — значит первым делом ферма.
+       *
+       * Криптогривна берется единственным способом: с крипто-фермы. Станция
+       * ничего не покупает, все сделки между игроками — переводы, и бот
+       * без денег не купит недостающее ни за какую цену. При этом в общем
+       * плане ферма стоит последней из десяти, а слот стройки на базе один, —
+       * то есть до нее не доходит очередь никогда. Проверено на живых ботах:
+       * у всех троих ферма нулевого уровня при шахтах до седьмого.
+       *
+       * Порог — цена того, чего не хватает, по нынешнему рынку. Это не догадка
+       * о «достаточной» сумме, а ровно тот вопрос, который решается покупкой:
+       * хватит ли денег закрыть дефицит, если купить его прямо сейчас.
+       */
+      if (!pressure && plan[0] && plan[0] !== 'CRYPTO_FARM') {
+        const cost = upgradeCost(plan[0], base.levels[plan[0]] + 1);
+        let needed = 0;
+        for (const resource of TRADED) {
+          const field = resource === 'ORE' ? 'ore' : 'polymers';
+          const gap = cost[field] - stock[field];
+          if (gap <= 0) continue;
+          needed += gap * (snapshot.market.find((ref) => ref.resource === resource)?.reference ?? 0);
+        }
+        if (
+          needed > 0 &&
+          snapshot.credits < needed &&
+          missingBuildingRequirements('CRYPTO_FARM', base.levels).length === 0 &&
+          affordable('CRYPTO_FARM')
+        ) {
+          building = 'CRYPTO_FARM';
+        }
+      }
 
       if (building) {
         intents.push({
           kind: 'BUILD',
           baseId: base.id,
           building,
-          why: pressure ? 'склад полон, копить некуда' : 'развитие базы',
+          why:
+            building === 'CRYPTO_FARM' && plan[0] !== 'CRYPTO_FARM'
+              ? 'на покупку недостающего не хватает криптогривны'
+              : pressure
+                ? 'склад полон, копить некуда'
+                : 'развитие базы',
         });
       } else if (plan[0]) {
         /*
