@@ -350,6 +350,8 @@ console.log('\n=== 4. Торговля: берем чужое, выставля�
   const cheap = snapshotWith({
     character: 'TRADER',
     credits: 100_000,
+    // Руды на базе мало — бот по ней покупатель, а не продавец.
+    bases: [testBase('home', { resources: { ore: 200, polymers: 3000, plasma: 1500 } })],
     hubStorage: { ore: 0, polymers: 0, free: 5000 },
     orderBook: [
       { id: 'дешевая-руда', side: 'SELL', resource: 'ORE', price: 8, amount: 400, mine: false },
@@ -429,6 +431,125 @@ console.log('\n=== 4. Торговля: берем чужое, выставля�
   check(
     'пустой склад хаба продавать нечем',
     !decide(empty).some((intent) => intent.kind === 'TAKE'),
+  );
+}
+
+{
+  /*
+   * Петля, из-за которой два бота за два часа совершили почти три сотни
+   * встречных сделок, не сдвинувших ничего, кроме комиссии биржи. Коридоры
+   * перекрываются: покупать не дороже 10.6 и продавать не дешевле 9.4
+   * означает, что цена 11 одновременно выгодна с обеих сторон. Теперь по
+   * каждому ресурсу бот выбирает одну сторону.
+   */
+  const rich = snapshotWith({
+    character: 'TRADER',
+    credits: 100_000,
+    hubStorage: { ore: 4000, polymers: 0, free: 1000 },
+    orderBook: [
+      { id: 'дешево', side: 'SELL', resource: 'ORE', price: 9, amount: 400, mine: false },
+      { id: 'дорого', side: 'BUY', resource: 'ORE', price: 11, amount: 400, mine: false },
+    ],
+  });
+  const intents = decide(rich).filter((i) => i.kind === 'TAKE' || i.kind === 'ORDER');
+  const buysOre = intents.some(
+    (i) => (i.kind === 'TAKE' && i.orderId === 'дешево') || (i.kind === 'ORDER' && i.side === 'BUY' && i.resource === 'ORE'),
+  );
+  const sellsOre = intents.some(
+    (i) => (i.kind === 'TAKE' && i.orderId === 'дорого') || (i.kind === 'ORDER' && i.side === 'SELL' && i.resource === 'ORE'),
+  );
+  check(
+    'при избытке руды бот только продает ее, но не покупает',
+    sellsOre && !buysOre,
+    `продает ${sellsOre}, покупает ${buysOre}`,
+  );
+}
+
+{
+  /*
+   * Заявка переживает смену стороны: живой бот держал покупку полимеров,
+   * выставленную старой логикой, и продавал полимеры одновременно — круг
+   * шел через собственную стоячую заявку.
+   */
+  const stale = snapshotWith({
+    character: 'TRADER',
+    credits: 100_000,
+    bases: [testBase('home', { resources: { ore: 5000, polymers: 3000, plasma: 1500 } })],
+    hubStorage: { ore: 4000, polymers: 0, free: 1000 },
+    orderBook: [{ id: 'старая', side: 'BUY', resource: 'ORE', price: 11, amount: 900, mine: true }],
+  });
+  const drop = decide(stale).find((i) => i.kind === 'DROP');
+  check(
+    'заявку на чужой стороне бот снимает',
+    drop?.kind === 'DROP' && drop.orderId === 'старая',
+    drop?.kind === 'DROP' ? 'сняли' : 'оставили',
+  );
+}
+
+{
+  // Пять устаревших заявок не должны запирать бота: потолок считается
+  // после снятия, иначе он выходил бы раньше, чем успел снять хоть одну.
+  const jammed = snapshotWith({
+    character: 'TRADER',
+    credits: 100_000,
+    bases: [testBase('home', { resources: { ore: 5000, polymers: 3000, plasma: 1500 } })],
+    hubStorage: { ore: 4000, polymers: 0, free: 1000 },
+    orderBook: [1, 2, 3, 4, 5].map((n) => ({
+      id: `старая-${n}`,
+      side: 'BUY' as const,
+      resource: 'ORE' as const,
+      price: 11,
+      amount: 100,
+      mine: true,
+    })),
+  });
+  check(
+    'пять устаревших заявок бот снимает, а не упирается в потолок',
+    decide(jammed).filter((i) => i.kind === 'DROP').length === 5,
+  );
+}
+
+{
+  /*
+   * Гарантия от возврата петли. Хаб пуст — товар только что продали, — но
+   * склады базы по-прежнему полны руды, значит бот остается продавцом
+   * и не выкупает обратно то, что продал. Привязка стороны к хабу давала
+   * ровно этот переворот после каждой сделки.
+   */
+  const sold = snapshotWith({
+    character: 'TRADER',
+    credits: 100_000,
+    bases: [testBase('home', { resources: { ore: 5000, polymers: 3000, plasma: 1500 } })],
+    hubStorage: { ore: 0, polymers: 0, free: 5000 },
+    orderBook: [
+      { id: 'дешево', side: 'SELL', resource: 'ORE', price: 8, amount: 400, mine: false },
+    ],
+  });
+  const intents = decide(sold);
+  check(
+    'опустевший хаб не переворачивает сторону: руду обратно бот не выкупает',
+    !intents.some(
+      (i) => (i.kind === 'TAKE' && i.orderId === 'дешево') || (i.kind === 'ORDER' && i.side === 'BUY' && i.resource === 'ORE'),
+    ),
+  );
+}
+
+{
+  const poor = snapshotWith({
+    character: 'TRADER',
+    credits: 100_000,
+    bases: [testBase('home', { resources: { ore: 200, polymers: 3000, plasma: 1500 } })],
+    hubStorage: { ore: 0, polymers: 0, free: 5000 },
+    orderBook: [
+      { id: 'дешево', side: 'SELL', resource: 'ORE', price: 9, amount: 400, mine: false },
+      { id: 'дорого', side: 'BUY', resource: 'ORE', price: 11, amount: 400, mine: false },
+    ],
+  });
+  const intents = decide(poor).filter((i) => i.kind === 'TAKE');
+  check(
+    'без запаса бот только покупает',
+    intents.length === 1 && intents[0]?.kind === 'TAKE' && intents[0].orderId === 'дешево',
+    intents.map((i) => (i.kind === 'TAKE' ? i.orderId : i.kind)).join(', ') || 'ничего',
   );
 }
 

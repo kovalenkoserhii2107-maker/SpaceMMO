@@ -176,6 +176,8 @@ export type BotIntent =
   | { kind: 'TAKE'; orderId: string; amount: number; why: string }
   /** Сделка со станцией: она берет всегда, но по своей невыгодной цене. */
   | { kind: 'STATION'; side: 'BUY' | 'SELL'; resource: 'ORE' | 'POLYMERS'; amount: number; why: string }
+  /** Снять собственную заявку: она больше не отвечает намерениям бота. */
+  | { kind: 'DROP'; orderId: string; why: string }
   | {
       kind: 'ORDER';
       side: 'BUY' | 'SELL';
@@ -1024,11 +1026,48 @@ function tradeIntents(snapshot: BotSnapshot, profile: BotPersonality): BotIntent
   const sellFloor = (resource: 'ORE' | 'POLYMERS') =>
     (reference.get(resource) ?? 0) * (1 - profile.trade.margin);
 
+  /*
+   * По каждому ресурсу бот выбирает одну сторону: он либо продавец, либо
+   * покупатель, но не оба сразу.
+   *
+   * Без этого правила боты гоняли товар по кругу. Коридоры перекрываются —
+   * покупать не дороже 10.6 и продавать не дешевле 9.4 означает, что цена 11
+   * одновременно «выгодно купить» и «выгодно продать», — и три бота на одном
+   * хабе за двадцать минут совершили 111 встречных сделок, симметричных
+   * до единицы: семнадцать туда, шестнадцать обратно. Не изменилось ничего,
+   * кроме комиссии биржи, которая эти круги и оплачивала.
+   *
+   * Сторону задает заполненность складов баз, а не запас на хабе. Хаб —
+   * следствие: он переворачивается после каждой сделки, и сторона вместе
+   * с ним, так что боты продолжали бы пинг-понг, просто медленнее. Склады
+   * баз отражают перекос добычи — то, из-за чего торговать вообще есть смысл,
+   * — и меняются они со скоростью стройки шахт, а не сделок.
+   *
+   * Отсюда же следует, что два одинаково развитых бота друг с другом
+   * не торгуют вовсе: у них один и тот же избыток, и встречного интереса
+   * между ними нет. Их контрагент — станция, и это правильно: она для того
+   * и стоит.
+   */
+  const fill = new Map<'ORE' | 'POLYMERS', number>();
+  for (const resource of TRADED) {
+    const stored = resource === 'ORE' ? 'ore' : 'polymers';
+    let held = 0;
+    let capacity = 0;
+    for (const base of snapshot.bases) {
+      held += Math.max(0, base.resources[stored]);
+      capacity += storageCapacities(base.levels)[stored];
+    }
+    fill.set(resource, capacity > 0 ? held / capacity : 0);
+  }
+
+  /** Склады полны наполовину — значит ресурс в избытке, и мы его продаем. */
+  const selling = (resource: 'ORE' | 'POLYMERS') => (fill.get(resource) ?? 0) >= 0.5;
+
   /* --- Берем чужое --- */
 
   // Дешевле всех — первым: если денег хватит не на все, тратим их с толком.
   const cheapest = foreign
-    .filter((order) => order.side === 'SELL' && order.price <= buyCeiling(order.resource))
+    .filter((order) => order.side === 'SELL' && !selling(order.resource) && order.price <= buyCeiling(order.resource))
     .sort((a, b) => a.price - b.price);
 
   let purse = snapshot.credits;
@@ -1054,7 +1093,7 @@ function tradeIntents(snapshot: BotSnapshot, profile: BotPersonality): BotIntent
 
   // Дороже всех — первым: продаем тому, кто больше дает.
   const richest = foreign
-    .filter((order) => order.side === 'BUY' && order.price >= sellFloor(order.resource))
+    .filter((order) => order.side === 'BUY' && selling(order.resource) && order.price >= sellFloor(order.resource))
     .sort((a, b) => b.price - a.price);
 
   const onHand = { ORE: hub.ore, POLYMERS: hub.polymers };
@@ -1108,10 +1147,33 @@ function tradeIntents(snapshot: BotSnapshot, profile: BotPersonality): BotIntent
    * в собственном потолке займет.
    */
   const mine = snapshot.orderBook.filter((order) => order.mine);
-  if (mine.length >= 5) return intents;
+  /*
+   * Снимаем свои заявки на стороне, которую бот больше не занимает.
+   *
+   * Заявка живет до исполнения и переживает смену намерений: живой бот
+   * держал покупку полимеров по 15, выставленную старой логикой, и одновременно
+   * продавал полимеры — петля крутилась через собственную же стоячую заявку,
+   * хотя новых таких он уже не ставил. Правило стороны без этого неполно:
+   * оно решает, что бот делает сейчас, но не убирает того, что он обещал раньше.
+   */
+  for (const order of mine) {
+    const wrongSide = order.side === (selling(order.resource) ? 'BUY' : 'SELL');
+    if (wrongSide) {
+      intents.push({
+        kind: 'DROP',
+        orderId: order.id,
+        why: `${order.resource === 'ORE' ? 'по руде' : 'по полимерам'} мы теперь на другой стороне`,
+      });
+    }
+  }
+
+  // Потолок считается после снятия: иначе бот с пятью устаревшими заявками
+  // выходил бы отсюда раньше, чем успел снять хоть одну, и застревал навсегда.
+  if (mine.length - intents.filter((intent) => intent.kind === 'DROP').length >= 5) return intents;
 
   const standing = (side: 'BUY' | 'SELL', resource: 'ORE' | 'POLYMERS') =>
     mine.some((order) => order.side === side && order.resource === resource);
+
 
   for (const ref of snapshot.market) {
     if (ref.reference <= 0) continue;
@@ -1119,26 +1181,29 @@ function tradeIntents(snapshot: BotSnapshot, profile: BotPersonality): BotIntent
     const best = foreign.filter((o) => o.resource === ref.resource);
 
     // Продаем излишек: то, что лежит на хабе и не нужно на выкуп.
-    if (held > 0 && !standing('SELL', ref.resource)) {
+    if (selling(ref.resource) && !standing('SELL', ref.resource)) {
       const amount = Math.floor(held * profile.trade.sellShare);
       if (amount > 0) {
         // Встаем чуть ниже лучшей чужой продажи, иначе очередь до нас
         // не дойдет никогда. Ниже пола не опускаемся.
+        // Округляем вверх: вниз — значит выйти за собственный пол.
         const rival = Math.min(...best.filter((o) => o.side === 'SELL').map((o) => o.price), Infinity);
         const price = Math.max(
-          Math.round(sellFloor(ref.resource)),
-          Number.isFinite(rival) ? Math.round(rival) - 1 : Math.round(ref.reference * (1 + profile.trade.margin)),
+          Math.ceil(sellFloor(ref.resource)),
+          Number.isFinite(rival) ? Math.round(rival) - 1 : Math.ceil(ref.reference * (1 + profile.trade.margin)),
         );
         intents.push({ kind: 'ORDER', side: 'SELL', resource: ref.resource, amount, price, why: 'излишек на хабе' });
       }
     }
 
     // Покупаем впрок: криптогривна сама по себе ничего не производит.
-    if (snapshot.credits > 0 && hub.free > 0 && !standing('BUY', ref.resource)) {
+    if (!selling(ref.resource) && snapshot.credits > 0 && hub.free > 0 && !standing('BUY', ref.resource)) {
+      // Округляем вниз: вверх — значит перебить собственный потолок.
+      // Именно на этом бот ставил покупку по 11 при потолке 10.6.
       const rival = Math.max(...best.filter((o) => o.side === 'BUY').map((o) => o.price), 0);
       const price = Math.min(
-        Math.round(buyCeiling(ref.resource)),
-        rival > 0 ? Math.round(rival) + 1 : Math.round(ref.reference),
+        Math.floor(buyCeiling(ref.resource)),
+        rival > 0 ? Math.round(rival) + 1 : Math.floor(ref.reference),
       );
       const amount = Math.floor(
         Math.min((snapshot.credits * 0.4) / Math.max(price, 1), hub.free),

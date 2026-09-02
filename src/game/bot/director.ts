@@ -273,6 +273,11 @@ async function execute(commanderId: string, intent: BotIntent): Promise<ActionRe
       return result;
     }
 
+    case 'DROP': {
+      const result = await cancelOrder(commanderId, intent.orderId);
+      return result;
+    }
+
     case 'ORDER': {
       const result = await placeOrder(commanderId, {
         side: intent.side,
