@@ -68,7 +68,8 @@ export interface BotBrief {
   /** Биржа: свои заявки, чужие заявки и последние сделки. */
   market: {
     myOrders: Array<{ side: string; resource: string; amount: number; price: number }>;
-    book: Array<{ side: string; resource: string; amount: number; price: number }>;
+    /** Чужие заявки с идентификаторами — их можно исполнить директивой FILL. */
+    book: Array<{ orderId: string; side: string; resource: string; amount: number; price: number }>;
     lastTrades: Array<{ resource: string; amount: number; price: number }>;
   };
   /** Свои бои: чем кончились и что принесли. */
@@ -151,9 +152,12 @@ raidAdvantage — во сколько раз твой флот должен пр
 {"kind":"SELL","resource":"ORE","amount":1000,"price":12,"why":"..."} — выставить на продажу
 {"kind":"BUY","resource":"POLYMERS","amount":500,"price":9,"why":"..."} — купить
 {"kind":"CANCEL","resource":"POLYMERS","why":"..."} — снять свои заявки по ресурсу, чтобы выставить по другой цене
+{"kind":"FILL","orderId":"...","amount":500,"why":"..."} — исполнить чужую заявку из стакана прямо сейчас
 {"kind":"MESSAGE","commanderId":"...","subject":"...","body":"...","why":"..."} — написать игроку
 
 Называть можно ТОЛЬКО то, что есть в сводке: planetId из neighbours, freePlanets или debris, commanderId из neighbours. Выдуманное будет отброшено.
+Взять чужую заявку лучше, чем выставить свою: сделка происходит сразу, а заявка может провисеть сутки. Смотри в market.book — там чужие заявки с их orderId.
+Криптогривна сама по себе ничего не производит: если в стакане лежит дешевый ресурс, бери по максимуму, сколько позволяет касса и место на складе хаба.
 Больше пяти открытых заявок держать нельзя: если рынок не берет твою цену, сними их и выставь заново дешевле, а не добавляй новые.
 Рисковать можно — иногда проиграть не страшно. Но лететь на цель, которая сильнее втрое, бессмысленно.
 Писать игрокам стоит по поводу: объявил войну, предлагаешь мир или сделку, отвечаешь на разгром. Не чаще пары писем в сутки одному.

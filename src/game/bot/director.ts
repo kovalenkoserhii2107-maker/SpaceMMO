@@ -15,7 +15,7 @@
  */
 import { prisma } from '../../db/prisma.js';
 import { gameLoop, type ActionResult } from '../gameLoop.js';
-import { cancelOrder, placeOrder } from '../../services/marketService.js';
+import { cancelOrder, fillOrder, placeOrder } from '../../services/marketService.js';
 // Справочная цена одна на всех: бот держит коридор вокруг нее, а интерфейс
 // той же величиной показывает игроку, дорого сейчас или дешево.
 import { REFERENCE_PRICE } from '../market.js';
@@ -23,6 +23,7 @@ import { deliver } from '../../services/mailService.js';
 import { SHIP_TYPES, emptyShipCounts, type ShipCounts } from '../ships.js';
 import { fleetCapacity } from '../fleets.js';
 import { storageCapacities } from '../rules.js';
+import { storageCapacity as hubCapacity } from '../market.js';
 import { normalizeDefenses, normalizeShips } from '../fogOfWar.js';
 import { spentOnDefense, spentOnFleet } from '../score.js';
 import type { CommanderRuntimeState } from '../baseState.js';
@@ -80,7 +81,7 @@ async function buildSnapshot(
   const home = bases[0]!;
   const homeGalaxy = home.galaxy;
 
-  const [freeRows, foreignRows, scans, orders, debrisRows] = await Promise.all([
+  const [freeRows, foreignRows, scans, orders, debrisRows, hubStock] = await Promise.all([
     prisma.planet.findMany({
       where: { base: null },
       select: { id: true, systemId: true, system: { select: { galaxyX: true, galaxyY: true } } },
@@ -102,9 +103,12 @@ async function buildSnapshot(
     }),
     // Открытые заявки: без них бот выставлял бы одну и ту же каждые
     // сорок пять секунд — условие, которое ее породило, держится часами.
+    // Весь стакан своего хаба: свои заявки и чужие. Чужие нужны затем, что
+    // торговля — это не только выставить цену, но и взять чужую.
     prisma.marketOrder.findMany({
-      where: { commanderId: commander.commanderId, remaining: { gt: 0 } },
-      select: { side: true, resource: true },
+      where: { remaining: { gt: 0 }, hub: { system: { planets: { some: { base: { commanderId: commander.commanderId } } } } } },
+      select: { id: true, commanderId: true, side: true, resource: true, remaining: true, pricePerUnit: true },
+      take: 40,
     }),
     // Поля обломков видны всем и туманом войны не скрываются — иначе гонка
     // за крупным полем была бы невозможна.
@@ -117,6 +121,10 @@ async function buildSnapshot(
         system: { select: { galaxyX: true, galaxyY: true } },
       },
       take: 20,
+    }),
+    prisma.hubStorage.findFirst({
+      where: { commanderId: commander.commanderId },
+      select: { ore: true, polymers: true, level: true },
     }),
   ]);
 
@@ -177,10 +185,19 @@ async function buildSnapshot(
       polymers: row.debrisPolymers,
       distance: distance(homeGalaxy, row.system),
     })),
-    openOrders: orders.map((order) => ({
+    orderBook: orders.map((order) => ({
+      id: order.id,
       side: order.side as 'BUY' | 'SELL',
       resource: order.resource as 'ORE' | 'POLYMERS',
+      price: order.pricePerUnit,
+      amount: order.remaining,
+      mine: order.commanderId === commander.commanderId,
     })),
+    hubStorage: {
+      ore: hubStock?.ore ?? 0,
+      polymers: hubStock?.polymers ?? 0,
+      free: Math.max(0, hubCapacity(hubStock?.level ?? 1) - ((hubStock?.ore ?? 0) + (hubStock?.polymers ?? 0))),
+    },
     colonizing: commander.fleets.some((fleet) => fleet.mission === 'COLONIZE'),
   };
 }
@@ -242,6 +259,13 @@ async function execute(commanderId: string, intent: BotIntent): Promise<ActionRe
         intent.ships,
         { ore: 0, polymers: 0, plasma: 0 },
       );
+
+    case 'TAKE': {
+      // Сделка по чужой заявке. Отказ штатен: заявку могли разобрать
+      // за секунды между решением и вызовом.
+      const result = await fillOrder(commanderId, intent.orderId, intent.amount);
+      return result;
+    }
 
     case 'ORDER': {
       const result = await placeOrder(commanderId, {
@@ -420,10 +444,11 @@ async function marketBrief(commanderId: string): Promise<BotBrief['market']> {
       where: { commanderId, remaining: { gt: 0 } },
       select: { side: true, resource: true, remaining: true, pricePerUnit: true },
     }),
+    // Идентификатор идет вместе с заявкой: по нему модель ее и исполняет.
     prisma.marketOrder.findMany({
       where: { commanderId: { not: commanderId }, remaining: { gt: 0 } },
-      select: { side: true, resource: true, remaining: true, pricePerUnit: true },
-      orderBy: { createdAt: 'desc' },
+      select: { id: true, side: true, resource: true, remaining: true, pricePerUnit: true },
+      orderBy: { pricePerUnit: 'asc' },
       take: 8,
     }),
     prisma.trade.findMany({
@@ -442,7 +467,7 @@ async function marketBrief(commanderId: string): Promise<BotBrief['market']> {
 
   return {
     myOrders: mine.map(row),
-    book: book.map(row),
+    book: book.map((order) => ({ orderId: order.id, ...row(order) })),
     lastTrades: trades.map((t) => ({
       resource: t.resource,
       amount: Math.round(t.quantity),
@@ -713,6 +738,11 @@ async function applyDirective(
         { ore: 0, polymers: 0, plasma: 0 },
       );
       return note(result.ok ? `сбор обломков — ${directive.why}` : result.error);
+    }
+
+    case 'FILL': {
+      const result = await fillOrder(commanderId, directive.orderId, directive.amount);
+      return note(result.ok ? `сделка прошла — ${directive.why}` : result.error);
     }
 
     case 'CANCEL': {

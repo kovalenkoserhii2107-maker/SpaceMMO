@@ -34,6 +34,11 @@ export type BotDirective =
    * ничего не исполняется, пять заявок висят, и цену уже не поменять.
    */
   | { kind: 'CANCEL'; resource: TradeResource; why: string }
+  /**
+   * Исполнить чужую заявку. Сделка происходит сразу, а выставленная своя
+   * может провисеть сутки — на редком рынке это разные вещи.
+   */
+  | { kind: 'FILL'; orderId: string; amount: number; why: string }
   | { kind: 'BUY'; resource: TradeResource; amount: number; price: number; why: string }
   | { kind: 'COLONIZE'; planetId: string; why: string }
   /** Сбор поля обломков над планетой. */
@@ -71,6 +76,10 @@ export function parseDirectives(raw: unknown, snapshot: BotSnapshot): BotDirecti
   const free = new Set(snapshot.freePlanets.map((planet) => planet.planetId));
   const debris = new Set(snapshot.debrisFields.map((field) => field.planetId));
   const known = new Set(snapshot.raidTargets.map((target) => target.commanderId));
+  // Чужие заявки, которые боту показали: своими торговать с собой нельзя.
+  const takeable = new Map(
+    snapshot.orderBook.filter((order) => !order.mine).map((order) => [order.id, order.amount]),
+  );
 
   const out: BotDirective[] = [];
   for (const item of raw) {
@@ -114,6 +123,15 @@ export function parseDirectives(raw: unknown, snapshot: BotSnapshot): BotDirecti
       case 'CANCEL': {
         const res = resource(row['resource']);
         if (res) out.push({ kind: 'CANCEL', resource: res, why });
+        break;
+      }
+      case 'FILL': {
+        const orderId = text(row['orderId'], 64);
+        const available = takeable.get(orderId);
+        if (available === undefined) break;
+        // Объем режется по самой заявке: больше, чем в ней лежит, не взять.
+        const amount = Math.min(positive(row['amount'], 10_000_000) || Math.floor(available), Math.floor(available));
+        if (amount > 0) out.push({ kind: 'FILL', orderId, amount, why });
         break;
       }
       case 'MESSAGE': {

@@ -339,68 +339,137 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
 
 /* ------------------------- 4. Биржа ------------------------- */
 
-console.log('\n=== 4. Ордера в коридоре ===');
+console.log('\n=== 4. Торговля: берем чужое, выставляем свое ===');
 
 {
-  const levels = { ...emptyLevels(), ORE_STORAGE: 3, POLYMER_STORAGE: 3, PLASMA_STORAGE: 3 };
-  const capacity = storageCapacity(levels);
-  const rich = snapshotWith({
+  /*
+   * Ради этого свойства торговля и переписана. Три бота на одном хабе
+   * не совершили ни одной сделки: каждый выставлял свою пассивную заявку,
+   * спред не пересекался, стакан стоял мертвым. Брать чужое бот не умел вовсе.
+   */
+  const cheap = snapshotWith({
     character: 'TRADER',
     credits: 100_000,
-    bases: [
-      testBase('home', {
-        levels,
-        // Руды больше половины склада — излишек; полимеров почти нет — надо купить.
-        resources: { ore: capacity * 0.8, polymers: capacity * 0.05, plasma: 0 },
-      }),
+    hubStorage: { ore: 0, polymers: 0, free: 5000 },
+    orderBook: [
+      { id: 'дешевая-руда', side: 'SELL', resource: 'ORE', price: 8, amount: 400, mine: false },
     ],
   });
 
-  const orders = decide(rich).filter((intent) => intent.kind === 'ORDER');
-  const sell = orders.find((o) => o.kind === 'ORDER' && o.side === 'SELL');
-  const buy = orders.find((o) => o.kind === 'ORDER' && o.side === 'BUY');
-
-  check('излишек выставляется на продажу', sell !== undefined);
-  check('нехватка выставляется на покупку', buy !== undefined);
-
-  if (sell?.kind === 'ORDER' && buy?.kind === 'ORDER') {
-    const margin = BOT_PERSONALITIES.TRADER.trade.margin;
-    check(
-      'продает дороже справочной, покупает дешевле',
-      sell.price > 10 && buy.price < 14,
-      `продажа ${sell.price}, покупка ${buy.price}, коридор ±${Math.round(margin * 100)}%`,
-    );
-    check('ордера положительного объема', sell.amount > 0 && buy.amount > 0);
-  }
+  const take = decide(cheap).find((intent) => intent.kind === 'TAKE');
+  check(
+    'дешевую чужую заявку бот исполняет, а не ждет',
+    take?.kind === 'TAKE' && take.orderId === 'дешевая-руда',
+    take?.kind === 'TAKE' ? `взял ${take.amount}` : 'не взял',
+  );
+  check(
+    'берет по максимуму, сколько лежит в заявке',
+    take?.kind === 'TAKE' && take.amount === 400,
+    take?.kind === 'TAKE' ? `${take.amount} из 400` : '',
+  );
 }
 
 {
-  // Условие «запас ниже четверти склада» держится часами, а ордер его не меняет.
-  // Без учета уже стоящих заявок бот выставлял бы новую каждые сорок пять секунд
-  // и за сутки замораживал в залоге всю кассу — проверено на живом стенде.
-  const levels = { ...emptyLevels(), ORE_STORAGE: 3, POLYMER_STORAGE: 3, PLASMA_STORAGE: 3 };
-  const capacity = storageCapacity(levels);
+  // Дорогую чужую продажу брать незачем: коридор на то и коридор.
+  const pricey = snapshotWith({
+    character: 'TRADER',
+    credits: 100_000,
+    hubStorage: { ore: 0, polymers: 0, free: 5000 },
+    orderBook: [{ id: 'дорого', side: 'SELL', resource: 'ORE', price: 40, amount: 400, mine: false }],
+  });
+  check(
+    'дорогую заявку бот не берет',
+    !decide(pricey).some((intent) => intent.kind === 'TAKE'),
+  );
+}
+
+{
+  // Своя заявка — не сделка: торговать с самим собой нельзя.
+  const own = snapshotWith({
+    character: 'TRADER',
+    credits: 100_000,
+    hubStorage: { ore: 0, polymers: 0, free: 5000 },
+    orderBook: [{ id: 'моя', side: 'SELL', resource: 'ORE', price: 8, amount: 400, mine: true }],
+  });
+  check('свою заявку бот не исполняет', !decide(own).some((intent) => intent.kind === 'TAKE'));
+}
+
+{
+  // Кассы нет — брать не на что, как бы дешево ни лежало.
+  const broke = snapshotWith({
+    character: 'TRADER',
+    credits: 0,
+    hubStorage: { ore: 0, polymers: 0, free: 5000 },
+    orderBook: [{ id: 'дешево', side: 'SELL', resource: 'ORE', price: 8, amount: 400, mine: false }],
+  });
+  check('без криптогривны бот не покупает', !decide(broke).some((intent) => intent.kind === 'TAKE'));
+}
+
+{
+  // Продажа идет с хаба: товар на базе для биржи не существует.
+  const seller = snapshotWith({
+    character: 'TRADER',
+    hubStorage: { ore: 3000, polymers: 0, free: 2000 },
+    orderBook: [{ id: 'щедрый', side: 'BUY', resource: 'ORE', price: 12, amount: 1000, mine: false }],
+  });
+  const take = decide(seller).find((intent) => intent.kind === 'TAKE');
+  check(
+    'щедрую чужую покупку бот исполняет со склада хаба',
+    take?.kind === 'TAKE' && take.orderId === 'щедрый' && take.amount === 1000,
+    take?.kind === 'TAKE' ? `отдал ${take.amount}` : 'не отдал',
+  );
+}
+
+{
+  const empty = snapshotWith({
+    character: 'TRADER',
+    hubStorage: { ore: 0, polymers: 0, free: 5000 },
+    orderBook: [{ id: 'щедрый', side: 'BUY', resource: 'ORE', price: 12, amount: 1000, mine: false }],
+  });
+  check(
+    'пустой склад хаба продавать нечем',
+    !decide(empty).some((intent) => intent.kind === 'TAKE'),
+  );
+}
+
+{
+  // Брать нечего — выставляем свое.
+  const posting = snapshotWith({
+    character: 'TRADER',
+    credits: 50_000,
+    hubStorage: { ore: 4000, polymers: 0, free: 1000 },
+  });
+  const orders = decide(posting).filter((intent) => intent.kind === 'ORDER');
+  check('на пустом стакане бот выставляет заявки', orders.length > 0, `${orders.length} заявок`);
+  check(
+    'продает то, что лежит на хабе',
+    orders.some((o) => o.kind === 'ORDER' && o.side === 'SELL' && o.resource === 'ORE'),
+  );
+}
+
+{
+  /*
+   * Условие, породившее заявку, держится часами, а сама заявка его не меняет.
+   * Без учета уже стоящих бот выставлял новую каждые сорок пять секунд
+   * и за сутки замораживал в залоге всю кассу.
+   */
   const situation = {
     character: 'TRADER' as const,
-    credits: 100_000,
-    bases: [
-      testBase('home', {
-        levels,
-        resources: { ore: capacity * 0.8, polymers: capacity * 0.05, plasma: 0 },
-      }),
-    ],
+    credits: 50_000,
+    hubStorage: { ore: 4000, polymers: 500, free: 500 },
   };
-
-  const fresh = decide(snapshotWith(situation)).filter((intent) => intent.kind === 'ORDER');
+  const fresh = decide(snapshotWith(situation)).filter((i) => i.kind === 'ORDER');
   const repeat = decide(
     snapshotWith({
       ...situation,
-      openOrders: [
-        { side: 'SELL', resource: 'ORE' },
-        { side: 'BUY', resource: 'POLYMERS' },
+      orderBook: [
+        { id: 'a', side: 'SELL', resource: 'ORE', price: 11, amount: 100, mine: true },
+        { id: 'b', side: 'SELL', resource: 'POLYMERS', price: 15, amount: 100, mine: true },
+        { id: 'c', side: 'BUY', resource: 'ORE', price: 9, amount: 100, mine: true },
+        { id: 'd', side: 'BUY', resource: 'POLYMERS', price: 13, amount: 100, mine: true },
       ],
     }),
-  ).filter((intent) => intent.kind === 'ORDER');
+  ).filter((i) => i.kind === 'ORDER');
 
   check(
     'заявка, которая уже стоит в стакане, не дублируется',
@@ -410,16 +479,18 @@ console.log('\n=== 4. Ордера в коридоре ===');
 }
 
 {
-  // Кассы нет — покупать не на что, и бот не должен выставлять пустой ордер.
-  const levels = { ...emptyLevels(), ORE_STORAGE: 3, POLYMER_STORAGE: 3, PLASMA_STORAGE: 3 };
-  const broke = snapshotWith({
+  // Пять открытых заявок — потолок: дальше это не торговля, а замороженный залог.
+  const full = snapshotWith({
     character: 'TRADER',
-    credits: 0,
-    bases: [testBase('home', { levels, resources: { ore: 0, polymers: 0, plasma: 0 } })],
+    credits: 50_000,
+    hubStorage: { ore: 4000, polymers: 4000, free: 1000 },
+    orderBook: Array.from({ length: 5 }, (_, i) => ({
+      id: `свой-${i}`, side: 'SELL' as const, resource: 'ORE' as const, price: 20 + i, amount: 10, mine: true,
+    })),
   });
   check(
-    'без криптогривны бот не покупает',
-    !decide(broke).some((intent) => intent.kind === 'ORDER' && intent.side === 'BUY'),
+    'на потолке заявок новые не выставляются',
+    !decide(full).some((intent) => intent.kind === 'ORDER'),
   );
 }
 

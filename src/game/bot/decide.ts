@@ -111,6 +111,16 @@ export interface BotMarketRef {
   reference: number;
 }
 
+/** Заявка в стакане — своя или чужая. */
+export interface BotMarketOrder {
+  id: string;
+  side: 'BUY' | 'SELL';
+  resource: 'ORE' | 'POLYMERS';
+  price: number;
+  amount: number;
+  mine: boolean;
+}
+
 /** Поле обломков над планетой: их видно всем и туманом войны не скрывается. */
 export interface BotDebrisField {
   planetId: string;
@@ -134,13 +144,20 @@ export interface BotSnapshot {
   /** Поля обломков поблизости — цель для переработчика. */
   debrisFields: BotDebrisField[];
   /**
-   * Заявки бота, которые уже стоят в стакане.
+   * Весь стакан, свои заявки и чужие.
    *
-   * Без них бот выставлял бы одну и ту же заявку каждые сорок пять секунд:
-   * условие «запас ниже четверти склада» держится часами, а ордер его
-   * не меняет. За сутки это десятки одинаковых заявок и вся касса в залоге.
+   * Своих хватало, пока бот умел только выставлять: без них он повторял одну
+   * и ту же заявку каждые сорок пять секунд, потому что породившее ее условие
+   * держится часами. Чужие нужны затем, что торговля — это не только выставить
+   * свою цену, но и взять чужую. Без них три бота на одном хабе висели
+   * с непересекающимися заявками и не совершили ни одной сделки.
    */
-  openOrders: Array<{ side: 'BUY' | 'SELL'; resource: 'ORE' | 'POLYMERS' }>;
+  orderBook: BotMarketOrder[];
+  /**
+   * Склад на хабе. Продавать можно только тем, что уже лежит на станции:
+   * товар туда возит флот, и решать о продаже по остаткам базы бессмысленно.
+   */
+  hubStorage: { ore: number; polymers: number; free: number };
   /** Уже отправлен ли колониальный рейс: два на одну планету не нужны. */
   colonizing: boolean;
 }
@@ -155,6 +172,8 @@ export type BotIntent =
   | { kind: 'COLONIZE'; baseId: string; planetId: string; why: string }
   | { kind: 'RAID'; baseId: string; planetId: string; ships: ShipCounts; why: string }
   | { kind: 'SCAN'; baseId: string; planetId: string; why: string }
+  /** Исполнить чужую заявку — сделка происходит сразу, а не когда-нибудь. */
+  | { kind: 'TAKE'; orderId: string; amount: number; why: string }
   | {
       kind: 'ORDER';
       side: 'BUY' | 'SELL';
@@ -951,7 +970,7 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
 
   /* --- Биржа --- */
   if (profile.trade.active) {
-    intents.push(...tradeIntents(snapshot, capital, profile));
+    intents.push(...tradeIntents(snapshot, profile));
   }
 
   return intents;
@@ -965,54 +984,131 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
  * либо пылесосом, высасывающим стакан. Продает излишек сверх собственных
  * нужд, покупает то, чего не хватает на ближайшую цель.
  */
-function tradeIntents(
-  snapshot: BotSnapshot,
-  capital: BotBaseSnapshot,
-  profile: BotPersonality,
-): BotIntent[] {
+/**
+ * Торговля.
+ *
+ * Три бота на одном хабе не совершили ни одной сделки: каждый выставлял свою
+ * пассивную заявку, спред не пересекался, и стакан стоял мертвым. Потому что
+ * бот умел только выставлять — брать чужое он не умел вовсе.
+ *
+ * Теперь порядок обратный: сперва смотрим, что уже лежит в стакане и что можно
+ * взять прямо сейчас, и только потом выставляем свое. Взять выгодное всегда
+ * лучше, чем ждать у моря погоды: сделка происходит сразу, а заявка может
+ * провисеть сутки.
+ */
+function tradeIntents(snapshot: BotSnapshot, profile: BotPersonality): BotIntent[] {
   const intents: BotIntent[] = [];
-  const capacity = storageCapacity(capital.levels);
-  const stock = capital.resources;
+  const hub = snapshot.hubStorage;
+  const reference = new Map(snapshot.market.map((ref) => [ref.resource, ref.reference]));
+  const foreign = snapshot.orderBook.filter((order) => !order.mine && order.amount > 0);
 
-  /** Заявка этой стороны по этому ресурсу уже стоит в стакане. */
-  const standing = (side: 'BUY' | 'SELL', resource: 'ORE' | 'POLYMERS'): boolean =>
-    snapshot.openOrders.some((order) => order.side === side && order.resource === resource);
+  /*
+   * Что считать выгодным.
+   *
+   * Коридор тот же, что бот держит для своих заявок: покупаем не дороже
+   * справочной с наценкой, продаем не дешевле справочной со скидкой. Внутри
+   * коридора сделка выгодна обеим сторонам, и бот не превращается ни
+   * в бесплатный насос, ни в пылесос.
+   */
+  const buyCeiling = (resource: 'ORE' | 'POLYMERS') =>
+    (reference.get(resource) ?? 0) * (1 + profile.trade.margin);
+  const sellFloor = (resource: 'ORE' | 'POLYMERS') =>
+    (reference.get(resource) ?? 0) * (1 - profile.trade.margin);
+
+  /* --- Берем чужое --- */
+
+  // Дешевле всех — первым: если денег хватит не на все, тратим их с толком.
+  const cheapest = foreign
+    .filter((order) => order.side === 'SELL' && order.price <= buyCeiling(order.resource))
+    .sort((a, b) => a.price - b.price);
+
+  let purse = snapshot.credits;
+  let room = hub.free;
+  for (const order of cheapest) {
+    if (purse <= 0 || room <= 0) break;
+    // Берем по максимуму: сколько позволяют касса, место на складе и сама
+    // заявка. Держать криптогривну мертвым грузом смысла нет — ресурс,
+    // купленный дешево, работает, а деньги на счету не работают никак.
+    const affordable = Math.floor(purse / Math.max(order.price, 1));
+    const amount = Math.min(order.amount, affordable, Math.floor(room));
+    if (amount <= 0) continue;
+
+    intents.push({
+      kind: 'TAKE',
+      orderId: order.id,
+      amount,
+      why: `берем ${order.resource === 'ORE' ? 'руду' : 'полимеры'} по ${order.price} при справочной ${Math.round(reference.get(order.resource) ?? 0)}`,
+    });
+    purse -= amount * order.price;
+    room -= amount;
+  }
+
+  // Дороже всех — первым: продаем тому, кто больше дает.
+  const richest = foreign
+    .filter((order) => order.side === 'BUY' && order.price >= sellFloor(order.resource))
+    .sort((a, b) => b.price - a.price);
+
+  const onHand = { ORE: hub.ore, POLYMERS: hub.polymers };
+  for (const order of richest) {
+    const have = Math.floor(onHand[order.resource]);
+    if (have <= 0) continue;
+    const amount = Math.min(order.amount, have);
+    if (amount <= 0) continue;
+
+    intents.push({
+      kind: 'TAKE',
+      orderId: order.id,
+      amount,
+      why: `отдаем ${order.resource === 'ORE' ? 'руду' : 'полимеры'} по ${order.price} при справочной ${Math.round(reference.get(order.resource) ?? 0)}`,
+    });
+    onHand[order.resource] -= amount;
+  }
+
+  /* --- Выставляем свое --- */
+
+  /*
+   * Заявка нужна там, где брать нечего. Считаем и свои, и чужие: если на этой
+   * стороне уже висит десяток заявок, еще одна ничего не изменит, а место
+   * в собственном потолке займет.
+   */
+  const mine = snapshot.orderBook.filter((order) => order.mine);
+  if (mine.length >= 5) return intents;
+
+  const standing = (side: 'BUY' | 'SELL', resource: 'ORE' | 'POLYMERS') =>
+    mine.some((order) => order.side === side && order.resource === resource);
 
   for (const ref of snapshot.market) {
     if (ref.reference <= 0) continue;
-    const held = ref.resource === 'ORE' ? stock.ore : stock.polymers;
+    const held = ref.resource === 'ORE' ? hub.ore : hub.polymers;
+    const best = foreign.filter((o) => o.resource === ref.resource);
 
-    // Продаем то, чего накопилось больше половины склада: это уже излишек,
-    // и он рискует упереться в потолок и остановить добычу.
-    const surplus = held - capacity * 0.5;
-    if (surplus > 0 && !standing('SELL', ref.resource)) {
-      const amount = Math.floor(surplus * profile.trade.sellShare);
+    // Продаем излишек: то, что лежит на хабе и не нужно на выкуп.
+    if (held > 0 && !standing('SELL', ref.resource)) {
+      const amount = Math.floor(held * profile.trade.sellShare);
       if (amount > 0) {
-        intents.push({
-          kind: 'ORDER',
-          side: 'SELL',
-          resource: ref.resource,
-          amount,
-          price: Math.round(ref.reference * (1 + profile.trade.margin)),
-          why: 'излишек сверх половины склада',
-        });
+        // Встаем чуть ниже лучшей чужой продажи, иначе очередь до нас
+        // не дойдет никогда. Ниже пола не опускаемся.
+        const rival = Math.min(...best.filter((o) => o.side === 'SELL').map((o) => o.price), Infinity);
+        const price = Math.max(
+          Math.round(sellFloor(ref.resource)),
+          Number.isFinite(rival) ? Math.round(rival) - 1 : Math.round(ref.reference * (1 + profile.trade.margin)),
+        );
+        intents.push({ kind: 'ORDER', side: 'SELL', resource: ref.resource, amount, price, why: 'излишек на хабе' });
       }
     }
 
-    // Покупаем на криптогривну то, чего меньше четверти склада, — но только
-    // в пределах трети баланса, чтобы один ордер не выгреб всю кассу.
-    if (held < capacity * 0.25 && snapshot.credits > 0 && !standing('BUY', ref.resource)) {
-      const price = Math.round(ref.reference * (1 - profile.trade.margin));
-      const amount = Math.floor(Math.min(snapshot.credits / 3 / Math.max(price, 1), capacity * 0.25));
+    // Покупаем впрок: криптогривна сама по себе ничего не производит.
+    if (snapshot.credits > 0 && hub.free > 0 && !standing('BUY', ref.resource)) {
+      const rival = Math.max(...best.filter((o) => o.side === 'BUY').map((o) => o.price), 0);
+      const price = Math.min(
+        Math.round(buyCeiling(ref.resource)),
+        rival > 0 ? Math.round(rival) + 1 : Math.round(ref.reference),
+      );
+      const amount = Math.floor(
+        Math.min((snapshot.credits * 0.4) / Math.max(price, 1), hub.free),
+      );
       if (amount > 0 && price > 0) {
-        intents.push({
-          kind: 'ORDER',
-          side: 'BUY',
-          resource: ref.resource,
-          amount,
-          price,
-          why: 'запас ниже четверти склада',
-        });
+        intents.push({ kind: 'ORDER', side: 'BUY', resource: ref.resource, amount, price, why: 'копим запас впрок' });
       }
     }
   }
@@ -1035,7 +1131,8 @@ export function emptyBotSnapshot(character: BotCharacter): BotSnapshot {
     raidTargets: [],
     market: [],
     debrisFields: [],
-    openOrders: [],
+    orderBook: [],
+    hubStorage: { ore: 0, polymers: 0, free: 0 },
     colonizing: false,
   };
 }
