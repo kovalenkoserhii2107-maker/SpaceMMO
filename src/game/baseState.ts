@@ -16,6 +16,7 @@ import {
   type BaseStock,
   energyEfficiency,
   buildingEnergyUsage,
+  creditOutput,
   energyOutput,
   energyUsage,
   hasEnoughResources,
@@ -31,6 +32,7 @@ import {
   type PlanetRichness,
 } from './rules.js';
 import {
+  cryptoBonus,
   economyBonuses,
   missingTechRequirements,
   buildSpeedup,
@@ -168,6 +170,15 @@ export interface CommanderRuntimeState {
   research: ResearchJobState | null;
   /** Уровни технологий или активное исследование изменились. */
   researchDirty: boolean;
+  /**
+   * Намытая, но еще не записанная криптогривна.
+   *
+   * Отдельный счетчик, а не прямая правка баланса: деньги лежат у командира,
+   * а добываются на базе, и биржа меняет тот же баланс из другого процесса.
+   * Абсолютная запись затерла бы чужую сделку, поэтому накопленное уходит
+   * в БД инкрементом.
+   */
+  minedCredits: number;
   bases: Map<string, BaseRuntimeState>;
   /** Флоты игрока в полете. Источник правды — БД, здесь кэш для отрисовки. */
   fleets: FleetRuntimeState[];
@@ -186,8 +197,23 @@ export interface CommanderRuntimeState {
  * ресурсов — иначе на полном складе руда вытесняла бы плазму просто потому,
  * что его добывают быстрее. Антиматерия под лимит не попадает.
  */
-export function accrue(state: BaseRuntimeState, techs: TechLevels, seconds: number): void {
+export function accrue(
+  state: BaseRuntimeState,
+  techs: TechLevels,
+  seconds: number,
+  /**
+   * Куда сложить намытую криптогривну. Деньги живут у командира, а добываются
+   * на базе, поэтому база их не хранит, а только досыпает в общий счетчик.
+   */
+  commander?: { minedCredits: number },
+): void {
   if (!Number.isFinite(seconds) || seconds <= 0) return;
+
+  if (commander) {
+    // Криптогривна в склад не кладется и потолком не режется: это не тоннаж,
+    // а запись в реестре.
+    commander.minedCredits += creditOutput(state.levels, cryptoBonus(techs)) * seconds;
+  }
 
   const perSecond = productionPerSecond(
     state.levels,
@@ -406,6 +432,13 @@ function buildingEffect(
     const now = storageCapacityForLevel(level);
     const after = storageCapacityForLevel(nextLevel);
     return `вместимость ${Math.round(now).toLocaleString('ru-RU')} → ${Math.round(after).toLocaleString('ru-RU')}`;
+  }
+
+  if (type === 'CRYPTO_FARM') {
+    const bonus = cryptoBonus(commander.techs);
+    const now = creditOutput(state.levels, bonus);
+    const after = creditOutput(next, bonus);
+    return `криптогривна ${perHour(now)} → ${perHour(after)} в час`;
   }
 
   if (type === 'POWER_PLANT') {

@@ -81,6 +81,7 @@ export async function checkArchitect(commanderId: string, baseId: string): Promi
     SCIENCE_CENTER: base.scienceCenterLevel,
     SHIPYARD: base.shipyardLevel,
     ANTIMATTER_FACTORY: base.antimatterFactoryLevel,
+    CRYPTO_FARM: base.cryptoFarmLevel,
     ORE_STORAGE: base.oreStorageLevel,
     POLYMER_STORAGE: base.polymerStorageLevel,
     PLASMA_STORAGE: base.plasmaStorageLevel,

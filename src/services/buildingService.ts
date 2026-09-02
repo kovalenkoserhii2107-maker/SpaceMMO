@@ -15,6 +15,7 @@ import {
   BUILDING_LABELS,
   buildSeconds,
   buildingEnergyUsage,
+  creditOutput,
   energyOutput,
   productionPerSecond,
   storageCapacityForLevel,
@@ -23,7 +24,7 @@ import {
   type BuildingLevels,
   type BuildingType,
 } from '../game/rules.js';
-import { buildSpeedup, economyBonuses, timeCompressionDrain } from '../game/techTree.js';
+import { buildSpeedup, cryptoBonus, economyBonuses, timeCompressionDrain } from '../game/techTree.js';
 import { defenseEnergyUsage } from '../game/defenses.js';
 import type { BuildingProjection, BuildingProjectionRow } from '../types/socket.js';
 
@@ -37,6 +38,7 @@ const OUTPUT_LABEL: Partial<Record<BuildingType, string>> = {
   PLASMA_REACTOR: 'плазма в час',
   ANTIMATTER_FACTORY: 'антиматерия в час',
   POWER_PLANT: 'выработка энергии',
+  CRYPTO_FARM: 'криптогривна в час',
   ORE_STORAGE: 'вместимость по руде',
   POLYMER_STORAGE: 'вместимость по полимерам',
   PLASMA_STORAGE: 'вместимость по плазме',
@@ -67,6 +69,7 @@ export async function getBuildingProjection(
       return storageCapacityForLevel(target);
     }
     if (type === 'POWER_PLANT') return energyOutput(levels, base.richness, bonuses);
+    if (type === 'CRYPTO_FARM') return creditOutput(levels, cryptoBonus(commander.techs)) * 3600;
 
     const production = productionPerSecond(levels, base.richness, bonuses, drain, modifiers, techDrain);
     if (type === 'ORE_MINE') return production.ore * 3600;

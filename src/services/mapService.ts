@@ -94,6 +94,7 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
               SCIENCE_CENTER: ownBase.scienceCenterLevel,
               SHIPYARD: ownBase.shipyardLevel,
               ANTIMATTER_FACTORY: ownBase.antimatterFactoryLevel,
+              CRYPTO_FARM: ownBase.cryptoFarmLevel,
               ORE_STORAGE: ownBase.oreStorageLevel,
               POLYMER_STORAGE: ownBase.polymerStorageLevel,
               PLASMA_STORAGE: ownBase.plasmaStorageLevel,

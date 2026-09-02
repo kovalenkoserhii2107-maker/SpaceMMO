@@ -22,6 +22,7 @@ export const TECHNOLOGY_TYPES = [
   'HYPERDRIVE',
   'ASTROPHYSICS',
   'ROBOTICS',
+  'CRYPTO_TECH',
   'TIME_COMPRESSION',
 ] as const;
 
@@ -46,6 +47,7 @@ export function emptyTechLevels(): TechLevels {
     HYPERDRIVE: 0,
     ASTROPHYSICS: 0,
     ROBOTICS: 0,
+    CRYPTO_TECH: 0,
     TIME_COMPRESSION: 0,
   };
 }
@@ -111,6 +113,15 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
     timeFactor: 2.15,
     labLevel: 2,
     requires: { ENERGY_TECH: 2 },
+  },
+  CRYPTO_TECH: {
+    label: 'Криптоинженерия',
+    description: '+15% к добыче криптогривны на фермах за уровень.',
+    cost: { ore: 400, polymers: 600, plasma: 100, factor: 1.9 },
+    baseSeconds: 120,
+    timeFactor: 2.15,
+    labLevel: 4,
+    requires: { COMPUTING_TECH: 2 },
   },
   MINING_TECH: {
     label: 'Горное дело',
@@ -324,6 +335,11 @@ export function missingTechRequirements(
  */
 export function colonySlots(techs: TechLevels): number {
   return 1 + Math.floor(Math.max(0, techs.ASTROPHYSICS) / 2);
+}
+
+/** Множитель добычи криптогривны от криптоинженерии: +15% за уровень. */
+export function cryptoBonus(techs: TechLevels): number {
+  return 1 + Math.max(0, techs.CRYPTO_TECH) * 0.15;
 }
 
 export function economyBonuses(techs: TechLevels): EconomyBonuses {

@@ -3,6 +3,7 @@
  * Все проверки и переводы — на сервере и в транзакции: товар и криптогривна
  * блокируются в момент выставления ордера, поэтому продать одно и то же дважды нельзя.
  */
+import { Prisma } from '../generated/prisma/client.js';
 import { prisma } from '../db/prisma.js';
 import { gameLoop } from '../game/gameLoop.js';
 import {
@@ -16,7 +17,10 @@ import {
   type TradeResource,
   quote,
   stationBuyPrice,
-  stationFee,
+  buyerEscrow,
+  buyerFee,
+  matchPrice,
+  sellerFee,
   stationSellPrice,
   type Quote,
 } from '../game/market.js';
@@ -391,11 +395,12 @@ export async function tradeWithStation(
         });
       } else {
         // Покупаем у станции: деньги исчезают, товар ложится на склад.
+        const cost = total + buyerFee(total);
         const paid = await tx.commander.updateMany({
-          where: { id: commanderId, credits: { gte: total } },
-          data: { credits: { decrement: total } },
+          where: { id: commanderId, credits: { gte: cost } },
+          data: { credits: { decrement: cost } },
         });
-        if (paid.count === 0) throw new MarketError(`Не хватает криптогривны: нужно ${total} ₴`);
+        if (paid.count === 0) throw new MarketError(`Не хватает криптогривны: нужно ${cost} ₴`);
 
         await incrementStorage(tx, storage.id, field, amount, storageCapacity(storage.level),
           `На складе хаба свободно только ${Math.floor(storageCapacity(storage.level) - storageUsed(storage))}`);
@@ -480,6 +485,7 @@ export async function placeOrder(
 
   const field = input.resource === 'ORE' ? 'ore' : 'polymers';
   const total = tradeTotal(input.quantity, input.pricePerUnit);
+  let matched: { quantity: number; total: number } = { quantity: 0, total: 0 };
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -499,16 +505,19 @@ export async function placeOrder(
           );
         }
       } else {
+        // Залог включает комиссию: иначе при сведении по своей же цене
+        // на сбор бы не хватило.
+        const escrow = buyerEscrow(input.quantity, input.pricePerUnit);
         const paid = await tx.commander.updateMany({
-          where: { id: commanderId, credits: { gte: total } },
-          data: { credits: { decrement: total } },
+          where: { id: commanderId, credits: { gte: escrow } },
+          data: { credits: { decrement: escrow } },
         });
         if (paid.count === 0) {
-          throw new MarketError(`Не хватает криптогривны: нужно ${total} ₴`);
+          throw new MarketError(`Не хватает криптогривны: нужно ${escrow} ₴ вместе с комиссией`);
         }
       }
 
-      await tx.marketOrder.create({
+      const created = await tx.marketOrder.create({
         data: {
           hubId: hub.id,
           commanderId,
@@ -519,12 +528,27 @@ export async function placeOrder(
           remaining: input.quantity,
         },
       });
+
+      matched = await matchOrder(tx, created);
     });
   } catch (error) {
     return toError(error, 'Не удалось выставить ордер');
   }
 
   await syncCredits(commanderId);
+
+  // Сведение — обычный исход, а не исключение: если встречная заявка была,
+  // сделка уже прошла, и молчать об этом было бы странно.
+  if (matched.quantity > 0) {
+    const rest = input.quantity - matched.quantity;
+    return {
+      ok: true,
+      message:
+        `Сведено ${matched.quantity} на ${matched.total} ₴` +
+        (rest > 0 ? `, в стакане осталось ${rest}` : ' — заявка закрыта целиком'),
+    };
+  }
+
   return {
     ok: true,
     message:
@@ -532,6 +556,103 @@ export async function placeOrder(
         ? `Ордер на продажу выставлен: ${input.quantity} × ${input.pricePerUnit} ₴`
         : `Ордер на покупку выставлен: заблокировано ${total} ₴`,
   };
+}
+
+/**
+ * Сведение встречных заявок.
+ *
+ * Заявка, пересекающаяся с чужой, исполняется сразу и по средней цене: продавец
+ * хочет дороже, покупатель дешевле, оба уже согласились на свою цену, и середина
+ * делит разницу поровну. Отдать сделку по цене одной из сторон значило бы
+ * подарить весь выигрыш тому, кто выставился вторым.
+ *
+ * Объем берется по меньшей заявке, остаток большей продолжает висеть по своей
+ * прежней цене. Непересекающиеся заявки не трогаются вовсе — они ждут, пока
+ * кто-нибудь не подвинется.
+ *
+ * Идем от лучшей встречной цены: покупателю — самая дешевая продажа, продавцу —
+ * самая дорогая покупка.
+ */
+async function matchOrder(
+  tx: Prisma.TransactionClient,
+  order: { id: string; hubId: string; commanderId: string; side: OrderSide; resource: TradeResource; pricePerUnit: number; remaining: number },
+): Promise<{ quantity: number; total: number }> {
+  const field = order.resource === 'ORE' ? 'ore' : 'polymers';
+  const counter = await tx.marketOrder.findMany({
+    where: {
+      hubId: order.hubId,
+      resource: order.resource,
+      side: order.side === 'SELL' ? 'BUY' : 'SELL',
+      remaining: { gt: 0 },
+      commanderId: { not: order.commanderId },
+      // Пересечение: покупатель дает не меньше, чем просит продавец.
+      pricePerUnit: order.side === 'SELL' ? { gte: order.pricePerUnit } : { lte: order.pricePerUnit },
+    },
+    orderBy: { pricePerUnit: order.side === 'SELL' ? 'desc' : 'asc' },
+    take: 20,
+  });
+
+  let left = order.remaining;
+  let filled = 0;
+  let paidTotal = 0;
+
+  for (const other of counter) {
+    if (left <= 0) break;
+    const volume = Math.min(left, other.remaining);
+    if (volume <= 0) continue;
+
+    const price = matchPrice(order.pricePerUnit, other.pricePerUnit);
+    const total = tradeTotal(volume, price);
+
+    const sellerId = order.side === 'SELL' ? order.commanderId : other.commanderId;
+    const buyerId = order.side === 'SELL' ? other.commanderId : order.commanderId;
+    const buyerBid = order.side === 'SELL' ? other.pricePerUnit : order.pricePerUnit;
+
+    // Товар уже в залоге у продавца, деньги — у покупателя. Осталось развести.
+    const buyerStorage = await tx.hubStorage.upsert({
+      where: { commanderId_hubId: { commanderId: buyerId, hubId: order.hubId } },
+      create: { commanderId: buyerId, hubId: order.hubId },
+      update: {},
+    });
+    await incrementStorage(tx, buyerStorage.id, field, volume, storageCapacity(buyerStorage.level),
+      'У покупателя не хватает места на складе хаба');
+
+    await tx.commander.update({
+      where: { id: sellerId },
+      data: { credits: { increment: total - sellerFee(total) } },
+    });
+
+    /*
+     * Покупатель заложил деньги по своей цене, а сделка прошла по средней —
+     * значит он переплатил в залог, и разницу надо вернуть. Без этого
+     * выставившийся дороже терял бы всю выгоду от встречи посередине.
+     */
+    const refund = buyerEscrow(volume, buyerBid) - (total + buyerFee(total));
+    if (refund > 0) {
+      await tx.commander.update({ where: { id: buyerId }, data: { credits: { increment: refund } } });
+    }
+
+    await tx.marketOrder.update({
+      where: { id: other.id },
+      data: { remaining: { decrement: volume } },
+    });
+    await tx.marketOrder.deleteMany({ where: { id: other.id, remaining: { lte: 0 } } });
+
+    await tx.trade.create({
+      data: { hubId: order.hubId, buyerId, sellerId, resource: order.resource, quantity: volume, pricePerUnit: price, total },
+    });
+
+    left -= volume;
+    filled += volume;
+    paidTotal += total;
+  }
+
+  if (filled > 0) {
+    await tx.marketOrder.update({ where: { id: order.id }, data: { remaining: { decrement: filled } } });
+    await tx.marketOrder.deleteMany({ where: { id: order.id, remaining: { lte: 0 } } });
+  }
+
+  return { quantity: filled, total: Math.round(paidTotal * 100) / 100 };
 }
 
 /**
@@ -574,9 +695,11 @@ export async function cancelOrder(commanderId: string, orderId: string): Promise
           data: { [field]: { increment: order.remaining } },
         });
       } else {
+        // Возвращаем залог целиком, вместе с заложенной комиссией:
+        // сделки не было, значит и сбора нет.
         await tx.commander.update({
           where: { id: commanderId },
-          data: { credits: { increment: tradeTotal(order.remaining, order.pricePerUnit) } },
+          data: { credits: { increment: buyerEscrow(order.remaining, order.pricePerUnit) } },
         });
       }
     });
@@ -653,11 +776,11 @@ export async function fillOrder(
 
         await incrementStorage(tx, myStorage.id, field, executed, storageCapacity(myStorage.level),
           `На складе хаба свободно только ${Math.floor(storageCapacity(myStorage.level) - storageUsed(myStorage))}`);
-        // Комиссия станции удерживается с продавца и исчезает из оборота:
-        // это второй сток денег и единственный, работающий на больших оборотах.
+        // Комиссия биржи исчезает из оборота: это второй сток денег
+        // и единственный, работающий на больших оборотах.
         await tx.commander.update({
           where: { id: order.commanderId },
-          data: { credits: { increment: total - stationFee(total) } },
+          data: { credits: { increment: total - sellerFee(total) } },
         });
       } else {
         // Мы продаем: товар уходит со склада, криптогривна покупателя уже в залоге.
@@ -678,7 +801,7 @@ export async function fillOrder(
           'У покупателя не хватает места на складе хаба');
         await tx.commander.update({
           where: { id: commanderId },
-          data: { credits: { increment: total - stationFee(total) } },
+          data: { credits: { increment: total - sellerFee(total) } },
         });
       }
 

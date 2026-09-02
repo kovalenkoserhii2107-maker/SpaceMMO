@@ -72,6 +72,7 @@ const BUILDING_COLUMNS: Record<BuildingType, string> = {
   SCIENCE_CENTER: 'scienceCenterLevel',
   SHIPYARD: 'shipyardLevel',
   ANTIMATTER_FACTORY: 'antimatterFactoryLevel',
+  CRYPTO_FARM: 'cryptoFarmLevel',
   ORE_STORAGE: 'oreStorageLevel',
   POLYMER_STORAGE: 'polymerStorageLevel',
   PLASMA_STORAGE: 'plasmaStorageLevel',

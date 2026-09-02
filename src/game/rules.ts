@@ -14,6 +14,7 @@ export const BUILDING_TYPES = [
   'ORE_STORAGE',
   'POLYMER_STORAGE',
   'PLASMA_STORAGE',
+  'CRYPTO_FARM',
 ] as const;
 
 export type BuildingType = (typeof BUILDING_TYPES)[number];
@@ -161,6 +162,12 @@ const COSTS: Record<BuildingType, ResourceAmounts & { factor: number }> = {
    * и незакрытый лейтгейм: три склада уходили в пятнадцатый уровень и съедали
    * все, что должно было идти в верфь и науку.
    */
+  /*
+   * Ферма майнинга. Дорогая и прожорливая нарочно: это единственная постройка,
+   * которая производит деньги, и она должна конкурировать с шахтами
+   * за те же ресурсы и ту же энергию, а не быть бесплатной прибавкой.
+   */
+  CRYPTO_FARM: { ore: 900, polymers: 700, plasma: 200, factor: 1.7 },
   ORE_STORAGE: { ore: 240, polymers: 120, plasma: 0, factor: 1.5 },
   POLYMER_STORAGE: { ore: 240, polymers: 120, plasma: 0, factor: 1.5 },
   PLASMA_STORAGE: { ore: 240, polymers: 120, plasma: 0, factor: 1.5 },
@@ -176,6 +183,8 @@ const ENERGY_DRAIN: Record<BuildingType, number> = {
   SHIPYARD: 1.5,
   // Фабрика антиматерии — самый прожорливый объект базы.
   ANTIMATTER_FACTORY: 8,
+  // Вычисления жрут электричество больше всего на базе, кроме антиматерии.
+  CRYPTO_FARM: 4,
   // Климат-контроль ангаров: хранилище почти не ест энергию.
   // Складов теперь три, поэтому расход каждого втрое меньше прежнего.
   ORE_STORAGE: 0.1,
@@ -183,10 +192,45 @@ const ENERGY_DRAIN: Record<BuildingType, number> = {
   PLASMA_STORAGE: 0.1,
 };
 
+/**
+ * Добыча криптогривны фермой майнинга.
+ *
+ * Ровно та же форма, что у шахт: уровень на экспоненту, богатство планеты
+ * ни при чем — вычисления от недр не зависят. Криптоинженерия множит отдачу
+ * так же, как горное дело множит руду.
+ *
+ * Это единственный источник денег на самой базе. Без него денежная масса
+ * росла бы только через продажи станции, то есть зависела бы от того, много ли
+ * игрок торгует, а не от того, насколько развита его колония.
+ */
+/*
+ * Базовая отдача подобрана замером, а не на глаз.
+ *
+ * Ферма конкурирует с шахтой за одну и ту же энергию, поэтому и мерить надо
+ * тем же: сколько ценности дает единица энергии. Шахта дает около двух тысяч
+ * единиц руды в час на единицу энергии; ферма при первой прикидке давала
+ * сорок пять в эквиваленте по цене станции — разница в пятьдесят раз, то есть
+ * ферму не построил бы никто и никогда.
+ *
+ * Целимся не в паритет, а примерно в две трети от шахты с продажей станции.
+ * Ферма дает меньше, но не требует ни рейсов на хаб, ни места на складе,
+ * ни удачи на рынке: это выбор между деньгами сразу и сырьем с логистикой,
+ * а не бесплатная прибавка.
+ */
+const CREDIT_BASE_PER_SECOND = 12;
+
+export function creditOutput(levels: BuildingLevels, cryptoBonus = 1): number {
+  const level = levels.CRYPTO_FARM;
+  if (level <= 0) return 0;
+  return CREDIT_BASE_PER_SECOND * level * Math.pow(1.1, level) * cryptoBonus;
+}
+
 /** Требования к уровню других построек. */
 const BUILDING_REQUIREMENTS: Partial<Record<BuildingType, Partial<Record<BuildingType, number>>>> = {
   SHIPYARD: { ORE_MINE: 2 },
   SCIENCE_CENTER: { ORE_MINE: 2 },
+  // Ферма требует вычислительной базы и электричества под нее.
+  CRYPTO_FARM: { SCIENCE_CENTER: 2, POWER_PLANT: 3 },
   ANTIMATTER_FACTORY: { SCIENCE_CENTER: 3, POWER_PLANT: 5 },
 };
 
@@ -198,6 +242,7 @@ export const BUILDING_LABELS: Record<BuildingType, string> = {
   SCIENCE_CENTER: 'Научный центр',
   SHIPYARD: 'Верфь',
   ANTIMATTER_FACTORY: 'Фабрика антиматерии',
+  CRYPTO_FARM: 'Крипто-ферма',
   ORE_STORAGE: 'Рудный склад',
   POLYMER_STORAGE: 'Склад полимеров',
   PLASMA_STORAGE: 'Плазмохранилище',
@@ -221,6 +266,8 @@ export const BUILDING_DESCRIPTIONS: Record<BuildingType, string> = {
   SHIPYARD: 'Орбитальные стапели. Каждый уровень ускоряет сборку кораблей и оборонных установок.',
   ANTIMATTER_FACTORY:
     'Ловушки для антивещества. Самый прожорливый объект колонии, но без антиматерии нет гиперпрыжков.',
+  CRYPTO_FARM:
+    'Вычислительные стойки, намывающие криптогривну. Единственный источник денег на самой базе — и самый прожорливый по энергии после фабрики антиматерии.',
   ORE_STORAGE: 'Отвалы и бункеры под породу. Держат лимит руды и прячут часть запаса от грабежа.',
   POLYMER_STORAGE:
     'Климатические ангары. Держат лимит полимеров и прячут часть запаса от грабежа.',
@@ -247,6 +294,7 @@ export function emptyLevels(): BuildingLevels {
     SCIENCE_CENTER: 0,
     SHIPYARD: 0,
     ANTIMATTER_FACTORY: 0,
+    CRYPTO_FARM: 0,
     ORE_STORAGE: 0,
     POLYMER_STORAGE: 0,
     PLASMA_STORAGE: 0,

@@ -377,6 +377,7 @@ model Base {
   antimatterFactoryLevel Int @default(0)
 
   /// Склад ресурсов: общий лимит на руду, полимеры и плазму.
+  cryptoFarmLevel     Int @default(0)
   oreStorageLevel     Int @default(0)
   polymerStorageLevel Int @default(0)
   plasmaStorageLevel  Int @default(0)
@@ -897,9 +898,14 @@ enum BuildingType {
   ORE_STORAGE
   POLYMER_STORAGE
   PLASMA_STORAGE
+  /// Ферма майнинга криптогривны: единственная постройка, которая производит
+  /// не ресурс, а деньги. Без нее денежная масса не растет вместе с экономикой.
+  CRYPTO_FARM
 }
 
 enum TechnologyType {
+  /// Криптоинженерия: поднимает отдачу ферм майнинга.
+  CRYPTO_TECH
   ENERGY_TECH
   COMPUTING_TECH
   WEAPONS_TECH

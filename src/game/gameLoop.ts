@@ -256,6 +256,7 @@ class GameLoop {
       techs: emptyTechLevels(),
       research: null,
       researchDirty: false,
+      minedCredits: 0,
       bases: new Map(),
       fleets: row.fleets.map(toFleetRuntime),
     };
@@ -288,6 +289,7 @@ class GameLoop {
       levels.SCIENCE_CENTER = base.scienceCenterLevel;
       levels.SHIPYARD = base.shipyardLevel;
       levels.ANTIMATTER_FACTORY = base.antimatterFactoryLevel;
+      levels.CRYPTO_FARM = base.cryptoFarmLevel;
       levels.ORE_STORAGE = base.oreStorageLevel;
       levels.POLYMER_STORAGE = base.polymerStorageLevel;
       levels.PLASMA_STORAGE = base.plasmaStorageLevel;
@@ -998,7 +1000,7 @@ class GameLoop {
   private accrueTo(base: BaseRuntimeState, commander: CommanderRuntimeState, time: number): void {
     const seconds = (time - base.lastTickAt) / 1000;
     if (seconds <= 0) return;
-    accrue(base, commander.techs, seconds);
+    accrue(base, commander.techs, seconds, commander);
     base.lastTickAt = time;
   }
 
@@ -2160,6 +2162,7 @@ class GameLoop {
             SCIENCE_CENTER: planet.base.scienceCenterLevel,
             SHIPYARD: planet.base.shipyardLevel,
             ANTIMATTER_FACTORY: planet.base.antimatterFactoryLevel,
+            CRYPTO_FARM: planet.base.cryptoFarmLevel,
             ORE_STORAGE: planet.base.oreStorageLevel,
             POLYMER_STORAGE: planet.base.polymerStorageLevel,
             PLASMA_STORAGE: planet.base.plasmaStorageLevel,
@@ -2229,6 +2232,28 @@ class GameLoop {
     const operations: Array<Prisma.PrismaPromise<unknown>> = [];
     const touched: BaseRuntimeState[] = [];
 
+    /*
+     * Намытая криптогривна уходит инкрементом, а не записью баланса.
+     *
+     * Баланс командира правит еще и биржа, из другого запроса и в своей
+     * транзакции. Абсолютная запись затерла бы чужую сделку целиком —
+     * инкремент складывается с ней корректно при любом порядке.
+     *
+     * Дробную часть оставляем в памяти: записывать сотые доли каждые десять
+     * секунд незачем, а за час они складываются в заметную сумму.
+     */
+    const mined = Math.floor(commander.minedCredits);
+    if (mined > 0) {
+      commander.minedCredits -= mined;
+      commander.credits += mined;
+      operations.push(
+        prisma.commander.update({
+          where: { id: commander.commanderId },
+          data: { credits: { increment: mined } },
+        }),
+      );
+    }
+
     for (const base of commander.bases.values()) {
       if (!base.dirty && !base.jobsDirty) continue;
       touched.push(base);
@@ -2248,6 +2273,7 @@ class GameLoop {
             scienceCenterLevel: base.levels.SCIENCE_CENTER,
             shipyardLevel: base.levels.SHIPYARD,
             antimatterFactoryLevel: base.levels.ANTIMATTER_FACTORY,
+            cryptoFarmLevel: base.levels.CRYPTO_FARM,
             oreStorageLevel: base.levels.ORE_STORAGE,
             polymerStorageLevel: base.levels.POLYMER_STORAGE,
             plasmaStorageLevel: base.levels.PLASMA_STORAGE,

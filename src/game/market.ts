@@ -68,17 +68,49 @@ export function stationSellPrice(resource: TradeResource): number {
 }
 
 /**
- * Комиссия станции со сделок между игроками.
+ * Комиссия биржи со сделок между игроками.
  *
  * Второй сток денег и единственный, который работает на больших оборотах:
  * покупки у станции редки, а сделок между игроками со временем будет много.
- * Процент намеренно мал — он не должен мешать торговать, только не давать
+ * Проценты намеренно малы — они не должны мешать торговать, только не давать
  * массе раздуваться без предела.
+ *
+ * С покупателя чуть больше, чем с продавца: покупатель уносит товар, который
+ * будет работать, продавец — деньги, которые сами по себе не работают.
  */
-export const STATION_FEE = 0.01;
+export const SELLER_FEE = 0.005;
+export const BUYER_FEE = 0.006;
 
-export function stationFee(total: number): number {
-  return Math.round(total * STATION_FEE * 100) / 100;
+export function sellerFee(total: number): number {
+  return Math.round(total * SELLER_FEE * 100) / 100;
+}
+
+export function buyerFee(total: number): number {
+  return Math.round(total * BUYER_FEE * 100) / 100;
+}
+
+/**
+ * Сколько криптогривны блокируется под заявку на покупку.
+ *
+ * Комиссия входит в залог сразу. Иначе при сведении по цене, равной заявке,
+ * на комиссию не хватило бы: залог считался по цене, а списать надо цену
+ * плюс сбор.
+ */
+export function buyerEscrow(quantity: number, pricePerUnit: number): number {
+  const total = tradeTotal(quantity, pricePerUnit);
+  return Math.round((total + buyerFee(total)) * 100) / 100;
+}
+
+/**
+ * Цена встречной сделки — середина между заявками.
+ *
+ * Продавец хочет дороже, покупатель дешевле, и оба уже согласились на свою
+ * цену. Отдать сделку по цене одной из сторон значило бы подарить всю разницу
+ * тому, кто выставился вторым. Середина делит выигрыш поровну и не зависит
+ * от того, кто пришел раньше.
+ */
+export function matchPrice(a: number, b: number): number {
+  return Math.round(((a + b) / 2) * 100) / 100;
 }
 
 /**
