@@ -29,7 +29,8 @@
     "test:assets": "tsx tests/assets.ts",
     "test:combat": "tsx tests/combat.ts",
     "test:fleets": "tsx tests/fleets.ts",
-    "test:bot": "tsx tests/bot.ts"
+    "test:bot": "tsx tests/bot.ts",
+    "test:budget": "tsx tests/budget.ts"
   },
   "keywords": [],
   "author": "",

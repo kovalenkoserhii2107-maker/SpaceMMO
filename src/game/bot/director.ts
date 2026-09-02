@@ -16,6 +16,16 @@
 import { prisma } from '../../db/prisma.js';
 import { gameLoop, type ActionResult } from '../gameLoop.js';
 import { cancelOrder, fillOrder, placeOrder } from '../../services/marketService.js';
+import {
+  DAILY_BUDGET,
+  mayAsk,
+  mayWrite,
+  readSpend,
+  spentToday,
+  withAttempt,
+  withLetter,
+  type BotSpend,
+} from './budget.js';
 // Справочная цена одна на всех: бот держит коридор вокруг нее, а интерфейс
 // той же величиной показывает игроку, дорого сейчас или дешево.
 import { marketPrice } from '../market.js';
@@ -600,11 +610,95 @@ function appendJournal(memory: unknown, entries: string[]): string[] {
   return [...readJournal(memory), ...entries.map((entry) => `${stamp} ${entry}`)].slice(-JOURNAL_LIMIT);
 }
 
-async function savePlan(botId: string, plan: BotPlan, journal: string[]): Promise<void> {
+async function savePlan(
+  botId: string,
+  plan: BotPlan,
+  journal: string[],
+  /** Каким рынок был в момент решения — по нему сверяется, стоит ли будить снова. */
+  market: BotSnapshot['market'],
+  spend: BotSpend,
+): Promise<void> {
   await prisma.bot.update({
     where: { id: botId },
-    data: { memory: { plan: plan as unknown as object, planMadeAt: Date.now(), journal } },
+    data: {
+      memory: {
+        plan: plan as unknown as object,
+        planMadeAt: Date.now(),
+        journal,
+        market: market.map((ref) => ({ resource: ref.resource, price: ref.reference, skew: ref.skew })),
+        spend: spend as unknown as object,
+      },
+    },
   });
+}
+
+/**
+ * Записать счетчик расхода, не трогая план.
+ *
+ * Нужен отдельно, потому что попытка засчитывается и тогда, когда ответа
+ * не пришло: план в этом случае не сохраняется, а запрос провайдер уже
+ * посчитал. Без этой записи неудачные вызовы были бы бесплатны в наших
+ * книгах и платны в чужих.
+ */
+async function saveSpend(botId: string, spend: BotSpend): Promise<void> {
+  const bot = await prisma.bot.findUnique({ where: { id: botId }, select: { memory: true } });
+  const memory = (typeof bot?.memory === 'object' && bot.memory !== null ? bot.memory : {}) as Record<
+    string,
+    unknown
+  >;
+  await prisma.bot.update({
+    where: { id: botId },
+    data: { memory: { ...memory, spend: spend as unknown as object } },
+  });
+}
+
+/**
+ * Сдвинулся ли рынок настолько, что об этом стоит спросить модель.
+ *
+ * Опрашивать рынок по часам не годится: код отрабатывает стакан каждые
+ * сорок пять секунд сам — берет дешевое, держит коридор, покупает
+ * недостающее, — и модель на частом такте почти всегда подтверждала бы уже
+ * сделанное. Считать это подтверждение дорого: три бота с пятиминутным
+ * опросом дают 864 запроса в сутки при дневном лимите в 500 на всех.
+ *
+ * Поэтому не опрос, а повод. Цена ушла заметно или перекос сменил знак —
+ * это новость, ради которой стоит пересмотреть, во что вкладываться.
+ * На спокойном рынке лишних вызовов нет вовсе.
+ */
+const PRICE_SHOCK = 0.15;
+
+function marketShock(memory: unknown, now: BotSnapshot['market']): string | null {
+  const saved = (memory as Record<string, unknown> | null)?.['market'];
+  if (!Array.isArray(saved)) return null;
+
+  for (const ref of now) {
+    // Цене из затравки верить нечего: сделок еще не было.
+    if (ref.seeded) continue;
+    const was = saved.find(
+      (row): row is { resource: string; price: number; skew: number | null } =>
+        typeof row === 'object' && row !== null && (row as { resource?: unknown }).resource === ref.resource,
+    );
+    if (!was || typeof was.price !== 'number' || was.price <= 0) continue;
+
+    const move = (ref.reference - was.price) / was.price;
+    if (Math.abs(move) >= PRICE_SHOCK) {
+      const name = ref.resource === 'ORE' ? 'руда' : 'полимеры';
+      return `${name} ${move > 0 ? 'подорожала' : 'подешевела'} на ${Math.round(Math.abs(move) * 100)}% — теперь ${ref.reference}`;
+    }
+
+    // Смена знака перекоса — это разворот рынка: то, чего было завались,
+    // стало нарасхват. Ноль за разворот не считаем, иначе будило бы
+    // всякое дрожание вокруг равновесия.
+    const before = was.skew;
+    if (typeof before === 'number' && ref.skew !== null && before * ref.skew < 0) {
+      const name = ref.resource === 'ORE' ? 'руду' : 'полимеры';
+      return ref.skew > 0
+        ? `${name} стали разбирать: спрос обогнал предложение`
+        : `${name} перестали брать: предложение обогнало спрос`;
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -615,8 +709,16 @@ async function savePlan(botId: string, plan: BotPlan, journal: string[]): Promis
  * Письмо помечается прочитанным в любом случае — молчание модели не должно
  * приводить к тому, что бот пытается ответить на него снова и снова.
  */
-async function answerMail(commanderId: string, character: BotCharacter): Promise<number> {
-  if (!llmEnabled()) return 0;
+async function answerMail(
+  commanderId: string,
+  character: BotCharacter,
+  spend: BotSpend,
+  /** Сколько обращений к модели уже сделали все боты за сегодня. */
+  spentAll: number,
+): Promise<{ sent: number; spend: BotSpend }> {
+  // Норма кончилась — бот молчит. Неотвеченное письмо лучше, чем бот,
+  // который выбрал дневную норму на переписке и перестал играть.
+  if (!llmEnabled() || spentAll >= DAILY_BUDGET) return { sent: 0, spend };
 
   const letters = await prisma.message.findMany({
     where: { recipientId: commanderId, isRead: false, type: 'PLAYER', senderId: { not: null } },
@@ -626,7 +728,7 @@ async function answerMail(commanderId: string, character: BotCharacter): Promise
     // значит и заход растянуть, и токены сжечь.
     take: 3,
   });
-  if (letters.length === 0) return 0;
+  if (letters.length === 0) return { sent: 0, spend };
 
   await prisma.message.updateMany({
     where: { id: { in: letters.map((letter) => letter.id) }, recipientId: commanderId },
@@ -634,14 +736,30 @@ async function answerMail(commanderId: string, character: BotCharacter): Promise
   });
 
   let sent = 0;
+  let ledger = spend;
   for (const letter of letters) {
+    if (!letter.senderId) continue;
+    /*
+     * Потолок на переписку жесткий и стоит в коде, а не в промпте.
+     *
+     * Просьба «не чаще пары писем в сутки одному» — это просьба, и модель
+     * ее выполняет ровно настолько, насколько захочет. Бот, которому пишут
+     * каждую минуту, отвечал бы каждую минуту: каждое письмо это вызов
+     * модели, а норма у нас общая на всех.
+     *
+     * Письмо все равно помечается прочитанным выше: молчание не должно
+     * приводить к тому, что бот пытается ответить на него снова и снова.
+     */
+    if (!mayWrite(ledger, letter.senderId)) continue;
+
+    ledger = withAttempt(ledger);
     const text = await askReply(
       character,
       letter.sender?.nickname ?? 'неизвестный',
       letter.subject,
       letter.body,
     );
-    if (!text || !letter.senderId) continue;
+    if (!text) continue;
 
     await deliver([
       {
@@ -652,9 +770,10 @@ async function answerMail(commanderId: string, character: BotCharacter): Promise
         body: text,
       },
     ]);
+    ledger = withLetter(ledger, letter.senderId);
     sent += 1;
   }
-  return sent;
+  return { sent, spend: ledger };
 }
 
 /**
@@ -716,8 +835,10 @@ async function applyDirective(
   commanderId: string,
   snapshot: BotSnapshot,
   directive: BotDirective,
-): Promise<{ line: string }> {
-  const note = (text: string) => ({ line: `${directive.kind}: ${text}` });
+  /** Счетчик переписки: письма живым игрокам ограничены и по своей директиве. */
+  spend: BotSpend,
+): Promise<{ line: string; spend: BotSpend }> {
+  const note = (text: string) => ({ line: `${directive.kind}: ${text}`, spend });
 
   switch (directive.kind) {
     case 'ATTACK': {
@@ -838,6 +959,17 @@ async function applyDirective(
     }
 
     case 'MESSAGE': {
+      /*
+       * Потолок переписки стоит и здесь, а не только на ответах.
+       *
+       * Своей волей бот пишет по поводу — объявил войну, предлагает мир, —
+       * но повод для модели величина растяжимая, и просьба в промпте писать
+       * «не чаще пары писем в сутки одному» ее ни к чему не обязывает.
+       * Живому игроку ящик забивать нельзя, и решать это должен код.
+       */
+      if (!mayWrite(spend, directive.commanderId)) {
+        return note('потолок писем на сутки исчерпан');
+      }
       await deliver([
         {
           recipientId: directive.commanderId,
@@ -847,7 +979,10 @@ async function applyDirective(
           body: directive.body,
         },
       ]);
-      return note(`письмо отправлено — ${directive.why}`);
+      return {
+        line: `MESSAGE: письмо отправлено — ${directive.why}`,
+        spend: withLetter(spend, directive.commanderId),
+      };
     }
 
     default: {
@@ -929,10 +1064,28 @@ async function turn(botId: string): Promise<BotTurn | null> {
    * код считает точнее, и платить в сотни раз больше.
    */
   const overdue = !plan || Date.now() - plan.madeAt > PLAN_TTL_MS;
-  const shock = await recentShock(bot.commanderId, plan?.madeAt ?? 0);
-  if (llmEnabled() && (overdue || shock !== null)) {
+  const shock =
+    (await recentShock(bot.commanderId, plan?.madeAt ?? 0)) ?? marketShock(bot.memory, snapshot.market);
+
+  /*
+   * Норма запросов общая на всех ботов и считается по попыткам: отказ сервиса
+   * стоит у провайдера столько же, сколько удачный ответ. Кончилась норма —
+   * бот доигрывает сутки по коду, и это штатный режим, а не авария.
+   */
+  let spend = readSpend(bot.memory);
+  // Общий расход читается один раз за заход: он нужен и стратегу, и почте.
+  const spentAll = llmEnabled() ? await spentToday() : Number.MAX_SAFE_INTEGER;
+  const wanted = llmEnabled() && (overdue || shock !== null);
+  if (wanted && mayAsk(spend, spentAll)) {
+    spend = withAttempt(spend);
     const brief = await buildBrief(commander, snapshot, bot.memory);
     const answer = await askStrategy(bot.character, brief, snapshot, shock);
+
+    if (!answer) {
+      // Ответа нет, но попытка была: записываем расход отдельно, иначе
+      // неудачные вызовы не попадут в счетчик вовсе.
+      await saveSpend(bot.id, spend);
+    }
 
     if (answer) {
       plan = { plan: answer.plan, madeAt: Date.now() };
@@ -945,12 +1098,13 @@ async function turn(botId: string): Promise<BotTurn | null> {
        * ресурсы списываются, требования проверяются, бой считает движок.
        */
       for (const directive of answer.directives) {
-        const done = await applyDirective(bot.commanderId, snapshot, directive);
+        const done = await applyDirective(bot.commanderId, snapshot, directive, spend);
+        spend = done.spend;
         actions.push(done.line);
         journal = appendJournal({ journal }, [done.line]);
       }
 
-      await savePlan(bot.id, answer.plan, journal);
+      await savePlan(bot.id, answer.plan, journal, snapshot.market, spend);
     }
   }
 
@@ -961,8 +1115,11 @@ async function turn(botId: string): Promise<BotTurn | null> {
   }
 
   // Дипломат: ответы на письма живых игроков.
-  const replied = await answerMail(bot.commanderId, bot.character);
-  if (replied > 0) actions.push(`ОТВЕТ: писем ${replied}`);
+  const mail = await answerMail(bot.commanderId, bot.character, spend, spentAll);
+  if (mail.sent > 0) {
+    actions.push(`ОТВЕТ: писем ${mail.sent}`);
+    await saveSpend(bot.id, mail.spend);
+  }
 
   // Торговый рейс идет после решений: ордера бот выставляет с того, что уже
   // лежит в хабе, а этот рейс наполняет хаб к следующему заходу.
