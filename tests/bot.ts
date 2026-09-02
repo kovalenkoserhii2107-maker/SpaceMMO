@@ -337,6 +337,50 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
   check('вслепую бот не летит, а разведывает', scan !== undefined);
 }
 
+{
+  /*
+   * Ферма была недостижима вовсе: `buildingPlan` не предлагал ее ни в одном
+   * пункте, и единственный путь к единственному источнику криптогривны шел
+   * через приоритеты языковой модели. У трех живых ботов она стояла на нуле.
+   */
+  const levels = { ...emptyLevels(), ORE_MINE: 7, POLYMER_PLANT: 7, POWER_PLANT: 8, SCIENCE_CENTER: 4, SHIPYARD: 4 };
+  const plan = buildingPlan(
+    testBase('home', { levels, resources: { ore: 1000, polymers: 1000, plasma: 1000 } }),
+    emptyTechLevels(),
+    'TRADER',
+  );
+  check('крипто-ферма вообще достижима в плане', plan.includes('CRYPTO_FARM'), plan.join(' → '));
+}
+
+{
+  // Склад полон, но его вместимости хватает на шесть часов добычи: расширять
+  // бессмысленно, узкое место в вывозе. Добытое сверх потолка стоит ноль,
+  // и две трети отдачи фермы больше этого нуля.
+  const levels = {
+    ...emptyLevels(),
+    ORE_MINE: 7, POLYMER_PLANT: 7, POWER_PLANT: 9,
+    SCIENCE_CENTER: 4, SHIPYARD: 4, POLYMER_STORAGE: 11, ORE_STORAGE: 7,
+  };
+  const caps = storageCapacities(levels);
+  const plan = buildingPlan(
+    testBase('home', { levels, resources: { ore: 100, polymers: caps.polymers, plasma: 100 } }),
+    emptyTechLevels(),
+    'TRADER',
+  );
+  const farm = plan.indexOf('CRYPTO_FARM');
+  const storage = plan.indexOf('POLYMER_STORAGE');
+  check(
+    'при полном складе с запасом на часы ферма идет вперед хвоста',
+    farm >= 0 && farm < plan.length - 1,
+    plan.join(' → '),
+  );
+  check(
+    'и склад, которого хватает на часы добычи, бот не расширяет: узкое место не в нем',
+    storage < 0 || farm < storage,
+    plan.join(' → '),
+  );
+}
+
 /* ------------------------- 4. Биржа ------------------------- */
 
 console.log('\n=== 4. Торговля: берем чужое, выставляем свое ===');
