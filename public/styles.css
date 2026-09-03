@@ -1180,6 +1180,232 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .flight-plan b { color: var(--text); }
 .flight-plan .bad { color: var(--err); }
 
+/* ---------- Хаб и биржа: сводка, стакан, история ---------- */
+
+/*
+ * Три блока сверху вниз, и порядок в них — это порядок решений: сперва
+ * понять, что с рынком, потом торговать, потом посмотреть, что вышло.
+ */
+
+.mk-head { display: grid; gap: 14px; margin-bottom: 20px; }
+.mk-head-top { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+.mk-hub { display: flex; gap: 14px; align-items: center; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
+.mk-hub b { color: var(--text); font-variant-numeric: tabular-nums; }
+.mk-hub .bar { width: 120px; height: 6px; border-radius: 999px; background: rgba(27, 37, 63, 0.6); overflow: hidden; }
+.mk-hub .bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+
+.mk-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+
+.mk-stat {
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 10px; padding: 12px 14px; display: grid; gap: 8px;
+  text-align: left; font: inherit; color: inherit;
+  transition: border-color 0.15s, transform 0.15s;
+}
+button.mk-stat { cursor: pointer; }
+button.mk-stat:hover { border-color: var(--line-strong); transform: translateY(-1px); }
+.mk-stat[aria-expanded="true"] { border-color: var(--accent); }
+
+.mk-stat-head { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.mk-stat-head .ico { width: 18px; height: 18px; }
+.mk-stat-price { display: flex; align-items: baseline; gap: 8px; }
+.mk-stat-price b { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.mk-delta { font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.mk-delta.up { color: var(--ok); }
+.mk-delta.down { color: var(--err); }
+.mk-stat-foot { display: flex; gap: 12px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; flex-wrap: wrap; }
+.mk-stat-foot b { color: var(--text); font-weight: 500; }
+
+/* Перекос спроса: полоса от «одни продавцы» до «одни покупатели». */
+.mk-skew { display: grid; gap: 6px; }
+.mk-skew-bar { height: 6px; border-radius: 999px; background: rgba(27, 37, 63, 0.6); position: relative; overflow: hidden; }
+.mk-skew-bar i { position: absolute; top: 0; bottom: 0; }
+.mk-skew-bar .buy { background: var(--ok); opacity: 0.75; }
+.mk-skew-bar .sell { background: var(--err); opacity: 0.75; }
+.mk-skew-legend { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.mk-skew-legend .ico { width: 1.05em; height: 1.05em; }
+
+.mk-chart { padding-top: 4px; animation: panel-in 0.25s ease; }
+.mk-chart-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 10px; }
+.mk-chart-head .section-title { margin: 0; }
+.mk-chart svg { width: 100%; height: 120px; display: block; }
+
+/* ---------- Стакан ---------- */
+
+.mk-tabs { display: flex; gap: 4px; margin-bottom: 14px; }
+.mk-tab {
+  padding: 7px 14px; border-radius: 999px; border: 1px solid transparent;
+  background: none; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer;
+}
+.mk-tab[aria-selected="true"] { background: rgba(27, 37, 63, 0.6); border-color: var(--line-strong); color: var(--text); }
+
+.mk-form {
+  display: grid; gap: 10px; align-items: end; margin-bottom: 12px;
+  grid-template-columns: auto minmax(130px, 0.8fr) minmax(160px, 1fr) minmax(160px, 1fr) auto;
+  padding: 14px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px;
+}
+.mk-form-barter { grid-template-columns: 1fr 1fr auto; }
+.mk-field { display: grid; gap: 5px; min-width: 0; }
+.mk-field label { font-size: 11px; color: var(--muted); letter-spacing: 0.04em; }
+
+/*
+ * Поля формы оформляются здесь же: общего правила для `select` в игре нет,
+ * и без этого выпадающий список оставался в браузерном виде — белый прямо
+ * посреди темной панели. Стрелка рисуется фоном, потому что системную
+ * `appearance: none` убирает вместе со всем остальным.
+ */
+.mk-form select,
+.mk-form input[type="text"],
+.mk-filters input[type="search"] {
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: rgba(8, 12, 24, 0.8);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.mk-form select {
+  appearance: none;
+  padding-right: 28px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 15px) center, calc(100% - 10px) center;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+.mk-form select option { background: #0b1121; color: var(--text); }
+.mk-form select:focus,
+.mk-form input[type="text"]:focus,
+.mk-filters input[type="search"]:focus { border-color: var(--accent); }
+.mk-form input[type="text"] { font-variant-numeric: tabular-nums; }
+/*
+ * Кнопка при поле не сжимается: без `flex: none` она отдавала ширину полю
+ * и обрезалась до «мак» — подпись, по которой не понять, что кнопка делает.
+ */
+/*
+ * `min-width: 0` обязателен: контейнер — грид-элемент, а у них минимальная
+ * ширина по умолчанию равна min-content, и поле ввода со своей стандартной
+ * шириной в двадцать символов распирало строку за пределы колонки. Кнопка
+ * при этом уезжала под соседнее поле и обрезалась до «мак».
+ */
+.mk-with-btn { display: flex; gap: 6px; align-items: stretch; min-width: 0; }
+.mk-with-btn input, .mk-with-btn select { min-width: 0; flex: 1; }
+.mk-with-btn > button { flex: none; white-space: nowrap; padding: 0 10px; }
+
+/*
+ * Сторона сделки: обе кнопки держат свой цвет всегда, а не только выбранная.
+ * Серая половина переключателя не говорит, чем она станет, если на нее нажать,
+ * — а перепутать сторону здесь дороже всего. Стрелка кодирует направление
+ * товара вторым каналом: вниз приходит к нам, вверх уходит.
+ */
+.mk-side { display: flex; gap: 6px; }
+.mk-side button {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 9px 16px; border-radius: 10px; cursor: pointer;
+  font: inherit; font-size: 13px; font-weight: 600;
+  border: 1px solid; background: transparent;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.mk-side .arw { font-size: 15px; line-height: 1; }
+.mk-side button.buy { color: rgba(74, 222, 128, 0.55); border-color: rgba(74, 222, 128, 0.28); }
+.mk-side button.sell { color: rgba(248, 113, 113, 0.55); border-color: rgba(248, 113, 113, 0.28); }
+.mk-side button.buy:hover { color: rgba(74, 222, 128, 0.85); border-color: rgba(74, 222, 128, 0.5); }
+.mk-side button.sell:hover { color: rgba(248, 113, 113, 0.85); border-color: rgba(248, 113, 113, 0.5); }
+.mk-side button[aria-pressed="true"].buy {
+  background: rgba(74, 222, 128, 0.18); border-color: var(--ok); color: var(--ok);
+  box-shadow: inset 0 0 0 1px rgba(74, 222, 128, 0.25), 0 0 16px rgba(74, 222, 128, 0.12);
+}
+.mk-side button[aria-pressed="true"].sell {
+  background: rgba(248, 113, 113, 0.18); border-color: var(--err); color: var(--err);
+  box-shadow: inset 0 0 0 1px rgba(248, 113, 113, 0.25), 0 0 16px rgba(248, 113, 113, 0.12);
+}
+
+.mk-filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+.mk-chip {
+  padding: 5px 12px; border-radius: 999px; border: 1px solid var(--line);
+  background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer;
+}
+.mk-chip[aria-pressed="true"] { border-color: var(--line-strong); background: rgba(27, 37, 63, 0.6); color: var(--text); }
+.mk-sep { width: 1px; height: 20px; background: var(--line); }
+.mk-grow { flex: 1; min-width: 140px; }
+
+.mk-scroll { overflow-x: auto; }
+.mk-table { width: 100%; border-collapse: collapse; min-width: 720px; }
+.mk-table th {
+  text-align: left; padding: 8px 10px; font-size: 11px; font-weight: 500;
+  color: var(--muted); letter-spacing: 0.04em; border-bottom: 1px solid var(--line); white-space: nowrap;
+}
+.mk-table th button {
+  background: none; border: 0; color: inherit; font: inherit; cursor: pointer;
+  padding: 0; display: inline-flex; gap: 4px; align-items: center;
+}
+.mk-table th button:hover { color: var(--text); }
+.mk-table th .arrow { opacity: 0; font-size: 9px; }
+.mk-table th button[data-active="true"] { color: var(--accent); }
+.mk-table th button[data-active="true"] .arrow { opacity: 1; }
+.mk-table td {
+  padding: 10px; border-bottom: 1px solid rgba(120, 160, 255, 0.07);
+  font-size: 13px; vertical-align: middle;
+}
+.mk-table .num { text-align: right; }
+.mk-table td.num { font-variant-numeric: tabular-nums; }
+.mk-table tbody tr:hover { background: rgba(120, 160, 255, 0.04); }
+.mk-table tr.mine td { background: rgba(157, 123, 255, 0.06); }
+
+/*
+ * Новая заявка встает по цене, а не наверх списка: стакан затем и нужен,
+ * чтобы лучшее предложение было первым. Появление показывает подсветка
+ * там, где строка встала.
+ */
+@keyframes mk-arrive {
+  from { background: rgba(77, 210, 255, 0.28); }
+  to { background: transparent; }
+}
+.mk-table tr.arrived td { animation: mk-arrive 1.6s ease-out; }
+
+/*
+ * Сторона на строке читается первой и чаще всего, поэтому различий три сразу:
+ * цвет, стрелка и форма — покупка залита сплошным, продажа обведена пунктиром.
+ * Одной заливкой их не развести: в столбце одинаковых пилюль глаз их путал.
+ */
+.mk-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 13px 4px 10px; border-radius: 999px; border: 1.5px solid;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap;
+}
+.mk-pill .arw { font-size: 13px; line-height: 1; font-weight: 400; }
+.mk-pill.buy { background: rgba(74, 222, 128, 0.22); border-color: rgba(74, 222, 128, 0.55); color: #86efac; }
+.mk-pill.sell { background: transparent; border-color: rgba(248, 113, 113, 0.75); border-style: dashed; color: #fca5a5; }
+
+/* Ресурс опознается значком, а не цветной точкой: цветов в игре шесть,
+   и помнить, какой чему соответствует, игрок не обязан. */
+.mk-res { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.mk-res .ico { width: 1.25em; height: 1.25em; flex: none; }
+.ico.ore { color: var(--ore); }
+.ico.polymers { color: var(--polymers); }
+.ico.credits { color: var(--credits); }
+
+.mk-act {
+  padding: 6px 16px; border-radius: 999px; border: 1px solid var(--line-strong);
+  background: #05070f; color: var(--text); font: inherit; font-size: 12px;
+  font-weight: 500; cursor: pointer; white-space: nowrap;
+}
+.mk-act:hover { border-color: var(--accent); color: var(--accent); }
+.mk-act.cancel:hover { border-color: var(--err); color: var(--err); }
+
+.mk-empty { padding: 28px 10px; text-align: center; color: var(--muted); font-size: 13px; }
+.mk-more { display: flex; justify-content: center; margin-top: 12px; }
+.mk-ts { color: var(--muted); font-size: 12px; }
+.mk-history { margin-top: 22px; }
+
+@media (max-width: 900px) {
+  .mk-form, .mk-form-barter { grid-template-columns: 1fr 1fr; }
+  .mk-form > .primary { grid-column: 1 / -1; }
+}
+
 /* ---------- Хаб и биржа ---------- */
 .ico.credits { color: var(--credits); }
 

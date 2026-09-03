@@ -40,8 +40,25 @@ export interface MarketView {
     nextCapacity: number;
   } | null;
   book: Record<TradeResource, { buy: PublicOrder[]; sell: PublicOrder[] }>;
-  /** Что происходит с ценой: справочная, лучшие заявки, спред, последняя сделка. */
+  /** Что происходит с ценой: рыночная, лучшие заявки, спред, перекос. */
   quotes: Record<TradeResource, Quote>;
+  /**
+   * Сводка по рынку за сутки.
+   *
+   * Считает сервер, а не клиент: цена и обороты — игровые величины, и клиент
+   * их не выводит (правило 3). Заодно это единственный способ показать
+   * изменение за сутки: у клиента нет вчерашних сделок, их незачем ему возить.
+   */
+  stats: Record<TradeResource, ResourceStats>;
+  /**
+   * Бартер отдельной строкой: он живет по своим правилам и денег не трогает.
+   *
+   * Числа сделок здесь нет намеренно. Принятое предложение удаляется, журнала
+   * обменов в базе не существует, и «обменов за сутки» пришлось бы либо
+   * выдумать, либо заводить под это таблицу. Показываем то, что знаем точно:
+   * сколько предложений висит и сколько товара в них заперто.
+   */
+  barterStats: { open: number; unitsOffered: number };
   /** Бартерные предложения хаба: обмен ресурса на ресурс, без денег. */
   barters: BarterView[];
   myOrders: PublicOrder[];
@@ -56,6 +73,71 @@ export interface MarketView {
     createdAt: number;
     mine: boolean;
   }>;
+}
+
+const DAY_MS = 86_400_000;
+
+/**
+ * Сколько сделок отдается за раз.
+ *
+ * Их накапливается много: три бота за четыре часа наторговали 139, за месяц
+ * это десятки тысяч. Отдавать все разом нельзя — страница не отрисует,
+ * а канал забьется тем, чего никто не прочтет.
+ */
+export const HISTORY_PAGE = 50;
+
+/**
+ * Сводка по ресурсу за сутки.
+ *
+ * Изменение цены считается сравнением двух средневзвешенных: за последние
+ * сутки и за сутки до них. Не «первая сделка против последней» — одна
+ * случайная сделка по кривой цене сдвинула бы показатель на десятки
+ * процентов, ничего не сказав о рынке.
+ */
+function statsFor(
+  resource: TradeResource,
+  recent: ReadonlyArray<{ resource: string; quantity: number; pricePerUnit: number; createdAt: Date }>,
+  openOrders: number,
+): ResourceStats {
+  const edge = Date.now() - DAY_MS;
+  const today = recent.filter((t) => t.resource === resource && t.createdAt.getTime() >= edge);
+  const before = recent.filter((t) => t.resource === resource && t.createdAt.getTime() < edge);
+
+  const vwap = (rows: typeof today) => {
+    let volume = 0;
+    let total = 0;
+    for (const row of rows) {
+      if (row.quantity <= 0 || row.pricePerUnit <= 0) continue;
+      volume += row.quantity;
+      total += row.quantity * row.pricePerUnit;
+    }
+    return volume > 0 ? total / volume : null;
+  };
+
+  const now = vwap(today);
+  const then = vwap(before);
+
+  return {
+    volumeToday: Math.round(today.reduce((sum, t) => sum + Math.max(0, t.quantity), 0)),
+    tradesToday: today.length,
+    openOrders,
+    change: now !== null && then !== null && then > 0 ? Math.round(((now - then) / then) * 100) / 100 : null,
+  };
+}
+
+/** Что рынок сделал с ресурсом за последние сутки. */
+export interface ResourceStats {
+  /** Сколько единиц перешло из рук в руки. */
+  volumeToday: number;
+  /** Сколько сделок прошло. */
+  tradesToday: number;
+  /** Открытых заявок по этому ресурсу — обе стороны вместе. */
+  openOrders: number;
+  /**
+   * Изменение цены за сутки, доля: 0.12 — подорожало на двенадцать процентов.
+   * null — сравнивать не с чем, сделок сутки назад не было.
+   */
+  change: number | null;
 }
 
 export interface PublicOrder {
@@ -99,13 +181,18 @@ export async function getMarketView(commanderId: string): Promise<MarketView> {
         ORE: quote('ORE', null, null, null),
         POLYMERS: quote('POLYMERS', null, null, null),
       },
+      stats: {
+        ORE: { volumeToday: 0, tradesToday: 0, openOrders: 0, change: null },
+        POLYMERS: { volumeToday: 0, tradesToday: 0, openOrders: 0, change: null },
+      },
+      barterStats: { open: 0, unitsOffered: 0 },
       barters: [],
       myOrders: [],
       trades: [],
     };
   }
 
-  const [storage, orders, trades, barters] = await Promise.all([
+  const [storage, orders, trades, barters, recent, barterOpen] = await Promise.all([
     prisma.hubStorage.findUnique({ where: { commanderId_hubId: { commanderId, hubId: hub.id } } }),
     prisma.marketOrder.findMany({
       where: { hubId: hub.id, remaining: { gt: 0 } },
@@ -116,7 +203,9 @@ export async function getMarketView(commanderId: string): Promise<MarketView> {
       where: { hubId: hub.id },
       include: { buyer: { select: { nickname: true } }, seller: { select: { nickname: true } } },
       orderBy: { createdAt: 'desc' },
-      take: 15,
+      // Первая страница истории. Дальше игрок подкачивает сам: за месяц сделок
+      // накопятся десятки тысяч, и отрисовать их разом страница не сможет.
+      take: HISTORY_PAGE,
     }),
     prisma.barterOffer.findMany({
       where: { hubId: hub.id },
@@ -124,6 +213,18 @@ export async function getMarketView(commanderId: string): Promise<MarketView> {
       orderBy: { createdAt: 'asc' },
       take: 20,
     }),
+    /*
+     * Сделки за двое суток — на них считается и оборот за сегодня,
+     * и цена сутки назад, с которой сравнивается нынешняя. Двое суток,
+     * а не одни: чтобы найти вчерашнюю цену, нужны сделки старше суток.
+     */
+    prisma.trade.findMany({
+      where: { hubId: hub.id, createdAt: { gte: new Date(Date.now() - 2 * DAY_MS) } },
+      select: { resource: true, quantity: true, pricePerUnit: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+      take: 2000,
+    }),
+    prisma.barterOffer.count({ where: { hubId: hub.id } }),
   ]);
 
   const toPublic = (order: (typeof orders)[number]): PublicOrder => ({
@@ -171,6 +272,14 @@ export async function getMarketView(commanderId: string): Promise<MarketView> {
     },
     book,
     // Считает сервер: цена — игровая величина, и клиент ее не выводит (правило 3).
+    stats: {
+      ORE: statsFor('ORE', recent, book.ORE.buy.length + book.ORE.sell.length),
+      POLYMERS: statsFor('POLYMERS', recent, book.POLYMERS.buy.length + book.POLYMERS.sell.length),
+    },
+    barterStats: {
+      open: barterOpen,
+      unitsOffered: Math.round(barters.reduce((sum, offer) => sum + offer.giveQuantity, 0)),
+    },
     quotes: {
       ORE: quoteFor('ORE', book.ORE, trades),
       POLYMERS: quoteFor('POLYMERS', book.POLYMERS, trades),
@@ -809,4 +918,87 @@ async function syncCredits(commanderId: string): Promise<void> {
 
 function round2(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+/**
+ * Средняя цена ресурса по дням — для графика в шапке.
+ *
+ * Ленивый запрос, а не часть общей сводки: график смотрят по клику и редко,
+ * а рынок опрашивается постоянно, и таскать тридцать точек в каждом ответе
+ * значило бы платить за них всегда ради тех случаев, когда их читают.
+ *
+ * День берется средневзвешенным по объему, как и рыночная цена: одна крупная
+ * сделка говорит о цене больше, чем десять мелких, и без веса случайная
+ * мелочь двигала бы дневную отметку наравне с настоящим оборотом.
+ */
+export async function priceHistory(
+  commanderId: string,
+  resource: TradeResource,
+  days = 30,
+): Promise<Array<{ day: string; price: number; volume: number }>> {
+  const hub = await findHubForUser(commanderId);
+  if (!hub) return [];
+
+  const since = new Date(Date.now() - days * DAY_MS);
+  const rows = await prisma.trade.findMany({
+    where: { hubId: hub.id, resource, createdAt: { gte: since } },
+    select: { quantity: true, pricePerUnit: true, createdAt: true },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  const byDay = new Map<string, { volume: number; total: number }>();
+  for (const row of rows) {
+    if (row.quantity <= 0 || row.pricePerUnit <= 0) continue;
+    const day = row.createdAt.toISOString().slice(0, 10);
+    const bucket = byDay.get(day) ?? { volume: 0, total: 0 };
+    bucket.volume += row.quantity;
+    bucket.total += row.quantity * row.pricePerUnit;
+    byDay.set(day, bucket);
+  }
+
+  // Дни без сделок пропускаются, а не рисуются нулем: ноль на графике цены
+  // означал бы «отдавали даром», а не «не торговали».
+  return [...byDay.entries()].map(([day, bucket]) => ({
+    day,
+    price: Math.round((bucket.total / bucket.volume) * 100) / 100,
+    volume: Math.round(bucket.volume),
+  }));
+}
+
+/**
+ * Страница истории сделок.
+ *
+ * Отдельно от общей сводки затем, что подкачка не должна тащить с собой
+ * стакан, склад и котировки: игрок листает историю, а не перезагружает рынок.
+ */
+export async function tradeHistory(
+  commanderId: string,
+  options: { before?: number | undefined; resource?: TradeResource | undefined; mineOnly?: boolean } = {},
+): Promise<MarketView['trades']> {
+  const hub = await findHubForUser(commanderId);
+  if (!hub) return [];
+
+  const rows = await prisma.trade.findMany({
+    where: {
+      hubId: hub.id,
+      ...(options.resource ? { resource: options.resource } : {}),
+      ...(options.before ? { createdAt: { lt: new Date(options.before) } } : {}),
+      ...(options.mineOnly ? { OR: [{ buyerId: commanderId }, { sellerId: commanderId }] } : {}),
+    },
+    include: { buyer: { select: { nickname: true } }, seller: { select: { nickname: true } } },
+    orderBy: { createdAt: 'desc' },
+    take: HISTORY_PAGE,
+  });
+
+  return rows.map((trade) => ({
+    id: trade.id,
+    resource: trade.resource,
+    quantity: trade.quantity,
+    pricePerUnit: trade.pricePerUnit,
+    total: Math.round(trade.quantity * trade.pricePerUnit * 100) / 100,
+    buyer: trade.buyer.nickname,
+    seller: trade.seller.nickname,
+    createdAt: trade.createdAt.getTime(),
+    mine: trade.buyerId === commanderId || trade.sellerId === commanderId,
+  }));
 }

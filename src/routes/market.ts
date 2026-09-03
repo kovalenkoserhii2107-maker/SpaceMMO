@@ -8,6 +8,8 @@ import {
   getMarketView,
   offerBarter,
   placeOrder,
+  priceHistory,
+  tradeHistory,
   upgradeStorage,
 } from '../services/marketService.js';
 import { currentCommander, requireAuth, requireCommander } from './middleware.js';
@@ -22,6 +24,42 @@ marketRouter.use(requireCommander);
 /** Состояние биржи: склад на хабе, стакан, свои ордера и история сделок. */
 marketRouter.get('/', async (req, res: Response<MarketResponse>) => {
   res.json(await getMarketView(currentCommander(req).id));
+});
+
+/**
+ * Дневная динамика цены — для графика в шапке.
+ *
+ * Отдельным роутом, а не полем сводки: график смотрят по клику и редко,
+ * а рынок опрашивается постоянно.
+ */
+marketRouter.get('/history/:resource', async (req, res) => {
+  const resource = req.params.resource;
+  if (!isTradeResource(resource)) {
+    res.status(400).json({ error: 'Неизвестный ресурс' });
+    return;
+  }
+  res.json({ series: await priceHistory(currentCommander(req).id, resource) });
+});
+
+/**
+ * Страница журнала сделок.
+ *
+ * Листается курсором по времени, а не смещением: за время листания приходят
+ * новые сделки, и смещение сдвинуло бы всю ленту — игрок увидел бы одну
+ * и ту же строку дважды или пропустил бы ее вовсе.
+ */
+marketRouter.get('/trades', async (req, res) => {
+  const raw = req.query['resource'];
+  const before = req.query['before'];
+  res.json({
+    trades: await tradeHistory(currentCommander(req).id, {
+      resource: isTradeResource(raw) ? raw : undefined,
+      // Number() здесь не годится: он молча превращает пустую строку в ноль
+      // (правило 13), а ноль в позиции курсора означал бы «с начала эпохи».
+      before: typeof before === 'string' && /^\d+$/.test(before) ? Number.parseInt(before, 10) : undefined,
+      mineOnly: req.query['mine'] === '1',
+    }),
+  });
 });
 
 /** Расширение личного склада на хабе. */
