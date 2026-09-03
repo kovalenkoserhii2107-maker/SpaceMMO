@@ -24,7 +24,7 @@ import {
   type DefenseType,
 } from './defenses.js';
 import {
-  PROTECTED_STORAGE_SHARE,
+  protectedShare,
   STORED_RESOURCES,
   type StorageCapacities,
 } from './rules.js';
@@ -598,16 +598,22 @@ export interface PlunderResult {
 /**
  * Сколько ресурсов увезет победитель — механика «сейфа».
  *
- * Хранилище прячет ресурсы в объеме до 90% своей вместимости. Всё сверх этого
- * порога — уязвимый излишек: и последние 10% вместимости, и то, что занесли
- * сверх лимита возвратные рейсы, экспедиции или отмена биржевых ордеров.
- * Агрессор забирает 90% излишка, пропорционально каждому типу ресурса,
- * а итог все так же режется трюмами уцелевших кораблей.
+ * Хранилище прячет пятую часть своей вместимости, и эту долю поднимает
+ * «Бункерование» — по два процента за уровень. Все сверх нее — уязвимый
+ * излишек: и незащищенная часть вместимости, и то, что занесли сверх лимита
+ * возвратные рейсы, экспедиции или отмена биржевых ордеров. Агрессор забирает
+ * 90% излишка, пропорционально каждому типу ресурса, а итог режется трюмами
+ * уцелевших кораблей.
+ *
+ * Надбавка приходит числом, а не уровнем технологии: бой о дереве наук
+ * не знает, ровно как правила добычи.
  */
 export function plunderAmount(
   stock: { ore: number; polymers: number; plasma: number },
   capacities: StorageCapacities,
   cargoCapacity: number,
+  /** Надбавка «Бункерования» защитника к несгораемой доле. */
+  vaultBonus = 0,
 ): PlunderResult {
   /*
    * Несгораемый объем считается по каждому складу отдельно.
@@ -627,7 +633,7 @@ export function plunderAmount(
   let protectedAmount = 0;
   const available = { ore: 0, polymers: 0, plasma: 0 };
   for (const resource of STORED_RESOURCES) {
-    const safe = Math.min(held[resource], Math.max(0, capacities[resource]) * PROTECTED_STORAGE_SHARE);
+    const safe = Math.min(held[resource], Math.max(0, capacities[resource]) * protectedShare(vaultBonus));
     protectedAmount += safe;
     available[resource] = Math.floor(Math.max(0, held[resource] - safe) * RAID_SHARE);
   }

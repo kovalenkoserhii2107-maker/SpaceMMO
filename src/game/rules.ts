@@ -476,8 +476,34 @@ export const BASE_STORAGE_CAPACITY = 2_500;
 const STORAGE_LEVEL_ONE_CAPACITY = 3_500;
 const STORAGE_GROWTH = 1.5;
 
-/** Доля вместимости, которую хранилище прячет от грабежа. */
-export const PROTECTED_STORAGE_SHARE = 0.9;
+/**
+ * Доля вместимости, которую хранилище прячет от грабежа без технологий.
+ *
+ * Было 0.9, и это делало грабеж бессмысленным. Порог считается от вместимости,
+ * а не от запаса, поэтому склад, заполненный меньше чем на девять десятых,
+ * не отдавал вообще ничего: живой агрессор провел восемь набегов подряд,
+ * выиграл все восемь и не унес ни единицы — у жертвы склады стояли
+ * на 38%, 74% и 29%. А поскольку и бот, и разумный игрок расширяют склад
+ * с запасом, заполненность выше девяноста процентов — редкость, и выходило,
+ * что ограбить нельзя никого и никогда.
+ *
+ * Пятая часть оставляет неприкосновенным ровно тот запас, который жалко
+ * потерять новичку, и не превращает склад в броню сам по себе. Дальше защита
+ * покупается наукой, а не выдается даром.
+ */
+export const PROTECTED_STORAGE_SHARE = 0.2;
+
+/**
+ * Какую долю вместимости прячет хранилище с учетом «Бункерования».
+ *
+ * Правила о дереве технологий не знают и знать не должны — `techTree.ts`
+ * импортирует правила, и обратная зависимость замкнула бы модули в кольцо
+ * (та же причина, по которой ускорение стройки передается числом). Поэтому
+ * сюда приходит уже посчитанная надбавка, а не уровень технологии.
+ */
+export function protectedShare(vaultBonus = 0): number {
+  return PROTECTED_STORAGE_SHARE + Math.max(0, vaultBonus);
+}
 
 export function storageCapacityForLevel(level: number): number {
   if (!Number.isFinite(level) || level <= 0) return BASE_STORAGE_CAPACITY;
@@ -554,9 +580,9 @@ export interface StorageState extends Record<StoredResource, ResourceStorageStat
  * возврат залога с биржи или трофеи экспедиции могут занести ресурсы сверх лимита.
  * Такой излишек не исчезает, но и не защищен.
  */
-function oneStorage(used: number, capacity: number): ResourceStorageState {
+function oneStorage(used: number, capacity: number, vaultBonus: number): ResourceStorageState {
   const held = Math.max(0, used);
-  const protectedAmount = Math.min(held, capacity * PROTECTED_STORAGE_SHARE);
+  const protectedAmount = Math.min(held, capacity * protectedShare(vaultBonus));
 
   return {
     capacity,
@@ -569,10 +595,15 @@ function oneStorage(used: number, capacity: number): ResourceStorageState {
   };
 }
 
-export function storageState(stock: ResourceAmounts, capacities: StorageCapacities): StorageState {
-  const ore = oneStorage(stock.ore, capacities.ore);
-  const polymers = oneStorage(stock.polymers, capacities.polymers);
-  const plasma = oneStorage(stock.plasma, capacities.plasma);
+export function storageState(
+  stock: ResourceAmounts,
+  capacities: StorageCapacities,
+  /** Надбавка «Бункерования» к несгораемой доле: приходит числом, не уровнем. */
+  vaultBonus = 0,
+): StorageState {
+  const ore = oneStorage(stock.ore, capacities.ore, vaultBonus);
+  const polymers = oneStorage(stock.polymers, capacities.polymers, vaultBonus);
+  const plasma = oneStorage(stock.plasma, capacities.plasma, vaultBonus);
 
   return {
     ore,

@@ -917,6 +917,8 @@ enum TechnologyType {
   HYPERDRIVE
   ASTROPHYSICS
   ROBOTICS
+  /// Бункерование: поднимает несгораемую долю склада.
+  VAULT_TECH
   TIME_COMPRESSION
 }
 

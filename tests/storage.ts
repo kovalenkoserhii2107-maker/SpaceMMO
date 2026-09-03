@@ -253,21 +253,39 @@ const CAPS = { ore: 3500, polymers: 3500, plasma: 3500 };
 const HOLDS = 1_000_000;
 
 {
-  const loot = plunderAmount({ ore: 1000, polymers: 800, plasma: 0 }, CAPS, HOLDS);
+  // 20% от 3 500 — это 700 на каждый склад.
+  const loot = plunderAmount({ ore: 700, polymers: 700, plasma: 0 }, CAPS, HOLDS);
   check(
-    'полупустые склады не теряют ничего',
-    loot.ore === 0 && loot.polymers === 0 && loot.surplus === 0,
-    `защищено ${Math.round(loot.protectedAmount)}`,
+    'ровно на границе несгораемой доли грабить нечего',
+    loot.ore === 0 && loot.polymers === 0,
+    `лежало ${Math.round(loot.stored)}, излишек ${Math.round(loot.surplus)}`,
   );
 }
 
 {
-  // 90% от 3 500 — это 3 150 на каждый склад.
-  const loot = plunderAmount({ ore: 3150, polymers: 3150, plasma: 0 }, CAPS, HOLDS);
+  /*
+   * Ради этого сейф и переделан. Прежние 90% вместимости давали полный
+   * иммунитет всем, у кого склад заполнен меньше чем на девять десятых, —
+   * то есть почти всем. Живой агрессор провел восемь набегов подряд, выиграл
+   * все восемь и не унес ни единицы: у жертвы склады стояли на 38%, 74% и 29%.
+   */
+  const loot = plunderAmount({ ore: 1000, polymers: 800, plasma: 0 }, CAPS, HOLDS);
   check(
-    'ровно на границе 90% вместимости грабить нечего',
-    loot.ore === 0 && loot.polymers === 0,
-    `лежало ${Math.round(loot.stored)}, излишек ${Math.round(loot.surplus)}`,
+    'полупустой склад больше не дает полного иммунитета',
+    loot.ore > 0 && loot.polymers > 0,
+    `увезли ${loot.ore} Ti + ${loot.polymers} Si`,
+  );
+}
+
+{
+  // «Бункерование» поднимает защиту по два процента за уровень: на десятом
+  // сейф — 40% вместимости, то есть 1 400 из 3 500.
+  const bare = plunderAmount({ ore: 1400, polymers: 0, plasma: 0 }, CAPS, HOLDS);
+  const bunkered = plunderAmount({ ore: 1400, polymers: 0, plasma: 0 }, CAPS, HOLDS, 0.2);
+  check(
+    'бункерование прикрывает то, что без него отдали бы',
+    bare.ore > 0 && bunkered.ore === 0,
+    `без технологии ${bare.ore}, с ней ${bunkered.ore}`,
   );
 }
 
@@ -375,10 +393,20 @@ if (registered.status !== 200 && registered.status !== 201) {
       ) < 1,
       `занято ${base.storage.used}`,
     );
+    /*
+     * При сейфе в пятую часть вместимости стартовая колония уязвима сразу:
+     * из полутора тысяч руды несгораемы пятьсот. Это осознанная цена
+     * за то, чтобы грабеж вообще работал, — прежние 90% давали иммунитет
+     * почти всем и всегда. Живого новичка прикрывает щит новичка, а не склад.
+     */
     check(
-      'новая колония еще не под угрозой грабежа',
-      base.storage.ore.vulnerable === 0 && !base.storage.anyFull,
-      `уязвимо ${base.storage.ore.vulnerable}`,
+      'у новой колонии несгораема пятая часть вместимости',
+      Math.abs(base.storage.ore.protectedAmount - base.storage.ore.capacity * 0.2) < 1,
+      `защищено ${Math.round(base.storage.ore.protectedAmount)} из ${base.storage.ore.capacity}`,
+    );
+    check(
+      'склад при этом не переполнен',
+      !base.storage.anyFull,
     );
   }
 

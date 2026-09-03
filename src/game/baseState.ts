@@ -38,6 +38,7 @@ import {
   buildSpeedup,
   researchCost,
   timeCompressionDrain,
+  vaultBonus,
   researchSeconds,
   techDescription,
   techLabel,
@@ -269,7 +270,7 @@ export function toSnapshot(state: BaseRuntimeState, commander: CommanderRuntimeS
   const techDrain = timeCompressionDrain(commander.techs);
   const usage = energyUsage(state.levels, defenseDrain, techDrain);
   const efficiency = energyEfficiency(state.levels, state.richness, bonuses, defenseDrain, techDrain);
-  const storage = storageState(state.resources, storageCapacities(state.levels));
+  const storage = storageState(state.resources, storageCapacities(state.levels), vaultBonus(commander.techs));
 
   return {
     baseId: state.id,

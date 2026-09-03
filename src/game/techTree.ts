@@ -23,6 +23,7 @@ export const TECHNOLOGY_TYPES = [
   'ASTROPHYSICS',
   'ROBOTICS',
   'CRYPTO_TECH',
+  'VAULT_TECH',
   'TIME_COMPRESSION',
 ] as const;
 
@@ -48,6 +49,7 @@ export function emptyTechLevels(): TechLevels {
     ASTROPHYSICS: 0,
     ROBOTICS: 0,
     CRYPTO_TECH: 0,
+    VAULT_TECH: 0,
     TIME_COMPRESSION: 0,
   };
 }
@@ -122,6 +124,17 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
     timeFactor: 2.15,
     labLevel: 4,
     requires: { COMPUTING_TECH: 2 },
+  },
+  VAULT_TECH: {
+    label: 'Бункерование',
+    description:
+      '+2% к несгораемой доле склада за уровень. Базовая защита — 20% вместимости; ' +
+      'после 50% каждый следующий уровень обходится втрое дороже предыдущего.',
+    cost: { ore: 800, polymers: 500, plasma: 150, factor: 1.7 },
+    baseSeconds: 150,
+    timeFactor: 2.15,
+    labLevel: 3,
+    requires: { COMPUTING_TECH: 1 },
   },
   MINING_TECH: {
     label: 'Горное дело',
@@ -248,9 +261,26 @@ export function techDescription(tech: TechnologyType): string {
   return TECHNOLOGIES[tech].description;
 }
 
+/**
+ * Уровень «Бункерования», за которым защита начинает стоить непомерно.
+ *
+ * Пятнадцатый: базовые 20% плюс пятнадцать раз по два дают ровно половину
+ * вместимости. До этой отметки защита — обычная ветка развития, дальше
+ * каждый уровень втрое дороже предыдущего сверх обычного роста. Смысл в том,
+ * что склад не должен становиться абсолютной броней: полная неуязвимость
+ * убивает грабеж, а с ним и повод держать флот.
+ */
+export const VAULT_SOFT_CAP = 15;
+
+/** Во сколько раз дорожает каждый уровень «Бункерования» сверх мягкого предела. */
+const VAULT_OVERRUN_FACTOR = 3;
+
 export function researchCost(tech: TechnologyType, targetLevel: number): ResourceAmounts {
   const { cost } = TECHNOLOGIES[tech];
-  const scale = Math.pow(cost.factor, targetLevel - 1);
+  let scale = Math.pow(cost.factor, targetLevel - 1);
+  if (tech === 'VAULT_TECH' && targetLevel > VAULT_SOFT_CAP) {
+    scale *= Math.pow(VAULT_OVERRUN_FACTOR, targetLevel - VAULT_SOFT_CAP);
+  }
   return {
     ore: Math.floor(cost.ore * scale),
     polymers: Math.floor(cost.polymers * scale),
@@ -340,6 +370,16 @@ export function colonySlots(techs: TechLevels): number {
 /** Множитель добычи криптогривны от криптоинженерии: +15% за уровень. */
 export function cryptoBonus(techs: TechLevels): number {
   return 1 + Math.max(0, techs.CRYPTO_TECH) * 0.15;
+}
+
+/**
+ * Надбавка «Бункерования» к несгораемой доле склада.
+ *
+ * Наружу отдается числом: правила о дереве не знают, `rules.ts` его
+ * не импортирует, и обратная зависимость замкнула бы модули в кольцо.
+ */
+export function vaultBonus(techs: TechLevels): number {
+  return Math.max(0, techs.VAULT_TECH) * 0.02;
 }
 
 export function economyBonuses(techs: TechLevels): EconomyBonuses {

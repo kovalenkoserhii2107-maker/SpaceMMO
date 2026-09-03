@@ -1618,6 +1618,14 @@ class GameLoop {
         include: { ships: true, defenses: true },
       });
 
+      // «Бункерование» защитника: оно решает, сколько склада вообще уязвимо.
+      // Читается здесь же, в транзакции боя, — как и все остальные его силы.
+      const defenderResearch = await tx.research.findMany({
+        where: { commanderId: defenderId, tech: 'VAULT_TECH' },
+        select: { level: true },
+      });
+      const defenderVault = Math.max(0, defenderResearch[0]?.level ?? 0) * 0.02;
+
       const defenderShips = emptyShipCounts();
       for (const ship of base.ships) defenderShips[ship.type] = ship.count;
       const defenderDefenses = emptyDefenseCounts();
@@ -1637,6 +1645,7 @@ class GameLoop {
           plasma: storageCapacityForLevel(base.plasmaStorageLevel),
         },
         outcome.winner === 'ATTACKER' ? fleetCapacity(outcome.attackerSurvivors) : 0,
+        defenderVault,
       );
 
       // Потери защитника: корабли и оборона списываются безвозвратно.
