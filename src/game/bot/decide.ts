@@ -47,6 +47,8 @@ import {
   type ShipCounts,
   type ShipType,
 } from '../ships.js';
+import { fleetCapacity } from '../fleets.js';
+import { storageUpgradeCost } from '../market.js';
 import {
   colonySlots,
   economyBonuses,
@@ -164,7 +166,14 @@ export interface BotSnapshot {
    * Склад на хабе. Продавать можно только тем, что уже лежит на станции:
    * товар туда возит флот, и решать о продаже по остаткам базы бессмысленно.
    */
-  hubStorage: { ore: number; polymers: number; free: number };
+  hubStorage: {
+    ore: number;
+    polymers: number;
+    free: number;
+    /** Уровень склада и цена следующего: расширение платится криптогривной. */
+    level: number;
+    upgradeCost: number;
+  };
   /** Уже отправлен ли колониальный рейс: два на одну планету не нужны. */
   colonizing: boolean;
 }
@@ -183,6 +192,10 @@ export type BotIntent =
   | { kind: 'TAKE'; orderId: string; amount: number; why: string }
   /** Снять собственную заявку: она больше не отвечает намерениям бота. */
   | { kind: 'DROP'; orderId: string; why: string }
+  /** Забрать товар с хаба домой: строят из того, что лежит на базе. */
+  | { kind: 'PICKUP'; baseId: string; ore: number; polymers: number; why: string }
+  /** Расширить склад на хабе — платится криптогривной. */
+  | { kind: 'HUB_UPGRADE'; why: string }
   | {
       kind: 'ORDER';
       side: 'BUY' | 'SELL';
@@ -1099,6 +1112,61 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
     intents.push(...tradeIntents(snapshot, profile, shortfall));
   }
 
+  /*
+   * Склад хаба тесен — расширяем, благо теперь это вопрос денег.
+   *
+   * Без этого бот запирался намертво: продать некому, значит место
+   * не освобождается, значит купить нельзя, значит и предложить в обмен
+   * нечего. Три живых бота встали так одновременно, и рынок замер — ноль
+   * сделок за двадцать минут при полутора миллионах на счетах.
+   *
+   * Порог по заполненности, а не по свободному месту в штуках: у большого
+   * склада тысяча свободных единиц это запас, у маленького — предел.
+   */
+  const hubTotal = snapshot.hubStorage.ore + snapshot.hubStorage.polymers;
+  const hubCapacity = hubTotal + Math.max(0, snapshot.hubStorage.free);
+  if (
+    hubCapacity > 0 &&
+    hubTotal >= hubCapacity * 0.8 &&
+    snapshot.credits >= snapshot.hubStorage.upgradeCost
+  ) {
+    intents.push({ kind: 'HUB_UPGRADE', why: 'склад на хабе забит, торговать негде' });
+  }
+
+  /*
+   * Везем недостающее домой.
+   *
+   * Купленное на бирже лежит на хабе, а строят из того, что на базе, — без
+   * этого рейса покупка не превращается ни во что. Забираем только то, чего
+   * не хватает на цель: везти домой излишек, который сами же и привезли
+   * продавать, значит гонять флот по кругу.
+   */
+  const homeward = snapshot.bases[0];
+  if (homeward) {
+    const hold = fleetCapacity({
+      ...emptyShipCounts(),
+      LARGE_CARGO: homeward.ships.LARGE_CARGO,
+      SMALL_CARGO: homeward.ships.SMALL_CARGO,
+    });
+    let ore = shortfall.has('ore') ? Math.floor(snapshot.hubStorage.ore) : 0;
+    let polymers = shortfall.has('polymers') ? Math.floor(snapshot.hubStorage.polymers) : 0;
+    if (ore + polymers > hold) {
+      const scale = hold / (ore + polymers);
+      ore = Math.floor(ore * scale);
+      polymers = Math.floor(polymers * scale);
+    }
+    // Мелочь рейса не стоит: транспорт уйдет надолго, а привезет ничто.
+    if (hold > 0 && ore + polymers >= 100) {
+      intents.push({
+        kind: 'PICKUP',
+        baseId: homeward.id,
+        ore,
+        polymers,
+        why: 'недостающее лежит на хабе, а строят из того, что на базе',
+      });
+    }
+  }
+
   return intents;
 }
 
@@ -1348,7 +1416,7 @@ export function emptyBotSnapshot(character: BotCharacter): BotSnapshot {
     market: [],
     debrisFields: [],
     orderBook: [],
-    hubStorage: { ore: 0, polymers: 0, free: 0 },
+    hubStorage: { ore: 0, polymers: 0, free: 0, level: 1, upgradeCost: storageUpgradeCost(2) },
     colonizing: false,
   };
 }

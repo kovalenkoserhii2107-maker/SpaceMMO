@@ -15,7 +15,7 @@
  */
 import { prisma } from '../../db/prisma.js';
 import { gameLoop, type ActionResult } from '../gameLoop.js';
-import { cancelOrder, fillOrder, placeOrder } from '../../services/marketService.js';
+import { cancelOrder, fillOrder, placeOrder, upgradeStorage } from '../../services/marketService.js';
 import {
   DAILY_BUDGET,
   mayAsk,
@@ -33,7 +33,7 @@ import { deliver } from '../../services/mailService.js';
 import { SHIP_TYPES, SQUADRON_TYPES, emptyShipCounts, type ShipCounts } from '../ships.js';
 import { fleetCapacity } from '../fleets.js';
 import { storageCapacities } from '../rules.js';
-import { storageCapacity as hubCapacity } from '../market.js';
+import { storageCapacity as hubCapacity, storageUpgradeCost } from '../market.js';
 import { normalizeDefenses, normalizeShips } from '../fogOfWar.js';
 import { spentOnDefense, spentOnFleet } from '../score.js';
 import type { CommanderRuntimeState } from '../baseState.js';
@@ -229,6 +229,8 @@ async function buildSnapshot(
       ore: hubStock?.ore ?? 0,
       polymers: hubStock?.polymers ?? 0,
       free: Math.max(0, hubCapacity(hubStock?.level ?? 1) - ((hubStock?.ore ?? 0) + (hubStock?.polymers ?? 0))),
+      level: hubStock?.level ?? 1,
+      upgradeCost: storageUpgradeCost((hubStock?.level ?? 1) + 1),
     },
     colonizing: commander.fleets.some((fleet) => fleet.mission === 'COLONIZE'),
   };
@@ -299,6 +301,14 @@ async function execute(commanderId: string, intent: BotIntent): Promise<ActionRe
       return result;
     }
 
+    case 'HUB_UPGRADE': {
+      return upgradeStorage(commanderId);
+    }
+
+    case 'PICKUP': {
+      return pickupFromHub(commanderId, intent.baseId, intent.ore, intent.polymers);
+    }
+
     case 'DROP': {
       const result = await cancelOrder(commanderId, intent.orderId);
       return result;
@@ -329,6 +339,53 @@ async function execute(commanderId: string, intent: BotIntent): Promise<ActionRe
  * поэтому торговля бота — это рейс, а не одна кнопка. Рейс отправляется
  * отдельно от ордеров: пока груз летит, продавать нечего.
  */
+/**
+ * Забрать товар с хаба домой.
+ *
+ * Без этого рейса у бота односторонний клапан: товар уезжает на хаб
+ * и остается там навсегда. Купленное на бирже он физически не может пустить
+ * в дело — строят из того, что лежит на базе, — а непроданное копится,
+ * пока склад хаба не забьется до отказа. Дальше все встает разом: свободного
+ * места нет, значит покупать некуда, значит и продавать некому.
+ *
+ * Проверено на живых ботах: три хаба забиты сверх вместимости, ноль сделок
+ * за двадцать минут, и Крамар с 2.36 млн ₴ не мог купить ни единицы руды,
+ * которой ему не хватало на постройку.
+ */
+async function pickupFromHub(
+  commanderId: string,
+  baseId: string,
+  ore: number,
+  polymers: number,
+): Promise<ActionResult> {
+  const hub = await prisma.tradeHub.findFirst({
+    where: { system: { planets: { some: { base: { commanderId } } } } },
+    select: { id: true },
+  });
+  if (!hub) return { ok: false, error: 'Торговый хаб не найден' };
+
+  const base = await prisma.base.findUnique({
+    where: { id: baseId },
+    select: { ships: { select: { type: true, count: true } } },
+  });
+  if (!base) return { ok: false, error: 'База не найдена' };
+
+  const ships = emptyShipCounts();
+  for (const row of base.ships) {
+    if (row.type === 'LARGE_CARGO' || row.type === 'SMALL_CARGO') ships[row.type] = row.count;
+  }
+
+  return gameLoop.sendFleet(
+    commanderId,
+    baseId,
+    { hubId: hub.id },
+    'HUB_PICKUP',
+    ships,
+    { ore: 0, polymers: 0, plasma: 0 },
+    { ore, polymers },
+  );
+}
+
 async function deliverToHub(
   commanderId: string,
   snapshot: BotSnapshot,

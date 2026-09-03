@@ -3389,13 +3389,15 @@
       `<span>свободно ${fmt(storage.free)}</span></div>` +
       hint;
 
-    const affordable =
-      storage.ore >= storage.upgradeCost.ore && storage.polymers >= storage.upgradeCost.polymers;
+    // Расширение платится криптогривной, а не товаром со склада: товаром
+    // платить приходилось ровно тогда, когда места нет, и нужного ресурса
+    // в забитой куче могло не оказаться вовсе.
+    const affordable = market.data.credits >= storage.upgradeCost;
     el.upgradeStorage.hidden = false;
     el.upgradeStorage.disabled = !affordable;
     el.upgradeStorage.innerHTML =
       `Расширить до ур. ${storage.nextLevel} → ${fmt(storage.nextCapacity)} · ` +
-      `${icon('ore', 'sm')} ${fmt(storage.upgradeCost.ore)} ${icon('polymers', 'sm')} ${fmt(storage.upgradeCost.polymers)}`;
+      `${icon('credits', 'sm')} ${fmt(storage.upgradeCost)}`;
   }
 
   /**

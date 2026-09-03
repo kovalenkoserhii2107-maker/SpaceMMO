@@ -34,7 +34,8 @@ export interface MarketView {
     level: number;
     capacity: number;
     free: number;
-    upgradeCost: { ore: number; polymers: number };
+    /** Расширение склада платится криптогривной. */
+    upgradeCost: number;
     nextLevel: number;
     nextCapacity: number;
   } | null;
@@ -369,25 +370,31 @@ export async function upgradeStorage(commanderId: string): Promise<MarketResult>
   const storage = await ensureStorage(commanderId, hub.id);
   const cost = storageUpgradeCost(storage.level + 1);
 
-  if (storage.ore < cost.ore || storage.polymers < cost.polymers) {
-    return {
-      ok: false,
-      error: `Нужно ${cost.ore} руды и ${cost.polymers} полимеров на складе хаба`,
-    };
+  let level = storage.level;
+  try {
+    await prisma.$transaction(async (tx) => {
+      // Списание и расширение одной транзакцией: проверка баланса отдельно
+      // от списания дала бы гонку, вычерпывающую счет дважды (правило 2).
+      const paid = await tx.commander.updateMany({
+        where: { id: commanderId, credits: { gte: cost } },
+        data: { credits: { decrement: cost } },
+      });
+      if (paid.count === 0) throw new MarketError(`Нужно ${cost} ₴ — столько стоит расширение`);
+
+      const updated = await tx.hubStorage.update({
+        where: { id: storage.id },
+        data: { level: { increment: 1 } },
+      });
+      level = updated.level;
+    });
+  } catch (error) {
+    return toError(error, 'Расширить склад не удалось');
   }
 
-  const updated = await prisma.hubStorage.update({
-    where: { id: storage.id },
-    data: {
-      ore: { decrement: cost.ore },
-      polymers: { decrement: cost.polymers },
-      level: { increment: 1 },
-    },
-  });
-
+  await syncCredits(commanderId);
   return {
     ok: true,
-    message: `Склад расширен до уровня ${updated.level}: вместимость ${storageCapacity(updated.level)}`,
+    message: `Склад расширен до уровня ${level}: вместимость ${storageCapacity(level)}`,
   };
 }
 

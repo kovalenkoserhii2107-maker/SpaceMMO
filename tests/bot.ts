@@ -493,6 +493,73 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
   );
 }
 
+{
+  /*
+   * Односторонний клапан, из-за которого рынок встал целиком: боты возили
+   * товар на хаб и не забирали обратно никогда. Купленное на бирже нельзя
+   * пустить в дело — строят из того, что на базе, — а непроданное копилось,
+   * пока склад не забился. Три живых хаба вышли за вместимость, сделок
+   * за двадцать минут стало ноль, и Крамар с 2.36 млн ₴ не мог купить
+   * ни единицы руды, которой ему не хватало на постройку.
+   */
+  const bought = snapshotWith({
+    character: 'TRADER',
+    credits: 0,
+    // Руды на базе нет — она нужна на цель и лежит на хабе.
+    bases: [
+      testBase('home', {
+        levels: { ...emptyLevels(), ORE_MINE: 10, POLYMER_PLANT: 10, POWER_PLANT: 14, SCIENCE_CENTER: 7, SHIPYARD: 7 },
+        resources: { ore: 10, polymers: 30_000, plasma: 12_000 },
+        ships: { ...emptyShipCounts(), SMALL_CARGO: 20 },
+      }),
+    ],
+    hubStorage: { ore: 5000, polymers: 0, free: 1000, level: 4, upgradeCost: 136_000 },
+  });
+  const pickup = decide(bought).find((i) => i.kind === 'PICKUP');
+  check(
+    'недостающее с хаба бот везет домой',
+    pickup?.kind === 'PICKUP' && pickup.ore > 0,
+    pickup?.kind === 'PICKUP' ? `руда ${pickup.ore}` : 'не везет',
+  );
+}
+
+{
+  // Излишек, который сами же привезли продавать, домой не возим:
+  // это гоняло бы флот по кругу.
+  const selling = snapshotWith({
+    character: 'TRADER',
+    bases: [
+      testBase('home', {
+        resources: { ore: 5000, polymers: 3000, plasma: 1500 },
+        ships: { ...emptyShipCounts(), SMALL_CARGO: 20 },
+      }),
+    ],
+    hubStorage: { ore: 5000, polymers: 5000, free: 1000, level: 4, upgradeCost: 136_000 },
+  });
+  check('излишек с хаба домой не возится', !decide(selling).some((i) => i.kind === 'PICKUP'));
+}
+
+{
+  // Забитый склад хаба запирает торговлю целиком: продать некому, значит
+  // место не освободится, значит и купить нельзя. Теперь это вопрос денег.
+  const jammed = snapshotWith({
+    character: 'TRADER',
+    credits: 500_000,
+    hubStorage: { ore: 19_000, polymers: 1000, free: 480, level: 4, upgradeCost: 136_000 },
+  });
+  check(
+    'забитый склад на хабе бот расширяет за криптогривну',
+    decide(jammed).some((i) => i.kind === 'HUB_UPGRADE'),
+  );
+
+  const broke = snapshotWith({
+    character: 'TRADER',
+    credits: 1000,
+    hubStorage: { ore: 19_000, polymers: 1000, free: 480, level: 4, upgradeCost: 136_000 },
+  });
+  check('без денег расширение не заказывается', !decide(broke).some((i) => i.kind === 'HUB_UPGRADE'));
+}
+
 /* ------------------------- 4. Биржа ------------------------- */
 
 console.log('\n=== 4. Торговля: берем чужое, выставляем свое ===');
