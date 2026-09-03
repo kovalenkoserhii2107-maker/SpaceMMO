@@ -5284,6 +5284,383 @@
   }
 
   /** Письмо центра связи → отчет. */
+  /* ---------- Отчет разведки ---------- */
+
+  /*
+   * Порядок ступеней шпионажа — тот же, что на сервере (`game/espionage.ts`).
+   * Держать его здесь копией приходится потому, что клиент не импортирует
+   * игровые модули; расхождение поймает глаз на первом же отчете, зато
+   * интерфейс не тянет за собой половину сервера.
+   */
+  const SPY_TIERS = ['NONE', 'BUILDINGS', 'FLEET_COUNT', 'DEFENCE_COUNT', 'DEFENCE_TYPES', 'FULL_FORCES', 'TECHS'];
+  const spyReaches = (detail, floor) => SPY_TIERS.indexOf(detail) >= SPY_TIERS.indexOf(floor);
+
+  const SPY_TIER_LABELS = {
+    NONE: 'Дрон потерян',
+    BUILDINGS: 'Только постройки',
+    FLEET_COUNT: 'Флот числом',
+    DEFENCE_COUNT: 'Флот и оборона числом',
+    DEFENCE_TYPES: 'Оборона по типам',
+    FULL_FORCES: 'Силы и склад по составу',
+    TECHS: 'Полный доступ',
+  };
+
+  /*
+   * Названия построек и технологий у клиента свои: с сервера они приходят
+   * только в карточках своей базы, а отчет разведки говорит о чужой.
+   * Расхождение с `rules.ts` и `techTree.ts` видно глазами на первом же
+   * отчете — тащить ради подписей половину сервера незачем.
+   */
+  const BUILD_LABELS = {
+    ORE_MINE: 'Рудная шахта',
+    POLYMER_PLANT: 'Полимерный завод',
+    PLASMA_REACTOR: 'Плазменный реактор',
+    POWER_PLANT: 'Энергостанция',
+    SCIENCE_CENTER: 'Научный центр',
+    SHIPYARD: 'Верфь',
+    ANTIMATTER_FACTORY: 'Фабрика антиматерии',
+    CRYPTO_FARM: 'Крипто-ферма',
+    ORE_STORAGE: 'Рудный склад',
+    POLYMER_STORAGE: 'Склад полимеров',
+    PLASMA_STORAGE: 'Плазмохранилище',
+  };
+
+  const TECH_LABELS = {
+    ENERGY_TECH: 'Энергетика',
+    COMPUTING_TECH: 'Вычислительная техника',
+    WEAPONS_TECH: 'Оружейная',
+    SHIELDS_TECH: 'Щитовая',
+    ARMOR_TECH: 'Бронебойная',
+    MINING_TECH: 'Горное дело',
+    COMBUSTION_DRIVE: 'Реактивный двигатель',
+    HYPERSPACE_PHYSICS: 'Гиперпространство',
+    HYPERDRIVE: 'Гипердвигатель',
+    ASTROPHYSICS: 'Астрофизика',
+    ROBOTICS: 'Робототехника',
+    CRYPTO_TECH: 'Криптоинженерия',
+    VAULT_TECH: 'Бункерование',
+    ESPIONAGE: 'Шпионаж',
+    TIME_COMPRESSION: 'Сжатие времени',
+  };
+
+  /**
+   * Письмо разведки — в отчет.
+   *
+   * Нагрузка письма лежит в базе и переживает изменения игры (правило 9):
+   * отчет, снятый до появления ступеней шпионажа, приходит без `outcome`,
+   * и читать его надо как полный доступ — тогда разведка показывала все.
+   */
+  function spyReportFromMail(message) {
+    const p = message.payload;
+    if (!p || !p.planetName) return null;
+    const outcome = p.outcome ?? {};
+    return {
+      planetName: p.planetName,
+      systemName: p.systemName ?? null,
+      planetType: p.planetType ?? null,
+      owner: p.owner ?? null,
+      colonized: p.colonized !== false,
+      detail: outcome.detail ?? 'TECHS',
+      resourcesSeen: outcome.resourcesSeen !== false,
+      droneLost: outcome.droneLost === true || p.droneLost === true,
+      richness: p.richness ?? null,
+      buildings: p.buildings ?? null,
+      resources: p.resources ?? null,
+      fleet: p.fleet ?? null,
+      defenses: p.defenses ?? null,
+      techs: p.techs ?? null,
+      date: message.createdAt,
+    };
+  }
+
+  const sumCounts = (counts) =>
+    counts ? Object.values(counts).reduce((total, value) => total + Math.max(0, value || 0), 0) : 0;
+
+  /** Плитка с картинкой и числом: ими показываются флот, оборона и постройки. */
+  function spyTile(folder, type, label, value, caption) {
+    const tile = document.createElement('div');
+    tile.className = 'spy-tile';
+
+    const art = document.createElement('div');
+    art.className = 'spy-tile-art';
+    const img = document.createElement('img');
+    img.src = `/assets/${folder}/${type.toLowerCase()}.webp`;
+    img.alt = '';
+    img.loading = 'lazy';
+    // Битую ссылку обязательно снимать обработчиком: без него браузер рисует
+    // на месте картинки собственную иконку «сломано» поверх заглушки.
+    img.addEventListener('error', () => {
+      art.classList.add('art-missing');
+      img.remove();
+    });
+    art.appendChild(img);
+
+    const badge = document.createElement('span');
+    badge.className = 'spy-tile-value';
+    badge.textContent = value;
+    art.appendChild(badge);
+
+    const name = document.createElement('span');
+    name.className = 'spy-tile-label';
+    name.textContent = label;
+
+    tile.append(art, name);
+    if (caption) {
+      const note = document.createElement('span');
+      note.className = 'spy-tile-note';
+      note.textContent = caption;
+      tile.appendChild(note);
+    }
+    return tile;
+  }
+
+  /** Раздел отчета: заголовок и содержимое либо честная причина пустоты. */
+  function spySection(title, node, blocked) {
+    const section = document.createElement('section');
+    section.className = 'spy-section';
+    const head = document.createElement('h4');
+    head.textContent = title;
+    section.appendChild(head);
+    if (node) {
+      section.appendChild(node);
+    } else {
+      const empty = document.createElement('p');
+      empty.className = 'spy-blocked';
+      empty.textContent = blocked;
+      section.appendChild(empty);
+    }
+    return section;
+  }
+
+  /**
+   * Отчет разведки.
+   *
+   * Раньше это был текст в шесть строк, по которому нельзя было ни оценить
+   * цель, ни понять, почему половина полей пуста. Теперь у каждой цифры своя
+   * картинка, а причина пустоты названа: «зонд не дотянулся» — это не то же
+   * самое, что «там ничего нет», и решают эти две новости разное.
+   */
+  function renderSpyReport(report) {
+    const card = document.createElement('article');
+    card.className = 'spy-report';
+    if (report.droneLost) card.classList.add('lost');
+
+    /* Шапка: портрет планеты, адрес, владелец и до чего дотянулся зонд. */
+    const header = document.createElement('header');
+    header.className = 'spy-head';
+
+    const portrait = document.createElement('div');
+    portrait.className = 'spy-portrait';
+    const art = PLANET_ART[report.planetType] || 'rocky';
+    const planetImg = document.createElement('img');
+    planetImg.src = `/assets/planets/${art}.webp`;
+    planetImg.alt = '';
+    planetImg.addEventListener('error', () => {
+      portrait.classList.add('art-missing');
+      planetImg.remove();
+    });
+    portrait.appendChild(planetImg);
+
+    const who = document.createElement('div');
+    who.className = 'spy-who';
+    who.innerHTML =
+      `<b>${escapeHtml(report.planetName)}</b>` +
+      (report.systemName ? `<span>система ${escapeHtml(report.systemName)}</span>` : '') +
+      `<span>${report.owner ? `владелец <b>${escapeHtml(report.owner)}</b>` : 'колонии нет'}</span>`;
+
+    const tier = document.createElement('span');
+    tier.className = `spy-tier ${report.droneLost ? 'bad' : spyReaches(report.detail, 'FULL_FORCES') ? 'deep' : ''}`;
+    tier.textContent = SPY_TIER_LABELS[report.detail] || report.detail;
+
+    header.append(portrait, who, tier);
+    if (report.date) {
+      const date = document.createElement('span');
+      date.className = 'spy-date';
+      date.textContent = new Date(report.date).toLocaleString('ru-RU');
+      header.appendChild(date);
+    }
+    card.appendChild(header);
+
+    /* Сбитый дрон: докладывать нечего, и вся остальная разметка не нужна. */
+    if (report.droneLost) {
+      const lost = document.createElement('p');
+      lost.className = 'spy-blocked';
+      lost.textContent =
+        'Зонд не вышел на связь: там знали, что он летит. Пока «Шпионаж» не подтянут, посылать туда нечего.';
+      card.appendChild(lost);
+      return card;
+    }
+
+    if (!report.colonized) {
+      const empty = document.createElement('p');
+      empty.className = 'spy-blocked';
+      empty.textContent = 'Колонии нет, следов активности не обнаружено.';
+      card.appendChild(empty);
+      return card;
+    }
+
+    /* Недра: та же шкала, что в паспорте колонии — единица посередине. */
+    if (report.richness) {
+      const grid = document.createElement('div');
+      grid.className = 'spy-richness';
+      for (const [key, label] of [
+        ['ore', 'Руда'],
+        ['polymers', 'Полимеры'],
+        ['plasma', 'Плазма'],
+        ['energy', 'Инсоляция'],
+        ['antimatter', 'Антиматерия'],
+      ]) {
+        const value = report.richness[key];
+        if (typeof value !== 'number') continue;
+        const row = document.createElement('div');
+        row.className = 'spy-rich-row';
+        row.innerHTML =
+          `<span>${label}</span>` +
+          `<span class="spy-bar"><i style="width:${Math.min(100, (value / 2) * 100).toFixed(0)}%"></i></span>` +
+          `<b>×${value.toFixed(2)}</b>`;
+        grid.appendChild(row);
+      }
+      card.appendChild(spySection('Богатство недр', grid, ''));
+    }
+
+    /* Склад. */
+    const stock = report.resources;
+    if (!report.resourcesSeen) {
+      card.appendChild(spySection('Склад', null, 'К учету подобраться не вышло.'));
+    } else if (spyReaches(report.detail, 'FULL_FORCES') && stock) {
+      const row = document.createElement('div');
+      row.className = 'spy-stock';
+      for (const [key, name] of [['ore', 'ore'], ['polymers', 'polymers'], ['plasma', 'plasma']]) {
+        const cell = document.createElement('span');
+        cell.className = 'spy-stock-cell';
+        cell.innerHTML = `${icon(name, 'sm')}<b>${fmt(stock[key] ?? 0)}</b>`;
+        row.appendChild(cell);
+      }
+      card.appendChild(spySection('Склад', row, ''));
+    } else if (spyReaches(report.detail, 'FLEET_COUNT') && stock) {
+      const total = (stock.ore ?? 0) + (stock.polymers ?? 0) + (stock.plasma ?? 0);
+      const row = document.createElement('div');
+      row.className = 'spy-rough';
+      row.innerHTML = `<b>${fmt(total)}</b><span>единиц всего — что именно лежит, различить не удалось</span>`;
+      card.appendChild(spySection('Склад', row, ''));
+    } else {
+      card.appendChild(spySection('Склад', null, 'Зонд не дотянулся.'));
+    }
+
+    /* Флот. */
+    if (spyReaches(report.detail, 'FULL_FORCES') && report.fleet) {
+      const grid = document.createElement('div');
+      grid.className = 'spy-grid';
+      for (const [type, count] of Object.entries(report.fleet)) {
+        if (!count) continue;
+        grid.appendChild(spyTile('ships', type, SHIP_LABELS[type] || type, fmt(count)));
+      }
+      card.appendChild(
+        spySection('Флот на орбите', grid.children.length ? grid : null, 'Орбита пуста.'),
+      );
+    } else if (spyReaches(report.detail, 'FLEET_COUNT')) {
+      const rough = document.createElement('div');
+      rough.className = 'spy-rough';
+      rough.innerHTML =
+        `<b>${fmt(sumCounts(report.fleet))}</b><span>вымпелов на орбите — классы различить не удалось</span>`;
+      card.appendChild(spySection('Флот на орбите', rough, ''));
+    } else {
+      card.appendChild(spySection('Флот на орбите', null, 'Зонд не дотянулся.'));
+    }
+
+    /* Оборона. */
+    if (spyReaches(report.detail, 'DEFENCE_TYPES') && report.defenses) {
+      const grid = document.createElement('div');
+      grid.className = 'spy-grid';
+      for (const [type, count] of Object.entries(report.defenses)) {
+        if (!count) continue;
+        grid.appendChild(spyTile('defense', type, DEFENSE_LABELS[type] || type, fmt(count)));
+      }
+      card.appendChild(spySection('Оборона', grid.children.length ? grid : null, 'Планета не укреплена.'));
+    } else if (spyReaches(report.detail, 'DEFENCE_COUNT')) {
+      const rough = document.createElement('div');
+      rough.className = 'spy-rough';
+      rough.innerHTML =
+        `<b>${fmt(sumCounts(report.defenses))}</b><span>огневых точек — типы различить не удалось</span>`;
+      card.appendChild(spySection('Оборона', rough, ''));
+    } else {
+      card.appendChild(spySection('Оборона', null, 'Зонд не дотянулся.'));
+    }
+
+    /* Постройки: их видно на любой уцелевшей ступени. */
+    if (report.buildings) {
+      const grid = document.createElement('div');
+      grid.className = 'spy-grid';
+      for (const [type, level] of Object.entries(report.buildings)) {
+        if (!level) continue;
+        grid.appendChild(spyTile('buildings', type, BUILD_LABELS[type] || type, `ур. ${level}`));
+      }
+      card.appendChild(spySection('Инфраструктура', grid.children.length ? grid : null, 'Ничего не построено.'));
+    }
+
+    /* Технологии — только с верхней ступени. */
+    if (spyReaches(report.detail, 'TECHS') && report.techs) {
+      const list = document.createElement('div');
+      list.className = 'spy-techs';
+      for (const [tech, level] of Object.entries(report.techs)) {
+        if (!level) continue;
+        const chip = document.createElement('span');
+        chip.className = 'spy-tech';
+        chip.innerHTML = `${escapeHtml(TECH_LABELS[tech] || tech)}<b>${level}</b>`;
+        list.appendChild(chip);
+      }
+      card.appendChild(spySection('Технологии', list.children.length ? list : null, 'Не изучено ничего.'));
+    }
+
+    return card;
+  }
+
+  /**
+   * Письмо о чужом зонде над своей планетой.
+   *
+   * Отдельный вид: здесь нечего раскладывать по полкам, важно одно — кто
+   * приходил и что успел прочесть. Подробность решает уровень контрразведки.
+   */
+  function renderIntrusion(message) {
+    const p = message.payload;
+    if (!p || !p.alert) return null;
+
+    const card = document.createElement('article');
+    card.className = 'spy-report intrusion';
+
+    const header = document.createElement('header');
+    header.className = 'spy-head';
+    const mark = document.createElement('div');
+    mark.className = 'spy-intruder';
+    mark.textContent = p.spyName ? p.spyName.slice(0, 1).toUpperCase() : '?';
+
+    const who = document.createElement('div');
+    who.className = 'spy-who';
+    who.innerHTML =
+      `<b>${p.spyName ? escapeHtml(p.spyName) : 'Неизвестный'}</b>` +
+      `<span>чужой зонд над ${escapeHtml(p.planetName ?? 'нашей колонией')}</span>` +
+      (p.spyHome ? `<span>пришел с ${escapeHtml(p.spyHome)}</span>` : '');
+
+    const tier = document.createElement('span');
+    tier.className = `spy-tier ${p.droneLost ? 'deep' : 'bad'}`;
+    tier.textContent = p.droneLost ? 'Дрон сбит' : 'Ушел безнаказанно';
+
+    header.append(mark, who, tier);
+    if (message.createdAt) {
+      const date = document.createElement('span');
+      date.className = 'spy-date';
+      date.textContent = new Date(message.createdAt).toLocaleString('ru-RU');
+      header.appendChild(date);
+    }
+    card.appendChild(header);
+
+    const body = document.createElement('p');
+    body.className = 'spy-blocked';
+    body.textContent = message.body;
+    card.appendChild(body);
+    return card;
+  }
+
   function battleReportFromMail(message) {
     const payload = message.payload;
     if (!payload || !payload.attackerLosses || !payload.defenderLosses) return null;
@@ -5472,8 +5849,21 @@
         // Если нагрузки нет (старое письмо или другой тип), текст и остается:
         // отчет без данных нарисовать не из чего.
         const report = message.type === 'BATTLE_REPORT' ? battleReportFromMail(message) : null;
+        // Разведка бывает двух видов: наш отчет о чужой планете и тревога
+        // о чужом зонде над своей. Различает их наличие поля `alert`.
+        const spy =
+          message.type === 'SPY_REPORT'
+            ? message.payload?.alert
+              ? renderIntrusion(message)
+              : (() => {
+                  const scan = spyReportFromMail(message);
+                  return scan ? renderSpyReport(scan) : null;
+                })()
+            : null;
         if (report) {
           item.appendChild(renderBattleReport(report));
+        } else if (spy) {
+          item.appendChild(spy);
         } else {
           const body = document.createElement('div');
           body.className = 'mail-body';

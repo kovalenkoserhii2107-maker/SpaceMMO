@@ -188,6 +188,8 @@ export interface SpyMailInput {
   commanderId: string;
   planetName: string;
   systemName: string;
+  /** Тип планеты: по нему интерфейс рисует ее портрет в отчете. */
+  planetType: string | null;
   payload: ScanPayload;
   /** Чем кончился пролет: до какой ступени дотянулись и уцелел ли дрон. */
   outcome: EspionageOutcome;
@@ -210,7 +212,7 @@ export function buildSpyMail(input: SpyMailInput): OutgoingMessage[] {
           `Зонд ушел к ${planetName} (система ${systemName}) и на связь не вышел. ` +
           `Там знали, что он летит, — чужая контрразведка сильнее нашей. ` +
           `Пока «Шпионаж» не подтянут, посылать туда больше нечего.`,
-        payload: { planetName, systemName, droneLost: true },
+        payload: { planetName, systemName, planetType: input.planetType, outcome: input.outcome, droneLost: true },
       },
     ];
   }
@@ -222,7 +224,7 @@ export function buildSpyMail(input: SpyMailInput): OutgoingMessage[] {
         type: 'SPY_REPORT',
         subject: `Разведка: ${planetName} необитаема`,
         body: `Зонд обследовал ${planetName} (система ${systemName}). Колонии нет, следов активности не обнаружено.`,
-        payload: { planetName, systemName, colonized: false },
+        payload: { planetName, systemName, planetType: input.planetType, outcome: input.outcome, colonized: false },
       },
     ];
   }
@@ -299,7 +301,7 @@ export function buildSpyMail(input: SpyMailInput): OutgoingMessage[] {
         buildLine,
         ...(techLine ? [techLine] : []),
       ].join('\n'),
-      payload: { planetName, systemName, ...payload },
+      payload: { planetName, systemName, planetType: input.planetType, outcome, ...payload },
     },
   ];
 }

@@ -1279,7 +1279,12 @@ class GameLoop {
       const spy = await this.getCommander(fleet.commanderId);
       const targetOwner = await prisma.planet.findUnique({
         where: { id: planetId },
-        select: { name: true, system: { select: { name: true } }, base: { select: { commanderId: true } } },
+        select: {
+          name: true,
+          type: true,
+          system: { select: { name: true } },
+          base: { select: { commanderId: true } },
+        },
       });
       const defenderId = targetOwner?.base?.commanderId ?? null;
       const defenderLevel = defenderId
@@ -1329,6 +1334,7 @@ class GameLoop {
             commanderId: fleet.commanderId,
             planetName,
             systemName,
+            planetType: targetOwner?.type ?? null,
             payload,
             outcome,
           }),
