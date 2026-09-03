@@ -288,7 +288,15 @@ async function buildSnapshot(
  * а за секунды между снимком и вызовом ресурсы мог съесть завершившийся
  * заказ. Следующий заход просто решит заново.
  */
-async function execute(commanderId: string, intent: BotIntent): Promise<ActionResult> {
+async function execute(
+  commanderId: string,
+  /*
+   * Призыв о помощи сюда не попадает: он единственный трогает счетчик
+   * переписки и потому исполняется там, где счетчик есть. Тип сужен, чтобы
+   * об этом узнавал компилятор, а не читатель.
+   */
+  intent: Exclude<BotIntent, { kind: 'RALLY' }>,
+): Promise<ActionResult> {
   switch (intent.kind) {
     case 'BUILD':
       return gameLoop.startBuild(commanderId, intent.baseId, intent.building);
@@ -343,10 +351,6 @@ async function execute(commanderId: string, intent: BotIntent): Promise<ActionRe
       // за секунды между решением и вызовом.
       const result = await fillOrder(commanderId, intent.orderId, intent.amount);
       return result;
-    }
-
-    case 'RALLY': {
-      return rallyNeighbours(commanderId, intent.commanderId, intent.nickname, intent.raids);
     }
 
     case 'HUB_UPGRADE': {
@@ -747,10 +751,25 @@ async function savePlan(
   /** Повод этого решения: по нему следующий такой же будет отброшен. */
   shock: string | null,
 ): Promise<void> {
+  /*
+   * Память сливается, а не подменяется целиком.
+   *
+   * Замена стирала все, чего нет в этом объекте: и отметку о разосланном
+   * призыве, и пик флота. Отметка о призыве держит паузу в двенадцать часов
+   * — без нее жертва рассылала соседям одно и то же письмо после каждого
+   * плана, то есть раз в полчаса. Живой игрок получил такую рассылку
+   * и ответил на нее, а бот продолжил слать то же самое.
+   */
+  const bot = await prisma.bot.findUnique({ where: { id: botId }, select: { memory: true } });
+  const memory = (typeof bot?.memory === 'object' && bot.memory !== null ? bot.memory : {}) as Record<
+    string,
+    unknown
+  >;
   await prisma.bot.update({
     where: { id: botId },
     data: {
       memory: {
+        ...memory,
         plan: plan as unknown as object,
         planMadeAt: Date.now(),
         journal,
@@ -867,15 +886,14 @@ async function answerMail(
   });
   if (letters.length === 0) return { sent: 0, spend };
 
-  await prisma.message.updateMany({
-    where: { id: { in: letters.map((letter) => letter.id) }, recipientId: commanderId },
-    data: { isRead: true },
-  });
-
   let sent = 0;
   let ledger = spend;
+  const handled: string[] = [];
   for (const letter of letters) {
-    if (!letter.senderId) continue;
+    if (!letter.senderId) {
+      handled.push(letter.id);
+      continue;
+    }
     /*
      * Потолок на переписку жесткий и стоит в коде, а не в промпте.
      *
@@ -884,11 +902,17 @@ async function answerMail(
      * каждую минуту, отвечал бы каждую минуту: каждое письмо это вызов
      * модели, а норма у нас общая на всех.
      *
-     * Письмо все равно помечается прочитанным выше: молчание не должно
-     * приводить к тому, что бот пытается ответить на него снова и снова.
+     * Упершееся в потолок письмо остается непрочитанным.
+     *
+     * Раньше все выбранные письма помечались прочитанными сразу, до проверки
+     * потолка, — и письмо живого игрока, пришедшее после шестого за сутки,
+     * пропадало молча: бот его «прочел» и не ответил никогда. Теперь такое
+     * письмо ждет завтрашнего дня. Перечитывание стоит один запрос к базе
+     * и ни одного обращения к модели.
      */
     if (!mayWrite(ledger, letter.senderId)) continue;
 
+    handled.push(letter.id);
     ledger = withAttempt(ledger);
     const text = await askReply(
       character,
@@ -896,6 +920,8 @@ async function answerMail(
       letter.subject,
       letter.body,
     );
+    // Модель промолчала — письмо все равно обработано: пытаться отвечать
+    // на него вечно значит жечь норму на одном и том же.
     if (!text) continue;
 
     await deliver([
@@ -910,6 +936,16 @@ async function answerMail(
     ledger = withLetter(ledger, letter.senderId);
     sent += 1;
   }
+
+  // Помечаем прочитанными только то, за что взялись: молчание модели тоже
+  // считается ответом — иначе бот пытался бы отвечать на одно письмо вечно.
+  if (handled.length > 0) {
+    await prisma.message.updateMany({
+      where: { id: { in: handled }, recipientId: commanderId },
+      data: { isRead: true },
+    });
+  }
+
   return { sent, spend: ledger };
 }
 
@@ -933,9 +969,10 @@ async function rallyNeighbours(
   aggressorId: string,
   aggressorName: string,
   raids: number,
-): Promise<ActionResult> {
+  spend: BotSpend,
+): Promise<ActionResult & { spend: BotSpend }> {
   const bot = await prisma.bot.findFirst({ where: { commanderId }, select: { id: true, memory: true } });
-  if (!bot) return { ok: false, error: 'Бот не найден' };
+  if (!bot) return { ok: false, error: 'Бот не найден', spend };
 
   const memory = (typeof bot.memory === 'object' && bot.memory !== null ? bot.memory : {}) as Record<
     string,
@@ -950,16 +987,33 @@ async function rallyNeighbours(
   }
   const last = sent[aggressorId];
   if (typeof last === 'number' && Date.now() - last < RALLY_COOLDOWN_MS) {
-    return { ok: false, error: 'призыв уже разослан' };
+    return { ok: false, error: 'призыв уже разослан', spend };
   }
 
   const me = await prisma.commander.findUnique({ where: { id: commanderId }, select: { nickname: true } });
-  const neighbours = await prisma.commander.findMany({
+  const candidates = await prisma.commander.findMany({
     where: { id: { notIn: [commanderId, aggressorId] } },
     select: { id: true },
-    take: RALLY_AUDIENCE,
+    take: RALLY_AUDIENCE * 2,
   });
-  if (neighbours.length === 0) return { ok: false, error: 'звать некого' };
+
+  /*
+   * Призыв считается письмами наравне с остальными.
+   *
+   * Раньше он шел мимо потолка совсем: письмо собирает код, модели оно
+   * не стоит ничего, и казалось, что ограничивать нечего. Но потолок защищает
+   * не бюджет, а ящик живого игрока, и рассылке он нужен даже больше, чем
+   * ответам: адресатов у нее шестеро разом.
+   */
+  let ledger = spend;
+  const neighbours = [];
+  for (const row of candidates) {
+    if (neighbours.length >= RALLY_AUDIENCE) break;
+    if (!mayWrite(ledger, row.id)) continue;
+    neighbours.push(row);
+    ledger = withLetter(ledger, row.id);
+  }
+  if (neighbours.length === 0) return { ok: false, error: 'звать некого', spend };
 
   await deliver(
     neighbours.map((row) => ({
@@ -980,7 +1034,7 @@ async function rallyNeighbours(
     data: { memory: { ...memory, rallied: { ...sent, [aggressorId]: Date.now() } } },
   });
 
-  return { ok: true, message: `призыв разослан: ${neighbours.length}` };
+  return { ok: true, message: `призыв разослан: ${neighbours.length}`, spend: ledger };
 }
 
 /**
@@ -1389,6 +1443,27 @@ async function turn(botId: string): Promise<BotTurn | null> {
 
   const profile = withPlan(bot.character, plan?.plan ?? null);
   for (const intent of decide(snapshot, profile)) {
+    /*
+     * Призыв о помощи идет не через `execute`: он единственный трогает
+     * счетчик переписки, а тот живет здесь. Тащить счетчик через все
+     * остальные ветки ради одной значило бы усложнить их все.
+     */
+    if (intent.kind === 'RALLY') {
+      const rallied = await rallyNeighbours(
+        bot.commanderId,
+        intent.commanderId,
+        intent.nickname,
+        intent.raids,
+        spend,
+      );
+      spend = rallied.spend;
+      if (rallied.ok) {
+        actions.push(`RALLY: ${intent.why}`);
+        await saveSpend(bot.id, spend);
+      }
+      continue;
+    }
+
     const result = await execute(bot.commanderId, intent);
     if (result.ok) actions.push(`${intent.kind}: ${intent.why}`);
   }
