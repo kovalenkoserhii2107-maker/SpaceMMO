@@ -48,7 +48,6 @@ import {
 import {
   DECISION_INTERVAL_MS,
   DECISION_JITTER_MS,
-  NEWBIE_SHIELD_DAYS,
   isBotCharacter,
   type BotCharacter,
 } from './personality.js';
