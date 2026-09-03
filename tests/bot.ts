@@ -546,10 +546,34 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
     character: 'TRADER',
     credits: 500_000,
     hubStorage: { ore: 19_000, polymers: 1000, free: 480, level: 4, upgradeCost: 136_000 },
+    market: [
+      { resource: 'ORE', reference: 10, seeded: false, demand: 8000, supply: 0, skew: 1 },
+      { resource: 'POLYMERS', reference: 14, seeded: false, demand: 0, supply: 0, skew: null },
+    ],
   });
   check(
-    'забитый склад на хабе бот расширяет за криптогривну',
+    'забитый ходовым товаром склад бот расширяет за криптогривну',
     decide(jammed).some((i) => i.kind === 'HUB_UPGRADE'),
+  );
+
+  /*
+   * А под неликвид — не расширяет. Живой бот поднял склад с четвертого
+   * уровня до восьмого и сжег 1.9 млн ₴ ради 56 тысяч полимеров, которых
+   * никто не берет: каждое расширение вдвое дороже предыдущего, а спроса
+   * от этого не появляется.
+   */
+  const deadStock = snapshotWith({
+    character: 'TRADER',
+    credits: 500_000,
+    hubStorage: { ore: 0, polymers: 20_000, free: 480, level: 4, upgradeCost: 136_000 },
+    market: [
+      { resource: 'ORE', reference: 10, seeded: false, demand: 0, supply: 0, skew: null },
+      { resource: 'POLYMERS', reference: 14, seeded: false, demand: 0, supply: 30_000, skew: -1 },
+    ],
+  });
+  check(
+    'под неликвид склад не расширяется: место освобождает вывоз, а не деньги',
+    !decide(deadStock).some((i) => i.kind === 'HUB_UPGRADE'),
   );
 
   const broke = snapshotWith({

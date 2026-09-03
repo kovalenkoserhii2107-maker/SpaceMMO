@@ -1125,12 +1125,26 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
    */
   const hubTotal = snapshot.hubStorage.ore + snapshot.hubStorage.polymers;
   const hubCapacity = hubTotal + Math.max(0, snapshot.hubStorage.free);
+  /*
+   * Расширяем, только если забит он ходовым товаром.
+   *
+   * Иначе бот платит за хранение неликвида, и каждый следующий уровень вдвое
+   * дороже предыдущего: живой бот поднял склад с четвертого до восьмого,
+   * сжег 1.9 млн ₴ и все ради 56 тысяч полимеров, которых никто не берет.
+   * Место под неликвид освобождается не расширением, а вывозом домой.
+   */
+  const liquid = TRADED.some((resource) => {
+    const onHub = resource === 'ORE' ? snapshot.hubStorage.ore : snapshot.hubStorage.polymers;
+    const demand = snapshot.market.find((ref) => ref.resource === resource)?.demand ?? 0;
+    return onHub > 0 && demand > 0;
+  });
   if (
     hubCapacity > 0 &&
     hubTotal >= hubCapacity * 0.8 &&
+    liquid &&
     snapshot.credits >= snapshot.hubStorage.upgradeCost
   ) {
-    intents.push({ kind: 'HUB_UPGRADE', why: 'склад на хабе забит, торговать негде' });
+    intents.push({ kind: 'HUB_UPGRADE', why: 'склад на хабе забит ходовым товаром' });
   }
 
   /*

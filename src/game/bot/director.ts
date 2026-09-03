@@ -424,8 +424,30 @@ async function deliverToHub(
   const caps = storageCapacities(base.levels);
   const surplus = (held: number, cap: number) => Math.max(0, held - cap * 0.5);
 
-  let ore = Math.floor(surplus(base.resources.ore, caps.ore) * 0.8);
-  let polymers = Math.floor(surplus(base.resources.polymers, caps.polymers) * 0.8);
+  /*
+   * Не везем то, что уже лежит на хабе непроданным.
+   *
+   * Без этого тормоза получался насос в пустоту: полимеров на рынке избыток,
+   * их никто не берет, но бот исправно возил новые — склад хаба забивался,
+   * и бот платил за расширение, каждый раз вдвое дороже предыдущего.
+   * Живой бот сжег так 1.9 млн ₴, подняв склад с четвертого уровня
+   * до восьмого ради 56 тысяч полимеров, которые никому не нужны.
+   *
+   * Порог — нынешний спрос в стакане плюс один трюм про запас: держать товар
+   * на хабе имеет смысл ровно настолько, насколько его готовы купить, плюс
+   * немного на случай, если покупатель появится до следующего рейса.
+   */
+  const demandFor = (resource: 'ORE' | 'POLYMERS') =>
+    snapshot.market.find((ref) => ref.resource === resource)?.demand ?? 0;
+  const glutted = (resource: 'ORE' | 'POLYMERS', onHub: number) =>
+    onHub > demandFor(resource) + hold;
+
+  let ore = glutted('ORE', snapshot.hubStorage.ore)
+    ? 0
+    : Math.floor(surplus(base.resources.ore, caps.ore) * 0.8);
+  let polymers = glutted('POLYMERS', snapshot.hubStorage.polymers)
+    ? 0
+    : Math.floor(surplus(base.resources.polymers, caps.polymers) * 0.8);
   if (ore + polymers > hold) {
     // Режем пропорционально, чтобы не вывезти один ресурс целиком.
     const scale = hold / (ore + polymers);
