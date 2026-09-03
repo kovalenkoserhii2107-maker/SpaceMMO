@@ -19,6 +19,7 @@ import {
   missingBuildingRequirements,
   multiplyResources,
   productionPerSecond,
+  MINE_FOR,
   STORAGE_FOR,
   STORED_RESOURCES,
   type StoredResource,
@@ -431,6 +432,32 @@ export function buildingPlan(
     if (Math.max(0, base.resources[resource]) < caps[resource] * 0.9) continue;
     if (buffered(resource)) continue;
     want(STORAGE_FOR[resource]);
+  }
+
+  /*
+   * Ресурс, которого хронически нет, добывают, а не ждут.
+   *
+   * Запас меряется не долей склада, а часами собственной добычи: склад растет
+   * уровнями, добыча — тоже, и «мало» здесь значит «расходуем быстрее, чем
+   * производим». Перекос считается против самого обильного ресурса, иначе
+   * правило срабатывало бы на старте, когда мало всего сразу.
+   *
+   * Без него семеро живых ботов встали одновременно. Руда — универсальный
+   * вход: следующий уровень шахты стоит вчетверо больше руды, чем полимеров,
+   * а добывались они поровну. К вечеру у всех склады были забиты полимерами,
+   * руды оставалось шесть-девять процентов, и все семеро выставили заявки
+   * на покупку руды. Продавать ее было некому: не было ни у кого. Рынок
+   * встал — четырнадцать сделок за шесть часов, — а Крамар держал рудную
+   * шахту четвертым пунктом плана, имея 3 839 руды при цели в 43 187.
+   */
+  const hours = (resource: StoredResource) =>
+    before[resource] > 0 ? Math.max(0, base.resources[resource]) / (before[resource] * 3600) : Infinity;
+  const starved = STORED_RESOURCES.filter((resource) => hours(resource) < 1);
+  const plenty = STORED_RESOURCES.some((resource) => hours(resource) > 3);
+  if (plenty && starved.length > 0) {
+    // Самый голодный первым: он и есть узкое место.
+    const worst = starved.reduce((a, b) => (hours(a) <= hours(b) ? a : b));
+    want(MINE_FOR[worst]);
   }
 
   // Просевшая энергия режет добычу на всех шахтах разом, поэтому станция

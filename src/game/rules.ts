@@ -521,6 +521,13 @@ export const STORAGE_FOR: Record<StoredResource, BuildingType> = {
   plasma: 'PLASMA_STORAGE',
 };
 
+/** Какая шахта добывает ресурс: обратная сторона `STORAGE_FOR`. */
+export const MINE_FOR: Record<StoredResource, BuildingType> = {
+  ore: 'ORE_MINE',
+  polymers: 'POLYMER_PLANT',
+  plasma: 'PLASMA_REACTOR',
+};
+
 export type StorageCapacities = Record<StoredResource, number>;
 
 /**

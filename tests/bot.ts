@@ -689,6 +689,46 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
   );
 }
 
+{
+  /*
+   * Тупик, в который встали семеро живых ботов одновременно. Руда —
+   * универсальный вход: следующий уровень шахты стоит вчетверо больше руды,
+   * чем полимеров, а добывались они поровну. К вечеру склады были забиты
+   * полимерами, руды оставалось шесть процентов, и все семеро выставили
+   * заявки на ее покупку — продавать было некому. Рынок встал: четырнадцать
+   * сделок за шесть часов.
+   */
+  const starved = testBase('home', {
+    levels: { ...emptyLevels(), ORE_MINE: 7, POLYMER_PLANT: 7, PLASMA_REACTOR: 6, POWER_PLANT: 11,
+      SCIENCE_CENTER: 4, SHIPYARD: 4, ORE_STORAGE: 8, POLYMER_STORAGE: 11, PLASMA_STORAGE: 9 },
+    // Руды на час добычи, полимеров на много часов — перекос, который бот
+    // создал себе сам. Плазмы вдоволь и склад не полон, иначе сработало бы
+    // правило остановленной добычи, и оно тут право.
+    resources: { ore: 3839, polymers: 106_970, plasma: 40_000 },
+  });
+  const plan = buildingPlan(starved, emptyTechLevels(), 'TRADER');
+  check(
+    'ресурс, которого хронически нет, бот идет добывать',
+    plan[0] === 'ORE_MINE',
+    plan.slice(0, 3).join(' → '),
+  );
+}
+
+{
+  // Ровный запас правило не трогает: мало всего сразу — это старт игры,
+  // а не перекос.
+  const even = testBase('home', {
+    levels: { ...emptyLevels(), ORE_MINE: 5, POLYMER_PLANT: 5, PLASMA_REACTOR: 4, POWER_PLANT: 7 },
+    resources: { ore: 500, polymers: 500, plasma: 300 },
+  });
+  const plan = buildingPlan(even, emptyTechLevels(), 'TRADER');
+  check(
+    'при ровном голоде шахта вперед не лезет',
+    plan[0] !== 'ORE_MINE' || plan.length === 1,
+    plan.slice(0, 3).join(' → '),
+  );
+}
+
 /* --------------------- Коалиция против агрессора --------------------- */
 
 console.log('\n=== Коалиция: против серийного агрессора скидываются ===');
