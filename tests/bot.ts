@@ -18,6 +18,7 @@ import {
   testBase,
   type BotRaidTarget,
   type BotSnapshot,
+  type BotThreat,
 } from '../src/game/bot/decide.js';
 import { NEWBIE_SHIELD_DAYS, BOT_PERSONALITIES, personality } from '../src/game/bot/personality.js';
 import { parsePlan, withPlan } from '../src/game/bot/plan.js';
@@ -685,6 +686,126 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
   check(
     'и новых зондов не заказывает',
     !intents.some((i) => i.kind === 'SHIPS' && i.ship === 'PROBE'),
+  );
+}
+
+/* --------------------- Коалиция против агрессора --------------------- */
+
+console.log('\n=== Коалиция: против серийного агрессора скидываются ===');
+
+function threat(overrides: Partial<BotThreat> = {}): BotThreat {
+  return {
+    commanderId: 'хижак',
+    nickname: 'Хижак',
+    planetId: 'логово',
+    raids: 5,
+    againstMe: false,
+    knownStrength: 1000,
+    distance: 3,
+    ...overrides,
+  };
+}
+
+function armed(overrides: Record<string, unknown> = {}) {
+  return snapshotWith({
+    character: 'TRADER',
+    bases: [
+      testBase('home', {
+        levels: { ...emptyLevels(), ORE_MINE: 8, POLYMER_PLANT: 7, POWER_PLANT: 9, SCIENCE_CENTER: 5, SHIPYARD: 5 },
+        resources: { ore: 40_000, polymers: 20_000, plasma: 8000 },
+        ships: { ...emptyShipCounts(), CRUISER: 30 },
+      }),
+    ],
+    raidTargets: [
+      { planetId: 'логово', commanderId: 'хижак', accountAgeDays: 30, isBot: true, knownStrength: 1000, distance: 3 },
+    ],
+    ...overrides,
+  });
+}
+
+{
+  /*
+   * Ради этого коалиция и написана. Живой Купець получил шестьдесят один
+   * набег подряд, потерял весь флот и всю оборону и только предлагал мир,
+   * который агрессор игнорировал. В одиночку жертве такого не остановить.
+   */
+  const raid = decide(armed({ threats: [threat()] })).find((i) => i.kind === 'RAID');
+  check(
+    'торговец летит на серийного агрессора, хотя сам не воюет',
+    raid?.kind === 'RAID' && raid.planetId === 'логово',
+    raid?.kind === 'RAID' ? raid.why : 'не полетел',
+  );
+}
+
+{
+  // Порог здесь ниже обычного — бьют вместе, — но пол безнадежности остается:
+  // лететь на цель втрое сильнее нельзя никому и ни при какой обиде.
+  const hopelessOne = armed({ threats: [threat({ knownStrength: 10_000_000 })] });
+  check(
+    'на заведомо более сильного не летят даже коалицией',
+    !decide(hopelessOne).some((i) => i.kind === 'RAID'),
+  );
+}
+
+{
+  const victim = armed({ threats: [threat({ againstMe: true })] });
+  const rally = decide(victim).find((i) => i.kind === 'RALLY');
+  check(
+    'жертва рассылает призыв о помощи',
+    rally?.kind === 'RALLY' && rally.commanderId === 'хижак',
+    rally?.kind === 'RALLY' ? rally.why : 'молчит',
+  );
+  check(
+    'а свидетель чужой беды почту не засоряет',
+    !decide(armed({ threats: [threat({ againstMe: false })] })).some((i) => i.kind === 'RALLY'),
+  );
+}
+
+{
+  /*
+   * Отступление. Живой Хижак сжег пятьдесят три истребителя из пятидесяти
+   * трех и продолжал слать набеги транспортами — только потому, что жертве
+   * уже нечем было отвечать.
+   */
+  const beaten = snapshotWith({
+    character: 'AGGRESSOR',
+    fleetPeak: 100_000,
+    bases: [
+      testBase('home', {
+        levels: { ...emptyLevels(), ORE_MINE: 8, POLYMER_PLANT: 7, POWER_PLANT: 9, SCIENCE_CENTER: 5, SHIPYARD: 5 },
+        resources: { ore: 40_000, polymers: 20_000, plasma: 8000 },
+        ships: { ...emptyShipCounts(), LIGHT_FIGHTER: 1 },
+      }),
+    ],
+    raidTargets: [
+      { planetId: 'жертва', commanderId: 'купець', accountAgeDays: 30, isBot: true, knownStrength: 1, distance: 2 },
+    ],
+  });
+  check(
+    'потеряв четыре пятых флота, агрессор в набеги не ходит',
+    !decide(beaten).some((i) => i.kind === 'RAID'),
+  );
+}
+
+{
+  // Двое и больше воюющих против нас — это союз, а не совпадение.
+  const besieged = snapshotWith({
+    character: 'AGGRESSOR',
+    warsAgainstMe: 2,
+    bases: [
+      testBase('home', {
+        levels: { ...emptyLevels(), ORE_MINE: 8, POLYMER_PLANT: 7, POWER_PLANT: 9, SCIENCE_CENTER: 5, SHIPYARD: 5 },
+        resources: { ore: 40_000, polymers: 20_000, plasma: 8000 },
+        ships: { ...emptyShipCounts(), CRUISER: 30 },
+      }),
+    ],
+    raidTargets: [
+      { planetId: 'жертва', commanderId: 'купець', accountAgeDays: 30, isBot: true, knownStrength: 1, distance: 2 },
+    ],
+  });
+  check(
+    'против союза агрессор не воюет, а окапывается',
+    !decide(besieged).some((i) => i.kind === 'RAID'),
   );
 }
 

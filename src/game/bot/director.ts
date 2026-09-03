@@ -43,6 +43,7 @@ import {
   type BotFreePlanet,
   type BotIntent,
   type BotRaidTarget,
+  type BotThreat,
   type BotSnapshot,
 } from './decide.js';
 import {
@@ -84,6 +85,8 @@ function distance(a: { galaxyX: number; galaxyY: number }, b: { galaxyX: number;
 async function buildSnapshot(
   commander: CommanderRuntimeState,
   character: BotCharacter,
+  /** Память бота: в ней лежит лучший флот, какой у него был. */
+  memory: unknown,
 ): Promise<BotSnapshot | null> {
   const bases = [...commander.bases.values()];
   if (bases.length === 0) return null;
@@ -91,7 +94,7 @@ async function buildSnapshot(
   const home = bases[0]!;
   const homeGalaxy = home.galaxy;
 
-  const [freeRows, foreignRows, scans, orders, debrisRows, recentTrades, hubStock] = await Promise.all([
+  const [freeRows, foreignRows, scans, orders, debrisRows, raidLog, recentTrades, hubStock] = await Promise.all([
     prisma.planet.findMany({
       where: { base: null },
       select: { id: true, systemId: true, system: { select: { galaxyX: true, galaxyY: true } } },
@@ -132,6 +135,23 @@ async function buildSnapshot(
       },
       take: 20,
     }),
+    /*
+     * Набеги за сутки: по ним видно серийного агрессора.
+     *
+     * Берем все бои галактики, а не только свои: соседа бьют — это и наше
+     * дело. Знание тут не подсматривание, а слух: жертва сама рассылает
+     * призыв о помощи, и набег на соседнюю планету видно из своей системы.
+     */
+    prisma.battleReport.findMany({
+      where: { createdAt: { gte: new Date(Date.now() - 86_400_000) } },
+      select: {
+        attackerId: true,
+        defenderId: true,
+        planetId: true,
+        attacker: { select: { nickname: true } },
+      },
+      take: 500,
+    }),
     // Последние сделки: цену ресурса назначает рынок, а не константа.
     prisma.trade.findMany({
       orderBy: { createdAt: 'desc' },
@@ -160,6 +180,25 @@ async function buildSnapshot(
     systemId: row.systemId,
     distance: distance(homeGalaxy, row.system),
   }));
+
+  /*
+   * Лучший флот, какой у бота был, и сколько командиров с ним воюют.
+   *
+   * Первое — единственный способ увидеть, что тебя разбили: чужой флот
+   * измерить нечем, разведка показывает оборону, а свой известен точно.
+   * Пик хранится в памяти бота и переживает изменения игры, поэтому читается
+   * защищенно (правила 8 и 9).
+   */
+  const fleetValue = bases.reduce((sum, base) => sum + spentOnFleet(base.ships), 0);
+  const savedPeak =
+    typeof memory === 'object' && memory !== null
+      ? (memory as Record<string, unknown>)['fleetPeak']
+      : undefined;
+  const fleetPeak = Math.max(
+    fleetValue,
+    typeof savedPeak === 'number' && Number.isFinite(savedPeak) ? savedPeak : 0,
+  );
+  const warsOnMe = await prisma.warDeclaration.count({ where: { targetId: commander.commanderId } });
 
   const raidTargets: BotRaidTarget[] = foreignRows.map((row) => ({
     planetId: row.planetId,
@@ -212,6 +251,10 @@ async function buildSnapshot(
         skew: both > 0 ? Math.round(((demand - supply) / both) * 100) / 100 : null,
       };
     }),
+    threats: buildThreats(commander.commanderId, raidLog, raidTargets),
+    fleetPeak,
+    // Двое и больше воюющих против нас — это союз, а не совпадение.
+    warsAgainstMe: warsOnMe,
     debrisFields: debrisRows.map((row) => ({
       planetId: row.id,
       ore: row.debrisOre,
@@ -300,6 +343,10 @@ async function execute(commanderId: string, intent: BotIntent): Promise<ActionRe
       // за секунды между решением и вызовом.
       const result = await fillOrder(commanderId, intent.orderId, intent.amount);
       return result;
+    }
+
+    case 'RALLY': {
+      return rallyNeighbours(commanderId, intent.commanderId, intent.nickname, intent.raids);
     }
 
     case 'HUB_UPGRADE': {
@@ -867,6 +914,133 @@ async function answerMail(
 }
 
 /**
+ * Разослать соседям призыв объединиться против серийного агрессора.
+ *
+ * Письмо собирает код, а не модель: это сигнал, а не переговоры, и стоить
+ * он должен ноль запросов. Уходит оно и ботам, и живым игрокам — последним
+ * это единственный способ узнать, что рядом кто-то зарвался, и решить,
+ * вмешиваться ли.
+ *
+ * Раз в двенадцать часов на одного агрессора и не больше шести адресатов.
+ * Тревога, повторяемая каждые сорок пять секунд, — это не тревога, а спам:
+ * набеги идут раз в минуту, и без этого предела ящик соседа лег бы за час.
+ */
+const RALLY_COOLDOWN_MS = 12 * 3600_000;
+const RALLY_AUDIENCE = 6;
+
+async function rallyNeighbours(
+  commanderId: string,
+  aggressorId: string,
+  aggressorName: string,
+  raids: number,
+): Promise<ActionResult> {
+  const bot = await prisma.bot.findFirst({ where: { commanderId }, select: { id: true, memory: true } });
+  if (!bot) return { ok: false, error: 'Бот не найден' };
+
+  const memory = (typeof bot.memory === 'object' && bot.memory !== null ? bot.memory : {}) as Record<
+    string,
+    unknown
+  >;
+  const raw = (memory['rallied'] ?? {}) as Record<string, unknown>;
+  // `Bot.memory` — это JSON из базы, переживающий изменения игры: читаем
+  // защищенно, а не полагаемся на форму (правила 8 и 9).
+  const sent: Record<string, number> = {};
+  for (const [id, at] of Object.entries(raw)) {
+    if (typeof at === 'number' && Number.isFinite(at)) sent[id] = at;
+  }
+  const last = sent[aggressorId];
+  if (typeof last === 'number' && Date.now() - last < RALLY_COOLDOWN_MS) {
+    return { ok: false, error: 'призыв уже разослан' };
+  }
+
+  const me = await prisma.commander.findUnique({ where: { id: commanderId }, select: { nickname: true } });
+  const neighbours = await prisma.commander.findMany({
+    where: { id: { notIn: [commanderId, aggressorId] } },
+    select: { id: true },
+    take: RALLY_AUDIENCE,
+  });
+  if (neighbours.length === 0) return { ok: false, error: 'звать некого' };
+
+  await deliver(
+    neighbours.map((row) => ({
+      recipientId: row.id,
+      senderId: commanderId,
+      type: 'PLAYER' as const,
+      subject: `«${aggressorName}» бьет без остановки`,
+      body:
+        `Говорит «${me?.nickname ?? 'сосед'}». За сутки «${aggressorName}» совершил ` +
+        `${raids} набегов на мою колонию и останавливаться не думает. В одиночку ` +
+        `его не унять — предлагаю ударить вместе, пока он не взялся за вас. ` +
+        `Ответа не жду: подниму флот, а вы решайте сами.`,
+    })),
+  );
+
+  await prisma.bot.update({
+    where: { id: bot.id },
+    data: { memory: { ...memory, rallied: { ...sent, [aggressorId]: Date.now() } } },
+  });
+
+  return { ok: true, message: `призыв разослан: ${neighbours.length}` };
+}
+
+/**
+ * Сколько набегов за сутки делают из соседа серийного агрессора.
+ *
+ * Один набег — война, дело обычное; три по одной жертве за сутки — промысел,
+ * и жертве его в одиночку не остановить. Живой Купець получил шестьдесят один
+ * набег подряд, потерял весь флот и всю оборону и только предлагал мир,
+ * который агрессор игнорировал.
+ */
+const RAID_SPREE = 3;
+
+function buildThreats(
+  self: string,
+  raids: ReadonlyArray<{ attackerId: string; defenderId: string; planetId: string; attacker: { nickname: string } }>,
+  targets: readonly BotRaidTarget[],
+): BotThreat[] {
+  // Считаем по паре «кто кого»: три набега на трех разных соседей — это
+  // обычная война на три фронта, а три на одного — уже избиение.
+  const byPair = new Map<string, number>();
+  const nicknames = new Map<string, string>();
+  const victims = new Map<string, Set<string>>();
+
+  for (const raid of raids) {
+    if (raid.attackerId === self) continue;
+    const pair = `${raid.attackerId}|${raid.defenderId}`;
+    byPair.set(pair, (byPair.get(pair) ?? 0) + 1);
+    nicknames.set(raid.attackerId, raid.attacker.nickname);
+    const seen = victims.get(raid.attackerId) ?? new Set<string>();
+    seen.add(raid.defenderId);
+    victims.set(raid.attackerId, seen);
+  }
+
+  const threats: BotThreat[] = [];
+  for (const [pair, count] of byPair) {
+    if (count < RAID_SPREE) continue;
+    const [attackerId, defenderId] = pair.split('|') as [string, string];
+    if (threats.some((threat) => threat.commanderId === attackerId)) continue;
+
+    // Ударить можно только по тому, чью планету нам показали: агрессор
+    // без известной базы — это слух, а не цель.
+    const reachable = targets.find((target) => target.commanderId === attackerId);
+    if (!reachable) continue;
+
+    threats.push({
+      commanderId: attackerId,
+      nickname: nicknames.get(attackerId) ?? 'неизвестный',
+      planetId: reachable.planetId,
+      raids: count,
+      againstMe: defenderId === self,
+      knownStrength: reachable.knownStrength,
+      distance: reachable.distance,
+    });
+  }
+
+  // Самый злостный первым: у кого набегов больше, тот и опаснее.
+  return threats.sort((a, b) => b.raids - a.raids);
+}
+
+/**
  * Что вырвало бота из расписания.
  *
  * Модель зовется не только по будильнику: бой, объявленная война или потеря
@@ -1132,7 +1306,7 @@ async function turn(botId: string): Promise<BotTurn | null> {
   const commander = await gameLoop.getCommander(bot.commanderId);
   if (!commander) return null;
 
-  const snapshot = await buildSnapshot(commander, bot.character);
+  const snapshot = await buildSnapshot(commander, bot.character, bot.memory);
   if (!snapshot) return null;
 
   const actions: string[] = [];
@@ -1235,6 +1409,26 @@ async function turn(botId: string): Promise<BotTurn | null> {
   if (hub) {
     const delivery = await deliverToHub(bot.commanderId, snapshot, hub.id);
     if (delivery) actions.push(delivery);
+  }
+
+  /*
+   * Пик флота записывается после решений, а не до: иначе только что
+   * заказанные корабли поднимали бы планку раньше, чем встали в строй.
+   * Пик только растет — в этом и смысл: он говорит, каким бот был в лучшей
+   * форме, и по нему видно, насколько его разбили.
+   */
+  if (snapshot.fleetPeak > 0) {
+    const memory = (typeof bot.memory === 'object' && bot.memory !== null ? bot.memory : {}) as Record<
+      string,
+      unknown
+    >;
+    const stored = memory['fleetPeak'];
+    if (typeof stored !== 'number' || stored < snapshot.fleetPeak) {
+      await prisma.bot.update({
+        where: { id: bot.id },
+        data: { memory: { ...memory, fleetPeak: snapshot.fleetPeak } },
+      });
+    }
   }
 
   const last = actions[actions.length - 1] ?? null;

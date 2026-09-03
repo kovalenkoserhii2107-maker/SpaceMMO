@@ -49,6 +49,7 @@ import {
 } from '../ships.js';
 import { fleetCapacity } from '../fleets.js';
 import { storageUpgradeCost } from '../market.js';
+import { hopeless } from './directives.js';
 import {
   colonySlots,
   economyBonuses,
@@ -122,6 +123,32 @@ export interface BotMarketRef {
   skew: number | null;
 }
 
+/**
+ * Серийный агрессор поблизости.
+ *
+ * Один набег — это война, дело обычное. Три и больше за сутки по одной жертве
+ * — это уже промысел, и в одиночку жертве его не остановить: живой Купець
+ * получил шестьдесят один набег подряд, потерял весь флот и всю оборону
+ * и только предлагал мир, который агрессор игнорировал.
+ *
+ * Против такого соседи скидываются. Договора между ними нет и не нужно:
+ * согласие — это когда сосед действительно объявил войну, а не строка в базе.
+ * Каждый решает сам, по той же оценке сил, по какой решает любой набег.
+ */
+export interface BotThreat {
+  commanderId: string;
+  nickname: string;
+  /** Планета, по которой можно ударить. */
+  planetId: string;
+  /** Сколько набегов он совершил за сутки. */
+  raids: number;
+  /** Бил ли он лично нас: своя обида поднимает готовность вложиться. */
+  againstMe: boolean;
+  /** Оценка его обороны по разведке. null — не разведан. */
+  knownStrength: number | null;
+  distance: number;
+}
+
 /** Заявка в стакане — своя или чужая. */
 export interface BotMarketOrder {
   id: string;
@@ -154,6 +181,17 @@ export interface BotSnapshot {
   market: BotMarketRef[];
   /** Поля обломков поблизости — цель для переработчика. */
   debrisFields: BotDebrisField[];
+  /** Серийные агрессоры по соседству: против них скидываются всем миром. */
+  threats: BotThreat[];
+  /**
+   * Самый большой флот, какой у бота был. По нему он видит, что разбит.
+   *
+   * Чужой флот измерить нечем — разведка показывает оборону, — а свой бот
+   * знает точно, и порог отступления считает он сам.
+   */
+  fleetPeak: number;
+  /** Сколько командиров объявили войну нам. Двое и больше — это союз. */
+  warsAgainstMe: number;
   /**
    * Весь стакан, свои заявки и чужие.
    *
@@ -198,6 +236,8 @@ export type BotIntent =
   | { kind: 'PICKUP'; baseId: string; ore: number; polymers: number; why: string }
   /** Расширить склад на хабе — платится криптогривной. */
   | { kind: 'HUB_UPGRADE'; why: string }
+  /** Призыв к соседям: против серийного агрессора в одиночку не выстоять. */
+  | { kind: 'RALLY'; commanderId: string; nickname: string; raids: number; why: string }
   | {
       kind: 'ORDER';
       side: 'BUY' | 'SELL';
@@ -799,11 +839,53 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
    * он задает приоритеты, а цены, сроки и бой по-прежнему считает сервер.
    * Испорченный план может заставить бота играть глупо — и только.
    */
-  const profile = override ?? personality(snapshot.character);
+  let profile = override ?? personality(snapshot.character);
   const intents: BotIntent[] = [];
   if (snapshot.bases.length === 0) return intents;
 
   const capital = snapshot.bases[0]!;
+  /*
+   * Мобилизация против серийного агрессора.
+   *
+   * Пока он бьет соседей, мирное развитие подождет: доля флота и обороны
+   * поднимается, но развитие не опускается ниже трети — того самого предела,
+   * за которым бот ломает сам себя. Это и есть «вложились в атакующий флот
+   * и оборону»: не декларация, а сдвинутые доли, по которым код и решает,
+   * что заказывать.
+   *
+   * Долю берет и жертва, и сосед. Разница в готовности: своя обида поднимает
+   * ставку выше, чем чужая.
+   */
+  /*
+   * Перегруппировка: флот разбит или против нас союз. Пока так, доход идет
+   * в оборону и восстановление, а не в новые набеги — иначе бот скармливает
+   * противнику свой же флот по частям.
+   */
+  const fleetNow = snapshot.bases.reduce((sum, base) => sum + spentOnFleet(base.ships), 0);
+  if (snapshot.fleetPeak > 0 && fleetNow < snapshot.fleetPeak * 0.2) {
+    profile = { ...profile, budget: { economy: 0.4, research: 0.15, fleet: 0.25, defense: 0.2 } };
+  } else if (snapshot.warsAgainstMe >= 2) {
+    profile = { ...profile, budget: { economy: 0.35, research: 0.15, fleet: 0.2, defense: 0.3 } };
+  }
+
+  const threat = snapshot.threats[0] ?? null;
+  if (threat) {
+    const zeal = threat.againstMe ? 1 : 0.6;
+    const fleet = profile.budget.fleet + 0.2 * zeal;
+    const defense = profile.budget.defense + 0.15 * zeal;
+    const rest = Math.max(0.33, 1 - fleet - defense);
+    const total = fleet + defense + rest;
+    profile = {
+      ...profile,
+      budget: {
+        economy: (rest * profile.budget.economy) / (profile.budget.economy + profile.budget.research) / total,
+        research: (rest * profile.budget.research) / (profile.budget.economy + profile.budget.research) / total,
+        fleet: fleet / total,
+        defense: defense / total,
+      },
+    };
+  }
+
   const held = portfolio(snapshot);
   /** Добрало ли направление свою долю портфеля. */
   const saturated = (direction: Direction): boolean =>
@@ -1084,7 +1166,49 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
 
   /* --- Набег --- */
   const ownFleet = snapshot.bases.reduce((sum, base) => sum + spentOnFleet(base.ships), 0);
-  const target = pickRaidTarget(snapshot.raidTargets, ownFleet, snapshot.character, profile);
+
+  /*
+   * Против серийного агрессора летят и торговцы, и не в одиночку.
+   *
+   * Порог перевеса здесь ниже обычного: бьют вместе, и полуторакратного
+   * превосходства каждого по отдельности ждать неоткуда — именно поэтому
+   * жертва в одиночку и не отбивалась. Пол безнадежности при этом остается:
+   * лететь на цель втрое сильнее нельзя никому и ни при какой обиде.
+   *
+   * Никакого договора между союзниками нет. Согласие — это когда сосед
+   * действительно поднял флот, а не строка в базе: каждый решает сам,
+   * по своей оценке сил, и передумать может в любой момент.
+   */
+  /*
+   * Разбит — значит воевать больше нечем, и надо уходить копить силы.
+   *
+   * Порог — пятая часть от лучшего своего флота: потеряв четыре пятых,
+   * агрессор перестает быть угрозой и становится мишенью. Живой Хижак дошел
+   * до этого сам и не заметил: сжег пятьдесят три истребителя из пятидесяти
+   * трех и продолжал слать набеги транспортами — только потому, что жертве
+   * уже нечем было отвечать. Против первого же, кому есть чем, он потерял бы
+   * и транспорты.
+   *
+   * Второй признак — союз: двое и больше объявили войну одновременно.
+   * Поодиночке они бы не решились, значит скинулись, и драться разом
+   * со всеми нельзя.
+   */
+  const beaten = snapshot.fleetPeak > 0 && ownFleet < snapshot.fleetPeak * 0.2;
+  const regrouping = beaten || snapshot.warsAgainstMe >= 2;
+
+  const rally =
+    threat &&
+    !regrouping &&
+    !hopeless(ownFleet, threat.knownStrength) &&
+    ownFleet >= (threat.knownStrength ?? 0)
+      ? threat
+      : null;
+
+  const target = regrouping
+    ? null
+    : rally
+      ? snapshot.raidTargets.find((item) => item.planetId === rally.planetId) ?? null
+      : pickRaidTarget(snapshot.raidTargets, ownFleet, snapshot.character, profile);
   if (target) {
     const striker = snapshot.bases.reduce((best, base) =>
       spentOnFleet(base.ships) > spentOnFleet(best.ships) ? base : best,
@@ -1106,7 +1230,9 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
         baseId: striker.id,
         planetId: target.planetId,
         ships: strike,
-        why: 'цель разведана и слабее эскадры',
+        why: rally
+          ? `${rally.nickname} бьет соседей: набегов за сутки ${rally.raids}`
+          : 'цель разведана и слабее эскадры',
       });
     }
   } else if (profile.raids) {
@@ -1152,6 +1278,25 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
         why: 'разведывать нечем, а цели не выяснены',
       });
     }
+  }
+
+  /*
+   * Призыв о помощи.
+   *
+   * Шлет его только жертва и только про того, кто бьет ее саму: рассылать
+   * тревогу за чужой счет — верный способ превратить почту в шум. Текст
+   * собирает код, не модель: это не переговоры, а сигнал, и стоить он должен
+   * ноль. Кто откликнется, решает каждый сам — согласие видно по поднятому
+   * флоту, а не по ответному письму.
+   */
+  if (threat?.againstMe) {
+    intents.push({
+      kind: 'RALLY',
+      commanderId: threat.commanderId,
+      nickname: threat.nickname,
+      raids: threat.raids,
+      why: `${threat.nickname} бьет меня раз за разом: набегов за сутки ${threat.raids}`,
+    });
   }
 
   /* --- Биржа --- */
@@ -1476,6 +1621,9 @@ export function emptyBotSnapshot(character: BotCharacter): BotSnapshot {
     raidTargets: [],
     market: [],
     debrisFields: [],
+    threats: [],
+    fleetPeak: 0,
+    warsAgainstMe: 0,
     orderBook: [],
     hubStorage: { ore: 0, polymers: 0, free: 0, level: 1, upgradeCost: storageUpgradeCost(2) },
     colonizing: false,
