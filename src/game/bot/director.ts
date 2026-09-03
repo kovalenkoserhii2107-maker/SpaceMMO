@@ -39,6 +39,7 @@ import { spentOnDefense, spentOnFleet } from '../score.js';
 import type { CommanderRuntimeState } from '../baseState.js';
 import {
   decide,
+  shielded,
   type BotFreePlanet,
   type BotIntent,
   type BotRaidTarget,
@@ -102,7 +103,7 @@ async function buildSnapshot(
       select: {
         planetId: true,
         commanderId: true,
-        commander: { select: { createdAt: true } },
+        commander: { select: { createdAt: true, user: { select: { role: true } } } },
         planet: { select: { system: { select: { galaxyX: true, galaxyY: true } } } },
       },
       take: 200,
@@ -165,6 +166,7 @@ async function buildSnapshot(
     planetId: row.planetId,
     commanderId: row.commanderId,
     accountAgeDays: (now - row.commander.createdAt.getTime()) / 86_400_000,
+    isBot: row.commander.user?.role === 'BOT',
     knownStrength: scanned.has(row.planetId) ? (scanned.get(row.planetId) as number) : null,
     distance: distance(homeGalaxy, row.planet.system),
   }));
@@ -923,7 +925,7 @@ async function applyDirective(
     case 'ATTACK': {
       const target = snapshot.raidTargets.find((item) => item.planetId === directive.planetId);
       if (!target) return note('цель пропала из виду');
-      if (target.accountAgeDays < NEWBIE_SHIELD_DAYS) return note('под щитом новичка — отказ');
+      if (shielded(target)) return note('под щитом новичка — отказ');
 
       const own = snapshot.bases.reduce((sum, base) => sum + spentOnFleet(base.ships), 0);
       if (hopeless(own, target.knownStrength)) return note('безнадежно, флот бы не вернулся');

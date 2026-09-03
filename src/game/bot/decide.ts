@@ -99,6 +99,8 @@ export interface BotRaidTarget {
   commanderId: string;
   /** Возраст аккаунта в сутках: щит новичка считается по нему. */
   accountAgeDays: number;
+  /** Бот ли это. Щит новичка между ботами не действует. */
+  isBot: boolean;
   /**
    * Оценка обороны цели по последней разведке в единицах ресурсов.
    * null — цель не разведана, лететь вслепую бот не станет.
@@ -591,6 +593,23 @@ export function nextResearch(
  * иначе эскадра выродилась бы в тысячу истребителей, потому что они
  * дешевые, и первый же крейсер противника выкосил бы ее целиком.
  */
+/**
+ * Прикрыт ли командир щитом новичка.
+ *
+ * Щит защищает человека, который еще не разобрался в правилах: бот ищет цели
+ * со скоростью машины и разграбил бы новичка в первые же сутки, ровно тогда,
+ * когда терять обиднее всего.
+ *
+ * Между ботами он не действует. Боту не обидно, разбираться в правилах ему
+ * не надо, а мир от взаимной неприкосновенности замирает: живой агрессор
+ * с сорока восемью истребителями простоял полсуток, получая на каждый вылет
+ * отказ, — воевать было не с кем, потому что все соседи оказались младше
+ * трех суток.
+ */
+export function shielded(target: { accountAgeDays: number; isBot: boolean }): boolean {
+  return !target.isBot && target.accountAgeDays < NEWBIE_SHIELD_DAYS;
+}
+
 function laggingShip(
   ships: ShipCounts,
   mix: Partial<Record<ShipType, number>>,
@@ -754,7 +773,7 @@ export function pickRaidTarget(
   if (!profile.raids) return null;
 
   const reachable = targets
-    .filter((target) => target.accountAgeDays >= NEWBIE_SHIELD_DAYS)
+    .filter((target) => !shielded(target))
     .filter((target) => target.knownStrength !== null)
     .filter((target) => ownFleetValue >= (target.knownStrength ?? 0) * profile.raidAdvantage);
 
@@ -1094,7 +1113,7 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
     // Целей нет, потому что никто не разведан — бот отправляет зонд.
     // Разведка ему нужна не меньше флота: без нее он летал бы вслепую.
     const blind = snapshot.raidTargets.find(
-      (candidate) => candidate.knownStrength === null && candidate.accountAgeDays >= NEWBIE_SHIELD_DAYS,
+      (candidate) => candidate.knownStrength === null && !shielded(candidate),
     );
     const scout = snapshot.bases.find((base) => base.ships.PROBE > 0);
     if (blind && scout) {

@@ -65,6 +65,7 @@ function target(overrides: Partial<BotRaidTarget> = {}): BotRaidTarget {
     planetId: 'p1',
     commanderId: 'victim',
     accountAgeDays: 30,
+    isBot: false,
     knownStrength: 100,
     distance: 1,
     ...overrides,
@@ -84,6 +85,27 @@ function target(overrides: Partial<BotRaidTarget> = {}): BotRaidTarget {
   check(
     'ветеран целью становится',
     pickRaidTarget([veteran], 1_000_000, 'AGGRESSOR')?.planetId === 'p1',
+  );
+}
+
+{
+  /*
+   * Между ботами щита нет. Он защищает человека, который еще не разобрался
+   * в правилах; боту разбираться не надо, а от взаимной неприкосновенности
+   * мир замирает: живой агрессор с сорока восемью истребителями простоял
+   * полсуток, получая на каждый вылет отказ, — все соседи оказались младше
+   * трех суток, и воевать было не с кем.
+   */
+  const youngBot = target({ accountAgeDays: NEWBIE_SHIELD_DAYS - 2, isBot: true, knownStrength: 100 });
+  check(
+    'молодого бота другой бот атаковать может',
+    pickRaidTarget([youngBot], 1_000_000, 'AGGRESSOR')?.planetId === 'p1',
+  );
+
+  const youngHuman = target({ accountAgeDays: NEWBIE_SHIELD_DAYS - 2, isBot: false, knownStrength: 100 });
+  check(
+    'а молодого живого игрока — по-прежнему нет',
+    pickRaidTarget([youngHuman], 1_000_000, 'AGGRESSOR') === null,
   );
 }
 
