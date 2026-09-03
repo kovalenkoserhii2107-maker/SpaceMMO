@@ -163,6 +163,9 @@ export const BOT_PERSONALITIES: Record<BotCharacter, BotPersonality> = {
       'COMBUSTION_DRIVE',
       'SHIELDS_TECH',
       'ARMOR_TECH',
+      // Торговцу «Шпионаж» нужен как контрразведка: разницу уровней читают
+      // с обеих сторон, и отставший показывает соседям свой склад целиком.
+      'ESPIONAGE',
       'WEAPONS_TECH',
       'ASTROPHYSICS',
       'HYPERSPACE_PHYSICS',

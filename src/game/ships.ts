@@ -95,7 +95,10 @@ const SHIPS: Record<ShipType, ShipDefinition> = {
     cost: { ore: 100, polymers: 40, plasma: 20 },
     baseSeconds: 20,
     shipyardLevel: 1,
-    requires: { COMPUTING_TECH: 1 },
+    // Зонд — шпионский дрон, а не телескоп: без «Шпионажа» его не собрать.
+    // Следствие принято сознательно: ранняя разведка отодвигается на всю
+    // ветку, и первые сутки агрессор не воюет вовсе.
+    requires: { ESPIONAGE: 1 },
   },
   SMALL_CARGO: {
     label: 'Малый транспорт «Чайка»',

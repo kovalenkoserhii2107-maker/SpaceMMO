@@ -58,6 +58,7 @@ import {
   missingDefenseRequirements,
   type DefenseType,
 } from './defenses.js';
+import { resolveEspionage, espionageSeed } from './espionage.js';
 import { plunderAmount, resolveBattle, type SideForces, type UnitLoss } from './combat.js';
 import { checkArchitect, checkPirateBane } from '../services/achievementService.js';
 import { canAttack, declareWar } from '../services/warService.js';
@@ -71,6 +72,7 @@ import {
   buildHarvestMail,
   buildReturnMail,
   buildSpyMail,
+  buildIntrusionMail,
   buildTransportMail,
 } from '../services/reportMail.js';
 import {
@@ -89,7 +91,6 @@ import {
   buildSpeedup,
   colonySlots,
   emptyTechLevels,
-  seesFleet,
   missingTechRequirements,
   researchCost,
   researchSeconds,
@@ -1265,37 +1266,93 @@ class GameLoop {
     }
 
     if (fleet.mission === 'SCAN' && fleet.targetPlanetId) {
-      const payload = await this.buildScanPayload(fleet.targetPlanetId);
       const planetId = fleet.targetPlanetId;
+      const payload = await this.buildScanPayload(planetId);
+
+      /*
+       * Разведку решает разница уровней «Шпионажа», а не абсолютный уровень:
+       * технология сразу наступательная и оборонительная. Броски делаются
+       * здесь, один раз, и их итог ложится в снимок навсегда — уничтоженный
+       * дрон не может задним числом привезти данные, а выученная позже наука
+       * не улучшает старый снимок.
+       */
+      const spy = await this.getCommander(fleet.commanderId);
+      const targetOwner = await prisma.planet.findUnique({
+        where: { id: planetId },
+        select: { name: true, system: { select: { name: true } }, base: { select: { commanderId: true } } },
+      });
+      const defenderId = targetOwner?.base?.commanderId ?? null;
+      const defenderLevel = defenderId
+        ? (
+            await prisma.research.findFirst({
+              where: { commanderId: defenderId, tech: 'ESPIONAGE' },
+              select: { level: true },
+            })
+          )?.level ?? 0
+        : 0;
+
+      const outcome = resolveEspionage(
+        spy?.techs.ESPIONAGE ?? 0,
+        defenderLevel,
+        espionageSeed(fleet.id, planetId),
+      );
+
+      const scanned = payload && !outcome.droneLost
+        ? { ...payload, detail: outcome.detail, resourcesSeen: outcome.resourcesSeen }
+        : null;
+
       await prisma.$transaction([
-        ...(payload
+        ...(scanned
           ? [
               prisma.planetScan.upsert({
                 where: { commanderId_planetId: { commanderId: fleet.commanderId, planetId } },
-                create: { commanderId: fleet.commanderId, planetId, scannedAt: new Date(now), data: toJson(payload) },
-                update: { scannedAt: new Date(now), data: toJson(payload) },
+                create: { commanderId: fleet.commanderId, planetId, scannedAt: new Date(now), data: toJson(scanned) },
+                update: { scannedAt: new Date(now), data: toJson(scanned) },
               }),
             ]
           : []),
-        prisma.fleet.update({ where: { id: fleet.id }, data: { status: 'RETURNING' } }),
+        // Сбитый дрон домой не возвращается: флот уничтожается целиком,
+        // потому что в разведку уходит один зонд и ничего больше.
+        outcome.droneLost
+          ? prisma.fleet.delete({ where: { id: fleet.id } })
+          : prisma.fleet.update({ where: { id: fleet.id }, data: { status: 'RETURNING' } }),
       ]);
+
+      const planetName = targetOwner?.name ?? 'неизвестной планеты';
+      const systemName = targetOwner?.system.name ?? '—';
 
       // Снимок на карте стареет и через сутки прячет цифры, а письмо остается
       // как зафиксированный момент — по нему видно, что было на планете тогда.
       if (payload) {
-        const planet = await prisma.planet.findUnique({
-          where: { id: planetId },
-          select: { name: true, system: { select: { name: true } } },
-        });
         await this.notify(
           buildSpyMail({
             commanderId: fleet.commanderId,
-            planetName: planet?.name ?? 'неизвестной планеты',
-            systemName: planet?.system.name ?? '—',
+            planetName,
+            systemName,
             payload,
-            // Письмо — зафиксированный момент, и умение читать берется тоже
-            // на этот момент: снимок в почте задним числом не переписывается.
-            seesFleet: seesFleet((await this.getCommander(fleet.commanderId))?.techs ?? emptyTechLevels()),
+            outcome,
+          }),
+        );
+      }
+
+      // Второе письмо — цели, если она заметила пролет.
+      if (defenderId && outcome.alert !== 'NONE') {
+        const home = await prisma.base.findFirst({
+          where: { commanderId: fleet.commanderId },
+          select: { planet: { select: { name: true, system: { select: { name: true } } } } },
+        });
+        await this.notify(
+          buildIntrusionMail({
+            commanderId: defenderId,
+            planetName,
+            alert: outcome.alert,
+            detail: outcome.detail,
+            spyName: spy ? (await prisma.commander.findUnique({
+              where: { id: fleet.commanderId },
+              select: { nickname: true },
+            }))?.nickname ?? 'неизвестный' : 'неизвестный',
+            spyHome: home ? `${home.planet.name} (${home.planet.system.name})` : null,
+            droneLost: outcome.droneLost,
           }),
         );
       }
@@ -2165,6 +2222,12 @@ class GameLoop {
 
     if (planet.base) {
       const live = this.findLoadedBase(planet.base.id);
+      // Технологии снимаются всегда, читаются только с верхней ступени:
+      // что зонд снял, решает лестница, а не то, что мы записали.
+      const ownerTechs = await prisma.research.findMany({
+        where: { commanderId: planet.base.commanderId },
+        select: { tech: true, level: true },
+      });
       const levels = live
         ? { ...live.levels }
         : {
@@ -2213,6 +2276,7 @@ class GameLoop {
         },
         fleet,
         defenses,
+        techs: Object.fromEntries(ownerTechs.filter((row) => row.level > 0).map((row) => [row.tech, row.level])),
       };
     }
 

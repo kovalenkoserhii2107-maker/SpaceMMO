@@ -308,32 +308,53 @@ if (!token) {
    * Отдавать его даром вместе с уровнями зданий значило бы, что разведка
    * отвечает на главный вопрос бесплатно.
    */
-  const blindScout = foreignPlanetView(
-    { planetId: 'p', name: 'Цель', position: 3, type: 'TERRAN', size: 1, debris: { ore: 0, polymers: 0 } },
-    { data: { owner: 'сосед', colonized: true, richness: { ore: 1, polymers: 1, plasma: 1, energy: 1, antimatter: 1 },
-      buildings: null, resources: null, fleet: { ...emptyShipCounts(), CRUISER: 40 }, defenses: null },
-      scannedAt: new Date() },
-    Date.now(),
-    false,
+  const seen = (detail: string) => ({
+    data: {
+      owner: 'сосед',
+      colonized: true,
+      richness: { ore: 1, polymers: 1, plasma: 1, energy: 1, antimatter: 1 },
+      buildings: null,
+      resources: { ore: 500, polymers: 300, plasma: 100, antimatter: 0 },
+      fleet: { ...emptyShipCounts(), CRUISER: 40 },
+      defenses: null,
+      detail,
+      resourcesSeen: true,
+    } as unknown as ScanPayload,
+    scannedAt: new Date(),
+  });
+  const facts = {
+    planetId: 'p',
+    name: 'Цель',
+    position: 3,
+    type: 'TERRAN',
+    size: 1,
+    debris: { ore: 0, polymers: 0 },
+  };
+
+  const shallow = foreignPlanetView(facts, seen('FLEET_COUNT'), Date.now());
+  check(
+    'без перевеса в «Шпионаже» флот виден только числом',
+    shallow.fleet === null && shallow.fleetTotal === 40,
+    `по типам ${JSON.stringify(shallow.fleet)}, числом ${shallow.fleetTotal}`,
   );
   check(
-    'без «Шпионажа» состав флота в разведданных скрыт',
-    blindScout.fleet === null && blindScout.fleetLocked,
-    `флот ${JSON.stringify(blindScout.fleet)}, замок ${blindScout.fleetLocked}`,
+    'и склад тоже общим числом',
+    shallow.resources === null && shallow.resourcesTotal === 900,
+    `${shallow.resourcesTotal}`,
   );
 
-  const spy = foreignPlanetView(
-    { planetId: 'p', name: 'Цель', position: 3, type: 'TERRAN', size: 1, debris: { ore: 0, polymers: 0 } },
-    { data: { owner: 'сосед', colonized: true, richness: { ore: 1, polymers: 1, plasma: 1, energy: 1, antimatter: 1 },
-      buildings: null, resources: null, fleet: { ...emptyShipCounts(), CRUISER: 40 }, defenses: null },
-      scannedAt: new Date() },
-    Date.now(),
-    true,
-  );
+  const deep = foreignPlanetView(facts, seen('FULL_FORCES'), Date.now());
   check(
-    'со «Шпионажем» виден тот флот, что стоял на планете при пролете',
-    spy.fleet?.CRUISER === 40 && !spy.fleetLocked,
-    `крейсеров ${spy.fleet?.CRUISER}`,
+    'с перевесом виден тот флот, что стоял на планете при пролете',
+    deep.fleet?.CRUISER === 40 && deep.resources?.ore === 500,
+    `крейсеров ${deep.fleet?.CRUISER}, руды ${deep.resources?.ore}`,
+  );
+
+  const shot = foreignPlanetView(facts, seen('NONE'), Date.now());
+  check(
+    'сбитый дрон не привозит ничего, включая постройки',
+    shot.fleet === null && shot.fleetTotal === null && shot.buildings === null,
+    `флот ${shot.fleetTotal}, постройки ${JSON.stringify(shot.buildings)}`,
   );
 
   /* --- Шаблоны флотов --- */

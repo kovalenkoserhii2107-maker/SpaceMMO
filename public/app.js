@@ -2557,13 +2557,21 @@
      */
     const hidden = planet.colonized && planet.staleHidden;
 
+    /*
+     * Ступень «Шпионажа» решает, разбирать ли по типам или показывать числом.
+     * Общее количество — не полуправда, а отдельный по смыслу ответ: «сорок
+     * вымпелов, классы неизвестны» говорит о цели больше, чем пустое место,
+     * и меньше, чем разбор по классам. Поэтому у него своя подпись.
+     */
     const resources = planet.colonized && planet.resources
       ? pdSection('склад', [
           pdCell(icon('ore', 'sm'), fmt(planet.resources.ore)),
           pdCell(icon('polymers', 'sm'), fmt(planet.resources.polymers)),
           pdCell(icon('plasma', 'sm'), fmt(planet.resources.plasma)),
         ])
-      : '';
+      : planet.colonized && planet.resourcesTotal !== null && planet.resourcesTotal !== undefined
+        ? pdSection('склад', [pdCell('всего', fmt(planet.resourcesTotal))])
+        : '';
 
     const fleet = planet.colonized && planet.fleet
       ? pdSection('флот', [
@@ -2573,23 +2581,37 @@
           pdCell('крейс', planet.fleet.CRUISER),
           pdCell('фрегат', planet.fleet.FRIGATE),
         ])
-      : '';
+      : planet.colonized && planet.fleetTotal !== null && planet.fleetTotal !== undefined
+        ? pdSection('флот', [pdCell('вымпелов', fmt(planet.fleetTotal))])
+        : '';
 
     const defenses = planet.defenses
       ? pdSection('оборона', [
           pdCell('пушки', planet.defenses.CANNON),
           pdCell('лазеры', planet.defenses.LASER),
         ])
-      : '';
+      : planet.defenceTotal !== null && planet.defenceTotal !== undefined
+        ? pdSection('оборона', [pdCell('точек', fmt(planet.defenceTotal))])
+        : '';
 
     const stale = hidden
       ? `<div class="pd-note stale-note">склад, флот и оборона скрыты: ${unknown}</div>`
       : '';
 
+    /*
+     * Почему поле пустое — вопрос, на который надо отвечать. «Данных нет»
+     * сказало бы неправду: зонд там был, но не дотянулся, и лечится это
+     * не новым вылетом, а уровнем «Шпионажа».
+     */
+    const shallow =
+      !hidden && planet.visibility === 'SCANNED' && planet.detail && planet.detail !== 'TECHS'
+        ? `<div class="pd-note stale-note">зонд дотянулся не до всего — нужен перевес в «Шпионаже»</div>`
+        : '';
+
     const age = planet.visibility === 'SCANNED' ? `<div class="pd-note">${scanAgeHtml(planet)}</div>` : '';
     const more = short && planet.buildings ? '<div class="pd-note">постройки — в панели справа</div>' : '';
 
-    return head + owner + debris + rich + buildings + resources + fleet + defenses + stale + age + more;
+    return head + owner + debris + rich + buildings + resources + fleet + defenses + stale + shallow + age + more;
   }
 
   /** Поле обломков на орбите. Туман войны его не скрывает — гонка честная. */

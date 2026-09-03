@@ -3,7 +3,6 @@
  * Своя планета показывается по актуальному состоянию, чужая — только по данным разведки.
  */
 import { prisma } from '../db/prisma.js';
-import { seesFleet } from '../game/techTree.js';
 import { gameLoop } from '../game/gameLoop.js';
 import {
   foreignPlanetView,
@@ -57,9 +56,6 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
   ]);
 
   const scanByPlanet = new Map(scans.map((scan) => [scan.planetId, scan]));
-  // Технологии командира держит тик — читать их из базы отдельным запросом
-  // значило бы видеть числа, устаревшие на несколько секунд (правило 12).
-  const spy = seesFleet(user.techs);
   const now = Date.now();
 
   const views: PlanetView[] = planets.map((planet) => {
@@ -128,8 +124,6 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
       // Снимок разведки пишет Game Loop, структура данных известна заранее.
       scan ? { data: scan.data as unknown as ScanPayload, scannedAt: scan.scannedAt } : null,
       now,
-      // Флот в снимке есть всегда, читать его умеет только «Шпионаж».
-      spy,
     );
   });
 

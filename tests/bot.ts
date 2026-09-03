@@ -619,9 +619,9 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
    */
   const blind = snapshotWith({
     character: 'AGGRESSOR',
-    // Зонд требует вычислительной технологии: без нее его не собрать,
-    // и заказывать его бессмысленно.
-    techs: { ...emptyTechLevels(), COMPUTING_TECH: 2 },
+    // Зонд — шпионский дрон: без «Шпионажа» его не собрать, и заказывать
+    // его бессмысленно.
+    techs: { ...emptyTechLevels(), COMPUTING_TECH: 2, ESPIONAGE: 1 },
     bases: [
       testBase('home', {
         levels: { ...emptyLevels(), ORE_MINE: 8, POLYMER_PLANT: 7, POWER_PLANT: 9, SCIENCE_CENTER: 5, SHIPYARD: 5 },
@@ -659,7 +659,7 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
     ],
   });
   check(
-    'без вычислительной технологии зонд не заказывается',
+    'без «Шпионажа» зонд не заказывается',
     !decide(ungated).some((i) => i.kind === 'SHIPS' && i.ship === 'PROBE'),
   );
 }
@@ -669,7 +669,7 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
   // но копить их незачем, разведывают по одной цели за раз.
   const eyed = snapshotWith({
     character: 'AGGRESSOR',
-    techs: { ...emptyTechLevels(), COMPUTING_TECH: 2 },
+    techs: { ...emptyTechLevels(), COMPUTING_TECH: 2, ESPIONAGE: 1 },
     bases: [
       testBase('home', {
         levels: { ...emptyLevels(), ORE_MINE: 8, POLYMER_PLANT: 7, POWER_PLANT: 9, SCIENCE_CENTER: 5, SHIPYARD: 5 },

@@ -8,6 +8,7 @@
  * Один бой дает два письма — атакующему и защитнику. Тексты зеркальные:
  * победа одного и есть поражение другого, но «мои потери» у каждого свои.
  */
+import { atLeast, type EspionageAlert, type EspionageDetail, type EspionageOutcome } from '../game/espionage.js';
 import type { BattleOutcome, PlunderResult, UnitLoss } from '../game/combat.js';
 import type { ScanPayload } from '../game/fogOfWar.js';
 import type { ExpeditionResult } from '../game/expeditions.js';
@@ -188,8 +189,8 @@ export interface SpyMailInput {
   planetName: string;
   systemName: string;
   payload: ScanPayload;
-  /** Читается ли состав флота: решает «Шпионаж» разведчика. */
-  seesFleet: boolean;
+  /** Чем кончился пролет: до какой ступени дотянулись и уцелел ли дрон. */
+  outcome: EspionageOutcome;
 }
 
 /**
@@ -198,6 +199,21 @@ export interface SpyMailInput {
  */
 export function buildSpyMail(input: SpyMailInput): OutgoingMessage[] {
   const { payload, planetName, systemName } = input;
+
+  if (input.outcome.droneLost) {
+    return [
+      {
+        recipientId: input.commanderId,
+        type: 'SPY_REPORT',
+        subject: `Разведка: зонд не вернулся с ${planetName}`,
+        body:
+          `Зонд ушел к ${planetName} (система ${systemName}) и на связь не вышел. ` +
+          `Там знали, что он летит, — чужая контрразведка сильнее нашей. ` +
+          `Пока «Шпионаж» не подтянут, посылать туда больше нечего.`,
+        payload: { planetName, systemName, droneLost: true },
+      },
+    ];
+  }
 
   if (!payload.colonized) {
     return [
@@ -211,30 +227,59 @@ export function buildSpyMail(input: SpyMailInput): OutgoingMessage[] {
     ];
   }
 
+  const { outcome } = input;
+
+  /*
+   * Отказ формулируется по причине, а не общей фразой.
+   *
+   * «Данных нет» сказало бы неправду сразу в трех разных случаях: дрон сбит,
+   * дрон долетел, но не дотянулся, дрону не повезло со складом. Игроку важно
+   * знать, что именно исправить, — а исправляется это одним: уровнем.
+   */
   const stock = payload.resources;
   const fleet = payload.fleet;
   const defenses = payload.defenses;
   const buildings = payload.buildings;
+  const shows = (floor: EspionageDetail) => atLeast(outcome.detail, floor);
+  const sum = (counts: Record<string, number> | null | undefined) =>
+    counts ? Object.values(counts).reduce((total, value) => total + Math.max(0, value), 0) : 0;
 
-  /*
-   * Состав флота читает только «Шпионаж» второго уровня.
-   *
-   * Отказ формулируется честно: зонд там был и что-то видел, но расшифровать
-   * увиденное нечем. «Данных нет» сказало бы неправду — данные есть, не хватает
-   * умения, и игроку важно знать, что именно исправить.
-   */
-  const fleetLine = !input.seesFleet
-    ? 'Флот на орбите: зонд снял отметки, но расшифровать их нечем — нужен «Шпионаж» 2 уровня.'
-    : fleet
+  const fleetLine = shows('FULL_FORCES')
+    ? fleet
       ? `Флот на орбите: зонды ${fleet.PROBE}, транспорты ${fleet.SMALL_CARGO}, ` +
         `истребители ${fleet.LIGHT_FIGHTER}, крейсера ${fleet.CRUISER}, фрегаты ${fleet.FRIGATE}.`
-      : 'Флот на орбите: данных нет.';
-  const defenseLine = defenses
-    ? `Оборона: ракетных установок ${defenses.CANNON}, лазерных орудий ${defenses.LASER}.`
-    : 'Оборона: данных нет.';
-  const stockLine = stock
-    ? `Склад: ${stock.ore} руды, ${stock.polymers} полимеров, ${stock.plasma} плазмы.`
-    : 'Склад: данных нет.';
+      : 'Флот на орбите: пусто.'
+    : shows('FLEET_COUNT')
+      ? `Флот на орбите: ${sum(fleet)} вымпелов, классы различить не удалось.`
+      : 'Флот на орбите: зонд не дотянулся.';
+
+  const defenseLine = shows('DEFENCE_TYPES')
+    ? defenses
+      ? `Оборона: ракетных установок ${defenses.CANNON}, лазерных орудий ${defenses.LASER}.`
+      : 'Оборона: пусто.'
+    : shows('DEFENCE_COUNT')
+      ? `Оборона: ${sum(defenses)} огневых точек, типы различить не удалось.`
+      : 'Оборона: зонд не дотянулся.';
+
+  const stockLine = !outcome.resourcesSeen
+    ? 'Склад: к учету подобраться не вышло.'
+    : shows('FULL_FORCES')
+      ? stock
+        ? `Склад: ${stock.ore} руды, ${stock.polymers} полимеров, ${stock.plasma} плазмы.`
+        : 'Склад: пусто.'
+      : `Склад: около ${Math.round(
+          (stock?.ore ?? 0) + (stock?.polymers ?? 0) + (stock?.plasma ?? 0),
+        )} единиц, что именно лежит — неизвестно.`;
+
+  const techLine = shows('TECHS')
+    ? `Технологии: ${
+        Object.entries(payload.techs ?? {})
+          .filter(([, level]) => level > 0)
+          .map(([tech, level]) => `${tech} ${level}`)
+          .join(', ') || 'ничего не изучено'
+      }.`
+    : null;
+
   const buildLine = buildings
     ? `Инфраструктура: шахты ${buildings.ORE_MINE}/${buildings.POLYMER_PLANT}/${buildings.PLASMA_REACTOR}, ` +
       `верфь ${buildings.SHIPYARD}, склады ${buildings.ORE_STORAGE}/${buildings.POLYMER_STORAGE}/${buildings.PLASMA_STORAGE}.`
@@ -252,6 +297,7 @@ export function buildSpyMail(input: SpyMailInput): OutgoingMessage[] {
         fleetLine,
         defenseLine,
         buildLine,
+        ...(techLine ? [techLine] : []),
       ].join('\n'),
       payload: { planetName, systemName, ...payload },
     },
@@ -556,6 +602,64 @@ export function buildReturnMail(input: ReturnMailInput): OutgoingMessage[] {
         fleet: input.fleet,
         cargo: input.cargo,
       },
+    },
+  ];
+}
+
+/**
+ * Письмо цели: у нее над планетой кто-то пролетел.
+ *
+ * Подробность решает та же лестница, прочитанная с другой стороны: уровень
+ * контрразведки говорит не только «заметил ли», но и «что именно понял».
+ * Отставая, видишь только чужой след; идя вровень — имя и адрес; опережая —
+ * еще и то, что успели прочесть, а это ценнее всего остального: зная,
+ * что утекло, понимаешь, к чему готовиться.
+ */
+export interface IntrusionMailInput {
+  commanderId: string;
+  planetName: string;
+  alert: EspionageAlert;
+  detail: EspionageDetail;
+  spyName: string;
+  spyHome: string | null;
+  droneLost: boolean;
+}
+
+export function buildIntrusionMail(input: IntrusionMailInput): OutgoingMessage[] {
+  const { alert, planetName, spyName, spyHome, detail, droneLost } = input;
+  if (alert === 'NONE') return [];
+
+  const leaked =
+    detail === 'NONE'
+      ? 'Прочесть он ничего не успел.'
+      : atLeast(detail, 'TECHS')
+        ? 'Он видел всё: склад, флот, оборону и наши технологии.'
+        : atLeast(detail, 'FULL_FORCES')
+          ? 'Он разобрал склад, флот и оборону по составу.'
+          : atLeast(detail, 'DEFENCE_TYPES')
+            ? 'Он разобрал нашу оборону по типам и сосчитал флот.'
+            : atLeast(detail, 'DEFENCE_COUNT')
+              ? 'Он сосчитал наш флот и огневые точки, но типов не разобрал.'
+              : 'Он сосчитал вымпелы на орбите, не разобрав классов.';
+
+  const shot = droneLost ? ' Дрон сбит.' : '';
+
+  const body =
+    alert === 'PRESENCE'
+      ? `Над ${planetName} прошел чужой зонд. Чей — установить не удалось.${shot}`
+      : alert === 'IDENTITY'
+        ? `Над ${planetName} прошел зонд «${spyName}».${shot}`
+        : alert === 'ORIGIN'
+          ? `Над ${planetName} прошел зонд «${spyName}»${spyHome ? `, пришел он с ${spyHome}` : ''}.${shot}`
+          : `Над ${planetName} прошел зонд «${spyName}»${spyHome ? `, пришел он с ${spyHome}` : ''}.${shot} ${leaked}`;
+
+  return [
+    {
+      recipientId: input.commanderId,
+      type: 'SPY_REPORT',
+      subject: alert === 'PRESENCE' ? `Чужой зонд над ${planetName}` : `«${spyName}» шпионил за ${planetName}`,
+      body,
+      payload: { planetName, alert, spyName: alert === 'PRESENCE' ? null : spyName, spyHome, droneLost },
     },
   ];
 }

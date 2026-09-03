@@ -6,6 +6,7 @@
 import { DEFENSE_TYPES, emptyDefenseCounts, type DefenseCounts } from './defenses.js';
 import { BUILDING_TYPES, emptyLevels, type BuildingLevels } from './rules.js';
 import { SHIP_TYPES, emptyShipCounts, type ShipCounts } from './ships.js';
+import { atLeast, type EspionageDetail } from './espionage.js';
 
 export type PlanetVisibility = 'OWN' | 'SCANNED' | 'UNKNOWN';
 
@@ -135,6 +136,17 @@ function safeCount(value: number | undefined): number {
 /** Снимок планеты, который зонд сохраняет в PlanetScan.data. */
 export interface ScanPayload {
   owner: string | null;
+  /**
+   * До какой ступени дотянулся зонд и виден ли был склад.
+   *
+   * Пишется в момент пролета и больше не меняется: броски уже состоялись,
+   * и выученная позже технология старый снимок не улучшает — уничтоженный
+   * дрон не может задним числом привезти данные. У снимков, снятых до
+   * появления шпионажа, полей нет, и они читаются как полный доступ:
+   * тогда разведка показывала всё (правило 8).
+   */
+  detail?: EspionageDetail;
+  resourcesSeen?: boolean;
   colonized: boolean;
   richness: { ore: number; polymers: number; plasma: number; energy: number; antimatter: number };
   buildings: BuildingLevels | null;
@@ -142,6 +154,8 @@ export interface ScanPayload {
   fleet: ShipCounts | null;
   /** Стационарная оборона колонии. У снимков, снятых до Этапа 12, поля нет. */
   defenses?: DefenseCounts | null;
+  /** Уровни технологий: снимаются всегда, читаются только с верхней ступени. */
+  techs?: Record<string, number> | null;
 }
 
 export interface PlanetView {
@@ -172,12 +186,18 @@ export interface PlanetView {
    */
   staleHidden: boolean;
   /**
-   * Флот скрыт не возрастом, а нехваткой «Шпионажа».
-   *
-   * Отдельно от `staleHidden` нарочно: «данные протухли» и «мы не умеем это
-   * прочесть» — разные новости, и вторая говорит игроку, что делать.
+   * До какой ступени дотянулся зонд. По ней интерфейс и понимает, почему
+   * поле пустое: «данные протухли» и «зонд не дотянулся» — разные новости,
+   * и вторая говорит игроку, что делать.
    */
-  fleetLocked: boolean;
+  detail: EspionageDetail | null;
+  /** Флот и оборона общим числом: ступень, где типов еще не разобрать. */
+  fleetTotal: number | null;
+  defenceTotal: number | null;
+  /** Склад общим числом, без разбора по видам. */
+  resourcesTotal: number | null;
+  /** Уровни технологий: только с верхней ступени. */
+  techs: Record<string, number> | null;
 }
 
 /**
@@ -213,8 +233,19 @@ export function ownPlanetView(facts: PlanetFacts, payload: ScanPayload): PlanetV
     freshness: 'FRESH',
     staleHidden: false,
     // Свою планету видно всю: тут нечего расшифровывать.
-    fleetLocked: false,
+    detail: 'TECHS',
+    fleetTotal: payload.fleet ? total(payload.fleet) : null,
+    defenceTotal: payload.defenses ? total(payload.defenses) : null,
+    resourcesTotal: payload.resources
+      ? payload.resources.ore + payload.resources.polymers + payload.resources.plasma
+      : null,
+    techs: null,
   };
+}
+
+/** Сумма по всем классам: то самое «общее количество без конкретизации». */
+function total(counts: Record<string, number>): number {
+  return Object.values(counts).reduce((sum, value) => sum + Math.max(0, value), 0);
 }
 
 /** Чужая планета: данные только из последнего скана, иначе — пусто. */
@@ -222,14 +253,6 @@ export function foreignPlanetView(
   facts: PlanetFacts,
   scan: { data: ScanPayload; scannedAt: Date } | null,
   now: number,
-  /**
-   * Видит ли разведчик чужой флот. Решает «Шпионаж», и решает по нынешнему
-   * уровню, а не по тому, каким он был при пролете зонда: снимок хранит все,
-   * что зонд снял, а показываем ровно то, что мы способны прочесть сейчас.
-   * Иначе выученная технология не открывала бы старые снимки, и игроку
-   * пришлось бы перелетать все заново без всякой на то причины.
-   */
-  seesFleet = true,
 ): PlanetView {
   if (!scan) {
     return {
@@ -246,7 +269,11 @@ export function foreignPlanetView(
       scanAgeSeconds: null,
       freshness: null,
       staleHidden: false,
-      fleetLocked: false,
+      detail: null,
+      fleetTotal: null,
+      defenceTotal: null,
+      resourcesTotal: null,
+      techs: null,
     };
   }
 
@@ -257,6 +284,18 @@ export function foreignPlanetView(
   // данных честнее старых данных.
   const outdated = freshness === 'OUTDATED';
 
+  /*
+   * Ступень решает, что вообще показывать. У снимков, снятых до появления
+   * шпионажа, поля нет — тогда разведка показывала всё, и такой снимок
+   * читается как полный доступ (правило 8).
+   */
+  const detail: EspionageDetail = scan.data.detail ?? 'TECHS';
+  const shows = (floor: EspionageDetail) => !outdated && atLeast(detail, floor);
+  const fleet = normalizeShips(scan.data.fleet);
+  const defenses = scan.data.defenses ? normalizeDefenses(scan.data.defenses) : null;
+  const stock = normalizeStock(scan.data.resources);
+  const resourcesSeen = scan.data.resourcesSeen ?? true;
+
   return {
     ...facts,
     visibility: 'SCANNED',
@@ -264,13 +303,22 @@ export function foreignPlanetView(
     owner: scan.data.owner,
     isOwn: false,
     richness: normalizeRichness(scan.data.richness),
-    buildings: normalizeBuildings(scan.data.buildings),
-    resources: outdated ? null : normalizeStock(scan.data.resources),
-    fleet: outdated || !seesFleet ? null : normalizeShips(scan.data.fleet),
-    defenses: outdated || !scan.data.defenses ? null : normalizeDefenses(scan.data.defenses),
+    // Постройки остаются и в устаревшем снимке — здания за сутки не разбирают,
+    // — но не тогда, когда дрон погиб и не привез вообще ничего.
+    buildings: detail === 'NONE' ? null : normalizeBuildings(scan.data.buildings),
+    resources: shows('FULL_FORCES') && resourcesSeen ? stock : null,
+    fleet: shows('FULL_FORCES') ? fleet : null,
+    defenses: shows('DEFENCE_TYPES') ? defenses : null,
+    fleetTotal: shows('FLEET_COUNT') ? total(fleet) : null,
+    defenceTotal: shows('DEFENCE_COUNT') && defenses ? total(defenses) : null,
+    resourcesTotal:
+      shows('FLEET_COUNT') && resourcesSeen && stock
+        ? stock.ore + stock.polymers + stock.plasma
+        : null,
+    techs: shows('TECHS') ? (scan.data.techs ?? null) : null,
     scanAgeSeconds: ageSeconds,
     freshness,
     staleHidden: outdated,
-    fleetLocked: !outdated && !seesFleet,
+    detail,
   };
 }
