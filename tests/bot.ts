@@ -606,6 +606,88 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
   check('без денег расширение не заказывается', !decide(broke).some((i) => i.kind === 'HUB_UPGRADE'));
 }
 
+{
+  /*
+   * Тупик, из-за которого агрессор не воевал вовсе. Зонд исключен
+   * из `SQUADRON_TYPES` нарочно — иначе модель ставила его в половину
+   * эскадры, — но другого пути заказать его не осталось: без разведки
+   * у цели нет оценки силы, без оценки набег не выбирается, а разведать
+   * нечем. Живой Хижак простоял в нем с пятьюдесятью тремя истребителями,
+   * с замыслом «наращиваем ударный флот для завоевания соседей»
+   * и с нулем войн.
+   */
+  const blind = snapshotWith({
+    character: 'AGGRESSOR',
+    // Зонд требует вычислительной технологии: без нее его не собрать,
+    // и заказывать его бессмысленно.
+    techs: { ...emptyTechLevels(), COMPUTING_TECH: 2 },
+    bases: [
+      testBase('home', {
+        levels: { ...emptyLevels(), ORE_MINE: 8, POLYMER_PLANT: 7, POWER_PLANT: 9, SCIENCE_CENTER: 5, SHIPYARD: 5 },
+        resources: { ore: 40_000, polymers: 20_000, plasma: 8000 },
+        ships: { ...emptyShipCounts(), LIGHT_FIGHTER: 53 },
+      }),
+    ],
+    raidTargets: [
+      { planetId: 'p1', commanderId: 'сосед', accountAgeDays: 30, isBot: false, knownStrength: null, distance: 2 },
+    ],
+  });
+  const order = decide(blind).find((i) => i.kind === 'SHIPS' && i.ship === 'PROBE');
+  check(
+    'без зондов агрессор их заказывает, а не стоит слепым',
+    order?.kind === 'SHIPS' && order.count > 0,
+    order?.kind === 'SHIPS' ? `${order.ship} ${order.count}` : 'не заказал',
+  );
+}
+
+{
+  // А без вычислительной технологии зонда не собрать, и заказывать его
+  // бессмысленно: отказ пришел бы с верфи.
+  const ungated = snapshotWith({
+    character: 'AGGRESSOR',
+    techs: emptyTechLevels(),
+    bases: [
+      testBase('home', {
+        levels: { ...emptyLevels(), ORE_MINE: 8, POLYMER_PLANT: 7, POWER_PLANT: 9, SCIENCE_CENTER: 5, SHIPYARD: 5 },
+        resources: { ore: 40_000, polymers: 20_000, plasma: 8000 },
+        ships: { ...emptyShipCounts(), LIGHT_FIGHTER: 53 },
+      }),
+    ],
+    raidTargets: [
+      { planetId: 'p1', commanderId: 'сосед', accountAgeDays: 30, isBot: false, knownStrength: null, distance: 2 },
+    ],
+  });
+  check(
+    'без вычислительной технологии зонд не заказывается',
+    !decide(ungated).some((i) => i.kind === 'SHIPS' && i.ship === 'PROBE'),
+  );
+}
+
+{
+  // Зонд есть — летит разведка, а не новый заказ: он одноразовый,
+  // но копить их незачем, разведывают по одной цели за раз.
+  const eyed = snapshotWith({
+    character: 'AGGRESSOR',
+    techs: { ...emptyTechLevels(), COMPUTING_TECH: 2 },
+    bases: [
+      testBase('home', {
+        levels: { ...emptyLevels(), ORE_MINE: 8, POLYMER_PLANT: 7, POWER_PLANT: 9, SCIENCE_CENTER: 5, SHIPYARD: 5 },
+        resources: { ore: 40_000, polymers: 20_000, plasma: 8000 },
+        ships: { ...emptyShipCounts(), LIGHT_FIGHTER: 53, PROBE: 2 },
+      }),
+    ],
+    raidTargets: [
+      { planetId: 'p1', commanderId: 'сосед', accountAgeDays: 30, isBot: false, knownStrength: null, distance: 2 },
+    ],
+  });
+  const intents = decide(eyed);
+  check('с зондом бот разведывает', intents.some((i) => i.kind === 'SCAN'));
+  check(
+    'и новых зондов не заказывает',
+    !intents.some((i) => i.kind === 'SHIPS' && i.ship === 'PROBE'),
+  );
+}
+
 /* ------------------------- 4. Биржа ------------------------- */
 
 console.log('\n=== 4. Торговля: берем чужое, выставляем свое ===');
