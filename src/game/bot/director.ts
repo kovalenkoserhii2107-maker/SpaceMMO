@@ -697,6 +697,8 @@ async function savePlan(
   /** Каким рынок был в момент решения — по нему сверяется, стоит ли будить снова. */
   market: BotSnapshot['market'],
   spend: BotSpend,
+  /** Повод этого решения: по нему следующий такой же будет отброшен. */
+  shock: string | null,
 ): Promise<void> {
   await prisma.bot.update({
     where: { id: botId },
@@ -707,6 +709,7 @@ async function savePlan(
         journal,
         market: market.map((ref) => ({ resource: ref.resource, price: ref.reference, skew: ref.skew })),
         spend: spend as unknown as object,
+        shock,
       },
     },
   });
@@ -730,6 +733,13 @@ async function saveSpend(botId: string, spend: BotSpend): Promise<void> {
     where: { id: botId },
     data: { memory: { ...memory, spend: spend as unknown as object } },
   });
+}
+
+/** Повод, по которому модель будили в прошлый раз: дословный повтор — не новость. */
+function lastShock(memory: unknown): string | null {
+  if (typeof memory !== 'object' || memory === null) return null;
+  const value = (memory as Record<string, unknown>)['shock'];
+  return typeof value === 'string' ? value : null;
 }
 
 /**
@@ -1144,8 +1154,23 @@ async function turn(botId: string): Promise<BotTurn | null> {
    * код считает точнее, и платить в сотни раз больше.
    */
   const overdue = !plan || Date.now() - plan.madeAt > PLAN_TTL_MS;
-  const shock =
+  const rawShock =
     (await recentShock(bot.commanderId, plan?.madeAt ?? 0)) ?? marketShock(bot.memory, snapshot.market);
+  /*
+   * Новость перестает быть новостью, если повторяется дословно.
+   *
+   * Живая война шла набегом в минуту: шестьдесят один бой за несколько часов,
+   * и каждый будил обе модели заново. Двое воюющих сожгли так 77 вызовов
+   * из четырехсот, докладывая одно и то же — «мой набег на Купця, победа».
+   * Решение по такому поводу модель уже приняла, и повторять его незачем:
+   * плановый пересмотр раз в полчаса никуда не делся, а внеочередной нужен
+   * там, где обстановка изменилась.
+   *
+   * Повтор гасит только побудку. Что рассказать модели, он не решает: если
+   * заход все равно состоялся по расписанию, обстановку она получает полную,
+   * иначе плановый пересмотр во время войны выглядел бы для нее как затишье.
+   */
+  const fresh = rawShock !== null && rawShock !== lastShock(bot.memory);
 
   /*
    * Норма запросов общая на всех ботов и считается по попыткам: отказ сервиса
@@ -1155,11 +1180,11 @@ async function turn(botId: string): Promise<BotTurn | null> {
   let spend = readSpend(bot.memory);
   // Общий расход читается один раз за заход: он нужен и стратегу, и почте.
   const spentAll = llmEnabled() ? await spentToday() : Number.MAX_SAFE_INTEGER;
-  const wanted = llmEnabled() && (overdue || shock !== null);
+  const wanted = llmEnabled() && (overdue || fresh);
   if (wanted && mayAsk(spend, spentAll)) {
     spend = withAttempt(spend);
     const brief = await buildBrief(commander, snapshot, bot.memory);
-    const answer = await askStrategy(bot.character, brief, snapshot, shock);
+    const answer = await askStrategy(bot.character, brief, snapshot, rawShock);
 
     if (!answer) {
       // Ответа нет, но попытка была: записываем расход отдельно, иначе
@@ -1170,7 +1195,7 @@ async function turn(botId: string): Promise<BotTurn | null> {
     if (answer) {
       plan = { plan: answer.plan, madeAt: Date.now() };
       actions.push(`ПЛАН: ${answer.plan.note || 'стратегия обновлена'}`);
-      if (shock) journal = appendJournal({ journal }, [`повод: ${shock}`]);
+      if (fresh && rawShock) journal = appendJournal({ journal }, [`повод: ${rawShock}`]);
 
       /*
        * Директивы — то, ради чего модель здесь. Исполняются они теми же
@@ -1184,7 +1209,7 @@ async function turn(botId: string): Promise<BotTurn | null> {
         journal = appendJournal({ journal }, [done.line]);
       }
 
-      await savePlan(bot.id, answer.plan, journal, snapshot.market, spend);
+      await savePlan(bot.id, answer.plan, journal, snapshot.market, spend, rawShock);
     }
   }
 
