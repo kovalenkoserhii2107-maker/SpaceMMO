@@ -30,7 +30,7 @@ import {
 // той же величиной показывает игроку, дорого сейчас или дешево.
 import { marketPrice } from '../market.js';
 import { deliver } from '../../services/mailService.js';
-import { SHIP_TYPES, SQUADRON_TYPES, emptyShipCounts, type ShipCounts } from '../ships.js';
+import { COMBAT_TYPES, SHIP_TYPES, SQUADRON_TYPES, emptyShipCounts, type ShipCounts } from '../ships.js';
 import { fleetCapacity } from '../fleets.js';
 import { storageCapacities } from '../rules.js';
 import { storageCapacity as hubCapacity, storageUpgradeCost } from '../market.js';
@@ -189,7 +189,16 @@ async function buildSnapshot(
    * Пик хранится в памяти бота и переживает изменения игры, поэтому читается
    * защищенно (правила 8 и 9).
    */
-  const fleetValue = bases.reduce((sum, base) => sum + spentOnFleet(base.ships), 0);
+  /*
+   * Пик считается по боевой части, как и текущий флот: сравнивать общую
+   * стоимость с боевой значило бы объявить разбитыми всех, у кого есть
+   * транспорты.
+   */
+  const fleetValue = bases.reduce((sum, base) => {
+    const fighting = emptyShipCounts();
+    for (const type of COMBAT_TYPES) fighting[type] = base.ships[type];
+    return sum + spentOnFleet(fighting);
+  }, 0);
   const savedPeak =
     typeof memory === 'object' && memory !== null
       ? (memory as Record<string, unknown>)['fleetPeak']

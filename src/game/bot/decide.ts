@@ -40,6 +40,7 @@ import {
   type DefenseType,
 } from '../defenses.js';
 import {
+  COMBAT_TYPES,
   SHIP_TYPES,
   emptyShipCounts,
   missingShipRequirements,
@@ -861,7 +862,11 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
    * в оборону и восстановление, а не в новые набеги — иначе бот скармливает
    * противнику свой же флот по частям.
    */
-  const fleetNow = snapshot.bases.reduce((sum, base) => sum + spentOnFleet(base.ships), 0);
+  const fleetNow = snapshot.bases.reduce((sum, base) => {
+    const fighting = emptyShipCounts();
+    for (const type of COMBAT_TYPES) fighting[type] = base.ships[type];
+    return sum + spentOnFleet(fighting);
+  }, 0);
   if (snapshot.fleetPeak > 0 && fleetNow < snapshot.fleetPeak * 0.2) {
     profile = { ...profile, budget: { economy: 0.4, research: 0.15, fleet: 0.25, defense: 0.2 } };
   } else if (snapshot.warsAgainstMe >= 2) {
@@ -1165,7 +1170,20 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
   }
 
   /* --- Набег --- */
-  const ownFleet = snapshot.bases.reduce((sum, base) => sum + spentOnFleet(base.ships), 0);
+  /*
+   * В бою считается только то, что дерется.
+   *
+   * Транспорт возит груз и не стреляет, поэтому его стоимость не говорит
+   * о силе ничего — а весит она много. Живой агрессор с семью десятками
+   * грузовиков и шестью истребителями выглядел по общей стоимости как флот
+   * в 44% от лучшей формы и продолжал ходить в набеги, проигрывая подряд.
+   */
+  const combatValue = (base: BotBaseSnapshot) => {
+    const fighting = emptyShipCounts();
+    for (const type of COMBAT_TYPES) fighting[type] = base.ships[type];
+    return spentOnFleet(fighting);
+  };
+  const ownFleet = snapshot.bases.reduce((sum, base) => sum + combatValue(base), 0);
 
   /*
    * Против серийного агрессора летят и торговцы, и не в одиночку.

@@ -49,6 +49,25 @@ export const SQUADRON_TYPES = SHIP_TYPES.filter(
   (type) => type !== 'PROBE' && type !== 'RECYCLER' && type !== 'COLONY_SHIP',
 );
 
+/**
+ * Классы, которые действительно дерутся.
+ *
+ * Отдельно от `SQUADRON_TYPES`, куда входят и грузовики: там речь о составе
+ * заказа, а здесь — о боевой силе. Смешивать их нельзя. Живой агрессор потерял
+ * пятьдесят три истребителя из пятидесяти трех, оставшись с семью десятками
+ * транспортов, — по общей стоимости флота это выглядело как 44% от лучшей
+ * формы, и порог отступления не срабатывал. Он ходил в набеги с одними
+ * грузовиками и проигрывал тридцать четыре боя подряд.
+ */
+export const COMBAT_TYPES = SHIP_TYPES.filter(
+  (type) =>
+    type !== 'PROBE' &&
+    type !== 'RECYCLER' &&
+    type !== 'COLONY_SHIP' &&
+    type !== 'SMALL_CARGO' &&
+    type !== 'LARGE_CARGO',
+);
+
 export function isShipType(value: unknown): value is ShipType {
   return typeof value === 'string' && (SHIP_TYPES as readonly string[]).includes(value);
 }

@@ -763,6 +763,36 @@ function armed(overrides: Record<string, unknown> = {}) {
 
 {
   /*
+   * Транспорт не воюет, и в пороге отступления не считается.
+   *
+   * Живой Хижак потерял пятьдесят три истребителя из пятидесяти трех
+   * и остался с семью десятками грузовиков. По общей стоимости флота это
+   * выглядело как 44% от лучшей формы — порог не срабатывал, и он ходил
+   * в набеги с одними транспортами, проиграв тридцать четыре боя подряд.
+   */
+  const hauler = snapshotWith({
+    character: 'AGGRESSOR',
+    fleetPeak: 100_000,
+    bases: [
+      testBase('home', {
+        levels: { ...emptyLevels(), ORE_MINE: 8, POLYMER_PLANT: 7, POWER_PLANT: 9, SCIENCE_CENTER: 5, SHIPYARD: 5 },
+        resources: { ore: 40_000, polymers: 20_000, plasma: 8000 },
+        // Грузовиков на целое состояние, боевого — почти ничего.
+        ships: { ...emptyShipCounts(), SMALL_CARGO: 72, LIGHT_FIGHTER: 6 },
+      }),
+    ],
+    raidTargets: [
+      { planetId: 'жертва', commanderId: 'купець', accountAgeDays: 30, isBot: true, knownStrength: 1, distance: 2 },
+    ],
+  });
+  check(
+    'разбитый агрессор не ходит в набег с одними грузовиками',
+    !decide(hauler).some((i) => i.kind === 'RAID'),
+  );
+}
+
+{
+  /*
    * Отступление. Живой Хижак сжег пятьдесят три истребителя из пятидесяти
    * трех и продолжал слать набеги транспортами — только потому, что жертве
    * уже нечем было отвечать.
