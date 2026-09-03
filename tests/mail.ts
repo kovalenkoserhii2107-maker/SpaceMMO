@@ -197,11 +197,18 @@ console.log('\n=== 1. Системные отчеты ===');
     defenses: { CANNON: 10, LASER: 5 },
   };
 
+  /*
+   * Отчет собирается на ступени полного доступа: здесь проверяются
+   * формулировки, а лестница раскрытия — в `tests/espionage.ts`.
+   */
+  const seenAll = { detail: 'TECHS', droneLost: false, resourcesSeen: true, alert: 'NONE' } as const;
   const mail = buildSpyMail({
     commanderId: 'cmd',
     planetName: 'Кобзар II',
     systemName: 'Сич',
+    planetType: 'ROCKY',
     payload,
+    outcome: seenAll,
   });
   check('разведка дает одно письмо', mail.length === 1 && mail[0]!.type === 'SPY_REPORT');
   check(
@@ -215,7 +222,9 @@ console.log('\n=== 1. Системные отчеты ===');
     commanderId: 'cmd',
     planetName: 'Пустышка',
     systemName: 'Сич',
+    planetType: 'ROCKY',
     payload: { ...payload, colonized: false },
+    outcome: seenAll,
   });
   check('необитаемая планета дает короткий отчет', empty[0]!.body.includes('Колонии нет'));
 }
