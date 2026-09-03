@@ -188,6 +188,8 @@ export interface SpyMailInput {
   planetName: string;
   systemName: string;
   payload: ScanPayload;
+  /** Читается ли состав флота: решает «Шпионаж» разведчика. */
+  seesFleet: boolean;
 }
 
 /**
@@ -214,10 +216,19 @@ export function buildSpyMail(input: SpyMailInput): OutgoingMessage[] {
   const defenses = payload.defenses;
   const buildings = payload.buildings;
 
-  const fleetLine = fleet
-    ? `Флот на орбите: зонды ${fleet.PROBE}, транспорты ${fleet.SMALL_CARGO}, ` +
-      `истребители ${fleet.LIGHT_FIGHTER}, крейсера ${fleet.CRUISER}, фрегаты ${fleet.FRIGATE}.`
-    : 'Флот на орбите: данных нет.';
+  /*
+   * Состав флота читает только «Шпионаж» второго уровня.
+   *
+   * Отказ формулируется честно: зонд там был и что-то видел, но расшифровать
+   * увиденное нечем. «Данных нет» сказало бы неправду — данные есть, не хватает
+   * умения, и игроку важно знать, что именно исправить.
+   */
+  const fleetLine = !input.seesFleet
+    ? 'Флот на орбите: зонд снял отметки, но расшифровать их нечем — нужен «Шпионаж» 2 уровня.'
+    : fleet
+      ? `Флот на орбите: зонды ${fleet.PROBE}, транспорты ${fleet.SMALL_CARGO}, ` +
+        `истребители ${fleet.LIGHT_FIGHTER}, крейсера ${fleet.CRUISER}, фрегаты ${fleet.FRIGATE}.`
+      : 'Флот на орбите: данных нет.';
   const defenseLine = defenses
     ? `Оборона: ракетных установок ${defenses.CANNON}, лазерных орудий ${defenses.LASER}.`
     : 'Оборона: данных нет.';

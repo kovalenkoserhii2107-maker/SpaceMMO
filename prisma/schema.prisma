@@ -919,6 +919,8 @@ enum TechnologyType {
   ROBOTICS
   /// Бункерование: поднимает несгораемую долю склада.
   VAULT_TECH
+  /// Шпионаж: открывает в разведданных то, что скрыто от простого зонда.
+  ESPIONAGE
   TIME_COMPRESSION
 }
 

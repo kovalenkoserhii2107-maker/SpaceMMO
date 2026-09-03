@@ -24,6 +24,7 @@ export const TECHNOLOGY_TYPES = [
   'ROBOTICS',
   'CRYPTO_TECH',
   'VAULT_TECH',
+  'ESPIONAGE',
   'TIME_COMPRESSION',
 ] as const;
 
@@ -50,6 +51,7 @@ export function emptyTechLevels(): TechLevels {
     ROBOTICS: 0,
     CRYPTO_TECH: 0,
     VAULT_TECH: 0,
+    ESPIONAGE: 0,
     TIME_COMPRESSION: 0,
   };
 }
@@ -135,6 +137,17 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
     timeFactor: 2.15,
     labLevel: 3,
     requires: { COMPUTING_TECH: 1 },
+  },
+  ESPIONAGE: {
+    label: 'Шпионаж',
+    description:
+      'Зонд видит больше, чем показывает оптика. Со второго уровня разведка ' +
+      'приносит состав флота, стоявшего на планете в момент пролета.',
+    cost: { ore: 500, polymers: 700, plasma: 80, factor: 1.8 },
+    baseSeconds: 100,
+    timeFactor: 2.15,
+    labLevel: 3,
+    requires: { COMPUTING_TECH: 2 },
   },
   MINING_TECH: {
     label: 'Горное дело',
@@ -370,6 +383,22 @@ export function colonySlots(techs: TechLevels): number {
 /** Множитель добычи криптогривны от криптоинженерии: +15% за уровень. */
 export function cryptoBonus(techs: TechLevels): number {
   return 1 + Math.max(0, techs.CRYPTO_TECH) * 0.15;
+}
+
+/**
+ * С какого уровня «Шпионажа» разведка приносит состав флота.
+ *
+ * Флот на планете — самое ценное, что можно узнать перед набегом, и самое
+ * недолговечное: он улетает и возвращается, а снимок остается. Отдавать его
+ * даром вместе с уровнями зданий значило бы, что разведка отвечает на главный
+ * вопрос бесплатно. Второй уровень, а не первый: первый должен ощущаться как
+ * задел, а не как выключатель.
+ */
+export const ESPIONAGE_FLEET_LEVEL = 2;
+
+/** Видит ли разведчик чужой флот при своем уровне «Шпионажа». */
+export function seesFleet(techs: TechLevels): boolean {
+  return techs.ESPIONAGE >= ESPIONAGE_FLEET_LEVEL;
 }
 
 /**

@@ -171,6 +171,13 @@ export interface PlanetView {
    * Уровни построек остаются: здания не разбирают за сутки.
    */
   staleHidden: boolean;
+  /**
+   * Флот скрыт не возрастом, а нехваткой «Шпионажа».
+   *
+   * Отдельно от `staleHidden` нарочно: «данные протухли» и «мы не умеем это
+   * прочесть» — разные новости, и вторая говорит игроку, что делать.
+   */
+  fleetLocked: boolean;
 }
 
 /**
@@ -205,6 +212,8 @@ export function ownPlanetView(facts: PlanetFacts, payload: ScanPayload): PlanetV
     scanAgeSeconds: 0,
     freshness: 'FRESH',
     staleHidden: false,
+    // Свою планету видно всю: тут нечего расшифровывать.
+    fleetLocked: false,
   };
 }
 
@@ -213,6 +222,14 @@ export function foreignPlanetView(
   facts: PlanetFacts,
   scan: { data: ScanPayload; scannedAt: Date } | null,
   now: number,
+  /**
+   * Видит ли разведчик чужой флот. Решает «Шпионаж», и решает по нынешнему
+   * уровню, а не по тому, каким он был при пролете зонда: снимок хранит все,
+   * что зонд снял, а показываем ровно то, что мы способны прочесть сейчас.
+   * Иначе выученная технология не открывала бы старые снимки, и игроку
+   * пришлось бы перелетать все заново без всякой на то причины.
+   */
+  seesFleet = true,
 ): PlanetView {
   if (!scan) {
     return {
@@ -229,6 +246,7 @@ export function foreignPlanetView(
       scanAgeSeconds: null,
       freshness: null,
       staleHidden: false,
+      fleetLocked: false,
     };
   }
 
@@ -248,10 +266,11 @@ export function foreignPlanetView(
     richness: normalizeRichness(scan.data.richness),
     buildings: normalizeBuildings(scan.data.buildings),
     resources: outdated ? null : normalizeStock(scan.data.resources),
-    fleet: outdated ? null : normalizeShips(scan.data.fleet),
+    fleet: outdated || !seesFleet ? null : normalizeShips(scan.data.fleet),
     defenses: outdated || !scan.data.defenses ? null : normalizeDefenses(scan.data.defenses),
     scanAgeSeconds: ageSeconds,
     freshness,
     staleHidden: outdated,
+    fleetLocked: !outdated && !seesFleet,
   };
 }

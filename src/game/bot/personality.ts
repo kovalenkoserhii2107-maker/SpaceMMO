@@ -119,6 +119,9 @@ export const BOT_PERSONALITIES: Record<BotCharacter, BotPersonality> = {
       'ENERGY_TECH',
       'COMBUSTION_DRIVE',
       'WEAPONS_TECH',
+      // Без «Шпионажа» разведка не показывает чужой флот, и агрессор
+      // выбирает цель вслепую — по одной обороне.
+      'ESPIONAGE',
       'ASTROPHYSICS',
       'SHIELDS_TECH',
       'ARMOR_TECH',

@@ -303,6 +303,39 @@ if (!token) {
     JSON.stringify(plunder),
   );
 
+  /*
+   * «Шпионаж»: состав флота — самое ценное перед набегом и самое недолговечное.
+   * Отдавать его даром вместе с уровнями зданий значило бы, что разведка
+   * отвечает на главный вопрос бесплатно.
+   */
+  const blindScout = foreignPlanetView(
+    { planetId: 'p', name: 'Цель', position: 3, type: 'TERRAN', size: 1, debris: { ore: 0, polymers: 0 } },
+    { data: { owner: 'сосед', colonized: true, richness: { ore: 1, polymers: 1, plasma: 1, energy: 1, antimatter: 1 },
+      buildings: null, resources: null, fleet: { ...emptyShipCounts(), CRUISER: 40 }, defenses: null },
+      scannedAt: new Date() },
+    Date.now(),
+    false,
+  );
+  check(
+    'без «Шпионажа» состав флота в разведданных скрыт',
+    blindScout.fleet === null && blindScout.fleetLocked,
+    `флот ${JSON.stringify(blindScout.fleet)}, замок ${blindScout.fleetLocked}`,
+  );
+
+  const spy = foreignPlanetView(
+    { planetId: 'p', name: 'Цель', position: 3, type: 'TERRAN', size: 1, debris: { ore: 0, polymers: 0 } },
+    { data: { owner: 'сосед', colonized: true, richness: { ore: 1, polymers: 1, plasma: 1, energy: 1, antimatter: 1 },
+      buildings: null, resources: null, fleet: { ...emptyShipCounts(), CRUISER: 40 }, defenses: null },
+      scannedAt: new Date() },
+    Date.now(),
+    true,
+  );
+  check(
+    'со «Шпионажем» виден тот флот, что стоял на планете при пролете',
+    spy.fleet?.CRUISER === 40 && !spy.fleetLocked,
+    `крейсеров ${spy.fleet?.CRUISER}`,
+  );
+
   /* --- Шаблоны флотов --- */
 
   const emptyTemplate = await api(

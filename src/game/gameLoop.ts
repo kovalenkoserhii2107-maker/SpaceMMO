@@ -89,6 +89,7 @@ import {
   buildSpeedup,
   colonySlots,
   emptyTechLevels,
+  seesFleet,
   missingTechRequirements,
   researchCost,
   researchSeconds,
@@ -1292,6 +1293,9 @@ class GameLoop {
             planetName: planet?.name ?? 'неизвестной планеты',
             systemName: planet?.system.name ?? '—',
             payload,
+            // Письмо — зафиксированный момент, и умение читать берется тоже
+            // на этот момент: снимок в почте задним числом не переписывается.
+            seesFleet: seesFleet((await this.getCommander(fleet.commanderId))?.techs ?? emptyTechLevels()),
           }),
         );
       }
