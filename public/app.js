@@ -5354,20 +5354,42 @@
     const p = message.payload;
     if (!p || !p.planetName) return null;
     const outcome = p.outcome ?? {};
+    /*
+     * У писем, отправленных до появления ступеней, отметки нет — ступень
+     * выводится из того, что реально лежит в нагрузке. Считать их полным
+     * доступом наотмашь неверно: сервер теперь кладет в письмо только то,
+     * до чего дотянулся зонд, и отсутствие поля само по себе есть ответ.
+     */
+    const implied = p.techs
+      ? 'TECHS'
+      : p.fleet || p.resources
+        ? 'FULL_FORCES'
+        : p.defenses
+          ? 'DEFENCE_TYPES'
+          : typeof p.defenceTotal === 'number'
+            ? 'DEFENCE_COUNT'
+            : typeof p.fleetTotal === 'number'
+              ? 'FLEET_COUNT'
+              : 'BUILDINGS';
     return {
       planetName: p.planetName,
       systemName: p.systemName ?? null,
       planetType: p.planetType ?? null,
       owner: p.owner ?? null,
       colonized: p.colonized !== false,
-      detail: outcome.detail ?? 'TECHS',
+      detail: outcome.detail ?? implied,
       resourcesSeen: outcome.resourcesSeen !== false,
       droneLost: outcome.droneLost === true || p.droneLost === true,
       richness: p.richness ?? null,
       buildings: p.buildings ?? null,
+      // Сервер кладет в письмо только то, до чего дотянулся зонд: там, где
+      // положено видеть одно число, приходит число, а не состав.
       resources: p.resources ?? null,
+      resourcesTotal: typeof p.resourcesTotal === 'number' ? p.resourcesTotal : null,
       fleet: p.fleet ?? null,
+      fleetTotal: typeof p.fleetTotal === 'number' ? p.fleetTotal : null,
       defenses: p.defenses ?? null,
+      defenceTotal: typeof p.defenceTotal === 'number' ? p.defenceTotal : null,
       techs: p.techs ?? null,
       date: message.createdAt,
     };
@@ -5537,8 +5559,8 @@
         row.appendChild(cell);
       }
       card.appendChild(spySection('Склад', row, ''));
-    } else if (spyReaches(report.detail, 'FLEET_COUNT') && stock) {
-      const total = (stock.ore ?? 0) + (stock.polymers ?? 0) + (stock.plasma ?? 0);
+    } else if (spyReaches(report.detail, 'FLEET_COUNT') && report.resourcesTotal !== null) {
+      const total = report.resourcesTotal;
       const row = document.createElement('div');
       row.className = 'spy-rough';
       row.innerHTML = `<b>${fmt(total)}</b><span>единиц всего — что именно лежит, различить не удалось</span>`;
@@ -5562,7 +5584,8 @@
       const rough = document.createElement('div');
       rough.className = 'spy-rough';
       rough.innerHTML =
-        `<b>${fmt(sumCounts(report.fleet))}</b><span>вымпелов на орбите — классы различить не удалось</span>`;
+        `<b>${fmt(report.fleetTotal ?? sumCounts(report.fleet))}</b>` +
+        '<span>вымпелов на орбите — классы различить не удалось</span>';
       card.appendChild(spySection('Флот на орбите', rough, ''));
     } else {
       card.appendChild(spySection('Флот на орбите', null, 'Зонд не дотянулся.'));
@@ -5581,7 +5604,8 @@
       const rough = document.createElement('div');
       rough.className = 'spy-rough';
       rough.innerHTML =
-        `<b>${fmt(sumCounts(report.defenses))}</b><span>огневых точек — типы различить не удалось</span>`;
+        `<b>${fmt(report.defenceTotal ?? sumCounts(report.defenses))}</b>` +
+        '<span>огневых точек — типы различить не удалось</span>';
       card.appendChild(spySection('Оборона', rough, ''));
     } else {
       card.appendChild(spySection('Оборона', null, 'Зонд не дотянулся.'));

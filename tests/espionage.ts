@@ -13,6 +13,10 @@ import {
   resolveEspionage,
   type EspionageDetail,
 } from '../src/game/espionage.js';
+import { buildSpyMail } from '../src/services/reportMail.js';
+import { emptyLevels } from '../src/game/rules.js';
+import { emptyShipCounts } from '../src/game/ships.js';
+import { emptyDefenseCounts } from '../src/game/defenses.js';
 
 let passed = 0;
 let failed = 0;
@@ -165,6 +169,83 @@ console.log('\n=== 7. Воспроизводимость ===');
   const c = espionageSeed('рейс-2', 'планета-7');
   const d = espionageSeed('рейс-1', 'планета-7');
   check('разные рейсы дают разные броски', c() !== d());
+}
+
+/* ------------------- Нагрузка письма не выше ступени ------------------- */
+
+console.log('\n=== Письмо не несет больше, чем добыл зонд ===');
+
+{
+  /*
+   * Текст отчета ступень уважал, а нагрузка нет: в письмо клался полный
+   * снимок независимо от того, до чего дотянулся зонд. Пока отчет был
+   * текстом, это не проявлялось — а стоило начать рисовать по нагрузке,
+   * и письмо показало состав флота, который зонд не разглядел. Живой игрок
+   * при разнице в один уровень увидел все в деталях.
+   */
+  const payload = {
+    owner: 'Крамар',
+    colonized: true,
+    richness: { ore: 1, polymers: 1, plasma: 1, energy: 1, antimatter: 1 },
+    buildings: { ...emptyLevels(), ORE_MINE: 7 },
+    resources: { ore: 4267, polymers: 105_886, plasma: 1787, antimatter: 0 },
+    fleet: { ...emptyShipCounts(), SMALL_CARGO: 68, LIGHT_FIGHTER: 104 },
+    defenses: { ...emptyDefenseCounts(), CANNON: 111, LASER: 17 },
+    techs: { MINING_TECH: 7 },
+  };
+
+  const at = (detail: EspionageDetail) =>
+    (buildSpyMail({
+      commanderId: 'me',
+      planetName: 'Кобзар II',
+      systemName: 'Явір',
+      planetType: 'GAS_GIANT',
+      payload,
+      outcome: { detail, droneLost: false, resourcesSeen: true, alert: 'NONE' },
+    })[0]!.payload ?? {}) as Record<string, unknown>;
+
+  const counted = at('FLEET_COUNT');
+  check(
+    'на ступени «числом» состава флота в письме нет',
+    counted['fleet'] === undefined && counted['fleetTotal'] === 172,
+    `fleet=${JSON.stringify(counted['fleet'])}, всего ${counted['fleetTotal']}`,
+  );
+  check(
+    'и склад приходит суммой, а не по видам',
+    counted['resources'] === undefined && counted['resourcesTotal'] === 111_940,
+    `resources=${JSON.stringify(counted['resources'])}, всего ${counted['resourcesTotal']}`,
+  );
+  check(
+    'обороны на этой ступени нет вовсе',
+    counted['defenses'] === undefined && counted['defenceTotal'] === undefined,
+  );
+  check('технологий тоже нет', counted['techs'] === undefined);
+
+  const walls = at('DEFENCE_COUNT');
+  check(
+    'на ступени «оборона числом» приходит число, но не типы',
+    walls['defenses'] === undefined && walls['defenceTotal'] === 128,
+    `defenceTotal=${walls['defenceTotal']}`,
+  );
+
+  const full = at('FULL_FORCES');
+  check(
+    'на разборе по составу приходит и флот, и склад',
+    full['fleet'] !== undefined && full['resources'] !== undefined,
+  );
+  check('но технологии остаются за верхней ступенью', full['techs'] === undefined);
+
+  const all = at('TECHS');
+  check('на верхней ступени приходит все', all['techs'] !== undefined);
+
+  const blind = at('BUILDINGS');
+  check(
+    'при уцелевшем дроне без доступа остаются только постройки и недра',
+    blind['buildings'] !== undefined &&
+      blind['fleet'] === undefined &&
+      blind['fleetTotal'] === undefined &&
+      blind['resourcesTotal'] === undefined,
+  );
 }
 
 console.log(`\n=== ИТОГ: ${passed}/${passed + failed} пройдено ===`);

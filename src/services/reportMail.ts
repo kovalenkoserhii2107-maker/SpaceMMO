@@ -301,7 +301,48 @@ export function buildSpyMail(input: SpyMailInput): OutgoingMessage[] {
         buildLine,
         ...(techLine ? [techLine] : []),
       ].join('\n'),
-      payload: { planetName, systemName, planetType: input.planetType, outcome, ...payload },
+      /*
+       * В письмо кладется только то, до чего дотянулся зонд.
+       *
+       * Раньше нагрузка несла полный снимок независимо от ступени: текст ее
+       * уважал, а данные нет. Пока отчет был текстом, это не проявлялось —
+       * а стоило начать рисовать по нагрузке, и письмо показало то, чего зонд
+       * не добыл. Секрет, лежащий в письме «на всякий случай», рано или поздно
+       * доезжает до экрана.
+       */
+      payload: {
+        planetName,
+        systemName,
+        planetType: input.planetType,
+        outcome,
+        owner: payload.owner,
+        colonized: payload.colonized,
+        richness: payload.richness,
+        buildings: payload.buildings,
+        /*
+         * Где положено видеть только число, уходит только число.
+         *
+         * Складывать состав на клиенте было бы проще, но тогда полный состав
+         * пришлось бы ему отдать — а «покажем не все, хотя прислали все»
+         * держится ровно до первого, кто посмотрит на нагрузку.
+         */
+        ...(outcome.resourcesSeen && shows('FULL_FORCES')
+          ? { resources: payload.resources }
+          : outcome.resourcesSeen && shows('FLEET_COUNT')
+            ? { resourcesTotal: sum(payload.resources ? { ...payload.resources, antimatter: 0 } : null) }
+            : {}),
+        ...(shows('FULL_FORCES')
+          ? { fleet: payload.fleet }
+          : shows('FLEET_COUNT')
+            ? { fleetTotal: sum(payload.fleet) }
+            : {}),
+        ...(shows('DEFENCE_TYPES')
+          ? { defenses: payload.defenses }
+          : shows('DEFENCE_COUNT')
+            ? { defenceTotal: sum(payload.defenses) }
+            : {}),
+        ...(shows('TECHS') ? { techs: payload.techs } : {}),
+      },
     },
   ];
 }
