@@ -111,7 +111,7 @@ const SHIPS: Record<ShipType, ShipDefinition> = {
   PROBE: {
     label: 'Зонд «Око»',
     description: 'Дешевый разведывательный дрон. Без оружия и защиты.',
-    cost: { ore: 100, polymers: 40, plasma: 20 },
+    cost: { ore: 100, polymers: 76, plasma: 20 },
     baseSeconds: 20,
     shipyardLevel: 1,
     // Зонд — шпионский дрон, а не телескоп: без «Шпионажа» его не собрать.
@@ -122,7 +122,7 @@ const SHIPS: Record<ShipType, ShipDefinition> = {
   SMALL_CARGO: {
     label: 'Малый транспорт «Чайка»',
     description: 'Грузовое судно. Без оружия, только корпус.',
-    cost: { ore: 900, polymers: 300, plasma: 100 },
+    cost: { ore: 900, polymers: 570, plasma: 100 },
     baseSeconds: 60,
     shipyardLevel: 2,
     requires: { COMBUSTION_DRIVE: 1 },
@@ -130,7 +130,7 @@ const SHIPS: Record<ShipType, ShipDefinition> = {
   LARGE_CARGO: {
     label: 'Большой транспорт «Чумак»',
     description: 'Тяжелый грузовик: трюм вшестеро больше «Чайки» и при этом быстрее нее.',
-    cost: { ore: 9000, polymers: 3500, plasma: 1200 },
+    cost: { ore: 9000, polymers: 6650, plasma: 1200 },
     baseSeconds: 300,
     shipyardLevel: 6,
     requires: { COMBUSTION_DRIVE: 6 },
@@ -138,7 +138,7 @@ const SHIPS: Record<ShipType, ShipDefinition> = {
   LIGHT_FIGHTER: {
     label: 'Легкий истребитель «Сокіл»',
     description: 'Лазерный урон, только корпус. Дешев и универсален.',
-    cost: { ore: 1400, polymers: 500, plasma: 100 },
+    cost: { ore: 1400, polymers: 950, plasma: 100 },
     baseSeconds: 45,
     shipyardLevel: 2,
     requires: { COMBUSTION_DRIVE: 1 },
@@ -146,7 +146,7 @@ const SHIPS: Record<ShipType, ShipDefinition> = {
   HEAVY_FIGHTER: {
     label: 'Тяжелый истребитель «Гайдамака»',
     description: 'Втрое живучее «Сокола» и косит мелочь: рой истребителей ему не страшен.',
-    cost: { ore: 5000, polymers: 2000, plasma: 400 },
+    cost: { ore: 5000, polymers: 3800, plasma: 400 },
     baseSeconds: 120,
     shipyardLevel: 4,
     requires: { WEAPONS_TECH: 4 },
@@ -154,7 +154,7 @@ const SHIPS: Record<ShipType, ShipDefinition> = {
   CRUISER: {
     label: 'Тяжелый крейсер «Отаман»',
     description: 'Кинетический урон и толстая броня. Ломает броню, вязнет в щитах.',
-    cost: { ore: 18000, polymers: 6000, plasma: 1800 },
+    cost: { ore: 18000, polymers: 11400, plasma: 1800 },
     baseSeconds: 300,
     shipyardLevel: 5,
     requires: { COMBUSTION_DRIVE: 5 },
@@ -162,7 +162,7 @@ const SHIPS: Record<ShipType, ShipDefinition> = {
   FRIGATE: {
     label: 'Ионный фрегат «Характерник»',
     description: 'Ионный урон и сильные щиты. Разбирает щиты, буксует против брони.',
-    cost: { ore: 6000, polymers: 7000, plasma: 1500 },
+    cost: { ore: 6000, polymers: 13300, plasma: 1500 },
     baseSeconds: 260,
     shipyardLevel: 7,
     requires: { HYPERSPACE_PHYSICS: 4 },
@@ -170,7 +170,7 @@ const SHIPS: Record<ShipType, ShipDefinition> = {
   BOMBER: {
     label: 'Бомбардировщик «Булава»',
     description: 'Специализируется на обороне планет: выносит турели быстрее любого флота.',
-    cost: { ore: 90000, polymers: 45000, plasma: 18000 },
+    cost: { ore: 90000, polymers: 85500, plasma: 18000 },
     baseSeconds: 600,
     shipyardLevel: 9,
     requires: { WEAPONS_TECH: 10 },
@@ -178,7 +178,7 @@ const SHIPS: Record<ShipType, ShipDefinition> = {
   BATTLESHIP: {
     label: 'Линкор «Гетьман»',
     description: 'Основа линейного флота. Пробивает крейсера и бомбардировщики насквозь.',
-    cost: { ore: 420000, polymers: 170000, plasma: 80000 },
+    cost: { ore: 420000, polymers: 323000, plasma: 80000 },
     baseSeconds: 1200,
     shipyardLevel: 11,
     requires: { HYPERDRIVE: 7 },
@@ -188,7 +188,7 @@ const SHIPS: Record<ShipType, ShipDefinition> = {
     description:
       'Летающая крепость: гигантский корпус и щит, а залп раскладывается по мелочи — ' +
       'рои истребителей и крейсеров тают за раунд.',
-    cost: { ore: 2200000, polymers: 1300000, plasma: 600000 },
+    cost: { ore: 2200000, polymers: 2470000, plasma: 600000 },
     baseSeconds: 2400,
     shipyardLevel: 12,
     requires: { ASTROPHYSICS: 11 },
@@ -197,7 +197,7 @@ const SHIPS: Record<ShipType, ShipDefinition> = {
     label: 'Переработчик',
     description:
       'Сборщик обломков. Без оружия, медленный и прожорливый, зато трюм больше, чем у десяти транспортов.',
-    cost: { ore: 45000, polymers: 22000, plasma: 9000 },
+    cost: { ore: 45000, polymers: 41800, plasma: 9000 },
     baseSeconds: 400,
     shipyardLevel: 8,
     // Тяжелый корпус под гигантский трюм требует развитой тяги.
@@ -208,7 +208,7 @@ const SHIPS: Record<ShipType, ShipDefinition> = {
     description:
       'Одноразовый корабль-основатель: садится на свободную планету и разбирается ' +
       'на первую инфраструктуру колонии. Обратно не возвращается.',
-    cost: { ore: 70000, polymers: 40000, plasma: 18000 },
+    cost: { ore: 70000, polymers: 76000, plasma: 18000 },
     baseSeconds: 500,
     shipyardLevel: 9,
     // Астрофизика нужна и на сам полет к чужой звезде, и на выбор пригодной планеты.

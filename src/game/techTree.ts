@@ -76,7 +76,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
     description:
       '+2% к выработке энергии базы за уровень. Открывает путь к остальным технологиям. ' +
       'На бой не влияет: щиты усиливает щитовая технология.',
-    cost: { ore: 0, polymers: 200, plasma: 100, factor: 2.0 },
+    cost: { ore: 0, polymers: 380, plasma: 100, factor: 2.0 },
     baseSeconds: 90,
     timeFactor: 2.15,
     labLevel: 1,
@@ -85,7 +85,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
   COMPUTING_TECH: {
     label: 'Вычислительная техника',
     description: '-3% к времени исследований за уровень. Нужна для постройки зондов.',
-    cost: { ore: 0, polymers: 100, plasma: 75, factor: 2.0 },
+    cost: { ore: 0, polymers: 190, plasma: 75, factor: 2.0 },
     baseSeconds: 60,
     timeFactor: 2.15,
     labLevel: 1,
@@ -94,7 +94,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
   WEAPONS_TECH: {
     label: 'Оружейная технология',
     description: '+10% к атаке всех кораблей и обороны за уровень.',
-    cost: { ore: 800, polymers: 200, plasma: 0, factor: 2.0 },
+    cost: { ore: 800, polymers: 380, plasma: 0, factor: 2.0 },
     baseSeconds: 120,
     timeFactor: 2.15,
     labLevel: 2,
@@ -103,7 +103,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
   SHIELDS_TECH: {
     label: 'Щитовая технология',
     description: '+10% к щитам всех кораблей и обороны за уровень.',
-    cost: { ore: 200, polymers: 600, plasma: 0, factor: 2.0 },
+    cost: { ore: 200, polymers: 1140, plasma: 0, factor: 2.0 },
     baseSeconds: 150,
     timeFactor: 2.15,
     labLevel: 3,
@@ -121,7 +121,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
   CRYPTO_TECH: {
     label: 'Криптоинженерия',
     description: '+15% к добыче криптогривны на фермах за уровень.',
-    cost: { ore: 400, polymers: 600, plasma: 100, factor: 1.9 },
+    cost: { ore: 400, polymers: 1140, plasma: 100, factor: 1.9 },
     baseSeconds: 120,
     timeFactor: 2.15,
     labLevel: 4,
@@ -132,7 +132,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
     description:
       '+2% к несгораемой доле склада за уровень. Базовая защита — 20% вместимости; ' +
       'после 50% каждый следующий уровень обходится втрое дороже предыдущего.',
-    cost: { ore: 800, polymers: 500, plasma: 150, factor: 1.7 },
+    cost: { ore: 800, polymers: 950, plasma: 150, factor: 1.7 },
     baseSeconds: 150,
     timeFactor: 2.15,
     labLevel: 3,
@@ -144,7 +144,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
       'Глаза и веки разом. Решает не уровень, а разница с уровнем противника: ' +
       'чем выше перевес, тем глубже заглядывает твой зонд и тем меньше видно ' +
       'чужой. Без нее не собрать даже зонд.',
-    cost: { ore: 500, polymers: 700, plasma: 80, factor: 1.8 },
+    cost: { ore: 500, polymers: 1330, plasma: 80, factor: 1.8 },
     baseSeconds: 100,
     timeFactor: 2.15,
     labLevel: 3,
@@ -153,7 +153,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
   MINING_TECH: {
     label: 'Горное дело',
     description: '+2% к добыче всех шахт за уровень.',
-    cost: { ore: 200, polymers: 100, plasma: 0, factor: 1.8 },
+    cost: { ore: 200, polymers: 190, plasma: 0, factor: 1.8 },
     baseSeconds: 75,
     timeFactor: 2.15,
     labLevel: 2,
@@ -171,7 +171,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
   HYPERSPACE_PHYSICS: {
     label: 'Гиперпространственная физика',
     description: 'Открывает постройку синтезатора антиматерии.',
-    cost: { ore: 800, polymers: 1200, plasma: 600, factor: 2.1 },
+    cost: { ore: 800, polymers: 2280, plasma: 600, factor: 2.1 },
     baseSeconds: 240,
     timeFactor: 2.15,
     labLevel: 3,
@@ -184,7 +184,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
       'одновременных задает уровень (1 → 1, 4 → 2, 9 → 3), он же увеличивает находки ' +
       'и помогает уходить от засад. Каждые два уровня добавляют слот под колонию ' +
       '(0 → 1 база, 2 → 2, 4 → 3) и открывают постройку колониального транспорта.',
-    cost: { ore: 400, polymers: 800, plasma: 400, factor: 1.9 },
+    cost: { ore: 400, polymers: 1520, plasma: 400, factor: 1.9 },
     baseSeconds: 180,
     timeFactor: 2.15,
     labLevel: 2,
@@ -195,7 +195,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
     description:
       'Открывает межзвездные прыжки на антиматерии. Каждый уровень ускоряет прыжок ' +
       'и снижает расход топлива.',
-    cost: { ore: 1500, polymers: 1000, plasma: 900, factor: 2.0 },
+    cost: { ore: 1500, polymers: 1900, plasma: 900, factor: 2.0 },
     baseSeconds: 300,
     timeFactor: 2.15,
     labLevel: 3,
@@ -206,7 +206,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
     description:
       'Строительные автоматы. Каждый уровень ускоряет постройку зданий и сборку ' +
       'кораблей с обороной. На исследования не влияет — там работает лаборатория.',
-    cost: { ore: 400, polymers: 200, plasma: 100, factor: 1.9 },
+    cost: { ore: 400, polymers: 380, plasma: 100, factor: 1.9 },
     baseSeconds: 120,
     timeFactor: 2.15,
     labLevel: 2,
@@ -219,7 +219,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
       'вообще все сроки: стройку, верфь, оборону и исследования. Плата — энергия: ' +
       'каждый следующий уровень потребляет вдвое больше предыдущего, и дефицит ' +
       'бьет по добыче всей базы.',
-    cost: { ore: 20000, polymers: 15000, plasma: 12000, factor: 2.4 },
+    cost: { ore: 20000, polymers: 28500, plasma: 12000, factor: 2.4 },
     baseSeconds: 3600,
     timeFactor: 2.0,
     labLevel: 10,

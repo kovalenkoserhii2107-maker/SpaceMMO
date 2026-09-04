@@ -68,6 +68,14 @@ export interface BotPersonality {
    * чтобы бот полетел. Меньше — рискованнее.
    */
   raidAdvantage: number;
+  /**
+   * Идти ли до последнего, когда против нас собралась коалиция.
+   *
+   * По умолчанию нет: отойти и накопить сил — решение, которое почти всегда
+   * лучше. Обратное решение принимает модель, и только она: это выбор
+   * характера в конкретной обстановке, а не арифметика.
+   */
+  standGround: boolean;
 
   /** Торгует ли бот на бирже и насколько активно (доля свободного склада). */
   trade: {
@@ -145,6 +153,7 @@ export const BOT_PERSONALITIES: Record<BotCharacter, BotPersonality> = {
     colonyAmbition: 6,
     raids: true,
     raidAdvantage: 1.6,
+    standGround: false,
     trade: { active: true, sellShare: 0.3, margin: 0.12 },
   },
 
@@ -192,6 +201,7 @@ export const BOT_PERSONALITIES: Record<BotCharacter, BotPersonality> = {
     colonyAmbition: 2,
     raids: false,
     raidAdvantage: 2.5,
+    standGround: false,
     trade: { active: true, sellShare: 0.6, margin: 0.06 },
   },
 };

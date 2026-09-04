@@ -49,7 +49,7 @@ import {
   type ShipCounts,
   type ShipType,
 } from '../ships.js';
-import { fleetCapacity } from '../fleets.js';
+import { canJump, fleetCapacity, planFlight, type GalaxyPoint } from '../fleets.js';
 import { storageUpgradeCost } from '../market.js';
 import { hopeless } from './directives.js';
 import {
@@ -75,6 +75,14 @@ export interface BotBaseSnapshot {
   id: string;
   planetId: string;
   systemId: string;
+  /** Орбита самой базы — вторая точка маршрута при расчете топлива. */
+  orbit: number;
+  /**
+   * Антиматерия на базе. В `resources` ее нет — там только то, что лежит
+   * на складах под лимитом, — а без нее не выйдет ни одного межзвездного
+   * рейса, и это надо знать до того, как рейс запланирован.
+   */
+  antimatter: number;
   levels: BuildingLevels;
   richness: PlanetRichness;
   anomaly: string;
@@ -109,6 +117,23 @@ export interface BotRaidTarget {
    * null — цель не разведана, лететь вслепую бот не станет.
    */
   knownStrength: number | null;
+  /**
+   * Что из этой оценки приходится на корабли.
+   *
+   * Нужно отдельно от общей силы: обломки дает только разбитый флот, оборона
+   * восстанавливается на месте и в поле не улетает. Цель с турелями на сто
+   * тысяч и без единого корабля не оставит после себя ничего.
+   */
+  knownFleetValue: number | null;
+  /**
+   * Сколько ресурсов лежало у цели в момент разведки.
+   *
+   * Это и есть добыча, ради которой летят. null — склад разглядеть не вышло:
+   * ступень разведки до него не дотянулась.
+   */
+  knownStock: number | null;
+  /** Орбита цели: внутри системы от нее зависит и время, и расход плазмы. */
+  orbit: number;
   distance: number;
 }
 
@@ -123,6 +148,19 @@ export interface BotMarketRef {
   supply: number;
   /** Перекос спроса от -1 (одни продавцы) до +1 (одни покупатели). */
   skew: number | null;
+  /**
+   * Тот же перекос, но без собственных заявок бота.
+   *
+   * Нужен только для одного вопроса: сказал ли рынок что-то новое. Стакан
+   * тонкий — четыре бота на хабе, — и своей же снятой заявкой бот
+   * переворачивал перекос с +1 на -1, читал это как новость и будил модель:
+   * семь переворотов за полтора часа у каждого из четверых, 27 поводов
+   * из 33 за ночь. Новость — это когда подвинулся кто-то другой.
+   *
+   * На цену он не влияет: коридор строится по общему стакану, потому что
+   * платить приходится в нем, а не в очищенном от себя.
+   */
+  foreignSkew: number | null;
 }
 
 /**
@@ -148,6 +186,8 @@ export interface BotThreat {
   againstMe: boolean;
   /** Оценка его обороны по разведке. null — не разведан. */
   knownStrength: number | null;
+  /** Орбита его планеты — без нее не посчитать, долетим ли до него вообще. */
+  planetOrbit: number;
   distance: number;
 }
 
@@ -470,13 +510,15 @@ export function buildingPlan(
   /*
    * Крипто-ферма: когда добывать больше уже некуда.
    *
-   * На единицу энергии ферма дает около двух третей того, что дает шахта
-   * с продажей станции, — то есть пока добытое доезжает до хаба, шахта лучше
-   * всегда. Проверка живым ботом показала, где это перестает быть верным:
+   * На единицу энергии ферма дает 40-50% того, что дает шахта по рыночной
+   * цене, — то есть пока добытое доезжает до хаба, шахта лучше всегда.
+   * (Прежняя оценка «две трети» считалась против фиксированной цены станции;
+   * станции больше нет, замер сделан заново.) Проверка живым ботом показала,
+   * где это перестает быть верным:
    * Крамар при шахтах седьмого уровня добывал 23 800 полимеров в час
    * при вместимости склада около сорока тысяч, то есть забивал его за два
    * часа, а вывозил двадцатью пятью малыми грузовиками с рейсом в обе стороны.
-   * Все, что не влезло, срезалось потолком и не стоило ничего. Две трети
+   * Все, что не влезло, срезалось потолком и не стоило ничего. Половина
    * больше нуля.
    *
    * Признак именно этот: ресурс уперся в потолок, а его хранилище уже обогнало
@@ -831,24 +873,152 @@ function cheapestAffordable(base: BotBaseSnapshot, techs: TechLevels): ShipType 
  * потому что за туманом войны может стоять «Перун». И запас по силе:
  * размен один в один боту невыгоден, флот он копил неделю.
  */
+/**
+ * Долетим ли вообще.
+ *
+ * Проверка появилась не от хорошей жизни. Живой Хижак каждый заход выбирал
+ * разведать соседа, рейс молча отваливался, и так по кругу: все неразведанные
+ * соседи оказались в других системах, а гиперпрыжок требует и «Гипердвигателя»,
+ * и антиматерии — у него не было ни того, ни другого. Планировать полет,
+ * которого не будет, значит не делать ничего и не знать об этом.
+ */
+export function reachable(
+  target: { orbit: number; distance: number },
+  ships: ShipCounts,
+  techs: TechLevels,
+  from: { orbit: number; antimatter: number },
+): boolean {
+  if (target.distance === 0) return true;
+  if (!canJump(techs)) return false;
+  const plan = planFlight(
+    ships,
+    techs,
+    { position: from.orbit, system: { galaxyX: 0, galaxyY: 0 } },
+    { position: target.orbit, system: { galaxyX: target.distance, galaxyY: 0 } },
+  );
+  return from.antimatter >= plan.antimatter;
+}
+
+/**
+ * Что набег принесет и во что обойдется.
+ *
+ * Считается в единицах ресурсов — все они идут один к одному, как в рейтинге:
+ * другого источника правды об их относительной ценности в игре нет, а биржа
+ * торгует лишь двумя из четырех.
+ */
+export interface RaidValue {
+  /** Сколько удастся увезти: меньшее из чужого склада и своих трюмов. */
+  loot: number;
+  /** Обломки разбитого флота — их подберет переработчик, если он есть. */
+  debris: number;
+  /** Топливо на дорогу туда и обратно. */
+  fuel: number;
+  /** Чистая выгода: добыча с обломками за вычетом топлива. */
+  net: number;
+}
+
+/**
+ * Какая доля чужого склада реально уносится.
+ *
+ * Грабеж берет 90% излишка сверх несгораемой доли, а несгораемая доля — пятая
+ * часть вместимости каждого хранилища. Вместимость чужих складов разведка
+ * показывает не всегда, поэтому здесь грубая, но честно заниженная оценка:
+ * половина увиденного запаса. Ошибаться лучше в меньшую сторону — тогда бот
+ * не полетит за добычей, которой не окажется.
+ */
+const LOOT_SHARE = 0.5;
+
+/** Доля стоимости разбитых кораблей, оседающая в поле обломков. */
+const DEBRIS_SHARE = 0.3;
+
+/**
+ * Оценка набега до вылета.
+ *
+ * Раньше ее не было вовсе, и это дорого стоило: живой Хижак ходил на Купця
+ * раз в три минуты, привозил по 104–739 единиц и жег около 930 плазмы
+ * за вылет. Каждый набег был прямым убытком, и остановить его было нечем —
+ * правило проверяло только «слабее ли цель», но не «стоит ли лететь».
+ */
+export function raidValue(
+  target: BotRaidTarget,
+  strike: ShipCounts,
+  techs: TechLevels,
+  from: { orbit: number; systemId: string },
+  /** Своя система по координатам — по ним видно, нужен ли прыжок. */
+  home: GalaxyPoint,
+  there: GalaxyPoint,
+): RaidValue {
+  const plan = planFlight(
+    strike,
+    techs,
+    { position: from.orbit, system: home },
+    { position: target.orbit, system: there },
+  );
+
+  const loot = Math.min(plan.capacity, Math.max(0, target.knownStock ?? 0) * LOOT_SHARE);
+  const debris = Math.max(0, target.knownFleetValue ?? 0) * DEBRIS_SHARE;
+  // Антиматерия дороже плазмы по добыче на порядки, но в единицах ресурсов
+  // считается так же — как и везде, где ресурсы складываются.
+  const fuel = plan.fuel + plan.antimatter;
+  return { loot, debris, fuel, net: loot + debris - fuel };
+}
+
+/**
+ * Выбор цели: не ближайшая из посильных, а самая выгодная из посильных.
+ *
+ * Порогов два, и они про разное. Первый — не лететь в убыток: добыча
+ * с обломками должна перекрывать топливо. Второй — соразмерность: набег
+ * ссорит с соседом и зовет ответный визит, поэтому он должен стоить ссоры.
+ * Мерой служит собственная часовая добыча — величина, которая растет вместе
+ * с ботом сама. Молодому и тысяча ресурсов заметна; у Хижака час добычи
+ * это десятки тысяч, и лететь за двумя сотнями ему бессмысленно, даже если
+ * формально выходит в плюс.
+ */
 export function pickRaidTarget(
   targets: BotRaidTarget[],
   ownFleetValue: number,
   character: BotCharacter,
   override?: BotPersonality,
+  /** Чем и откуда летим и сколько сами добываем за час. Без этого — как раньше. */
+  economy?: {
+    strike: ShipCounts;
+    techs: TechLevels;
+    from: { orbit: number; systemId: string; antimatter: number };
+    home: GalaxyPoint;
+    systemOf: (target: BotRaidTarget) => GalaxyPoint;
+    hourlyOutput: number;
+  },
 ): BotRaidTarget | null {
   const profile = override ?? personality(character);
   if (!profile.raids) return null;
 
-  const reachable = targets
+  const candidates = targets
     .filter((target) => !shielded(target))
     .filter((target) => target.knownStrength !== null)
-    .filter((target) => ownFleetValue >= (target.knownStrength ?? 0) * profile.raidAdvantage);
+    .filter((target) => ownFleetValue >= (target.knownStrength ?? 0) * profile.raidAdvantage)
+    // Недостижимая цель — не цель: без гипердвигателя и антиматерии рейс
+    // не улетит, а решение будет приниматься заново каждый заход.
+    .filter(
+      (target) =>
+        !economy ||
+        reachable(target, economy.strike, economy.techs, { orbit: economy.from.orbit, antimatter: economy.from.antimatter }),
+    );
 
-  if (reachable.length === 0) return null;
+  if (candidates.length === 0) return null;
+  if (!economy) {
+    // Из подходящих — ближайшая: дорога тоже стоит топлива и времени.
+    return candidates.reduce((best, target) => (target.distance < best.distance ? target : best));
+  }
 
-  // Из подходящих — ближайшая: дорога тоже стоит топлива и времени.
-  return reachable.reduce((best, target) => (target.distance < best.distance ? target : best));
+  const worth = candidates
+    .map((target) => ({
+      target,
+      value: raidValue(target, economy.strike, economy.techs, economy.from, economy.home, economy.systemOf(target)),
+    }))
+    .filter((row) => row.value.net > 0 && row.value.net >= economy.hourlyOutput);
+
+  if (worth.length === 0) return null;
+  return worth.reduce((best, row) => (row.value.net > best.value.net ? row : best)).target;
 }
 
 /* ------------------------- Главная функция ------------------------- */
@@ -1027,9 +1197,11 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
        * по дешевым шахтам вместо того, чтобы дойти до ворот контента.
        */
       let building = pressure ? plan.find(affordable) : plan[0] && affordable(plan[0]) ? plan[0] : undefined;
+      /** Почему ферма вышла вперед плана: порогов два, и они про разное. */
+      let farmReason: string | null = null;
 
       /*
-       * Денег нет, а без них не обойтись — значит первым делом ферма.
+       * Денег нет — значит первым делом ферма. Порогов у этого два.
        *
        * Криптогривна берется единственным способом: с крипто-фермы. Станция
        * ничего не покупает, все сделки между игроками — переводы, и бот
@@ -1038,9 +1210,37 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
        * то есть до нее не доходит очередь никогда. Проверено на живых ботах:
        * у всех троих ферма нулевого уровня при шахтах до седьмого.
        *
-       * Порог — цена того, чего не хватает, по нынешнему рынку. Это не догадка
-       * о «достаточной» сумме, а ровно тот вопрос, который решается покупкой:
-       * хватит ли денег закрыть дефицит, если купить его прямо сейчас.
+       * Первый порог — цена того, чего не хватает, по нынешнему рынку. Это
+       * не догадка о «достаточной» сумме, а ровно тот вопрос, который решается
+       * покупкой: хватит ли денег закрыть дефицит прямо сейчас.
+       *
+       * Одного его оказалось мало. Он спрашивает «хватит ли на дефицит»,
+       * а дефицита может не быть вовсе: ресурсы на ближайшее здание есть,
+       * покупать нечего, порог молчит — и ферма не строится никогда. Так живут
+       * ровно те, у кого недра богатые и склад не переполняется: у живых
+       * Яструба и Беркута ферма нулевого уровня на вторые сутки, причем
+       * у Яструба при этом ₴7 835 на счету. Деньги ему нужны не на дефицит,
+       * а чтобы вообще торговать и расширять склад, и взять их неоткуда.
+       *
+       * Отсюда второй порог: цена следующего расширения склада на хабе. Он
+       * не выдуман — это единственная покупка бота помимо закрытия дефицита
+       * и второй сток криптогривны. Не хватает на нее — бот беден
+       * по-настоящему, а не занят.
+       *
+       * Замерено прогоном недели на семи ботах, до и после правила при одной
+       * и той же расстановке (`npm run forecast -- 7`, правка снимается
+       * `git stash`): денежная масса ₴75.1 млн против ₴132.7 млн,
+       * то есть ₴1.67 против ₴2.48 на единицу добытого товара. Добыча при
+       * этом не падает, а растет — 45.1 млн против 53.5 млн единиц: бедный
+       * бот перестает стоять и начинает докупать недостающее. Ворота контента
+       * не сдвинулись: средняя верфь 6.0 в обоих прогонах, лучшая 8 против 7.
+       * И главное — исчезает нулевая ферма: без второго порога бот с богатой
+       * рудой не строит ее за неделю ни разу.
+       *
+       * Доля характера при этом не обходится: ферма проходит тот же
+       * `affordable`, что и любая другая стройка. Прогон с обходом доли
+       * показал, чем это кончается — денег втрое больше, но добыча падает
+       * на пятую часть, потому что ферма начинает объедать шахты.
        */
       if (!pressure && plan[0] && plan[0] !== 'CRYPTO_FARM') {
         const cost = upgradeCost(plan[0], base.levels[plan[0]] + 1);
@@ -1051,13 +1251,17 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
           if (gap <= 0) continue;
           needed += gap * (snapshot.market.find((ref) => ref.resource === resource)?.reference ?? 0);
         }
+        const cannotBuyDeficit = needed > 0 && snapshot.credits < needed;
+        const broke = snapshot.hubStorage.upgradeCost > 0 && snapshot.credits < snapshot.hubStorage.upgradeCost;
         if (
-          needed > 0 &&
-          snapshot.credits < needed &&
+          (cannotBuyDeficit || broke) &&
           missingBuildingRequirements('CRYPTO_FARM', base.levels).length === 0 &&
           affordable('CRYPTO_FARM')
         ) {
           building = 'CRYPTO_FARM';
+          farmReason = cannotBuyDeficit
+            ? 'на покупку недостающего не хватает криптогривны'
+            : 'денег нет даже на расширение склада';
         }
       }
 
@@ -1067,11 +1271,8 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
           baseId: base.id,
           building,
           why:
-            building === 'CRYPTO_FARM' && plan[0] !== 'CRYPTO_FARM'
-              ? 'на покупку недостающего не хватает криптогривны'
-              : pressure
-                ? 'склад полон, копить некуда'
-                : 'развитие базы',
+            farmReason ??
+            (pressure ? 'склад полон, копить некуда' : 'развитие базы'),
         });
       } else if (plan[0]) {
         /*
@@ -1102,7 +1303,47 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
     }
 
     /* --- Верфь --- */
-    if (base.shipQueue < 3 && base.levels.SHIPYARD > 0 && !saturated('fleet')) {
+    /*
+     * Грузовик впереди боевых кораблей, если своего добра не на чем привезти.
+     *
+     * Бот без транспортов отрезан от собственного склада на хабе: строят
+     * из того, что на базе, а перевезти нечем. Живой Купець просидел так
+     * с 45 555 руды на станции при трех тысячах дома — Хижак сжег ему весь
+     * грузовой флот, и для правил это выглядело как рядовое «класс отстает
+     * от состава эскадры», наравне с истребителями.
+     *
+     * Транспорт — инструмент под задачу, как зонд: заказывается тогда, когда
+     * задача есть. Задача здесь — свой же запас, до которого не дотянуться.
+     */
+    const hold = fleetCapacity({
+      ...emptyShipCounts(),
+      LARGE_CARGO: base.ships.LARGE_CARGO,
+      SMALL_CARGO: base.ships.SMALL_CARGO,
+    });
+    const strandedAtHub = snapshot.hubStorage.ore + snapshot.hubStorage.polymers;
+    if (
+      base.shipQueue < 3 &&
+      base.levels.SHIPYARD > 0 &&
+      hold <= 0 &&
+      /*
+       * Пустой ангар — не всегда отсутствие транспорта: он мог уйти в рейс,
+       * а в составе базы числится только то, что стоит на земле. Живой Хижак
+       * заказал лишний грузовик ровно так — его восемьдесят два транспорта
+       * в ту минуту везли товар с хаба.
+       */
+      snapshot.fleetsInFlight === 0 &&
+      strandedAtHub >= 100 &&
+      missingShipRequirements('SMALL_CARGO', base.levels, snapshot.techs).length === 0 &&
+      hasEnoughResources(stock, shipCost('SMALL_CARGO'))
+    ) {
+      intents.push({
+        kind: 'SHIPS',
+        baseId: base.id,
+        ship: 'SMALL_CARGO',
+        count: 1,
+        why: 'свой запас лежит на хабе, а вывезти нечем',
+      });
+    } else if (base.shipQueue < 3 && base.levels.SHIPYARD > 0 && !saturated('fleet')) {
       const order = laggingShip(base.ships, profile.fleetMix, base.levels, snapshot.techs, stock, {
         capacity,
         share: share('fleet'),
@@ -1239,7 +1480,20 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
    * со всеми нельзя.
    */
   const beaten = snapshot.fleetPeak > 0 && ownFleet < snapshot.fleetPeak * 0.2;
-  const regrouping = beaten || snapshot.warsAgainstMe >= 2;
+  /*
+   * Коалиция: двое и больше воюющих одновременно.
+   *
+   * Что с ней делать — не арифметика, а выбор, и он оставлен модели. По
+   * умолчанию бот отходит, зализывает раны и копит силы: это решение почти
+   * всегда лучше, и оно же прежнее поведение. Захотела драться до конца —
+   * пусть дерется, это ее право и ее ответственность.
+   *
+   * Разбитому выбора не оставляют ни при каком ответе: стоять насмерть
+   * нечем, а скормить агрессорам остатки флота — верный способ не подняться
+   * уже никогда.
+   */
+  const besieged = snapshot.warsAgainstMe >= 2;
+  const regrouping = beaten || (besieged && !profile.standGround);
 
   const rally =
     threat &&
@@ -1249,26 +1503,69 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
       ? threat
       : null;
 
+  const striker = snapshot.bases.reduce((best, base) =>
+    spentOnFleet(base.ships) > spentOnFleet(best.ships) ? base : best,
+  );
+  // В набег идет только боевая часть: грузовики, зонды, переработчики
+  // и колониальный корабль остаются дома, им в бою делать нечего.
+  const strike = emptyShipCounts();
+  for (const type of SHIP_TYPES) {
+    if (type === 'PROBE' || type === 'RECYCLER' || type === 'COLONY_SHIP') continue;
+    if (type === 'SMALL_CARGO' || type === 'LARGE_CARGO') continue;
+    strike[type] = striker.ships[type];
+  }
+  /*
+   * Трюмы под добычу — половина транспортов, и малых тоже.
+   *
+   * Малые не брали вовсе, и с расчетом выгоды это стало видно сразу: у живого
+   * Хижака восемьдесят два малых транспорта и ни одного большого, поэтому
+   * увезти он мог ровно столько, сколько влезало в трюмы истребителей —
+   * пять тысяч единиц. Любой набег при таком потолке не окупался в принципе,
+   * сколько бы ни лежало у цели на складе. Половина, а не все: вторая
+   * половина продолжает возить на хаб, пока эта воюет.
+   */
+  strike.LARGE_CARGO = Math.floor(striker.ships.LARGE_CARGO / 2);
+  strike.SMALL_CARGO = Math.floor(striker.ships.SMALL_CARGO / 2);
+
+  /*
+   * Час собственной добычи — мера соразмерности набега.
+   *
+   * Величина растет вместе с ботом сама, и в этом ее смысл: молодому и тысяча
+   * ресурсов заметна, а развитому она не стоит ни топлива, ни испорченных
+   * отношений с соседом. Постоянного порога тут быть не может — он устарел бы
+   * к третьим суткам.
+   */
+  const output = productionPerSecond(
+    striker.levels,
+    striker.richness,
+    economyBonuses(snapshot.techs),
+    0,
+    systemModifiers(striker.anomaly),
+    timeCompressionDrain(snapshot.techs),
+  );
+  const hourlyOutput = (output.ore + output.polymers + output.plasma) * 3600;
+
+  /*
+   * Координаты подставные, и это точно, а не приблизительно: `planFlight`
+   * смотрит на них ровно дважды — совпадают ли системы и каково расстояние
+   * между ними. Обе величины из `distance` восстанавливаются без потерь.
+   */
+  const home: GalaxyPoint = { galaxyX: 0, galaxyY: 0 };
+  const systemOf = (item: BotRaidTarget): GalaxyPoint => ({ galaxyX: item.distance, galaxyY: 0 });
+
   const target = regrouping
     ? null
     : rally
       ? snapshot.raidTargets.find((item) => item.planetId === rally.planetId) ?? null
-      : pickRaidTarget(snapshot.raidTargets, ownFleet, snapshot.character, profile);
+      : pickRaidTarget(snapshot.raidTargets, ownFleet, snapshot.character, profile, {
+          strike,
+          techs: snapshot.techs,
+          from: { orbit: striker.orbit, systemId: striker.systemId, antimatter: striker.antimatter },
+          home,
+          systemOf,
+          hourlyOutput,
+        });
   if (target) {
-    const striker = snapshot.bases.reduce((best, base) =>
-      spentOnFleet(base.ships) > spentOnFleet(best.ships) ? base : best,
-    );
-    // В набег идет только боевая часть: грузовики, зонды, переработчики
-    // и колониальный корабль остаются дома, им в бою делать нечего.
-    const strike = emptyShipCounts();
-    for (const type of SHIP_TYPES) {
-      if (type === 'PROBE' || type === 'RECYCLER' || type === 'COLONY_SHIP') continue;
-      if (type === 'SMALL_CARGO' || type === 'LARGE_CARGO') continue;
-      strike[type] = striker.ships[type];
-    }
-    // Трюмы под добычу: без грузовиков трофеи придется бросить на месте.
-    strike.LARGE_CARGO = Math.floor(striker.ships.LARGE_CARGO / 2);
-
     if (spentOnFleet(strike) > 0) {
       intents.push({
         kind: 'RAID',
@@ -1277,22 +1574,81 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
         ships: strike,
         why: rally
           ? `${rally.nickname} бьет соседей: набегов за сутки ${rally.raids}`
-          : 'цель разведана и слабее эскадры',
+          : `добыча окупает вылет: ${Math.round(
+              raidValue(target, strike, snapshot.techs, { orbit: striker.orbit, systemId: striker.systemId }, home, systemOf(target)).net,
+            )} чистыми`,
       });
     }
-  } else if (profile.raids) {
-    // Целей нет, потому что никто не разведан — бот отправляет зонд.
-    // Разведка ему нужна не меньше флота: без нее он летал бы вслепую.
-    const blind = snapshot.raidTargets.find(
-      (candidate) => candidate.knownStrength === null && !shielded(candidate),
-    );
+  }
+
+  {
+    /** Долетит ли туда зонд: рейс в чужую систему требует прыжка. */
+    const canFly = (candidate: { orbit: number; distance: number }): boolean => {
+      const probe = emptyShipCounts();
+      probe.PROBE = 1;
+      return reachable(candidate, probe, snapshot.techs, {
+        orbit: striker.orbit,
+        antimatter: striker.antimatter,
+      });
+    };
+
+    /*
+     * Разведка идет своим чередом, а не «когда лететь некуда».
+     *
+     * Раньше она стояла в ветке «цели нет»: бот, у которого набег выбрался,
+     * не смотрел по сторонам вовсе. На живом стенде это выглядело так —
+     * семьдесят пять колоний вокруг, разведаны две, и обе разведаны месяц
+     * назад. Выбор из двух целей выбором не является, а решение «стоит ли
+     * лететь» без чужого склада вообще не считается: набег теперь окупается
+     * или не летит.
+     *
+     * Зонд и ударный флот — разные корабли и разные очереди, лететь им
+     * ничто не мешает одновременно.
+     *
+     * Разведка нужна не только агрессору.
+     *
+     * Неразведанная цель безнадежна по определению — это правило, и оно
+     * верное. Но пока разведка висела на `profile.raids`, торговец не мог
+     * разведать вообще никого, а значит и подняться на серийного соседа
+     * не мог никогда, сколько бы у него ни было флота. Правило «против
+     * серийного агрессора соседи скидываются» при этом обещает обратное:
+     * летят и торговцы.
+     *
+     * Так оно и вышло на живом стенде: «Хижак» сделал 376 набегов на одного
+     * «Купця», тот разослал призыв, а «Крамар» со ста тридцатью двумя
+     * истребителями и ста сорока турелями — сильнее агрессора — даже
+     * не посмотрел в его сторону. Не потому что не захотел, а потому что
+     * торговцу нечем смотреть.
+     *
+     * Поэтому зонд под серийного соседа заказывает и отправляет кто угодно,
+     * а под обычную добычу — по-прежнему только тот, кто вообще ходит
+     * в набеги.
+     */
+    const blindThreat =
+      threat && threat.knownStrength === null && canFly({ orbit: threat.planetOrbit, distance: threat.distance })
+        ? { planetId: threat.planetId, why: `${threat.nickname} бьет соседей, а мы его не видели` }
+        : null;
+    /*
+     * Кого смотреть первым: ближнего. Дорога зонду тоже чего-то стоит,
+     * а неразведанных вокруг больше, чем зондов за всю жизнь бота.
+     */
+    const blindPrey = profile.raids
+      ? snapshot.raidTargets
+          .filter((candidate) => candidate.knownStrength === null && !shielded(candidate) && canFly(candidate))
+          .reduce<BotRaidTarget | undefined>(
+            (best, candidate) => (best === undefined || candidate.distance < best.distance ? candidate : best),
+            undefined,
+          )
+      : undefined;
+    const blind = blindThreat ?? (blindPrey ? { planetId: blindPrey.planetId, why: 'цель не разведана' } : null);
+
     const scout = snapshot.bases.find((base) => base.ships.PROBE > 0);
     if (blind && scout) {
       intents.push({
         kind: 'SCAN',
         baseId: scout.id,
         planetId: blind.planetId,
-        why: 'цель не разведана',
+        why: blind.why,
       });
     }
 
@@ -1309,10 +1665,26 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
      * Живой агрессор простоял в нем с пятьюдесятью тремя истребителями:
      * замысел «наращиваем ударный флот для завоевания соседей», войн ноль,
      * боев ноль. Зонд — инструмент под задачу, и заказывается он тогда,
-     * когда задача есть: цель невыяснена, а смотреть нечем.
+     * когда задача есть: цель невыяснена, а смотреть нечем. Задача эта
+     * бывает и у торговца — серийный сосед по соседству, — поэтому условие
+     * тут про зонды и цель, а не про характер.
+     */
+    /*
+     * Заказываем зонды только под собственную добычу, но не под серийного
+     * соседа.
+     *
+     * Разница в том, чем кончается неудача. Обычную цель бот рано или поздно
+     * разглядит. Агрессора с «Шпионажем» выше своего не разглядит никогда:
+     * при отставании на два уровня дрон гибнет с вероятностью 99% и записи
+     * о вылете не оставляет, поэтому цель остается неразведанной, а заказ
+     * повторяется — получилась бы мясорубка на пару зондов в минуту.
+     * У живого «Крамара» «Шпионаж» 2 против 5 у «Хижака» — ровно этот случай.
+     *
+     * Силу такого соседа бот и так узнает, когда отобьет его набег:
+     * отчет о бое показывает приведенный флот целиком.
      */
     const yard = snapshot.bases.find((base) => base.levels.SHIPYARD > 0 && base.shipQueue < 3);
-    if (blind && !scout && yard && missingShipRequirements('PROBE', yard.levels, snapshot.techs).length === 0) {
+    if (blindPrey && !scout && yard && missingShipRequirements('PROBE', yard.levels, snapshot.techs).length === 0) {
       // Пара штук: зонд одноразовый, но заказывать их десятками незачем —
       // разведывают по одной цели за раз.
       intents.push({
@@ -1385,12 +1757,18 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
   }
 
   /*
-   * Везем недостающее домой.
+   * Везем домой все свое, что влезет, а не только сегодняшний дефицит.
    *
-   * Купленное на бирже лежит на хабе, а строят из того, что на базе, — без
-   * этого рейса покупка не превращается ни во что. Забираем только то, чего
-   * не хватает на цель: везти домой излишек, который сами же и привезли
-   * продавать, значит гонять флот по кругу.
+   * Строят из того, что лежит на базе, и запас на хабе в планировании стройки
+   * не участвует вовсе. Пока рейс забирал только недостающее на ближайшую
+   * цель, собственное добро лежало на станции мертвым грузом: у живого Купця
+   * на хабе было 45 555 руды при трех тысячах дома и месте под двадцать три
+   * тысячи. Он не «решил не везти» — правило просто не срабатывало, потому
+   * что в ту минуту он не копил, а строил.
+   *
+   * Дома ресурс работает, на хабе он только занимает место и толкает платить
+   * за расширение склада. Поэтому забираем все, подо что есть место дома,
+   * — а недостающее на цель грузим первым, если трюмов на все не хватает.
    */
   const homeward = snapshot.bases[0];
   if (homeward) {
@@ -1399,21 +1777,32 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
       LARGE_CARGO: homeward.ships.LARGE_CARGO,
       SMALL_CARGO: homeward.ships.SMALL_CARGO,
     });
-    let ore = shortfall.has('ore') ? Math.floor(snapshot.hubStorage.ore) : 0;
-    let polymers = shortfall.has('polymers') ? Math.floor(snapshot.hubStorage.polymers) : 0;
-    if (ore + polymers > hold) {
-      const scale = hold / (ore + polymers);
-      ore = Math.floor(ore * scale);
-      polymers = Math.floor(polymers * scale);
+    const caps = storageCapacities(homeward.levels);
+    const room = (resource: StoredResource): number =>
+      Math.max(0, caps[resource] - Math.max(0, homeward.resources[resource]));
+
+    // Порядок погрузки: сначала то, чего не хватает на цель.
+    const queue: Array<'ore' | 'polymers'> = shortfall.has('polymers') && !shortfall.has('ore')
+      ? ['polymers', 'ore']
+      : ['ore', 'polymers'];
+
+    let left = hold;
+    const take = { ore: 0, polymers: 0 };
+    for (const resource of queue) {
+      const available = Math.floor(resource === 'ore' ? snapshot.hubStorage.ore : snapshot.hubStorage.polymers);
+      const amount = Math.max(0, Math.min(available, Math.floor(room(resource)), Math.floor(left)));
+      take[resource] = amount;
+      left -= amount;
     }
+
     // Мелочь рейса не стоит: транспорт уйдет надолго, а привезет ничто.
-    if (hold > 0 && ore + polymers >= 100) {
+    if (hold > 0 && take.ore + take.polymers >= 100) {
       intents.push({
         kind: 'PICKUP',
         baseId: homeward.id,
-        ore,
-        polymers,
-        why: 'недостающее лежит на хабе, а строят из того, что на базе',
+        ore: take.ore,
+        polymers: take.polymers,
+        why: 'свое лежит на хабе, а строят из того, что на базе',
       });
     }
   }
@@ -1494,8 +1883,10 @@ function tradeIntents(
    *
    * Отсюда же следует, что два одинаково развитых бота друг с другом
    * не торгуют вовсе: у них один и тот же избыток, и встречного интереса
-   * между ними нет. Их контрагент — станция, и это правильно: она для того
-   * и стоит.
+   * между ними нет. Раньше их контрагентом была станция; она снята, и теперь
+   * такой стакан просто стоит — все на одной стороне, встречной заявки нет
+   * ни у кого. Разводит их не биржа, а разная застройка: у кого шахта
+   * обогнала завод, тот и продает руду.
    */
   const fill = new Map<'ORE' | 'POLYMERS', number>();
   for (const resource of TRADED) {
@@ -1524,11 +1915,43 @@ function tradeIntents(
   const selling = (resource: 'ORE' | 'POLYMERS') =>
     !shortfall.has(stored(resource)) && (fill.get(resource) ?? 0) >= 0.5;
 
+  /*
+   * Не покупаем то, чего на хабе уже больше, чем база способна принять.
+   *
+   * Сторону решают склады баз, а не хаб, и это верно — привязка стороны
+   * к хабу давала петлю на 111 встречных сделок. Но у правила была обратная
+   * сторона: хаб не учитывался вовсе, и бот покупал ресурс, которого у него
+   * там уже лежала гора. Живой «Купець» дошел до предела этой логики —
+   * 146 тысяч полимеров на хабе, восемь тысяч на базе, и он спускает
+   * последние два миллиона гривны на покупку еще полимеров, оставшись
+   * с тремя гривнами на счету.
+   *
+   * Порог не выдуман: домой можно увезти только то, что влезет в склад базы.
+   * Если на хабе уже больше свободного места дома, следующая купленная
+   * единица не превратится ни во что — ее некуда положить даже теоретически.
+   * Продавать при этом ничто не мешает, и вывоз домой тоже: тормоз стоит
+   * только на покупке.
+   */
+  const glutted = (resource: 'ORE' | 'POLYMERS'): boolean => {
+    const field = resource === 'ORE' ? 'ore' : 'polymers';
+    let room = 0;
+    for (const base of snapshot.bases) {
+      room += Math.max(0, storageCapacities(base.levels)[field] - Math.max(0, base.resources[field]));
+    }
+    return (resource === 'ORE' ? hub.ore : hub.polymers) >= room;
+  };
+
   /* --- Берем чужое --- */
 
   // Дешевле всех — первым: если денег хватит не на все, тратим их с толком.
   const cheapest = foreign
-    .filter((order) => order.side === 'SELL' && !selling(order.resource) && order.price <= buyCeiling(order.resource))
+    .filter(
+      (order) =>
+        order.side === 'SELL' &&
+        !selling(order.resource) &&
+        !glutted(order.resource) &&
+        order.price <= buyCeiling(order.resource),
+    )
     .sort((a, b) => a.price - b.price);
 
   let purse = snapshot.credits;
@@ -1631,7 +2054,14 @@ function tradeIntents(
     }
 
     // Покупаем впрок: криптогривна сама по себе ничего не производит.
-    if (!selling(ref.resource) && snapshot.credits > 0 && hub.free > 0 && !standing('BUY', ref.resource)) {
+    // Но не в кучу, которую и так некуда девать, — тот же тормоз, что и выше.
+    if (
+      !selling(ref.resource) &&
+      !glutted(ref.resource) &&
+      snapshot.credits > 0 &&
+      hub.free > 0 &&
+      !standing('BUY', ref.resource)
+    ) {
       // Округляем вниз: вверх — значит перебить собственный потолок.
       // Именно на этом бот ставил покупку по 11 при потолке 10.6.
       const rival = Math.max(...best.filter((o) => o.side === 'BUY').map((o) => o.price), 0);
@@ -1681,6 +2111,8 @@ export function testBase(id: string, overrides: Partial<BotBaseSnapshot> = {}): 
     id,
     planetId: `${id}-planet`,
     systemId: `${id}-system`,
+    orbit: 1,
+    antimatter: 0,
     levels: emptyLevels(),
     richness: { ore: 1, polymers: 1, plasma: 1, energy: 1, antimatter: 1 },
     anomaly: 'NONE',

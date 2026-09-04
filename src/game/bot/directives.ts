@@ -41,8 +41,34 @@ export type BotDirective =
   | { kind: 'FILL'; orderId: string; amount: number; why: string }
   | { kind: 'BUY'; resource: TradeResource; amount: number; price: number; why: string }
   | { kind: 'COLONIZE'; planetId: string; why: string }
+  /**
+   * Разведать соседа.
+   *
+   * Код и сам смотрит ближайшего неразведанного каждый заход, но выбирает
+   * он по расстоянию — а модели бывает нужен конкретный: тот, с кем она
+   * думает торговать или воевать. Решение «на кого потратить зонд» — про
+   * замысел, а не про арифметику, поэтому рычаг у нее есть.
+   */
+  | { kind: 'SCOUT'; planetId: string; why: string }
   /** Сбор поля обломков над планетой. */
   | { kind: 'HARVEST'; planetId: string; why: string }
+  /**
+   * Помощь ресурсами: караван соседу без возврата.
+   *
+   * Взаимопомощь не обязана быть военной. Разоренному соседу руда нужнее
+   * чужого флота, а отправителю она стоит дешевле войны. Рейс односторонний —
+   * груз переходит владельцу базы назначения тем же способом, каким игроки
+   * передают друг другу товар.
+   */
+  | { kind: 'AID'; commanderId: string; ore: number; polymers: number; why: string }
+  /**
+   * Помощь флотом: корабли уходят соседу насовсем.
+   *
+   * Тот же односторонний рейс, но вместо груза — боевые корабли, и на месте
+   * они переходят хозяину базы. Это дороже ресурсов и потому решение более
+   * серьезное: помогающий остается без флота, которым сам мог бы обороняться.
+   */
+  | { kind: 'REINFORCE'; commanderId: string; why: string }
   /** Письмо живому игроку по собственному почину. */
   | { kind: 'MESSAGE'; commanderId: string; subject: string; body: string; why: string };
 
@@ -105,6 +131,30 @@ export function parseDirectives(raw: unknown, snapshot: BotSnapshot): BotDirecti
         if (free.has(planetId)) out.push({ kind: 'COLONIZE', planetId, why });
         break;
       }
+      case 'AID': {
+        const commanderId = text(row['commanderId'], 64);
+        const ore = positive(row['ore'], 10_000_000);
+        const polymers = positive(row['polymers'], 10_000_000);
+        if (known.has(commanderId) && ore + polymers > 0) {
+          out.push({ kind: 'AID', commanderId, ore, polymers, why });
+        }
+        break;
+      }
+
+      case 'REINFORCE': {
+        const commanderId = text(row['commanderId'], 64);
+        if (known.has(commanderId)) out.push({ kind: 'REINFORCE', commanderId, why });
+        break;
+      }
+
+      case 'SCOUT': {
+        const planetId = text(row['planetId'], 64);
+        // Сверяем по списку показанных колоний: разведать можно только то,
+        // что боту вообще видно на карте.
+        if (scouted.has(planetId)) out.push({ kind: 'SCOUT', planetId, why });
+        break;
+      }
+
       case 'HARVEST': {
         const planetId = text(row['planetId'], 64);
         if (debris.has(planetId)) out.push({ kind: 'HARVEST', planetId, why });

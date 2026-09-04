@@ -47,7 +47,7 @@ const DEFENSES: Record<DefenseType, DefenseDefinition> = {
   LASER: {
     label: 'Лазер «Промінь»',
     description: 'Мощная турель, требует энергетики.',
-    cost: { ore: 3200, polymers: 1700, plasma: 0 },
+    cost: { ore: 3200, polymers: 3230, plasma: 0 },
     baseSeconds: 40,
     energyDrain: 1.2,
     shipyardLevel: 2,
@@ -56,7 +56,7 @@ const DEFENSES: Record<DefenseType, DefenseDefinition> = {
   GAUSS: {
     label: 'Гаусс-пушка «Скіф»',
     description: 'Рельсовое орудие: пробивает броню крейсеров, но прожорливо по энергии.',
-    cost: { ore: 22000, polymers: 12000, plasma: 1500 },
+    cost: { ore: 22000, polymers: 22800, plasma: 1500 },
     baseSeconds: 200,
     energyDrain: 3.0,
     shipyardLevel: 6,
@@ -65,7 +65,7 @@ const DEFENSES: Record<DefenseType, DefenseDefinition> = {
   PLASMA: {
     label: 'Плазменная батарея «Сварог»',
     description: 'Тяжелая батарея планетарной обороны. Держит удар линейного флота.',
-    cost: { ore: 160000, polymers: 95000, plasma: 32000 },
+    cost: { ore: 160000, polymers: 180500, plasma: 32000 },
     baseSeconds: 700,
     energyDrain: 8.0,
     shipyardLevel: 9,
@@ -76,7 +76,7 @@ const DEFENSES: Record<DefenseType, DefenseDefinition> = {
     description:
       'Ультимативная защита планеты. Бьет раз в раунд и только по одной цели — ' +
       'зато залпа хватает, чтобы снять линкор. Требует энергетику целой колонии.',
-    cost: { ore: 1400000, polymers: 1000000, plasma: 350000 },
+    cost: { ore: 1400000, polymers: 1900000, plasma: 350000 },
     baseSeconds: 1800,
     energyDrain: 50.0,
     shipyardLevel: 12,

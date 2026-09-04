@@ -35,6 +35,16 @@ export interface BotPlan {
   defenseMix: Partial<Record<DefenseType, number>>;
   colonyAmbition: number;
   raidAdvantage: number;
+  /**
+   * Что делать, когда против нас собралась коалиция.
+   *
+   * Двое и больше воюющих одновременно — это не совпадение: поодиночке они
+   * бы не решились, значит скинулись. Дальше выбор не арифметический,
+   * и потому он за моделью: `false` — отойти, зализать раны и копить силы;
+   * `true` — идти до последнего. Разбитому флоту выбора не оставляют
+   * ни при каком ответе: стоять насмерть нечем.
+   */
+  standGround: boolean;
   /** Одна фраза о замысле — она уходит в пульт, чтобы было видно, чем бот занят. */
   note: string;
 }
@@ -174,6 +184,7 @@ export function parsePlan(raw: unknown, character: BotCharacter): BotPlan | null
     // Перевес меньше единицы означает «лети на заведомо более сильного»:
     // это не смелость, а слив флота, который бот копил неделю.
     raidAdvantage: clamp(source['raidAdvantage'], 1, 10, base.raidAdvantage),
+    standGround: typeof source['standGround'] === 'boolean' ? source['standGround'] : base.standGround,
     note,
   };
 }
@@ -219,6 +230,7 @@ export function withPlan(character: BotCharacter, plan: BotPlan | null): BotPers
     defenseMix: plan.defenseMix,
     colonyAmbition: plan.colonyAmbition,
     raidAdvantage: plan.raidAdvantage,
+    standGround: plan.standGround,
   };
 }
 

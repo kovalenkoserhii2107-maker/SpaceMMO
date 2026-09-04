@@ -119,8 +119,8 @@ const BASE_YIELD_PER_SECOND: Record<MineType, number> = {
  * уровень должен быть достижением, а не побочным следствием добычи.
  */
 const COSTS: Record<BuildingType, ResourceAmounts & { factor: number }> = {
-  ORE_MINE: { ore: 140, polymers: 35, plasma: 0, factor: 1.65 },
-  POLYMER_PLANT: { ore: 112, polymers: 56, plasma: 0, factor: 1.65 },
+  ORE_MINE: { ore: 140, polymers: 66, plasma: 0, factor: 1.65 },
+  POLYMER_PLANT: { ore: 112, polymers: 105, plasma: 0, factor: 1.65 },
   /*
    * Плазменный реактор. Цена срезана вдвое по замеру, а не на глаз.
    *
@@ -132,8 +132,8 @@ const COSTS: Record<BuildingType, ResourceAmounts & { factor: number }> = {
    * Бот, который считает честно, показал это за шесть часов: реактор второго
    * уровня при шахтах седьмого и девяносто семь единиц плазмы на складе.
    */
-  PLASMA_REACTOR: { ore: 190, polymers: 65, plasma: 0, factor: 1.65 },
-  POWER_PLANT: { ore: 175, polymers: 70, plasma: 0, factor: 1.65 },
+  PLASMA_REACTOR: { ore: 190, polymers: 125, plasma: 0, factor: 1.65 },
+  POWER_PLANT: { ore: 175, polymers: 135, plasma: 0, factor: 1.65 },
   // Первые уровни верфи и лаборатории намеренно дешевы: это обучающие
   // постройки, и упереться в них в первый час игрок не должен. Крутизну
   // задает множитель — к десятому уровню они стоят миллионы.
@@ -143,9 +143,9 @@ const COSTS: Record<BuildingType, ResourceAmounts & { factor: number }> = {
    * под две тысячи в час — двенадцать минут простоя на одной постройке,
    * и это в первые полчаса игры.
    */
-  SCIENCE_CENTER: { ore: 260, polymers: 380, plasma: 0, factor: 2.3 },
-  SHIPYARD: { ore: 320, polymers: 160, plasma: 0, factor: 2.3 },
-  ANTIMATTER_FACTORY: { ore: 6000, polymers: 4500, plasma: 2400, factor: 2.3 },
+  SCIENCE_CENTER: { ore: 260, polymers: 720, plasma: 0, factor: 2.3 },
+  SHIPYARD: { ore: 320, polymers: 305, plasma: 0, factor: 2.3 },
+  ANTIMATTER_FACTORY: { ore: 6000, polymers: 8550, plasma: 2400, factor: 2.3 },
   /*
    * Склады разделены по ресурсам, и цена каждого — примерно треть прежней
    * общей. Суммарное вложение и суммарный объем остались как были: три склада
@@ -167,10 +167,10 @@ const COSTS: Record<BuildingType, ResourceAmounts & { factor: number }> = {
    * которая производит деньги, и она должна конкурировать с шахтами
    * за те же ресурсы и ту же энергию, а не быть бесплатной прибавкой.
    */
-  CRYPTO_FARM: { ore: 900, polymers: 700, plasma: 200, factor: 1.7 },
-  ORE_STORAGE: { ore: 240, polymers: 120, plasma: 0, factor: 1.5 },
-  POLYMER_STORAGE: { ore: 240, polymers: 120, plasma: 0, factor: 1.5 },
-  PLASMA_STORAGE: { ore: 240, polymers: 120, plasma: 0, factor: 1.5 },
+  CRYPTO_FARM: { ore: 900, polymers: 1330, plasma: 200, factor: 1.7 },
+  ORE_STORAGE: { ore: 240, polymers: 230, plasma: 0, factor: 1.5 },
+  POLYMER_STORAGE: { ore: 240, polymers: 230, plasma: 0, factor: 1.5 },
+  PLASMA_STORAGE: { ore: 240, polymers: 230, plasma: 0, factor: 1.5 },
 };
 
 /** Потребление энергии постройками. Солнечная станция энергию не тратит. */

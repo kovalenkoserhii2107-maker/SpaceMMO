@@ -819,8 +819,19 @@ export async function fillOrder(
         });
         if (paid.count === 0) throw new MarketError(`Не хватает криптогривны: нужно ${total} ₴`);
 
+        /*
+         * Свободное место в отказе не уходит в минус.
+         *
+         * Склад бывает переполнен сверх вместимости: снятая заявка возвращает
+         * товар без оглядки на лимит (см. `cancelOrder`), а место, которое он
+         * освобождал, к тому времени могло быть занято покупкой. Разность
+         * тогда отрицательна, и отказ читался как «свободно только −29262» —
+         * место, которого не просто нет, а меньше чем нет. Свободного места
+         * в этом случае ноль, о чем и надо сказать.
+         */
+        const freeSpace = Math.max(0, storageCapacity(myStorage.level) - storageUsed(myStorage));
         await incrementStorage(tx, myStorage.id, field, executed, storageCapacity(myStorage.level),
-          `На складе хаба свободно только ${Math.floor(storageCapacity(myStorage.level) - storageUsed(myStorage))}`);
+          `На складе хаба свободно только ${Math.floor(freeSpace)}`);
         // Комиссия биржи исчезает из оборота: это второй сток денег
         // и единственный, работающий на больших оборотах.
         await tx.commander.update({

@@ -13,6 +13,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "check:rules": "tsx src/scripts/checkRules.ts",
+    "forecast": "tsx src/scripts/forecast.ts",
     "audit": "tsc -p tsconfig.audit.json",
     "legacy:password": "tsx src/scripts/legacyPassword.ts",
     "admin:grant": "tsx src/scripts/grantAdmin.ts",

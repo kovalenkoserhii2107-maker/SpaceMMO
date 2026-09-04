@@ -24,6 +24,10 @@ import { NEWBIE_SHIELD_DAYS, BOT_PERSONALITIES, personality } from '../src/game/
 import { parsePlan, withPlan } from '../src/game/bot/plan.js';
 import { hopeless, parseDirectives } from '../src/game/bot/directives.js';
 import {
+  battleShock, markShock, marketShock, readShocks,
+  MARKET_SHOCK_TTL_MS, SHOCK_TTL_MS,
+} from '../src/game/bot/director.js';
+import {
   buildSeconds,
   emptyLevels,
   productionPerSecond,
@@ -45,6 +49,7 @@ import {
 import { emptyShipCounts, shipCost, shipUnitSeconds } from '../src/game/ships.js';
 import { defenseCost, defenseUnitSeconds, emptyDefenseCounts } from '../src/game/defenses.js';
 import { spentOnFleet } from '../src/game/score.js';
+import { storageUpgradeCost } from '../src/game/market.js';
 
 const results: Array<{ name: string; passed: boolean }> = [];
 
@@ -68,7 +73,15 @@ function target(overrides: Partial<BotRaidTarget> = {}): BotRaidTarget {
     accountAgeDays: 30,
     isBot: false,
     knownStrength: 100,
-    distance: 1,
+    // Цель по умолчанию стоит набега: на складе есть что взять, и флот,
+    // который оставит после себя обломки. Без этого набег не выбирается —
+    // теперь он должен окупаться, а не просто быть посильным.
+    knownFleetValue: 5_000,
+    knownStock: 200_000,
+    orbit: 4,
+    // Своя система: рейс в чужую требует «Гипердвигателя» и антиматерии,
+    // а без них цель недостижима и в расчет не идет вовсе.
+    distance: 0,
     ...overrides,
   };
 }
@@ -325,6 +338,7 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
   ships.COLONY_SHIP = 2;
   ships.RECYCLER = 3;
   ships.LARGE_CARGO = 10;
+  ships.SMALL_CARGO = 8;
 
   const raid = decide(
     snapshotWith({
@@ -340,10 +354,16 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
       raid.ships.PROBE === 0 && raid.ships.RECYCLER === 0 && raid.ships.COLONY_SHIP === 0,
     );
     check('боевой костяк уходит целиком', raid.ships.CRUISER === 50);
+    /*
+     * Половина трюмов уходит за добычей, половина продолжает возить на хаб.
+     * Малые транспорты считаются наравне с большими: без них у бота, у кого
+     * больших нет вовсе, потолок добычи — трюмы истребителей, и набег
+     * не окупается никогда.
+     */
     check(
       'часть трюмов идет под добычу, часть остается дома',
-      raid.ships.LARGE_CARGO === 5,
-      `${raid.ships.LARGE_CARGO} из 10`,
+      raid.ships.LARGE_CARGO === 5 && raid.ships.SMALL_CARGO === 4,
+      `большие ${raid.ships.LARGE_CARGO} из 10, малые ${raid.ships.SMALL_CARGO} из 8`,
     );
   }
 }
@@ -518,6 +538,65 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
 
 {
   /*
+   * Второй порог фермы: бот беден, но не заблокирован.
+   *
+   * Первый порог спрашивает «хватит ли денег закрыть дефицит», и когда
+   * дефицита нет вовсе, он молчит. Так и живут боты на богатых недрах:
+   * ресурсы на очередное здание есть всегда, склад не переполняется, ферма
+   * не строится никогда. Живой Яструб простоял так двое суток с ₴7 835
+   * на счету и фермой нулевого уровня.
+   */
+  const levels = {
+    ...emptyLevels(),
+    ORE_MINE: 10, POLYMER_PLANT: 10, PLASMA_REACTOR: 8, POWER_PLANT: 14,
+    SCIENCE_CENTER: 7, SHIPYARD: 7, ORE_STORAGE: 14, POLYMER_STORAGE: 14, PLASMA_STORAGE: 12,
+  };
+  // Ресурсов вдоволь: на следующее здание хватает, покупать нечего,
+  // и первый порог не срабатывает.
+  const resources = { ore: 200_000, polymers: 200_000, plasma: 60_000 };
+
+  const poor = snapshotWith({
+    character: 'TRADER',
+    // Меньше, чем стоит расширение склада на хабе: торговать и расти не на что.
+    credits: 1_000,
+    bases: [testBase('home', { levels, resources })],
+  });
+  const poorBuild = decide(poor).find((i) => i.kind === 'BUILD');
+  check(
+    'без денег на расширение склада бот строит ферму',
+    poorBuild?.kind === 'BUILD' && poorBuild.building === 'CRYPTO_FARM',
+    poorBuild?.kind === 'BUILD' ? `${poorBuild.building} — ${poorBuild.why}` : 'не строит',
+  );
+
+  const solvent = snapshotWith({
+    character: 'TRADER',
+    credits: 5_000_000,
+    bases: [testBase('home', { levels, resources })],
+  });
+  const solventBuild = decide(solvent).find((i) => i.kind === 'BUILD');
+  check(
+    'с деньгами очередь застройки ферма не занимает',
+    !(solventBuild?.kind === 'BUILD' && solventBuild.building === 'CRYPTO_FARM'),
+    solventBuild?.kind === 'BUILD' ? solventBuild.building : 'копит на цель',
+  );
+
+  // Порог — цена расширения склада, а не константа: он растет вместе с хабом.
+  const bigHub = snapshotWith({
+    character: 'TRADER',
+    credits: 5_000_000,
+    bases: [testBase('home', { levels, resources })],
+    hubStorage: { ore: 0, polymers: 0, free: 0, level: 12, upgradeCost: storageUpgradeCost(13) },
+  });
+  const bigHubBuild = decide(bigHub).find((i) => i.kind === 'BUILD');
+  check(
+    'с большим хабом та же сумма уже считается бедностью',
+    bigHubBuild?.kind === 'BUILD' && bigHubBuild.building === 'CRYPTO_FARM',
+    bigHubBuild?.kind === 'BUILD' ? bigHubBuild.building : 'не строит',
+  );
+}
+
+{
+  /*
    * Односторонний клапан, из-за которого рынок встал целиком: боты возили
    * товар на хаб и не забирали обратно никогда. Купленное на бирже нельзя
    * пустить в дело — строят из того, что на базе, — а непроданное копилось,
@@ -630,7 +709,7 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
       }),
     ],
     raidTargets: [
-      { planetId: 'p1', commanderId: 'сосед', accountAgeDays: 30, isBot: false, knownStrength: null, distance: 2 },
+      target({ commanderId: 'сосед', knownStrength: null, knownFleetValue: null, knownStock: null }),
     ],
   });
   const order = decide(blind).find((i) => i.kind === 'SHIPS' && i.ship === 'PROBE');
@@ -655,7 +734,7 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
       }),
     ],
     raidTargets: [
-      { planetId: 'p1', commanderId: 'сосед', accountAgeDays: 30, isBot: false, knownStrength: null, distance: 2 },
+      target({ commanderId: 'сосед', knownStrength: null, knownFleetValue: null, knownStock: null }),
     ],
   });
   check(
@@ -678,7 +757,7 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
       }),
     ],
     raidTargets: [
-      { planetId: 'p1', commanderId: 'сосед', accountAgeDays: 30, isBot: false, knownStrength: null, distance: 2 },
+      target({ commanderId: 'сосед', knownStrength: null, knownFleetValue: null, knownStock: null }),
     ],
   });
   const intents = decide(eyed);
@@ -729,6 +808,177 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
   );
 }
 
+{
+  /*
+   * Не покупаем то, чего на хабе уже гора.
+   *
+   * Сторону решают склады баз, а не хаб, — и это верно, привязка к хабу
+   * когда-то дала петлю на 111 встречных сделок. Но хаб не учитывался вовсе,
+   * и живой «Купець» дошел до предела: 146 тысяч полимеров на хабе, восемь
+   * на базе, и он спускает последние два миллиона на покупку еще полимеров,
+   * оставшись с тремя гривнами. Домой их не увезти — склад базы меньше
+   * впятеро, — и превратиться им не во что.
+   */
+  const levels = { ...emptyLevels(), ORE_MINE: 6, POLYMER_PLANT: 4, POWER_PLANT: 6, SCIENCE_CENTER: 4, SHIPYARD: 4, POLYMER_STORAGE: 1, ORE_STORAGE: 4 };
+  const offer = { id: 'дешево', side: 'SELL' as const, resource: 'POLYMERS' as const, price: 5, amount: 5000, mine: false };
+  const world = (hubPolymers: number) =>
+    snapshotWith({
+      character: 'TRADER',
+      credits: 1_000_000,
+      // Полимеров на базе меньше половины склада — значит бот их покупатель,
+      // а не продавец: сторону решает заполненность своих складов.
+      bases: [testBase('home', { levels, resources: { ore: 5_000, polymers: 1_000, plasma: 3_000 } })],
+      orderBook: [offer],
+      hubStorage: { ore: 0, polymers: hubPolymers, free: 100_000, level: 6, upgradeCost: storageUpgradeCost(7) },
+    });
+
+  const takes = (snapshot: BotSnapshot) =>
+    decide(snapshot).some((i) => i.kind === 'TAKE' && i.orderId === 'дешево');
+  const orders = (snapshot: BotSnapshot) =>
+    decide(snapshot).some((i) => i.kind === 'ORDER' && i.side === 'BUY' && i.resource === 'POLYMERS');
+
+  check('пока дома есть место, дешевый товар бот берет', takes(world(0)));
+  check('и заявку на покупку выставляет', orders(world(0)));
+
+  // На хабе больше, чем влезет домой: следующая купленная единица
+  // не превратится ни во что.
+  check('с забитым хабом чужую продажу не выкупает', !takes(world(200_000)));
+  check('и своей заявки на покупку не ставит', !orders(world(200_000)));
+}
+
+{
+  /*
+   * Набег — предприятие, а не рефлекс.
+   *
+   * Живой Хижак ходил на Купця раз в три минуты, привозил по 104–739 единиц
+   * и жег около 930 плазмы за вылет. Каждый вылет был прямым убытком, и
+   * остановить его было нечем: правило спрашивало «слабее ли цель», но
+   * не «стоит ли лететь».
+   */
+  const raider = (targets: BotRaidTarget[]) =>
+    snapshotWith({
+      character: 'AGGRESSOR',
+      bases: [
+        testBase('home', {
+          levels: { ...emptyLevels(), ORE_MINE: 8, POLYMER_PLANT: 7, POWER_PLANT: 9, SHIPYARD: 5, SCIENCE_CENTER: 4 },
+          resources: { ore: 30_000, polymers: 20_000, plasma: 9_000 },
+          ships: { ...emptyShipCounts(), LIGHT_FIGHTER: 90, LARGE_CARGO: 10 },
+        }),
+      ],
+      raidTargets: targets,
+    });
+
+  const raidOn = (targets: BotRaidTarget[]) => {
+    const intent = decide(raider(targets)).find((i) => i.kind === 'RAID');
+    return intent?.kind === 'RAID' ? intent : null;
+  };
+
+  // Пустая цель: взять нечего, флота нет, значит и обломков не будет.
+  check(
+    'за гроши бот не летит',
+    raidOn([target({ knownStock: 1_000, knownFleetValue: 0 })]) === null,
+  );
+
+  check(
+    'за настоящей добычей летит',
+    raidOn([target({ knownStock: 400_000, knownFleetValue: 40_000 })]) !== null,
+  );
+
+  // Склад разведка не разглядела — лететь наугад незачем.
+  check(
+    'к цели с неразведанным складом не летит',
+    raidOn([target({ knownStock: null, knownFleetValue: 0 })]) === null,
+  );
+
+  /*
+   * Соразмерность: выбирается не ближайшая цель, а самая выгодная. Раньше
+   * бот брал ближайшую из посильных и мог годами возить копейки от соседа
+   * по орбите, не замечая склада вчетверо толще через полсистемы.
+   */
+  const chosen = raidOn([
+    target({ planetId: 'рядом', orbit: 5, distance: 0, knownStock: 30_000, knownFleetValue: 0 }),
+    target({ planetId: 'далеко', orbit: 9, distance: 0, knownStock: 500_000, knownFleetValue: 60_000 }),
+  ]);
+  check('из двух целей выбирается жирная, а не ближняя', chosen?.planetId === 'далеко', chosen?.planetId);
+
+  /*
+   * Полет, которого не будет, не планируется.
+   *
+   * Живой Хижак каждый заход выбирал разведать соседа, рейс молча отваливался,
+   * и так по кругу: все неразведанные соседи оказались в других системах,
+   * а гиперпрыжок требует и «Гипердвигателя», и антиматерии — не было ни того,
+   * ни другого. Планировать недостижимое значит не делать ничего и не знать
+   * об этом.
+   */
+  check(
+    'в чужую систему без гипердвигателя не летят',
+    raidOn([target({ distance: 4, knownStock: 900_000, knownFleetValue: 90_000 })]) === null,
+  );
+
+  const jumper = snapshotWith({
+    character: 'AGGRESSOR',
+    techs: { ...emptyTechLevels(), HYPERSPACE_PHYSICS: 3, HYPERDRIVE: 2 },
+    bases: [
+      testBase('home', {
+        levels: { ...emptyLevels(), ORE_MINE: 8, POLYMER_PLANT: 7, POWER_PLANT: 9, SHIPYARD: 5, SCIENCE_CENTER: 4 },
+        resources: { ore: 30_000, polymers: 20_000, plasma: 9_000 },
+        antimatter: 100_000,
+        ships: { ...emptyShipCounts(), LIGHT_FIGHTER: 90, LARGE_CARGO: 10 },
+      }),
+    ],
+    raidTargets: [target({ distance: 4, knownStock: 900_000, knownFleetValue: 90_000 })],
+  });
+  check(
+    'с гипердвигателем и антиматерией — летят',
+    decide(jumper).some((i) => i.kind === 'RAID'),
+  );
+}
+
+{
+  /*
+   * Свой запас на хабе — не товар в пути, а материал, до которого надо
+   * дотянуться. Живой Купець просидел с 45 555 руды на станции при трех
+   * тысячах дома: Хижак сжег ему весь грузовой флот, а правила видели
+   * в грузовике рядовой «класс, отстающий от состава эскадры».
+   */
+  const levels = { ...emptyLevels(), ORE_MINE: 6, POLYMER_PLANT: 5, POWER_PLANT: 7, SHIPYARD: 4, SCIENCE_CENTER: 4, ORE_STORAGE: 6, POLYMER_STORAGE: 6 };
+  const stranded = (ships: Partial<Record<'SMALL_CARGO' | 'LIGHT_FIGHTER', number>>) =>
+    snapshotWith({
+      character: 'TRADER',
+      // Транспорт без «Реактивного двигателя» не собрать вовсе.
+      techs: { ...emptyTechLevels(), COMBUSTION_DRIVE: 2 },
+      bases: [testBase('home', { levels, resources: { ore: 20_000, polymers: 10_000, plasma: 4_000 }, ships: { ...emptyShipCounts(), ...ships } })],
+      hubStorage: { ore: 45_000, polymers: 20_000, free: 10_000, level: 8, upgradeCost: storageUpgradeCost(9) },
+    });
+
+  const cut = decide(stranded({ LIGHT_FIGHTER: 13 })).find((i) => i.kind === 'SHIPS');
+  check(
+    'без трюмов бот заказывает грузовик, а не истребитель',
+    cut?.kind === 'SHIPS' && cut.ship === 'SMALL_CARGO',
+    cut?.kind === 'SHIPS' ? `${cut.ship} — ${cut.why}` : 'ничего не заказал',
+  );
+
+  // Трюмы есть — грузовик вперед не лезет, работает обычный состав эскадры.
+  const fine = decide(stranded({ SMALL_CARGO: 20, LIGHT_FIGHTER: 13 })).find((i) => i.kind === 'SHIPS');
+  check(
+    'с трюмами очередь верфи обычная',
+    !(fine?.kind === 'SHIPS' && fine.why.includes('вывезти нечем')),
+    fine?.kind === 'SHIPS' ? fine.ship : 'ничего',
+  );
+
+  /*
+   * И вывоз домой теперь забирает свое, а не только сегодняшний дефицит:
+   * дома ресурс работает, на хабе он занимает место и толкает платить
+   * за расширение склада.
+   */
+  const haul = decide(stranded({ SMALL_CARGO: 20 })).find((i) => i.kind === 'PICKUP');
+  check(
+    'вывоз забирает свое с хаба, даже когда дефицита нет',
+    haul?.kind === 'PICKUP' && haul.ore + haul.polymers > 0,
+    haul?.kind === 'PICKUP' ? `руда ${haul.ore}, полимеры ${haul.polymers}` : 'не везет',
+  );
+}
+
 /* --------------------- Коалиция против агрессора --------------------- */
 
 console.log('\n=== Коалиция: против серийного агрессора скидываются ===');
@@ -741,7 +991,8 @@ function threat(overrides: Partial<BotThreat> = {}): BotThreat {
     raids: 5,
     againstMe: false,
     knownStrength: 1000,
-    distance: 3,
+    planetOrbit: 6,
+    distance: 0,
     ...overrides,
   };
 }
@@ -774,6 +1025,59 @@ function armed(overrides: Record<string, unknown> = {}) {
     'торговец летит на серийного агрессора, хотя сам не воюет',
     raid?.kind === 'RAID' && raid.planetId === 'логово',
     raid?.kind === 'RAID' ? raid.why : 'не полетел',
+  );
+}
+
+{
+  /*
+   * Недостающее звено, из-за которого коалиция не собиралась ни разу.
+   *
+   * Проверка выше подсовывает уже разведанного агрессора, и на фикстуре все
+   * сходилось. В живом мире разведка висела на признаке `raids`, которого
+   * у торговца нет: он не мог послать зонд, значит сила агрессора оставалась
+   * неизвестной, значит цель считалась безнадежной — и торговец не летел
+   * никогда. «Хижак» сделал 376 набегов на «Купця», пока «Крамар» со ста
+   * тридцатью двумя истребителями стоял рядом и не смотрел в его сторону.
+   */
+  /*
+   * Зонды под серийного соседа не заказываем, и это не забывчивость.
+   * Агрессора со «Шпионажем» выше своего не разглядеть в принципе: дрон
+   * гибнет и записи не оставляет, цель остается неразведанной, а заказ
+   * повторяется — вышла бы мясорубка. Силу такого соседа дает бой.
+   */
+  const blind = armed({
+    threats: [threat({ knownStrength: null })],
+    raidTargets: [],
+    techs: { ...emptyTechLevels(), ESPIONAGE: 1 },
+  });
+  check(
+    'зонды под серийного соседа бот не штампует',
+    !decide(blind).some((i) => i.kind === 'SHIPS' && i.ship === 'PROBE'),
+  );
+
+  const withProbe = armed({
+    threats: [threat({ knownStrength: null })],
+    raidTargets: [],
+    bases: [
+      testBase('home', {
+        levels: { ...emptyLevels(), ORE_MINE: 8, POLYMER_PLANT: 7, POWER_PLANT: 9, SCIENCE_CENTER: 5, SHIPYARD: 5 },
+        resources: { ore: 40_000, polymers: 20_000, plasma: 8000 },
+        ships: { ...emptyShipCounts(), CRUISER: 30, PROBE: 2 },
+      }),
+    ],
+  });
+  const scan = decide(withProbe).find((i) => i.kind === 'SCAN');
+  check(
+    'и отправляет его именно на агрессора',
+    scan?.kind === 'SCAN' && scan.planetId === 'логово',
+    scan?.kind === 'SCAN' ? scan.why : 'не разведывает',
+  );
+
+  // Разведчиками при этом все не становятся: нет серийного соседа —
+  // нет и разведки, торговец по-прежнему не ходит в набеги по своей воле.
+  check(
+    'без серийного соседа торговец никого не разведывает',
+    !decide(armed({ raidTargets: [] })).some((i) => i.kind === 'SCAN'),
   );
 }
 
@@ -1913,6 +2217,36 @@ console.log('\n=== 8. Поручения модели проверяются п�
 }
 
 {
+  /*
+   * Новые поручения проверяются как все прочие: назвать можно только того,
+   * кого показали. Помощь — решение модели, но адресат должен существовать.
+   */
+  const world = snapshotWith({
+    raidTargets: [target({ planetId: 'логово', commanderId: 'сосед' })],
+  });
+  const aid = parseDirectives(
+    [
+      { kind: 'AID', commanderId: 'сосед', ore: 5000, polymers: 2000, why: 'разорили' },
+      { kind: 'REINFORCE', commanderId: 'сосед', why: 'не выстоит один' },
+      { kind: 'SCOUT', planetId: 'логово', why: 'надо знать' },
+    ],
+    world,
+  );
+  check('помощь и разведка проходят проверку', aid.length === 3, `${aid.length} из 3`);
+
+  const strangers = parseDirectives(
+    [
+      { kind: 'AID', commanderId: 'выдуманный', ore: 5000, polymers: 0, why: '' },
+      { kind: 'REINFORCE', commanderId: 'выдуманный', why: '' },
+      { kind: 'SCOUT', planetId: 'выдуманная', why: '' },
+      { kind: 'AID', commanderId: 'сосед', ore: 0, polymers: 0, why: 'пустой караван' },
+    ],
+    world,
+  );
+  check('помощь выдуманному соседу отбрасывается', strangers.length === 0, `${strangers.length} штук`);
+}
+
+{
   const world = snapshotWith({});
   const junk = parseDirectives(
     [
@@ -1939,6 +2273,121 @@ console.log('\n=== 8. Поручения модели проверяются п�
   check('вдвое сильнее — можно рискнуть', !hopeless(1000, 2000));
   check('без флота лететь нельзя', hopeless(0, 1));
   check('неразведанная цель безнадежна по определению', hopeless(1_000_000, null));
+}
+
+/* ------------------------- 9. Повод для вызова модели ------------------------- */
+
+console.log('\n=== 9. Повторный повод не будит модель заново ===');
+
+{
+  /*
+   * Ключ повода не несет чисел, и это ровно то, на чем защита сломалась.
+   *
+   * Сравнение шло по тексту, а в тексте стояла добыча набега: «разбит,
+   * унесли 1271», следом «унесли 2700» — для строкового сравнения это разные
+   * новости, хотя новость одна. Живая война шла набегом в минуту, и двое
+   * воюющих сожгли 177 вызовов из 389 за сутки, докладывая одно и то же.
+   */
+  const first = battleShock(false, false, 'Хижак', 1271);
+  const second = battleShock(false, false, 'Хижак', 2700);
+  check('добыча меняет текст повода', first.text !== second.text, second.text);
+  check('добыча не меняет ключ повода', first.key === second.key, first.key);
+
+  const won = battleShock(false, true, 'Хижак', 0);
+  check('отбитый набег — другая новость', won.key !== first.key, won.key);
+
+  const other = battleShock(false, false, 'Крамар', 1271);
+  check('другой противник — другая новость', other.key !== first.key, other.key);
+
+  const raid = battleShock(true, true, 'Купець', 660);
+  const raidAgain = battleShock(true, true, 'Купець', 580);
+  check('свой набег тоже сводится к одному ключу', raid.key === raidAgain.key, raid.key);
+  check('свой набег отличается от чужого', raid.key !== battleShock(false, true, 'Купець', 660).key);
+}
+
+{
+  // Цена в поводе тоже меняется каждый раз, а новость все та же:
+  // рынок поехал вниз.
+  const was = { market: [{ resource: 'ORE', price: 10, skew: 0.5 }] };
+  // Перекос в снимке двойной: общий идет в цену, чужой — в решение о побудке.
+  const market = (price: number, skew: number | null, foreignSkew = skew) => [
+    { resource: 'ORE' as const, reference: price, seeded: false, demand: 0, supply: 0, skew, foreignSkew },
+  ];
+
+  const drop = marketShock(was, market(8, 0.5));
+  const deeper = marketShock(was, market(7, 0.5));
+  check('цена ушла — повод есть', drop !== null, drop?.text);
+  check('разная просадка — один ключ', drop?.key === deeper?.key, drop?.key);
+  check('текст просадки несет саму цену', drop?.text !== deeper?.text);
+
+  /*
+   * Направление в ключ не идет. Цена ходит туда-обратно, перекос тем более:
+   * четверо ботов на одном тонком хабе переворачивали его друг другу за пять
+   * минут, и «стали разбирать» / «перестали брать» шли как две разные новости.
+   */
+  const rise = marketShock({ market: [{ resource: 'ORE', price: 10, skew: 0.5 }] }, market(13, 0.5));
+  check('подорожание — та же новость, что и просадка', rise?.key === drop?.key, rise?.key);
+  check('текст подорожания все же свой', rise?.text !== drop?.text, rise?.text);
+
+  const flip = marketShock(was, market(10, -0.5));
+  check('разворот перекоса — та же новость про руду', flip?.key === 'market:ORE', flip?.key);
+  check('рынок отработан на такт плана', flip?.ttl === MARKET_SHOCK_TTL_MS);
+  check('происшествие отработано на час', battleShock(false, false, 'Хижак', 1).ttl === SHOCK_TTL_MS);
+
+  const polymers = marketShock(
+    { market: [{ resource: 'POLYMERS', price: 10, skew: 0.5 }] },
+    [{ resource: 'POLYMERS' as const, reference: 8, seeded: false, demand: 0, supply: 0, skew: 0.5, foreignSkew: 0.5 }],
+  );
+  check('другой ресурс — другая новость', polymers?.key === 'market:POLYMERS', polymers?.key);
+
+  const quiet = marketShock(was, market(10.2, 0.5));
+  check('дрожание вокруг цены не будит', quiet === null);
+
+  /*
+   * Стакан тонкий, и своей же снятой заявкой бот переворачивал перекос
+   * с плюса на минус, читал это как новость и будил модель — 27 поводов
+   * из 33 за ночь. Разворот считается по чужим заявкам.
+   */
+  const ownFlip = marketShock(was, market(10, -0.5, 0.5));
+  check('свой разворот не будит', ownFlip === null);
+
+  const alien = marketShock(was, market(10, 0.5, -0.5));
+  check('чужой разворот будит', alien?.key === 'market:ORE', alien?.key);
+
+  const alone = marketShock(was, market(10, -0.5, null));
+  check('без чужих заявок разворота нет', alone === null);
+}
+
+{
+  /*
+   * Память на один повод: чередующиеся события проходили ее насквозь.
+   * Живого Купця одна и та же вражда будила пять раз за ночь — война, бой,
+   * война, бой, — потому что каждый следующий ключ затирал предыдущий.
+   */
+  const now = 1_000_000_000;
+  const war = 'war:Хижак';
+  const lost = 'battle:defense:Хижак:lost';
+
+  let shocks = markShock({}, war, SHOCK_TTL_MS, now);
+  shocks = markShock(shocks, lost, SHOCK_TTL_MS, now + 60_000);
+  const memory = { shocks };
+
+  const seen = readShocks(memory, now + 120_000);
+  check('оба повода помнятся разом', seen[war] !== undefined && seen[lost] !== undefined);
+
+  const later = readShocks(memory, now + SHOCK_TTL_MS + 60_001);
+  check('просроченные поводы забываются', Object.keys(later).length === 0);
+
+  const half = readShocks(memory, now + SHOCK_TTL_MS + 30_000);
+  check('забывается по своему сроку, а не разом', half[lost] !== undefined && half[war] === undefined);
+
+  // Срок хранится у каждого ключа свой: рынок живет дольше происшествия.
+  const mixed = { shocks: markShock(markShock({}, 'market:ORE', MARKET_SHOCK_TTL_MS, now), lost, SHOCK_TTL_MS, now) };
+  const between = readShocks(mixed, now + SHOCK_TTL_MS + 1000);
+  check('рынок помнится дольше боя', between['market:ORE'] !== undefined && between[lost] === undefined);
+
+  check('мусор в памяти читается как пусто', Object.keys(readShocks({ shocks: 'не объект' })).length === 0);
+  check('битая отметка времени не проходит', Object.keys(readShocks({ shocks: { x: 'вчера' } })).length === 0);
 }
 
 /* ------------------------- Итог ------------------------- */

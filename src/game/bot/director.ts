@@ -31,14 +31,17 @@ import {
 import { marketPrice } from '../market.js';
 import { deliver } from '../../services/mailService.js';
 import { COMBAT_TYPES, SHIP_TYPES, SQUADRON_TYPES, emptyShipCounts, type ShipCounts } from '../ships.js';
-import { fleetCapacity } from '../fleets.js';
-import { storageCapacities } from '../rules.js';
+import { fleetSize, fleetCapacity } from '../fleets.js';
+import { productionPerSecond, systemModifiers, storageCapacities } from '../rules.js';
+import { economyBonuses, timeCompressionDrain } from '../techTree.js';
 import { storageCapacity as hubCapacity, storageUpgradeCost } from '../market.js';
 import { normalizeDefenses, normalizeShips } from '../fogOfWar.js';
 import { spentOnDefense, spentOnFleet } from '../score.js';
 import type { CommanderRuntimeState } from '../baseState.js';
 import {
   decide,
+  raidValue,
+  reachable,
   shielded,
   type BotFreePlanet,
   type BotIntent,
@@ -74,6 +77,12 @@ function distance(a: { galaxyX: number; galaxyY: number }, b: { galaxyX: number;
   return Math.hypot(a.galaxyX - b.galaxyX, a.galaxyY - b.galaxyY);
 }
 
+/** Перекос сторон стакана: -1 — одни продавцы, +1 — одни покупатели. */
+function ratio(demand: number, supply: number): number | null {
+  const both = demand + supply;
+  return both > 0 ? Math.round(((demand - supply) / both) * 100) / 100 : null;
+}
+
 /**
  * Что бот знает о мире.
  *
@@ -106,7 +115,7 @@ async function buildSnapshot(
         planetId: true,
         commanderId: true,
         commander: { select: { createdAt: true, user: { select: { role: true } } } },
-        planet: { select: { system: { select: { galaxyX: true, galaxyY: true } } } },
+        planet: { select: { position: true, system: { select: { galaxyX: true, galaxyY: true } } } },
       },
       take: 200,
     }),
@@ -158,20 +167,46 @@ async function buildSnapshot(
       select: { resource: true, pricePerUnit: true, quantity: true },
       take: 60,
     }),
+    /*
+     * Склад берется на своем хабе, а не любой первый попавшийся.
+     *
+     * Пока у бота одна база, разницы нет, но с первой же колонией в другой
+     * системе появляется вторая запись, и снимок мог бы описывать один хаб,
+     * а стакан и рейсы — другой. Условие то же, что у книги заявок и у
+     * `findHubForUser`: хаб в системе, где у бота есть база.
+     */
     prisma.hubStorage.findFirst({
-      where: { commanderId: commander.commanderId },
+      where: {
+        commanderId: commander.commanderId,
+        hub: { system: { planets: { some: { base: { commanderId: commander.commanderId } } } } },
+      },
       select: { ore: true, polymers: true, level: true },
     }),
   ]);
 
-  const scanned = new Map<string, number>();
+  /*
+   * Разведка дает три разных числа, и путать их нельзя.
+   *
+   * Сила — флот и оборона вместе, по ней решают, потянем ли бой. Флот
+   * отдельно — по нему считают обломки: разбитая оборона в поле не улетает,
+   * она восстанавливается на месте. Склад — сама добыча, ради которой летят.
+   */
+  const scanned = new Map<string, { strength: number; fleet: number; stock: number | null }>();
   for (const scan of scans) {
     const payload = scan.data as Record<string, unknown> | null;
     // Снимок разведки — данные из прошлого и переживает изменения игры,
     // поэтому состав нормализуется, а не читается как есть (правило 8).
     const ships = normalizeShips(payload?.['ships'] as never);
     const defenses = normalizeDefenses(payload?.['defenses'] as never);
-    scanned.set(scan.planetId, spentOnFleet(ships) + spentOnDefense(defenses));
+    const fleet = spentOnFleet(ships);
+    const raw = payload?.['resources'] as Record<string, unknown> | null | undefined;
+    const amount = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0);
+    // Склад мог быть не разглядан вовсе — это не то же самое, что пустой склад.
+    const stock =
+      raw && typeof raw === 'object'
+        ? amount(raw['ore']) + amount(raw['polymers']) + amount(raw['plasma'])
+        : null;
+    scanned.set(scan.planetId, { strength: fleet + spentOnDefense(defenses), fleet, stock });
   }
 
   const now = Date.now();
@@ -209,14 +244,20 @@ async function buildSnapshot(
   );
   const warsOnMe = await prisma.warDeclaration.count({ where: { targetId: commander.commanderId } });
 
-  const raidTargets: BotRaidTarget[] = foreignRows.map((row) => ({
-    planetId: row.planetId,
-    commanderId: row.commanderId,
-    accountAgeDays: (now - row.commander.createdAt.getTime()) / 86_400_000,
-    isBot: row.commander.user?.role === 'BOT',
-    knownStrength: scanned.has(row.planetId) ? (scanned.get(row.planetId) as number) : null,
-    distance: distance(homeGalaxy, row.planet.system),
-  }));
+  const raidTargets: BotRaidTarget[] = foreignRows.map((row) => {
+    const seen = scanned.get(row.planetId);
+    return {
+      planetId: row.planetId,
+      commanderId: row.commanderId,
+      accountAgeDays: (now - row.commander.createdAt.getTime()) / 86_400_000,
+      isBot: row.commander.user?.role === 'BOT',
+      knownStrength: seen ? seen.strength : null,
+      knownFleetValue: seen ? seen.fleet : null,
+      knownStock: seen ? seen.stock : null,
+      orbit: row.planet.position,
+      distance: distance(homeGalaxy, row.planet.system),
+    };
+  });
 
   return {
     character,
@@ -227,6 +268,8 @@ async function buildSnapshot(
       id: base.id,
       planetId: base.planetId,
       systemId: base.systemId,
+      orbit: base.position,
+      antimatter: base.resources.antimatter,
       levels: base.levels,
       richness: base.richness,
       anomaly: base.anomaly,
@@ -243,13 +286,17 @@ async function buildSnapshot(
     // Цену назначает рынок: она средневзвешенная по последним сделкам,
     // а перекос стакана говорит, чего не хватает и во что стоит вкладываться.
     market: (['ORE', 'POLYMERS'] as const).map((resource) => {
-      const side = (want: 'BUY' | 'SELL') =>
+      const side = (want: 'BUY' | 'SELL', own: boolean) =>
         orders
-          .filter((order) => order.resource === resource && order.side === want)
+          .filter(
+            (order) =>
+              order.resource === resource &&
+              order.side === want &&
+              (own || order.commanderId !== commander.commanderId),
+          )
           .reduce((sum, order) => sum + order.remaining, 0);
-      const demand = side('BUY');
-      const supply = side('SELL');
-      const both = demand + supply;
+      const demand = side('BUY', true);
+      const supply = side('SELL', true);
       const { price, seeded } = marketPrice(resource, recentTrades);
       return {
         resource,
@@ -257,7 +304,10 @@ async function buildSnapshot(
         seeded,
         demand: Math.round(demand),
         supply: Math.round(supply),
-        skew: both > 0 ? Math.round(((demand - supply) / both) * 100) / 100 : null,
+        skew: ratio(demand, supply),
+        // Свои заявки из перекоса вычтены: он решает, новость ли это,
+        // а собственная снятая заявка новостью не является.
+        foreignSkew: ratio(side('BUY', false), side('SELL', false)),
       };
     }),
     threats: buildThreats(commander.commanderId, raidLog, raidTargets),
@@ -580,6 +630,30 @@ async function buildBrief(
     defenses: positive(capital.defenses as unknown as Record<string, number>),
     neighbours: neighbours.map((row) => {
       const target = snapshot.raidTargets.find((item) => item.commanderId === row.id);
+      /*
+       * Цена вопроса по каждому соседу считается тем же расчетом, которым
+       * код выбирает цель, — иначе модель советовала бы одно, а исполнялось
+       * бы другое. Состав тот же, что ушел бы в набег: боевая часть плюс
+       * половина больших транспортов под добычу.
+       */
+      const strike = emptyShipCounts();
+      for (const type of SHIP_TYPES) {
+        if (type === 'PROBE' || type === 'RECYCLER' || type === 'COLONY_SHIP') continue;
+        if (type === 'SMALL_CARGO' || type === 'LARGE_CARGO') continue;
+        strike[type] = capital.ships[type];
+      }
+      strike.LARGE_CARGO = Math.floor(capital.ships.LARGE_CARGO / 2);
+      const value =
+        target && target.knownStrength !== null
+          ? raidValue(
+              target,
+              strike,
+              snapshot.techs,
+              { orbit: capital.orbit, systemId: capital.systemId },
+              { galaxyX: 0, galaxyY: 0 },
+              { galaxyX: target.distance, galaxyY: 0 },
+            )
+          : null;
       return {
         id: row.id,
         nickname: row.nickname,
@@ -587,8 +661,26 @@ async function buildBrief(
         atWar: enemies.has(row.id),
         planetId: target?.planetId ?? '',
         distance: Math.round((target?.distance ?? 0) * 10) / 10,
+        raid: value
+          ? {
+              loot: Math.round(value.loot),
+              debris: Math.round(value.debris),
+              fuel: Math.round(value.fuel),
+              net: Math.round(value.net),
+            }
+          : null,
       };
     }),
+    /*
+     * Чего бот не видит. Считается по всему списку соседей, а не по тому
+     * урезанному, что уходит модели, — иначе строка описывала бы саму себя.
+     */
+    fog: {
+      around: snapshot.raidTargets.length,
+      scouted: snapshot.raidTargets.filter((item) => item.knownStrength !== null).length,
+      withStock: snapshot.raidTargets.filter((item) => item.knownStock !== null).length,
+      probes: capital.ships.PROBE,
+    },
     // Ближайшая десятка: список всех свободных планет галактики модели незачем,
     // а платим мы за каждую строку.
     freePlanets: [...snapshot.freePlanets]
@@ -634,9 +726,23 @@ async function marketBrief(
       where: { commanderId, remaining: { gt: 0 } },
       select: { side: true, resource: true, remaining: true, pricePerUnit: true },
     }),
-    // Идентификатор идет вместе с заявкой: по нему модель ее и исполняет.
+    /*
+     * Идентификатор идет вместе с заявкой: по нему модель ее и исполняет.
+     *
+     * Стакан берется только свой — тот же, что видит код в снимке. Без
+     * привязки к хабу модели показывали заявки со всей галактики, а склада
+     * у бота там нет, и обе стороны выходили плохо: продажа отваливалась
+     * с «На складе хаба только 0», а покупка проходила — товар ложился
+     * на чужой хаб, куда бот не летает, и оплаченный груз пропадал совсем.
+     * Стакан на стенде и правда лежал на двух хабах, а сюда шли восемь самых
+     * дешевых заявок без разбора.
+     */
     prisma.marketOrder.findMany({
-      where: { commanderId: { not: commanderId }, remaining: { gt: 0 } },
+      where: {
+        commanderId: { not: commanderId },
+        remaining: { gt: 0 },
+        hub: { system: { planets: { some: { base: { commanderId } } } } },
+      },
       select: { id: true, side: true, resource: true, remaining: true, pricePerUnit: true },
       orderBy: { pricePerUnit: 'asc' },
       take: 8,
@@ -757,8 +863,8 @@ async function savePlan(
   /** Каким рынок был в момент решения — по нему сверяется, стоит ли будить снова. */
   market: BotSnapshot['market'],
   spend: BotSpend,
-  /** Повод этого решения: по нему следующий такой же будет отброшен. */
-  shock: string | null,
+  /** Поводы, которыми модель уже будили: по ним следующий такой же отбросят. */
+  shocks: Record<string, number>,
 ): Promise<void> {
   /*
    * Память сливается, а не подменяется целиком.
@@ -770,10 +876,11 @@ async function savePlan(
    * и ответил на нее, а бот продолжил слать то же самое.
    */
   const bot = await prisma.bot.findUnique({ where: { id: botId }, select: { memory: true } });
-  const memory = (typeof bot?.memory === 'object' && bot.memory !== null ? bot.memory : {}) as Record<
-    string,
-    unknown
-  >;
+  // Поле `shock` осталось от памяти на один повод: там лежал текст, а не ключ,
+  // и сравнивать с ним нечего. Убираем его при первой же записи.
+  const { shock: _outdated, ...memory } = (
+    typeof bot?.memory === 'object' && bot.memory !== null ? bot.memory : {}
+  ) as Record<string, unknown>;
   await prisma.bot.update({
     where: { id: botId },
     data: {
@@ -782,9 +889,14 @@ async function savePlan(
         plan: plan as unknown as object,
         planMadeAt: Date.now(),
         journal,
-        market: market.map((ref) => ({ resource: ref.resource, price: ref.reference, skew: ref.skew })),
+        // Перекос сохраняется без своих заявок — с ним же и сравнивается.
+        market: market.map((ref) => ({
+          resource: ref.resource,
+          price: ref.reference,
+          skew: ref.foreignSkew,
+        })),
         spend: spend as unknown as object,
-        shock,
+        shocks,
       },
     },
   });
@@ -797,8 +909,17 @@ async function savePlan(
  * не пришло: план в этом случае не сохраняется, а запрос провайдер уже
  * посчитал. Без этой записи неудачные вызовы были бы бесплатны в наших
  * книгах и платны в чужих.
+ *
+ * По той же причине здесь пишутся и поводы: побудка состоялась и запрос ушел
+ * независимо от ответа. Иначе неудачный вызов оставлял бы повод неотмеченным,
+ * и следующий заход будил бы модель тем же самым.
  */
-async function saveSpend(botId: string, spend: BotSpend): Promise<void> {
+async function saveSpend(
+  botId: string,
+  spend: BotSpend,
+  /** Поводы, которыми модель уже будили. */
+  shocks: Record<string, number>,
+): Promise<void> {
   const bot = await prisma.bot.findUnique({ where: { id: botId }, select: { memory: true } });
   const memory = (typeof bot?.memory === 'object' && bot.memory !== null ? bot.memory : {}) as Record<
     string,
@@ -806,15 +927,87 @@ async function saveSpend(botId: string, spend: BotSpend): Promise<void> {
   >;
   await prisma.bot.update({
     where: { id: botId },
-    data: { memory: { ...memory, spend: spend as unknown as object } },
+    data: { memory: { ...memory, spend: spend as unknown as object, shocks } },
   });
 }
 
-/** Повод, по которому модель будили в прошлый раз: дословный повтор — не новость. */
-function lastShock(memory: unknown): string | null {
-  if (typeof memory !== 'object' || memory === null) return null;
-  const value = (memory as Record<string, unknown>)['shock'];
-  return typeof value === 'string' ? value : null;
+/**
+ * Повод для внеочередного вызова модели: что рассказать и по чему сверить повтор.
+ *
+ * Разведены нарочно. Текст несет числа — добычу набега, новую цену, — без них
+ * модель не поймет масштаба. Ключ их не несет, и в этом весь смысл: сравнение
+ * шло по тексту, а число делало дословный повтор невозможным, и защита
+ * не срабатывала ни разу. Живая война шла набегом в минуту, добыча каждый раз
+ * новая: «разбит, унесли 1271», «унесли 2700», «унесли 2950» — двадцать
+ * пробуждений подряд с одним и тем же решением «предлагаем мир». Двое воюющих
+ * сожгли так 177 вызовов из 389 за сутки, то есть почти половину дневной нормы
+ * на всех ботов.
+ */
+export interface Shock {
+  /** Текст для модели: с числами, как есть. */
+  text: string;
+  /** Ключ для сравнения с прошлым поводом: без чисел, только суть события. */
+  key: string;
+  /** Сколько этот повод считается отработанным. */
+  ttl: number;
+}
+
+/**
+ * Сколько происшествие считается отработанным.
+ *
+ * Час, а не «до следующего повода»: память была на один ключ, и чередующиеся
+ * события проходили ее насквозь. Живого Купця одна и та же вражда будила пять
+ * раз за ночь — война, бой, война, бой: каждый повод отличался от того, что
+ * лежал в памяти, потому что предыдущий уже затерли. Решение по вражде
+ * принято один раз, и повторять его ни в том порядке, ни в другом незачем.
+ */
+export const SHOCK_TTL_MS = 60 * 60_000;
+
+/**
+ * Сколько отработанным считается движение рынка.
+ *
+ * Дольше происшествия, и намеренно. Рынок — сигнал слабый: стакан код
+ * отрабатывает сам каждые сорок пять секунд, а модель решает по нему
+ * не «продать сейчас», а «во что вкладываться», и такой вопрос пересматривают
+ * с тактом плана, не чаще.
+ *
+ * Замерено на стенде после того, как перекос перестали считать по своим
+ * заявкам: четверо на одном тонком хабе все равно переворачивали его друг
+ * другу, и «руду стали разбирать» в 05:14 сменялось на «перестали брать»
+ * в 05:19 — два вызова за пять минут на одну и ту же новость.
+ */
+export const MARKET_SHOCK_TTL_MS = PLAN_TTL_MS;
+
+/**
+ * Ключи поводов, которыми будили модель, и до какого времени они считаются
+ * отработанными.
+ *
+ * Хранится срок, а не отметка времени: у происшествия и у движения рынка
+ * он разный, и решать это должен тот, кто повод породил. Лежит в `Bot.memory`,
+ * то есть переживает изменения игры и читается защищенно (правила 8 и 9).
+ * Истекшие ключи не хранятся: они больше ничего не значат, а память бота
+ * не журнал.
+ */
+export function readShocks(memory: unknown, now = Date.now()): Record<string, number> {
+  if (typeof memory !== 'object' || memory === null) return {};
+  const raw = (memory as Record<string, unknown>)['shocks'];
+  if (typeof raw !== 'object' || raw === null) return {};
+
+  const fresh: Record<string, number> = {};
+  for (const [key, until] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof until === 'number' && until > now) fresh[key] = until;
+  }
+  return fresh;
+}
+
+/** Отметить, что этим поводом модель уже будили. */
+export function markShock(
+  shocks: Record<string, number>,
+  key: string,
+  ttl: number,
+  now = Date.now(),
+): Record<string, number> {
+  return { ...shocks, [key]: now + ttl };
 }
 
 /**
@@ -832,7 +1025,7 @@ function lastShock(memory: unknown): string | null {
  */
 const PRICE_SHOCK = 0.15;
 
-function marketShock(memory: unknown, now: BotSnapshot['market']): string | null {
+export function marketShock(memory: unknown, now: BotSnapshot['market']): Shock | null {
   const saved = (memory as Record<string, unknown> | null)?.['market'];
   if (!Array.isArray(saved)) return null;
 
@@ -848,18 +1041,37 @@ function marketShock(memory: unknown, now: BotSnapshot['market']): string | null
     const move = (ref.reference - was.price) / was.price;
     if (Math.abs(move) >= PRICE_SHOCK) {
       const name = ref.resource === 'ORE' ? 'руда' : 'полимеры';
-      return `${name} ${move > 0 ? 'подорожала' : 'подешевела'} на ${Math.round(Math.abs(move) * 100)}% — теперь ${ref.reference}`;
+      /*
+       * В ключе остается только ресурс. Ни процент, ни новая цена, ни даже
+       * направление: цена ходит туда-обратно, а новость все та же — рынок
+       * по руде сдвинулся. Что именно он сделал, модель прочтет в тексте.
+       */
+      return {
+        text: `${name} ${move > 0 ? 'подорожала' : 'подешевела'} на ${Math.round(Math.abs(move) * 100)}% — теперь ${ref.reference}`,
+        key: `market:${ref.resource}`,
+        ttl: MARKET_SHOCK_TTL_MS,
+      };
     }
 
-    // Смена знака перекоса — это разворот рынка: то, чего было завались,
-    // стало нарасхват. Ноль за разворот не считаем, иначе будило бы
-    // всякое дрожание вокруг равновесия.
+    /*
+     * Смена знака перекоса — это разворот рынка: то, чего было завались,
+     * стало нарасхват. Ноль за разворот не считаем, иначе будило бы
+     * всякое дрожание вокруг равновесия.
+     *
+     * Считается по чужим заявкам: свою собственную бот и снял, и выставил
+     * сам, и переворот от нее — не новость, а эхо прошлого решения.
+     */
     const before = was.skew;
-    if (typeof before === 'number' && ref.skew !== null && before * ref.skew < 0) {
+    if (typeof before === 'number' && ref.foreignSkew !== null && before * ref.foreignSkew < 0) {
       const name = ref.resource === 'ORE' ? 'руду' : 'полимеры';
-      return ref.skew > 0
-        ? `${name} стали разбирать: спрос обогнал предложение`
-        : `${name} перестали брать: предложение обогнало спрос`;
+      const text =
+        ref.foreignSkew > 0
+          ? `${name} стали разбирать: спрос обогнал предложение`
+          : `${name} перестали брать: предложение обогнало спрос`;
+      // Ключ тот же, что у движения цены: и то и другое — «рынок сдвинулся».
+      // Четверо на одном хабе переворачивают перекос друг другу за минуты,
+      // и каждый переворот стоил бы вызова.
+      return { text, key: `market:${ref.resource}`, ttl: MARKET_SHOCK_TTL_MS };
     }
   }
 
@@ -1094,7 +1306,19 @@ function buildThreats(
       planetId: reachable.planetId,
       raids: count,
       againstMe: defenderId === self,
+      /*
+       * Сила берется только из разведки, и это не упущение — пробовали иначе.
+       *
+       * Соблазн понятен: тот, кто отбил набег, видел приведенный флот, и отчет
+       * о бое его записал. Но отчет говорит о налете, а не о доме. В нем нет
+       * ни обороны планеты, ни того, что агрессор оставил в гарнизоне, —
+       * это нижняя граница, и очень заниженная. Живой Крамар получил по ней
+       * оценку, счел «Хижака» слабее себя, полетел и потерял сто тридцать два
+       * истребителя об укрепленную базу за один бой. Разведка считает флот
+       * и оборону на месте; бой не заменяет ее ничем.
+       */
       knownStrength: reachable.knownStrength,
+      planetOrbit: reachable.orbit,
       distance: reachable.distance,
     });
   }
@@ -1104,13 +1328,30 @@ function buildThreats(
 }
 
 /**
+ * Повод о бое: текст с добычей и ключ без нее.
+ *
+ * Вынесен из запроса отдельно, потому что именно здесь ломалась защита
+ * от повтора, а проверить ее на живой базе нечем (правило 4: расхождение
+ * видно только на запуске набора).
+ */
+export function battleShock(mine: boolean, won: boolean, other: string, loot: number): Shock {
+  // Добыча остается в тексте и уходит из ключа: следующий такой же набег
+  // принесет другое число, а новость будет прежней.
+  const key = `battle:${mine ? 'raid' : 'defense'}:${other}:${won ? 'won' : 'lost'}`;
+  const ttl = SHOCK_TTL_MS;
+  return mine
+    ? { text: `мой набег на «${other}» — ${won ? 'победа' : 'поражение'}, добыча ${loot}`, key, ttl }
+    : { text: `на меня напал «${other}» — ${won ? 'отбился' : 'разбит'}, унесли ${loot}`, key, ttl };
+}
+
+/**
  * Что вырвало бота из расписания.
  *
  * Модель зовется не только по будильнику: бой, объявленная война или потеря
  * колонии — это ровно те нестандартные ситуации, ради которых она здесь.
  * В спокойные часы функция возвращает null, и лишнего вызова не будет.
  */
-async function recentShock(commanderId: string, since: number): Promise<string | null> {
+async function recentShock(commanderId: string, since: number): Promise<Shock | null> {
   const after = new Date(Math.max(since, Date.now() - 6 * 3600_000));
 
   const battle = await prisma.battleReport.findFirst({
@@ -1135,9 +1376,7 @@ async function recentShock(commanderId: string, since: number): Promise<string |
     const won = (mine && battle.winner === 'ATTACKER') || (!mine && battle.winner === 'DEFENDER');
     const other = mine ? battle.defender.nickname : battle.attacker.nickname;
     const loot = Math.round(battle.plunderOre + battle.plunderPolymers + battle.plunderPlasma);
-    return mine
-      ? `мой набег на «${other}» — ${won ? 'победа' : 'поражение'}, добыча ${loot}`
-      : `на меня напал «${other}» — ${won ? 'отбился' : 'разбит'}, унесли ${loot}`;
+    return battleShock(mine, won, other, loot);
   }
 
   const war = await prisma.warDeclaration.findFirst({
@@ -1145,7 +1384,13 @@ async function recentShock(commanderId: string, since: number): Promise<string |
     select: { aggressor: { select: { nickname: true } } },
     orderBy: { declaredAt: 'desc' },
   });
-  if (war) return `«${war.aggressor.nickname}» объявил мне войну`;
+  if (war) {
+    return {
+      text: `«${war.aggressor.nickname}» объявил мне войну`,
+      key: `war:${war.aggressor.nickname}`,
+      ttl: SHOCK_TTL_MS,
+    };
+  }
 
   return null;
 }
@@ -1182,11 +1427,46 @@ async function applyDirective(
       const strike = emptyShipCounts();
       for (const type of SHIP_TYPES) {
         if (type === 'PROBE' || type === 'RECYCLER' || type === 'COLONY_SHIP') continue;
-        if (type === 'SMALL_CARGO') continue;
+        if (type === 'SMALL_CARGO' || type === 'LARGE_CARGO') continue;
         strike[type] = striker.ships[type];
       }
       strike.LARGE_CARGO = Math.floor(striker.ships.LARGE_CARGO / 2);
+      strike.SMALL_CARGO = Math.floor(striker.ships.SMALL_CARGO / 2);
       if (spentOnFleet(strike) <= 0) return note('нечем лететь');
+
+      /*
+       * Поручение модели проходит ту же проверку выгоды, что и решение кода.
+       *
+       * Иначе правило дырявое насквозь: код перестает летать за копейками,
+       * а модель по старой памяти шлет набег — и он уходит. Живой Хижак так
+       * и сделал через полтора часа после того, как код замолчал: привел сто
+       * девять истребителей, привез 5 650 полимеров при часе собственной
+       * добычи в восемьдесят шесть тысяч. Директива — просьба, а не исполнение,
+       * и правила на нее распространяются ровно так же.
+       */
+      if (!reachable(target, strike, snapshot.techs, { orbit: striker.orbit, antimatter: striker.antimatter })) {
+        return note('туда не долететь: нужен гипердвигатель и антиматерия');
+      }
+      const gain = raidValue(
+        target,
+        strike,
+        snapshot.techs,
+        { orbit: striker.orbit, systemId: striker.systemId },
+        { galaxyX: 0, galaxyY: 0 },
+        { galaxyX: target.distance, galaxyY: 0 },
+      );
+      const output = productionPerSecond(
+        striker.levels,
+        striker.richness,
+        economyBonuses(snapshot.techs),
+        0,
+        systemModifiers(striker.anomaly),
+        timeCompressionDrain(snapshot.techs),
+      );
+      const hourly = (output.ore + output.polymers + output.plasma) * 3600;
+      if (gain.net < hourly) {
+        return note(`не окупается: ${Math.round(gain.net)} чистыми против часа добычи в ${Math.round(hourly)}`);
+      }
 
       const result = await gameLoop.sendFleet(
         commanderId,
@@ -1218,6 +1498,71 @@ async function applyDirective(
         { ore: 0, polymers: 0, plasma: 0 },
       );
       return note(result.ok ? `рейс к планете — ${directive.why}` : result.error);
+    }
+
+    case 'AID':
+    case 'REINFORCE': {
+      /*
+       * Помощь идет односторонним рейсом: на чужой базе флот не разворачивается,
+       * а садится, и корабли с грузом переходят ее владельцу. Тем же способом
+       * передают имущество живые игроки — отдельной механики для ботов нет
+       * и не нужно.
+       */
+      const ally = snapshot.raidTargets.find((item) => item.commanderId === directive.commanderId);
+      if (!ally) return note('где его база, неизвестно');
+      const home = snapshot.bases[0];
+      if (!home) return note('базы нет');
+
+      const ships = emptyShipCounts();
+      let cargo = { ore: 0, polymers: 0, plasma: 0 };
+      if (directive.kind === 'AID') {
+        // Караван: грузовики и ровно то, что есть на складе.
+        ships.SMALL_CARGO = home.ships.SMALL_CARGO;
+        ships.LARGE_CARGO = home.ships.LARGE_CARGO;
+        const hold = fleetCapacity(ships);
+        const ore = Math.min(directive.ore, Math.floor(home.resources.ore));
+        const polymers = Math.min(directive.polymers, Math.floor(home.resources.polymers));
+        const total = ore + polymers;
+        if (total <= 0) return note('нечего отправить');
+        // В трюмы влезет не все — режем пропорционально просьбе.
+        const factor = total > hold ? hold / total : 1;
+        cargo = { ore: Math.floor(ore * factor), polymers: Math.floor(polymers * factor), plasma: 0 };
+      } else {
+        for (const type of COMBAT_TYPES) ships[type] = home.ships[type];
+      }
+      if (fleetSize(ships) === 0) return note('отправлять нечем');
+
+      const result = await gameLoop.sendFleet(
+        commanderId,
+        home.id,
+        { planetId: ally.planetId },
+        'TRANSPORT',
+        ships,
+        cargo,
+        { ore: 0, polymers: 0 },
+        true,
+      );
+      return note(
+        result.ok
+          ? `${directive.kind === 'AID' ? 'караван помощи' : 'флот в подмогу'} — ${directive.why}`
+          : result.error,
+      );
+    }
+
+    case 'SCOUT': {
+      const scout = snapshot.bases.find((base) => base.ships.PROBE > 0);
+      if (!scout) return note('зондов нет');
+      const ships = emptyShipCounts();
+      ships.PROBE = 1;
+      const result = await gameLoop.sendFleet(
+        commanderId,
+        scout.id,
+        { planetId: directive.planetId },
+        'SCAN',
+        ships,
+        { ore: 0, polymers: 0, plasma: 0 },
+      );
+      return note(result.ok ? `зонд отправлен — ${directive.why}` : result.error);
     }
 
     case 'HARVEST': {
@@ -1391,23 +1736,30 @@ async function turn(botId: string): Promise<BotTurn | null> {
    * код считает точнее, и платить в сотни раз больше.
    */
   const overdue = !plan || Date.now() - plan.madeAt > PLAN_TTL_MS;
-  const rawShock =
+  const shock =
     (await recentShock(bot.commanderId, plan?.madeAt ?? 0)) ?? marketShock(bot.memory, snapshot.market);
+  const rawShock = shock?.text ?? null;
   /*
-   * Новость перестает быть новостью, если повторяется дословно.
+   * Новость перестает быть новостью, если повторяется.
    *
    * Живая война шла набегом в минуту: шестьдесят один бой за несколько часов,
    * и каждый будил обе модели заново. Двое воюющих сожгли так 77 вызовов
    * из четырехсот, докладывая одно и то же — «мой набег на Купця, победа».
    * Решение по такому поводу модель уже приняла, и повторять его незачем:
-   * плановый пересмотр раз в полчаса никуда не делся, а внеочередной нужен
-   * там, где обстановка изменилась.
+   * плановый пересмотр никуда не делся, а внеочередной нужен там, где
+   * обстановка изменилась.
+   *
+   * Сравнивается ключ, а не текст: числа в тексте меняются от боя к бою,
+   * и по тексту защита не сработала ни разу (см. `Shock`). Помнится не один
+   * последний ключ, а все за час: чередующиеся события — война, бой, война —
+   * проходили память на один слот насквозь, затирая друг друга.
    *
    * Повтор гасит только побудку. Что рассказать модели, он не решает: если
    * заход все равно состоялся по расписанию, обстановку она получает полную,
    * иначе плановый пересмотр во время войны выглядел бы для нее как затишье.
    */
-  const fresh = rawShock !== null && rawShock !== lastShock(bot.memory);
+  let shocks = readShocks(bot.memory);
+  const fresh = shock !== null && shocks[shock.key] === undefined;
 
   /*
    * Норма запросов общая на всех ботов и считается по попыткам: отказ сервиса
@@ -1420,13 +1772,16 @@ async function turn(botId: string): Promise<BotTurn | null> {
   const wanted = llmEnabled() && (overdue || fresh);
   if (wanted && mayAsk(spend, spentAll)) {
     spend = withAttempt(spend);
+    // Повод отмечается на попытке, а не на удаче: побудка состоялась
+    // и запрос ушел независимо от того, что ответил провайдер.
+    if (shock) shocks = markShock(shocks, shock.key, shock.ttl);
     const brief = await buildBrief(commander, snapshot, bot.memory);
     const answer = await askStrategy(bot.character, brief, snapshot, rawShock);
 
     if (!answer) {
       // Ответа нет, но попытка была: записываем расход отдельно, иначе
       // неудачные вызовы не попадут в счетчик вовсе.
-      await saveSpend(bot.id, spend);
+      await saveSpend(bot.id, spend, shocks);
     }
 
     if (answer) {
@@ -1446,7 +1801,7 @@ async function turn(botId: string): Promise<BotTurn | null> {
         journal = appendJournal({ journal }, [done.line]);
       }
 
-      await savePlan(bot.id, answer.plan, journal, snapshot.market, spend, rawShock);
+      await savePlan(bot.id, answer.plan, journal, snapshot.market, spend, shocks);
     }
   }
 
@@ -1468,7 +1823,7 @@ async function turn(botId: string): Promise<BotTurn | null> {
       spend = rallied.spend;
       if (rallied.ok) {
         actions.push(`RALLY: ${intent.why}`);
-        await saveSpend(bot.id, spend);
+        await saveSpend(bot.id, spend, shocks);
       }
       continue;
     }
@@ -1481,7 +1836,7 @@ async function turn(botId: string): Promise<BotTurn | null> {
   const mail = await answerMail(bot.commanderId, bot.character, spend, spentAll);
   if (mail.sent > 0) {
     actions.push(`ОТВЕТ: писем ${mail.sent}`);
-    await saveSpend(bot.id, mail.spend);
+    await saveSpend(bot.id, mail.spend, shocks);
   }
 
   // Торговый рейс идет после решений: ордера бот выставляет с того, что уже
