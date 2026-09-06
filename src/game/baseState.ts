@@ -415,12 +415,23 @@ function buildingCard(
  * разница между текущим и следующим уровнем на реальных формулах, поэтому
  * богатство планеты и технологии в число уже заложены.
  */
+/**
+ * Строка эффекта постройки: что изменится после улучшения.
+ *
+ * Возвращается разобранной на значок и текст, а не одной фразой. Слово
+ * «добыча» на карточке рудной шахты не сообщало ничего — что шахта добывает,
+ * сказано в ее названии, — зато занимало место и переносило строку. Значок
+ * ресурса на его месте отвечает на вопрос, которого текст не касался вовсе:
+ * чего именно столько-то. Там, где существительное несет смысл сверх ресурса
+ * («вместимость», «выработка»), оно остается: без него склад и шахта читались
+ * бы одинаково.
+ */
 function buildingEffect(
   type: BuildingType,
   state: BaseRuntimeState,
   commander: CommanderRuntimeState,
   nextLevel: number,
-): string | null {
+): { icon: string | null; text: string } | null {
   const level = state.levels[type];
   const bonuses = economyBonuses(commander.techs);
   const modifiers = systemModifiers(state.anomaly);
@@ -432,22 +443,26 @@ function buildingEffect(
   if (type === 'ORE_STORAGE' || type === 'POLYMER_STORAGE' || type === 'PLASMA_STORAGE') {
     const now = storageCapacityForLevel(level);
     const after = storageCapacityForLevel(nextLevel);
-    return `вместимость ${Math.round(now).toLocaleString('ru-RU')} → ${Math.round(after).toLocaleString('ru-RU')}`;
+    const stored = type === 'ORE_STORAGE' ? 'ore' : type === 'POLYMER_STORAGE' ? 'polymers' : 'plasma';
+    return {
+      icon: stored,
+      text: `вместимость ${Math.round(now).toLocaleString('ru-RU')} → ${Math.round(after).toLocaleString('ru-RU')}`,
+    };
   }
 
   if (type === 'CRYPTO_FARM') {
     const bonus = cryptoBonus(commander.techs);
     const now = creditOutput(state.levels, bonus);
     const after = creditOutput(next, bonus);
-    return `криптогривна ${perHour(now)} → ${perHour(after)} в час`;
+    return { icon: 'credits', text: `${perHour(now)} → ${perHour(after)} в час` };
   }
 
   if (type === 'POWER_PLANT') {
     const now = energyOutput(state.levels, state.richness, bonuses);
     const after = energyOutput(next, state.richness, bonuses);
-    // Именно «выработка»: на карточке рядом стоит строка расхода, и слово
-    // «энергия» в обеих не отвечало на вопрос, дается она или тратится.
-    return `выработка ${Math.round(now)} → ${Math.round(after)}`;
+    // Именно «выработка»: на карточке рядом стоит строка расхода, и один
+    // значок молнии в обеих не отвечал бы, дается энергия или тратится.
+    return { icon: 'energy', text: `выработка ${Math.round(now)} → ${Math.round(after)}` };
   }
 
   if (type === 'SCIENCE_CENTER') {
@@ -455,7 +470,7 @@ function buildingEffect(
     // иначе «ускорение ×1.25» ничего не говорит о реальном сроке.
     const now = researchSeconds('ENERGY_TECH', commander.techs.ENERGY_TECH + 1, level, commander.techs, modifiers);
     const after = researchSeconds('ENERGY_TECH', commander.techs.ENERGY_TECH + 1, nextLevel, commander.techs, modifiers);
-    return `исследования: ${fmtSeconds(now)} → ${fmtSeconds(after)}`;
+    return { icon: null, text: `исследования: ${fmtSeconds(now)} → ${fmtSeconds(after)}` };
   }
 
   if (type === 'SHIPYARD') {
@@ -464,7 +479,7 @@ function buildingEffect(
     const after = shipUnitSeconds('LIGHT_FIGHTER', nextLevel, modifiers, speedup);
     // Формулировка короткая намеренно: в три строки она ломала выравнивание
     // ряда карточек, а мерится эффект все равно на истребителе.
-    return `сборка кораблей: ${fmtSeconds(now)} → ${fmtSeconds(after)}`;
+    return { icon: null, text: `сборка кораблей: ${fmtSeconds(now)} → ${fmtSeconds(after)}` };
   }
 
   const production = (levels: BuildingLevels) =>
@@ -473,14 +488,14 @@ function buildingEffect(
   if (type === 'ANTIMATTER_FACTORY') {
     const now = production(state.levels).antimatter;
     const after = production(next).antimatter;
-    return `антиматерия ${perHour(now)} → ${perHour(after)} в час`;
+    return { icon: 'antimatter', text: `${perHour(now)} → ${perHour(after)} в час` };
   }
 
   const key = type === 'ORE_MINE' ? 'ore' : type === 'POLYMER_PLANT' ? 'polymers' : 'plasma';
   if (key === 'ore' || key === 'polymers' || key === 'plasma') {
     const now = production(state.levels)[key];
     const after = production(next)[key];
-    return `добыча ${perHour(now)} → ${perHour(after)} в час`;
+    return { icon: key, text: `${perHour(now)} → ${perHour(after)} в час` };
   }
   return null;
 }

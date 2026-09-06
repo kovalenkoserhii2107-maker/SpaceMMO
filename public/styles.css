@@ -1903,6 +1903,12 @@ button.tiny { padding: 4px 10px; font-size: 11px; flex: none; }
   overflow: hidden;
 }
 .combat-line:empty { display: none; }
+/*
+ * Значок стоит в строке эффекта вместо существительного, поэтому он часть
+ * текста, а не отдельная колонка: строка переносится, и flex поставил бы
+ * его по центру двух строк вместо начала первой.
+ */
+.combat-line .ico { vertical-align: -0.2em; }
 
 
 /* ---------- Инструменты командира: симулятор и шаблоны ---------- */
@@ -2829,7 +2835,7 @@ button.tiny { padding: 4px 10px; font-size: 11px; flex: none; }
   align-items: baseline;
   gap: 12px;
 }
-.spec dt { font-size: 12px; color: var(--muted); }
+.spec dt { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
 .spec dd { margin: 0; font-size: 13px; font-variant-numeric: tabular-nums; }
 .spec dd .muted { color: var(--muted); }
 .spec dd.time { font-size: 13px; color: var(--text); }
@@ -2930,8 +2936,14 @@ button.tiny { padding: 4px 10px; font-size: 11px; flex: none; }
    * на карточку, а нижний край и так ровный: кнопку прижимает margin-top: auto.
    */
   .card .cost, .card .combat-line { min-height: 0; }
+  /*
+   * Строка эффекта жмется по горизонтали, чтобы «в час» не уезжало на вторую
+   * строку одно: перенос ради двух слогов стоит восемнадцати пикселей высоты
+   * на каждой карточке, а их на экране четыре.
+   */
+  .card .combat-line { font-size: 10.5px; padding: 5px 7px; }
   .spec { gap: 4px; }
-  .spec-row { grid-template-columns: minmax(52px, auto) minmax(0, 1fr); gap: 7px; }
+  .spec-row { grid-template-columns: minmax(62px, auto) minmax(0, 1fr); gap: 7px; }
   .spec dt { font-size: 10.5px; }
   .spec dd, .spec dd.time { font-size: 11.5px; }
   .spec-row.spec-cost { grid-template-columns: minmax(0, 1fr); gap: 1px; }

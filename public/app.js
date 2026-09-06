@@ -1415,12 +1415,19 @@
     }
   }
 
-  /** Строка характеристики: подпись слева, значение справа. */
-  function specRow(label, value) {
+  /**
+   * Строка характеристики: подпись слева, значение справа.
+   *
+   * Подпись — разметка, а не текст: у расхода в ней стоит значок молнии.
+   * Голое «Расход» не отвечало, чего именно расход, а слово «энергии»
+   * рядом не помещается — в узкой карточке под подпись отведено полсотни
+   * пикселей. Подписи здесь свои, не пользовательские.
+   */
+  function specRow(labelHtml, value) {
     const row = document.createElement('div');
     row.className = 'spec-row';
     const term = document.createElement('dt');
-    term.textContent = label;
+    term.innerHTML = labelHtml;
     row.append(term, value);
     return row;
   }
@@ -1466,7 +1473,7 @@
     spec.className = 'spec';
 
     const energy = document.createElement('dd');
-    const energyRow = specRow('Расход', energy);
+    const energyRow = specRow(icon('energy', 'sm') + ' Расход', energy);
     energyRow.hidden = true;
 
     const cost = document.createElement('dd');
@@ -1579,7 +1586,12 @@
     // приходилось самому.
     card.level.textContent = `Ур. ${building.level} → ${building.nextLevel}`;
     // Тем же местом, что и боевой профиль у кораблей: короткая строка эффекта.
-    card.combat.textContent = building.effect || '';
+    // Значок вместо существительного: «добыча» на карточке шахты повторяла
+    // ее название и переносила строку, а чего именно столько-то — не говорила.
+    const effect = building.effect;
+    card.combat.innerHTML = effect
+      ? (effect.icon ? icon(effect.icon, 'sm') + ' ' : '') + escapeHtml(effect.text)
+      : '';
 
     /*
      * Расход энергии показываем всегда и у всех — даже там, где он нулевой,
@@ -1598,7 +1610,7 @@
       card.energyRow.hidden = false;
       card.energy.innerHTML =
         nextUsage <= 0
-          ? '<span class="muted">не потребляет</span>'
+          ? '<span class="muted">нет</span>'
           : `<span>${fmtEnergy(usage)} → ${fmtEnergy(nextUsage)}</span>` +
             (grow > 0 ? ` <span class="grow">+${fmtEnergy(grow)}</span>` : '');
     }
