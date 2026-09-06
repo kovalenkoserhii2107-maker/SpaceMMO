@@ -1067,7 +1067,7 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
   check('плата растет тем же шагом, что и цена места', Math.abs(hubRent(9) / hubRent(8) - 2) < 1e-9, `${(hubRent(9) / hubRent(8)).toFixed(2)}×`);
   check(
     'плата — доля от цены самого места',
-    Math.abs(hubRent(8) * 3600 - storageUpgradeCost(8) * 0.03) < 1e-6,
+    Math.abs(hubRent(8) * 3600 - storageUpgradeCost(8) * 0.045) < 1e-6,
     `₴${Math.round(hubRent(8) * 3600).toLocaleString('ru-RU')} в час при цене места ₴${storageUpgradeCost(8).toLocaleString('ru-RU')}`,
   );
 

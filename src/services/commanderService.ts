@@ -64,8 +64,58 @@ export async function getCommanderProfile(commanderId: string): Promise<Commande
 }
 
 /**
+ * Стартовая планета — ближайшая свободная к уже обжитым местам.
+ *
+ * Раньше бралась первая свободная по возрастанию `galaxyX`, и это разбрасывало
+ * новичков по галактике: сортировка не смотрит на `galaxyY` вовсе, поэтому
+ * после заполнения системы на X=1 следующий игрок уезжал в другую систему
+ * с тем же X и совершенно другим Y — на другой конец карты. Соседей нет,
+ * торговать не с кем, лететь до кого-либо часами. Мир из одиночек
+ * не мультиплеер, а набор одиночных игр на общем сервере.
+ *
+ * Якорь — середина уже заселенных систем. Скопление от этого растет наружу
+ * кольцами: каждая следующая колония садится в ближайшую к центру систему,
+ * где еще есть место. Привязываться к торговому хабу нельзя — он есть
+ * в каждой системе и центром притяжения не является.
+ *
+ * Пока не заселено ничего, берется просто первая свободная: с нее
+ * скопление и начнется.
+ */
+async function pickStartingPlanet(): Promise<{ id: string; name: string } | null> {
+  const free = await prisma.planet.findMany({
+    where: { base: null },
+    select: { id: true, name: true, position: true, system: { select: { galaxyX: true, galaxyY: true } } },
+  });
+  if (free.length === 0) return null;
+
+  const settled = await prisma.solarSystem.findMany({
+    where: { planets: { some: { base: { isNot: null } } } },
+    select: { galaxyX: true, galaxyY: true },
+  });
+  if (settled.length === 0) return free[0] ?? null;
+
+  const anchorX = settled.reduce((sum, s) => sum + s.galaxyX, 0) / settled.length;
+  const anchorY = settled.reduce((sum, s) => sum + s.galaxyY, 0) / settled.length;
+  // Квадрат расстояния: корень ничего не меняет в порядке, а считать дешевле.
+  const distance = (planet: (typeof free)[number]): number =>
+    (planet.system.galaxyX - anchorX) ** 2 + (planet.system.galaxyY - anchorY) ** 2;
+
+  let best = free[0]!;
+  let bestDistance = distance(best);
+  for (const planet of free) {
+    const value = distance(planet);
+    // При равном расстоянии — ближняя к звезде орбита: система заполняется
+    // изнутри наружу, как и настоящая колонизация.
+    if (value < bestDistance || (value === bestDistance && planet.position < best.position)) {
+      best = planet;
+      bestDistance = value;
+    }
+  }
+  return best;
+}
+
+/**
  * Создание командира: уникальный позывной, аватар и стартовая планета.
- * Планета берется из уже сгенерированной галактики — первая свободная.
  */
 export async function createCommander(
   userId: string,
@@ -80,10 +130,7 @@ export async function createCommander(
   const taken = await prisma.commander.findUnique({ where: { nickname } });
   if (taken) return { ok: false, error: 'Позывной уже занят', status: 409 };
 
-  const planet = await prisma.planet.findFirst({
-    where: { base: null },
-    orderBy: [{ system: { galaxyX: 'asc' } }, { position: 'asc' }],
-  });
+  const planet = await pickStartingPlanet();
   if (!planet) {
     return {
       ok: false,
