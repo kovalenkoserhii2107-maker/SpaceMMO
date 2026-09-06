@@ -183,6 +183,8 @@
     broadcastBody: $('broadcast-body'),
     broadcastSend: $('broadcast-send'),
     presetSelect: $('preset-select'),
+    presetRow: $('preset-row'),
+    presetToggle: $('preset-toggle'),
     presetManage: $('preset-manage'),
     presetList: $('preset-list'),
     presetName: $('preset-name'),
@@ -1464,7 +1466,7 @@
     spec.className = 'spec';
 
     const energy = document.createElement('dd');
-    const energyRow = specRow('Энергия', energy);
+    const energyRow = specRow('Расход', energy);
     energyRow.hidden = true;
 
     const cost = document.createElement('dd');
@@ -2877,19 +2879,23 @@
             : MISSION_OPTIONS[kind] || MISSION_OPTIONS.UNKNOWN_PLANET;
     const options = [...base];
 
-    // Колонизация — только на планету, про которую не известно, что она занята,
-    // и только с основателем на борту: пункт появляется, когда он выполним.
-    if ((free || unknown) && readComposition().COLONY_SHIP > 0) {
-      options.push(['COLONIZE', 'Основать колонию']);
-    }
+    /*
+     * Колонизация — на планету, про которую не известно, что она занята.
+     *
+     * Раньше пункт требовал основателя уже в составе, и это стало ловушкой,
+     * как только состав начал фильтроваться по миссии: поле колонизатора
+     * не показано — значит его не ввести, значит пункт не появится, значит
+     * поле не покажут. Выполнимость проверяет сервер, а форма отвечает
+     * за то, что вообще бывает с этой целью.
+     */
+    if (free || unknown) options.push(['COLONIZE', 'Основать колонию']);
 
     // «Переработка» появляется только когда в составе есть переработчик и над
     // планетой действительно висит поле: пустой пункт меню сбивал бы с толку.
     if (!map.coordTarget && map.selectedKind === 'PLANET') {
       const planet = selectedPlanet();
       const hasDebris = planet && planet.debris && planet.debris.ore + planet.debris.polymers > 0;
-      const picked = readComposition();
-      if (hasDebris && picked.RECYCLER > 0) options.push(['HARVEST', 'Переработка обломков']);
+      if (hasDebris) options.push(['HARVEST', 'Переработка обломков']);
     }
 
     // Выбор игрока сохраняется, пока он выполним: перерисовка меню на каждое
@@ -2912,6 +2918,8 @@
         el.missionMenu.appendChild(button);
       }
     }
+
+    syncFleetFields();
 
     const pickup = map.mission === 'HUB_PICKUP';
     // Подпись перерисовывается вместе с иконкой: textContent стер бы SVG из разметки.
@@ -3020,7 +3028,7 @@
     if (el.fleetInputs.childElementCount === 0) {
       for (const [type, label] of Object.entries(SHIP_LABELS)) {
         const field = document.createElement('label');
-        field.className = 'field';
+        field.className = 'field field-with-max';
         const caption = document.createElement('span');
         const input = document.createElement('input');
         input.type = 'number';
@@ -3031,19 +3039,66 @@
           syncMissionOptions();
           schedulePlan();
         });
-        field.append(caption, input);
+        // Кнопка «все» рядом с полем: набрать весь класс — самое частое
+        // действие, а вводить трехзначное число с телефона неудобно.
+        const max = document.createElement('button');
+        max.type = 'button';
+        max.className = 'field-max';
+        max.textContent = 'все';
+        max.addEventListener('click', (event) => {
+          event.preventDefault();
+          const current = activeBase();
+          input.value = String((current && current.fleet[type]) || 0);
+          syncMissionOptions();
+          schedulePlan();
+        });
+
+        field.append(caption, input, max);
         el.fleetInputs.appendChild(field);
-        fleetInputs[type] = { caption, input };
+        fleetInputs[type] = { caption, input, field, max };
       }
     }
 
     for (const [type, label] of Object.entries(SHIP_LABELS)) {
-      fleetInputs[type].caption.textContent = `${label} (${base.fleet[type]})`;
-      fleetInputs[type].input.max = String(base.fleet[type]);
+      const owned = base.fleet[type];
+      fleetInputs[type].caption.textContent = `${label} (${owned})`;
+      fleetInputs[type].input.max = String(owned);
+      fleetInputs[type].max.disabled = owned <= 0;
     }
+    syncFleetFields();
   }
 
   const fleetInputs = {};
+
+  /*
+   * Какие классы имеют смысл в этой миссии.
+   *
+   * Урезаются только две, и обе — там, где лишний корабль не бесполезен,
+   * а вреден. Разведке нужен зонд и только он: боя на разведке не бывает,
+   * эскадра рядом с дроном просто жжет топливо и рискует собой впустую.
+   * Сборке обломков — переработчик: обычные трюмы поле не берут, иначе
+   * он был бы не нужен.
+   *
+   * Остальные рейсы показывают все классы, и это не лень. Односторонний
+   * транспорт — способ передать имущество: им дарят союзнику и грузовик,
+   * и переработчик, и зонд. Спрятать класс значит запретить такой подарок,
+   * а выигрыш был бы только в опрятности списка.
+   */
+  function shipsForMission(mission) {
+    if (mission === 'SCAN') return ['PROBE'];
+    if (mission === 'HARVEST') return ['RECYCLER'];
+    return Object.keys(SHIP_LABELS);
+  }
+
+  /** Скрытое поле обнуляется: иначе корабль улетел бы, не показавшись в форме. */
+  function syncFleetFields() {
+    const allowed = new Set(shipsForMission(map.mission));
+    for (const [type, refs] of Object.entries(fleetInputs)) {
+      const off = !allowed.has(type);
+      refs.field.hidden = off;
+      if (off && refs.input.value !== '0') refs.input.value = '0';
+    }
+  }
 
   function readComposition() {
     const ships = { PROBE: 0, SMALL_CARGO: 0, LIGHT_FIGHTER: 0 };
@@ -3297,11 +3352,18 @@
   el.fleetAll.addEventListener('click', () => {
     const base = activeBase();
     if (!base) return;
+    const allowed = new Set(shipsForMission(map.mission));
     for (const [type, refs] of Object.entries(fleetInputs)) {
-      refs.input.value = String(base.fleet[type] || 0);
+      if (allowed.has(type)) refs.input.value = String(base.fleet[type] || 0);
     }
     syncMissionOptions();
     schedulePlan();
+  });
+
+  /* Список шаблонов разворачивается кнопкой и сам по себе места не занимает. */
+  el.presetToggle.addEventListener('click', () => {
+    el.presetRow.hidden = !el.presetRow.hidden;
+    el.presetToggle.classList.toggle('active', !el.presetRow.hidden);
   });
 
   el.fleetNone.addEventListener('click', () => {

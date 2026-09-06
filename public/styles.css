@@ -2948,3 +2948,33 @@ button.tiny { padding: 4px 10px; font-size: 11px; flex: none; }
    */
   .card .time { text-wrap: balance; }
 }
+
+/* ---------- Поле состава флота: кнопка «все» ---------- */
+
+/*
+ * Кнопка сидит в правом краю самого поля. Отдельной строкой она удвоила бы
+ * высоту каждого поля, а классов в составе двенадцать — форма и без того
+ * длиннее экрана. Набрать весь класс целиком — самое частое действие,
+ * и трехзначное число с телефона вводить незачем.
+ */
+.field-with-max { position: relative; }
+.field-with-max input { padding-right: 52px; }
+.field-max {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  padding: 4px 9px;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--accent);
+  cursor: pointer;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel-2);
+}
+.field-max:hover:not(:disabled) { border-color: var(--accent); }
+.field-max:disabled { opacity: 0.35; color: var(--muted); cursor: default; }
+
+/* Развернутый список шаблонов помечает свою кнопку. */
+.ghost.active { border-color: var(--accent); color: var(--accent); }

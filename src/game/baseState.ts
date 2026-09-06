@@ -445,7 +445,9 @@ function buildingEffect(
   if (type === 'POWER_PLANT') {
     const now = energyOutput(state.levels, state.richness, bonuses);
     const after = energyOutput(next, state.richness, bonuses);
-    return `энергия ${Math.round(now)} → ${Math.round(after)}`;
+    // Именно «выработка»: на карточке рядом стоит строка расхода, и слово
+    // «энергия» в обеих не отвечало на вопрос, дается она или тратится.
+    return `выработка ${Math.round(now)} → ${Math.round(after)}`;
   }
 
   if (type === 'SCIENCE_CENTER') {

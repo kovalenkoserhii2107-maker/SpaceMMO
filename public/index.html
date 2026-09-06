@@ -859,12 +859,21 @@
 
           <section class="step">
             <h4 class="step-head"><span class="step-no">2</span> Состав</h4>
-            <div class="preset-row">
+            <!--
+              Шаблоны спрятаны за кнопку. Выпадающий список стоял первым
+              в шаге состава и молчал о том, что вообще предлагает: игрок
+              видел «— вручную —» и не понимал, чего от него хотят. Кнопка
+              называет действие, а список появляется, только когда он нужен.
+            -->
+            <div class="step-actions">
+              <button type="button" class="ghost" id="preset-toggle">Заполнить из шаблона</button>
+              <button type="button" class="ghost" id="preset-manage">Мои шаблоны</button>
+            </div>
+            <div class="preset-row" id="preset-row" hidden>
               <label class="field">
-                <span>Шаблон флота</span>
+                <span>Готовые составы</span>
                 <select id="preset-select"><option value="">— вручную —</option></select>
               </label>
-              <button type="button" class="ghost" id="preset-manage">Шаблоны</button>
             </div>
             <div id="fleet-inputs" class="fleet-inputs"></div>
             <div class="step-actions">
