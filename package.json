@@ -16,6 +16,7 @@
     "check:rules": "tsx src/scripts/checkRules.ts",
     "forecast": "tsx src/scripts/forecast.ts",
     "audit": "tsc -p tsconfig.audit.json",
+    "audit:client": "tsc -p tsconfig.client.json --pretty false | grep -E \"TS2304|TS2552\" ; test $? -ne 0",
     "legacy:password": "tsx src/scripts/legacyPassword.ts",
     "admin:grant": "tsx src/scripts/grantAdmin.ts",
     "test:stand": "tsx src/scripts/testStand.ts",

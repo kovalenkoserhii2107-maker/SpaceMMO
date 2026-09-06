@@ -1408,6 +1408,190 @@
       : 'Место есть во всех трех хранилищах.';
   }
 
+
+  /**
+   * Центр управления: очереди и взятые уровни.
+   *
+   * Склад, недра и гарнизон показывает паспорт выше, поэтому здесь их нет —
+   * список колоний повторял те же полосы теми же числами и отвечал на уже
+   * отвеченный вопрос. Осталось то, чего в паспорте нет вовсе: что занято
+   * работой прямо сейчас и до каких уровней доросли постройки с наукой.
+   *
+   * Скелеты строятся один раз на состав, значения обновляются на месте:
+   * таймеры идут каждую секунду, а состав постройки и технологии не меняют.
+   */
+  let levelTableSignature = '';
+
+  function renderOverview(base) {
+    renderEnergyStats(base);
+    renderQueueSummary(base);
+
+    const signature =
+      base.baseId +
+      '#' + base.buildings.map((item) => item.type).join(',') +
+      '#' + base.technologies.map((item) => item.tech).join(',');
+    if (signature !== levelTableSignature) {
+      levelTableSignature = signature;
+      fillLevelTable(el.levelBuildings, base.buildings, (item) => item.type);
+      fillLevelTable(el.levelTechs, base.technologies, (item) => item.tech);
+    }
+
+    const research = state.research && state.research.active;
+    updateLevelTable(
+      el.levelBuildings,
+      base.buildings,
+      (item) => item.type,
+      base.buildJob ? base.buildJob.building : null,
+      base.buildJob ? base.buildJob.targetLevel : null,
+    );
+    updateLevelTable(
+      el.levelTechs,
+      base.technologies,
+      (item) => item.tech,
+      research ? research.tech : null,
+      research ? research.targetLevel : null,
+    );
+  }
+
+  /**
+   * Энергия развернуто: выработка, потребление, остаток и КПД шахт.
+   *
+   * В шапке под нее одна ячейка, и там показан расход — по нему видно, когда
+   * пора ставить станцию. Но «сколько всего дают» и «сколько еще свободно»
+   * из одного числа не достать, а именно они решают, потянет ли база
+   * следующую шахту.
+   */
+  function renderEnergyStats(base) {
+    if (!el.energyStats) return;
+    const energy = base.energy || { output: 0, usage: 0, efficiency: 1 };
+    const free = energy.output - energy.usage;
+    const rows = [
+      ['Выработка', fmt(Math.round(energy.output)), ''],
+      ['Потребление', fmt(Math.round(energy.usage)), ''],
+      ['Свободно', fmt(Math.round(free)), free < 0 ? 'lack' : ''],
+      ['Мощность шахт', Math.round(energy.efficiency * 100) + '%', energy.efficiency < 1 ? 'lack' : ''],
+    ];
+
+    if (!el.energyStats.firstChild) {
+      el.energyStats.innerHTML = rows
+        .map((row) => '<div class="level-row" data-key="' + row[0] + '">' +
+          '<span class="level-name">' + row[0] + '</span><b class="level-value"></b></div>')
+        .join('');
+    }
+    for (const [label, value, flag] of rows) {
+      const node = el.energyStats.querySelector('[data-key="' + label + '"]');
+      if (!node) continue;
+      const cell = node.querySelector('.level-value');
+      cell.textContent = value;
+      cell.classList.toggle('lack', flag === 'lack');
+    }
+  }
+
+  function fillLevelTable(node, items, keyOf) {
+    if (!node) return;
+    node.innerHTML = '';
+    for (const item of items) {
+      const row = document.createElement('div');
+      row.className = 'level-row';
+      row.dataset.key = keyOf(item);
+      row.innerHTML = '<span class="level-name"></span><b class="level-value"></b>';
+      row.querySelector('.level-name').textContent = item.label;
+      node.appendChild(row);
+    }
+  }
+
+  /**
+   * Значения в таблице уровней.
+   *
+   * `busyKey` — то, над чем прямо сейчас идет работа. Отметка стоит здесь,
+   * а не только в сводке очередей, потому что вопросы «до чего я дорос»
+   * и «что строю» задают об одном и том же объекте: разводить их по разным
+   * блокам значит заставлять сверять два списка глазами.
+   */
+  function updateLevelTable(node, items, keyOf, busyKey, busyTo) {
+    if (!node) return;
+    for (const item of items) {
+      const key = keyOf(item);
+      const row = node.querySelector('[data-key="' + key + '"]');
+      if (!row) continue;
+
+      const busy = Boolean(busyKey) && key === busyKey;
+      const level = item.level > 0 ? String(item.level) : '—';
+      row.querySelector('.level-value').textContent = busy ? level + ' → ' + busyTo : level;
+      row.classList.toggle('busy', busy);
+      // Не построенное показывается приглушенно, а не прячется: пустая строка
+      // в списке и есть ответ на вопрос «что я еще не трогал».
+      row.classList.toggle('empty', item.level === 0 && !busy);
+    }
+  }
+
+  /**
+   * Четыре очереди одной сводкой.
+   *
+   * Порознь они лежат по своим разделам, и чтобы понять, простаивает ли база,
+   * приходилось обойти четыре вкладки. Свободная очередь — это не отсутствие
+   * новости, а сама новость: она означает, что мощности стоят зря.
+   */
+  function renderQueueSummary(base) {
+    if (!el.queueSummary) return;
+
+    const research = state.research && state.research.active;
+    const ship = base.shipQueue && base.shipQueue[0];
+    const defense = base.defenseQueue && base.defenseQueue[0];
+
+    const unitLeft = (job) =>
+      job.nextUnitInSeconds + Math.max(0, job.remaining - 1) * job.unitSeconds;
+
+    const rows = [
+      {
+        label: 'Стройка',
+        text: base.buildJob
+          ? base.buildJob.label + ' → ур. ' + base.buildJob.targetLevel
+          : null,
+        left: base.buildJob ? base.buildJob.remainingSeconds : 0,
+      },
+      {
+        label: 'Исследование',
+        text: research ? research.label + ' → ур. ' + research.targetLevel : null,
+        left: research ? research.remainingSeconds : 0,
+      },
+      {
+        label: 'Верфь',
+        text: ship ? ship.label + ' · ' + ship.remaining + ' шт.' : null,
+        left: ship ? unitLeft(ship) : 0,
+        queued: base.shipQueue ? base.shipQueue.length - 1 : 0,
+      },
+      {
+        label: 'Оборона',
+        text: defense ? defense.label + ' · ' + defense.remaining + ' шт.' : null,
+        left: defense ? unitLeft(defense) : 0,
+        queued: base.defenseQueue ? base.defenseQueue.length - 1 : 0,
+      },
+    ];
+
+    if (!el.queueSummary.firstChild) {
+      el.queueSummary.innerHTML = rows
+        .map(
+          (row) =>
+            '<div class="queue-line" data-queue="' + row.label + '">' +
+            '<span class="queue-label">' + row.label + '</span>' +
+            '<span class="queue-what"></span>' +
+            '<b class="queue-left"></b></div>',
+        )
+        .join('');
+    }
+
+    for (const row of rows) {
+      const node = el.queueSummary.querySelector('[data-queue="' + row.label + '"]');
+      if (!node) continue;
+      const tail = row.queued > 0 ? ' · в очереди еще ' + row.queued : '';
+      node.querySelector('.queue-what').textContent = row.text ? row.text + tail : 'свободно';
+      node.querySelector('.queue-left').textContent = row.text ? fmtTime(row.left) : '';
+      node.classList.toggle('idle', !row.text);
+    }
+  }
+
+
   function renderJobBanner(node, job) {
     if (!job) {
       node.hidden = true;
