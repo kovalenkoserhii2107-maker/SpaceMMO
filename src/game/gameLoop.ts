@@ -1408,7 +1408,11 @@ class GameLoop {
         select: {
           name: true,
           type: true,
-          system: { select: { name: true } },
+          position: true,
+          // Координаты нужны письму: по ним интерфейс открывает систему цели
+          // и наводит на нее форму отправки. Без них отчет разведки
+          // заканчивается тупиком — «нашли, а дальше ищи руками».
+          system: { select: { name: true, galaxyX: true, galaxyY: true } },
           base: { select: { commanderId: true } },
         },
       });
@@ -1461,6 +1465,13 @@ class GameLoop {
             planetName,
             systemName,
             planetType: targetOwner?.type ?? null,
+            location: targetOwner
+              ? {
+                  galaxyX: targetOwner.system.galaxyX,
+                  galaxyY: targetOwner.system.galaxyY,
+                  position: targetOwner.position,
+                }
+              : null,
             payload,
             outcome,
           }),

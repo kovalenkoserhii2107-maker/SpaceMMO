@@ -207,6 +207,7 @@ console.log('\n=== 1. Системные отчеты ===');
     planetName: 'Кобзар II',
     systemName: 'Сич',
     planetType: 'ROCKY',
+    location: { galaxyX: 1, galaxyY: 1, position: 3 },
     payload,
     outcome: seenAll,
   });
@@ -223,6 +224,7 @@ console.log('\n=== 1. Системные отчеты ===');
     planetName: 'Пустышка',
     systemName: 'Сич',
     planetType: 'ROCKY',
+    location: { galaxyX: 1, galaxyY: 1, position: 3 },
     payload: { ...payload, colonized: false },
     outcome: seenAll,
   });

@@ -704,13 +704,19 @@
             <div>
               <div class="mail-filters" id="mail-filters"></div>
               <div class="sim-actions">
+                <button type="button" class="ghost" id="mail-compose-toggle">Написать письмо</button>
                 <button type="button" class="ghost" id="mail-read-all">Прочитать все</button>
                 <span class="storage-note" id="mail-summary"></span>
               </div>
               <div id="mail-list" class="queue"></div>
             </div>
 
-            <aside class="hub-card mail-compose">
+            <!--
+              Форма письма занимала колонку целиком, а на телефоне — экран
+              под списком. Ящик читают каждый заход, пишут в него редко,
+              поэтому форма уехала за кнопку. «Ответить» разворачивает ее сама.
+            -->
+            <aside class="hub-card mail-compose" id="mail-compose" hidden>
               <h3 class="section-title">Новое письмо</h3>
               <label class="field"><span>Позывной получателя</span><input id="mail-to" type="text" maxlength="24" placeholder="Адмирал"></label>
               <label class="field"><span>Тема</span><input id="mail-subject" type="text" maxlength="120"></label>

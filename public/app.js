@@ -177,6 +177,8 @@
     mailTo: $('mail-to'),
     mailSubject: $('mail-subject'),
     mailBody: $('mail-body'),
+    mailCompose: $('mail-compose'),
+    mailComposeToggle: $('mail-compose-toggle'),
     mailSend: $('mail-send'),
     mailBroadcast: $('mail-broadcast'),
     broadcastSubject: $('broadcast-subject'),
@@ -2168,13 +2170,57 @@
     return polar(MAP.deepOrbit, DEEP_SPACE_ANGLE);
   }
 
-  async function loadMap() {
-    const response = await fetch('/api/map', { headers: authHeaders() });
+  /*
+    * Карта системы. Без аргумента — своя, с systemId — чужая: маршрут это умел
+    * с самого начала, просто клиент никогда не спрашивал.
+    *
+    * Ответы нумеруются, потому что запросов бывает два разом. Переход к планете
+    * из письма открывает раздел карты, а тот сам просит свою систему — и ее
+    * ответ, придя вторым, затер бы уже показанную чужую.
+    */
+  let mapRequest = 0;
+
+  async function loadMap(systemId) {
+    const ticket = ++mapRequest;
+    const url = systemId ? `/api/map?systemId=${encodeURIComponent(systemId)}` : '/api/map';
+    const response = await fetch(url, { headers: authHeaders() });
     if (!response.ok) return;
-    map.data = await response.json();
+    const data = await response.json();
+    if (ticket !== mapRequest) return;
+    map.data = data;
     renderMap();
     renderPlanetInfo();
     updateMapCaption();
+  }
+
+  /**
+   * Координаты планеты из нагрузки письма.
+   *
+   * Нагрузка — данные из прошлого (правило 9): у писем, отправленных до
+   * появления координат, их нет вовсе, и форма у разных отчетов разная.
+   * Боевой отчет кладет их в `location`, колонизация — прямо в корень.
+   * Ничего не нашли — кнопки просто не будет.
+   */
+  function mailPlanetTarget(payload) {
+    for (const source of [payload && payload.location, payload]) {
+      if (!source) continue;
+      const x = Number(source.galaxyX);
+      const y = Number(source.galaxyY);
+      const position = Number(source.position);
+      if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(position)) {
+        return { galaxyX: x, galaxyY: y, position };
+      }
+    }
+    return null;
+  }
+
+  /** Переход к планете из письма: открыть ее систему и навести на нее форму. */
+  async function openPlanetFromMail(target) {
+    el.coordInput.value = `${target.galaxyX}:${target.galaxyY}:${target.position}`;
+    await lookupCoords();
+    showPanel('map');
+    const systemId = map.coordTarget && map.coordTarget.systemId;
+    if (systemId) await loadMap(systemId);
   }
 
   function svgEl(name, attrs) {
@@ -3102,11 +3148,22 @@
     return Object.keys(SHIP_LABELS);
   }
 
-  /** Скрытое поле обнуляется: иначе корабль улетел бы, не показавшись в форме. */
+  /**
+   * Что показать в составе: пересечение «имеет смысл в миссии» и «есть в ангаре».
+   *
+   * Пустой класс — это строка, которая ничего не предлагает: ввести в нее
+   * нечего, а места она занимает столько же, сколько полезная. Двенадцать
+   * классов, из которых построены три, превращали шаг состава в список
+   * преимущественно нулей.
+   *
+   * Скрытое поле обнуляется: иначе корабль улетел бы, не показавшись в форме.
+   */
   function syncFleetFields() {
+    const base = activeBase();
     const allowed = new Set(shipsForMission(map.mission));
     for (const [type, refs] of Object.entries(fleetInputs)) {
-      const off = !allowed.has(type);
+      const owned = base ? base.fleet[type] || 0 : 0;
+      const off = !allowed.has(type) || owned <= 0;
       refs.field.hidden = off;
       if (off && refs.input.value !== '0') refs.input.value = '0';
     }
@@ -3373,6 +3430,11 @@
   });
 
   /* Список шаблонов разворачивается кнопкой и сам по себе места не занимает. */
+  el.mailComposeToggle.addEventListener('click', () => {
+    el.mailCompose.hidden = !el.mailCompose.hidden;
+    el.mailComposeToggle.classList.toggle('active', !el.mailCompose.hidden);
+  });
+
   el.presetToggle.addEventListener('click', () => {
     el.presetRow.hidden = !el.presetRow.hidden;
     el.presetToggle.classList.toggle('active', !el.presetRow.hidden);
@@ -6163,6 +6225,18 @@
         }
       });
 
+      // Отчет заканчивался тупиком: «нашли планету, дальше ищи руками».
+      // Кнопка открывает систему цели и наводит на нее форму отправки.
+      const planetTarget = mailPlanetTarget(message.payload);
+      if (planetTarget) {
+        const goto = document.createElement('button');
+        goto.type = 'button';
+        goto.className = 'ghost';
+        goto.textContent = 'К планете';
+        goto.addEventListener('click', () => void openPlanetFromMail(planetTarget));
+        actions.appendChild(goto);
+      }
+
       if (message.from) {
         const reply = document.createElement('button');
         reply.type = 'button';
@@ -6173,6 +6247,8 @@
           el.mailSubject.value = message.subject.startsWith('Re: ')
             ? message.subject
             : `Re: ${message.subject}`;
+          el.mailCompose.hidden = false;
+          el.mailComposeToggle.classList.add('active');
           el.mailBody.focus();
         });
         actions.appendChild(reply);

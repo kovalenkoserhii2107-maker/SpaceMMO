@@ -88,6 +88,16 @@ io.on('connection', (socket) => {
   const { commanderId, nickname } = socket.data;
   void socket.join(roomForCommander(commanderId));
 
+  /*
+   * Счетчик непрочитанного — сразу при подключении, а не только при доставке.
+   *
+   * Письма приходят и офлайн-игрокам, а событие о них уходит в комнату,
+   * которой в тот момент никого нет. На телефоне сокет рвется постоянно —
+   * приложение ушло в фон, сеть моргнула, — и вернувшийся игрок узнавал
+   * о письмах только полной перезагрузкой или заходом в почту.
+   */
+  gameLoop.pushUnread(commanderId);
+
   void gameLoop.attachCommander(commanderId).then(() => {
     socket.emit('session:ready', { commanderId, nickname });
     sendState();

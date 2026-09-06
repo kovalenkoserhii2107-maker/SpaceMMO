@@ -200,6 +200,7 @@ console.log('\n=== Письмо не несет больше, чем добыл 
       planetName: 'Кобзар II',
       systemName: 'Явір',
       planetType: 'GAS_GIANT',
+    location: { galaxyX: 1, galaxyY: 1, position: 3 },
       payload,
       outcome: { detail, droneLost: false, resourcesSeen: true, alert: 'NONE' },
     })[0]!.payload ?? {}) as Record<string, unknown>;
