@@ -13,7 +13,7 @@
     credits: 0,
     colonies: { used: 0, slots: 1 },
     activeBaseId: null,
-    activeTab: 'buildings',
+    activeTab: 'overview',
     socket: null,
   };
 
@@ -27,6 +27,7 @@
     detailDesc: $('detail-desc'),
     detailBody: $('detail-body'),
     detailClose: $('detail-close'),
+    colonyList: $('colony-list'),
     layout: document.querySelector('.layout'),
     sidebar: $('sidebar'),
     navToggle: $('nav-toggle'),
@@ -979,6 +980,7 @@
     renderRichness(base);
     renderGarrison(base);
     renderStorage(base.storage);
+    renderColonyList();
 
     renderJobBanner(el.buildJob, base.buildJob && {
       title: `${base.buildJob.label} → ур. ${base.buildJob.targetLevel}`,
@@ -1184,6 +1186,86 @@
     el.storageNote.textContent = filled.length
       ? `Склад заполнен: ${filled.join(', ')}. Добыча ${filled.length > 1 ? 'этих ресурсов остановлена' : 'этого ресурса остановлена'}.${risk}`
       : `Место есть во всех трех хранилищах.${risk}`;
+  }
+
+  /**
+   * Список колоний в центре управления.
+   *
+   * Паспорт выше отвечает на вопрос «что у меня здесь», список — на вопрос
+   * «где я сейчас нужен»: у какой колонии встала добыча, где кончается место
+   * и где простаивает стройка. Поэтому в строке только то, что меняет решение,
+   * а не второй полный снимок базы.
+   *
+   * Скелет строится один раз на состав колоний, а числа обновляются на месте.
+   * Склад меняется каждую секунду, и пересобирать разметку целиком значит
+   * каждую секунду выбрасывать и создавать десятки узлов — та же причина,
+   * по которой не перерисовывается ангар.
+   */
+  let colonyListSignature = '';
+
+  function renderColonyList() {
+    if (!el.colonyList) return;
+
+    const signature = state.bases.map((base) => base.baseId).join('|');
+    if (signature !== colonyListSignature) {
+      colonyListSignature = signature;
+      el.colonyList.innerHTML = '';
+      for (const base of state.bases) {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'colony-row';
+        row.dataset.base = base.baseId;
+        // Полосы склада те же, что в паспорте: у одинаковых чисел должен быть
+        // одинаковый вид, иначе игрок сверяет их заново глазами.
+        row.innerHTML =
+          '<span class="colony-row-head">' +
+          '<b class="colony-row-name"></b><span class="colony-row-coords"></span>' +
+          '</span><span class="colony-row-bars">' +
+          STORAGE_ROWS.map(
+            (item) =>
+              '<span class="storage-row" data-res="' + item.key + '">' +
+              '<span class="storage-name">' + icon(item.key, 'sm') + '</span>' +
+              '<b class="storage-amount"></b>' +
+              '<span class="storage-bar"><i></i></span></span>',
+          ).join('') +
+          '</span><span class="colony-row-job"></span>';
+        row.addEventListener('click', () => {
+          state.activeBaseId = base.baseId;
+          renderBaseList();
+          renderActiveBase();
+        });
+        el.colonyList.appendChild(row);
+      }
+    }
+
+    for (const base of state.bases) {
+      const row = el.colonyList.querySelector('[data-base="' + base.baseId + '"]');
+      if (!row) continue;
+
+      row.classList.toggle('active', base.baseId === state.activeBaseId);
+      row.querySelector('.colony-row-name').textContent = base.baseName;
+      row.querySelector('.colony-row-coords').textContent = baseCoords(base);
+
+      for (const item of STORAGE_ROWS) {
+        const one = base.storage && base.storage[item.key];
+        const cell = row.querySelector('[data-res="' + item.key + '"]');
+        if (!one || !cell) continue;
+        const fill = Math.max(0, Math.min(1, one.fill));
+        cell.querySelector('.storage-bar i').style.width = (fill * 100).toFixed(1) + '%';
+        cell.querySelector('.storage-amount').textContent = fmt(one.used) + ' / ' + fmt(one.capacity);
+        cell.classList.toggle('full', one.full);
+        cell.classList.toggle('near', !one.full && one.fill >= 0.85);
+      }
+
+      // Простой стройки — не мелочь: колония с пустой очередью не строит
+      // вообще ничего, и заметить это иначе можно только зайдя в нее.
+      const job = base.buildJob;
+      const jobNode = row.querySelector('.colony-row-job');
+      jobNode.textContent = job
+        ? job.label + ' → ур. ' + job.targetLevel + ' · ' + fmtTime(job.remainingSeconds)
+        : 'стройка свободна';
+      jobNode.classList.toggle('idle', !job);
+    }
   }
 
   function renderJobBanner(node, job) {

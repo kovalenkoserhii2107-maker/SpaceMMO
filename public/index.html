@@ -79,6 +79,12 @@
     </symbol>
 
     <!-- Навигация: штриховые значки разделов -->
+    <symbol id="ico-nav-overview" viewBox="0 0 24 24">
+      <rect x="3.2" y="3.2" width="7.2" height="9.4" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.7"/>
+      <rect x="13.6" y="3.2" width="7.2" height="5.6" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.7"/>
+      <rect x="3.2" y="15.4" width="7.2" height="5.4" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.7"/>
+      <rect x="13.6" y="11.8" width="7.2" height="9" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.7"/>
+    </symbol>
     <symbol id="ico-nav-buildings" viewBox="0 0 24 24">
       <path d="M3 20h18M6 20V9l5-3.5V20M17 20V12l-6-3.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
       <path d="M8.5 12.5h.01M8.5 16h.01M14 15.5h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
@@ -281,8 +287,13 @@
       <aside class="sidebar" id="sidebar">
         <nav class="nav" id="tabs">
           <div class="nav-group">
+            <h2 class="nav-title">Обзор</h2>
+            <button type="button" class="tab active" data-tab="overview"><svg class="ico" aria-hidden="true"><use href="#ico-nav-overview"/></svg><span>Центр управления</span></button>
+          </div>
+
+          <div class="nav-group">
             <h2 class="nav-title">Развитие</h2>
-            <button type="button" class="tab active" data-tab="buildings"><svg class="ico" aria-hidden="true"><use href="#ico-nav-buildings"/></svg><span>Инфраструктура</span></button>
+            <button type="button" class="tab" data-tab="buildings"><svg class="ico" aria-hidden="true"><use href="#ico-nav-buildings"/></svg><span>Инфраструктура</span></button>
             <button type="button" class="tab" data-tab="research"><svg class="ico" aria-hidden="true"><use href="#ico-nav-research"/></svg><span>Исследования</span></button>
           </div>
 
@@ -321,53 +332,63 @@
 
       <main class="content">
         <!--
-          Паспорт активной базы, три колонки: кто и где мы (портрет, адрес,
-          склад), что под нами лежит (недра) и что у нас стоит (гарнизон).
-          Три колонки, а не одна лента: на широком экране полоса склада
-          и полосы богатства тянулись от края до края, и глазу приходилось
-          проходить полтора метра пикселей ради одного числа справа.
+          Центр управления: все о колониях в одном месте.
+
+          Паспорт раньше стоял над всеми панелями сразу и повторялся на каждой
+          вкладке. На широком экране это лишь занимало полосу сверху, а на
+          телефоне колонки складываются в одну, и паспорт занимал экран целиком:
+          до карточек шахт приходилось листать мимо него каждый раз, куда бы
+          игрок ни шел. Поэтому он переехал в собственный раздел, где рядом
+          с ним встал список остальных колоний.
         -->
-        <section class="planet-card">
-          <div class="colony-col colony-id">
-            <div class="colony-ident">
-              <div class="colony-art" id="colony-art"></div>
-              <div class="colony-head">
-                <h2 id="base-name">—</h2>
-                <p class="muted" id="planet-meta">—</p>
+        <section data-panel="overview">
+          <h3 class="panel-title">Центр управления</h3>
+
+          <section class="planet-card">
+            <div class="colony-col colony-id">
+              <div class="colony-ident">
+                <div class="colony-art" id="colony-art"></div>
+                <div class="colony-head">
+                  <h2 id="base-name">—</h2>
+                  <p class="muted" id="planet-meta">—</p>
+                </div>
+              </div>
+
+              <!--
+                Складов три, по одному на ресурс: полный склад полимеров больше
+                не останавливает добычу руды. Строки собираются скриптом.
+              -->
+              <div class="storage" id="storage">
+                <div class="storage-head">
+                  <span>Хранилища</span>
+                  <b id="storage-text">0 / 0</b>
+                </div>
+                <div class="storage-rows" id="storage-rows"></div>
+                <p class="storage-note" id="storage-note"></p>
               </div>
             </div>
 
-            <!--
-              Складов три, по одному на ресурс: полный склад полимеров больше
-              не останавливает добычу руды. Строки собираются скриптом.
-            -->
-            <div class="storage" id="storage">
-              <div class="storage-head">
-                <span>Хранилища</span>
-                <b id="storage-text">0 / 0</b>
+            <div class="colony-col">
+              <div class="colony-block">
+                <h3 class="colony-sub">Богатство недр</h3>
+                <div class="richness" id="richness"></div>
               </div>
-              <div class="storage-rows" id="storage-rows"></div>
-              <p class="storage-note" id="storage-note"></p>
             </div>
-          </div>
 
-          <div class="colony-col">
-            <div class="colony-block">
-              <h3 class="colony-sub">Богатство недр</h3>
-              <div class="richness" id="richness"></div>
+            <div class="colony-col colony-garrison">
+              <div class="colony-block">
+                <h3 class="colony-sub">Флот на орбите <b id="garrison-fleet-total">0</b></h3>
+                <div id="garrison-fleet" class="garrison"></div>
+              </div>
+              <div class="colony-block">
+                <h3 class="colony-sub">Оборона планеты <b id="garrison-defense-total">0</b></h3>
+                <div id="garrison-defense" class="garrison"></div>
+              </div>
             </div>
-          </div>
+          </section>
 
-          <div class="colony-col colony-garrison">
-            <div class="colony-block">
-              <h3 class="colony-sub">Флот на орбите <b id="garrison-fleet-total">0</b></h3>
-              <div id="garrison-fleet" class="garrison"></div>
-            </div>
-            <div class="colony-block">
-              <h3 class="colony-sub">Оборона планеты <b id="garrison-defense-total">0</b></h3>
-              <div id="garrison-defense" class="garrison"></div>
-            </div>
-          </div>
+          <h3 class="panel-title">Колонии</h3>
+          <div class="colony-list" id="colony-list"></div>
         </section>
 
         <section data-panel="buildings">

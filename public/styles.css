@@ -2814,3 +2814,98 @@ button.tiny { padding: 4px 10px; font-size: 11px; flex: none; }
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   border-color: var(--accent);
 }
+
+/* ---------- Центр управления: список колоний ---------- */
+
+/*
+ * Строка колонии — кнопка: по ней переключается активная база. Список отвечает
+ * на вопрос «где я сейчас нужен», поэтому в нем только склад и стройка.
+ * Все остальное про выбранную колонию показывает паспорт выше, и дублировать
+ * его в каждой строке значит сделать список нечитаемым ради полноты.
+ */
+.colony-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.colony-row {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+}
+.colony-row:hover { border-color: rgba(77, 210, 255, 0.45); }
+.colony-row.active { border-color: var(--accent); }
+
+.colony-row-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.colony-row-name { font-size: 15px; }
+.colony-row-coords {
+  font-size: 12px;
+  color: var(--accent);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.colony-row-bars { display: grid; gap: 6px; }
+
+/*
+ * В списке у полосы нет подписи ресурса, только значок, поэтому первая колонка
+ * сжимается по содержимому. Ширина в 88px, унаследованная от паспорта, увела бы
+ * под пустое место половину строки.
+ */
+.colony-row .storage-row { grid-template-columns: auto minmax(0, auto) 1fr; gap: 8px; }
+
+.colony-row-job {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.colony-row-job.idle { color: var(--muted); }
+
+/* ---------- Телефон: карточки в две колонки ---------- */
+
+/*
+ * Квадратная обложка во всю ширину карточки — решение широкого экрана, где
+ * сама карточка узкая. На телефоне колонка одна, и та же обложка разворачивалась
+ * на весь экран: одна карточка занимала экран целиком, до кнопки приходилось
+ * листать, а сравнить два соседних здания было нельзя вовсе — второго не видно.
+ *
+ * Две колонки и обложка пропорцией 16:10 дают четыре карточки на экран. Меньше
+ * четырех — это уже не выбор, а перелистывание; картинка при этом остается
+ * достаточно крупной, чтобы объект узнавался.
+ */
+@media (max-width: 640px) {
+  .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+
+  .card { padding: 9px; gap: 4px; border-radius: 12px; }
+  /*
+   * Обложка вытянута сильнее квадрата: панораму объекта узнать по ней все еще
+   * можно, а девяносто лишних пикселей высоты на карточку — это как раз
+   * разница между тремя карточками на экране и четырьмя.
+   */
+  .card .art { aspect-ratio: 2.2 / 1; }
+  .card-titles { padding: 6px 8px; gap: 3px; }
+  .card-titles h4 { font-size: 12.5px; line-height: 1.2; min-height: 2.4em; }
+  .card .desc { font-size: 11px; line-height: 1.2; }
+  .card .prod, .card .cost { font-size: 11px; line-height: 1.2; }
+  .card .time { font-size: 10.5px; line-height: 1.2; }
+  .energy-line { font-size: 10.5px; line-height: 1.2; min-height: 1.1em; }
+  .card > button { padding: 7px; font-size: 12.5px; }
+
+  /*
+   * Иначе «Время постройки: 4 мин 12 с» переносится как придется, и на второй
+   * строке остается одинокое «с». Балансировка делит строку по смыслу.
+   */
+  .card .time { text-wrap: balance; }
+}
