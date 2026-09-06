@@ -28,6 +28,8 @@
     detailBody: $('detail-body'),
     detailClose: $('detail-close'),
     queueSummary: $('queue-summary'),
+    energyStats: $('energy-stats'),
+    overviewFleets: $('overview-fleets'),
     levelBuildings: $('level-buildings'),
     levelTechs: $('level-techs'),
     layout: document.querySelector('.layout'),
@@ -1393,6 +1395,7 @@
   let levelTableSignature = '';
 
   function renderOverview(base) {
+    renderEnergyStats(base);
     renderQueueSummary(base);
 
     const signature =
@@ -1407,6 +1410,40 @@
 
     updateLevelTable(el.levelBuildings, base.buildings, (item) => item.type);
     updateLevelTable(el.levelTechs, base.technologies, (item) => item.tech);
+  }
+
+  /**
+   * Энергия развернуто: выработка, потребление, остаток и КПД шахт.
+   *
+   * В шапке под нее одна ячейка, и там показан расход — по нему видно, когда
+   * пора ставить станцию. Но «сколько всего дают» и «сколько еще свободно»
+   * из одного числа не достать, а именно они решают, потянет ли база
+   * следующую шахту.
+   */
+  function renderEnergyStats(base) {
+    if (!el.energyStats) return;
+    const energy = base.energy || { output: 0, usage: 0, efficiency: 1 };
+    const free = energy.output - energy.usage;
+    const rows = [
+      ['Выработка', fmt(Math.round(energy.output)), ''],
+      ['Потребление', fmt(Math.round(energy.usage)), ''],
+      ['Свободно', fmt(Math.round(free)), free < 0 ? 'lack' : ''],
+      ['Мощность шахт', Math.round(energy.efficiency * 100) + '%', energy.efficiency < 1 ? 'lack' : ''],
+    ];
+
+    if (!el.energyStats.firstChild) {
+      el.energyStats.innerHTML = rows
+        .map((row) => '<div class="level-row" data-key="' + row[0] + '">' +
+          '<span class="level-name">' + row[0] + '</span><b class="level-value"></b></div>')
+        .join('');
+    }
+    for (const [label, value, flag] of rows) {
+      const node = el.energyStats.querySelector('[data-key="' + label + '"]');
+      if (!node) continue;
+      const cell = node.querySelector('.level-value');
+      cell.textContent = value;
+      cell.classList.toggle('lack', flag === 'lack');
+    }
   }
 
   function fillLevelTable(node, items, keyOf) {
@@ -3569,13 +3606,23 @@
     await loadWar();
   }
 
+  /*
+   * Очередь полетов живет в двух местах: в правой сводке у карты и в центре
+   * управления. Это не дубль — панели никогда не видны одновременно, а вопрос
+   * «когда вернется рейс» задают и не открывая карту.
+   */
   function renderFleetList() {
-    el.fleetList.innerHTML = '';
+    for (const node of [el.fleetList, el.overviewFleets]) fillFleetList(node);
+  }
+
+  function fillFleetList(node) {
+    if (!node) return;
+    node.innerHTML = '';
     if (!state.fleets.length) {
       const empty = document.createElement('div');
       empty.className = 'queue-item';
       empty.textContent = 'Флотов в полете нет';
-      el.fleetList.appendChild(empty);
+      node.appendChild(empty);
       return;
     }
 
@@ -3598,7 +3645,7 @@
       meta.innerHTML =
         `${escapeHtml(fleet.composition)}${cargo} · прибытие через ${fmtTime(fleet.etaSeconds)}`;
       item.append(title, meta);
-      el.fleetList.appendChild(item);
+      node.appendChild(item);
     }
   }
 

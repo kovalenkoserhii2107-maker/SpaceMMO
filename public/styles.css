@@ -946,6 +946,14 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 }
 .queue .queue-item span { color: var(--muted); font-variant-numeric: tabular-nums; }
 
+/*
+ * Строка очереди блоками друг под другом. В узкой сводке у карты заголовок
+ * и детали помещаются в строку, а на всю ширину панели они разъезжаются
+ * по краям, и между ними остается пустое поле — глазу приходится идти через
+ * него от «куда летим» к «когда прибудет».
+ */
+.queue.queue-stacked .queue-item { display: grid; gap: 4px; }
+
 .order { display: flex; gap: 8px; align-items: center; }
 .order input[type="number"] {
   width: 80px;
@@ -2529,8 +2537,15 @@ button.tiny { padding: 4px 10px; font-size: 11px; flex: none; }
   .colony-garrison { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
 }
 
-/* Ресурсы на среднем экране: служебные показатели уступают место основным. */
-@media (max-width: 1080px) {
+/*
+ * Служебные показатели уступают место основным только в средней полосе.
+ *
+ * Ниже 900px строка ресурсов переносится на вторую строку шапки, и место
+ * для них появляется снова — а прятать их там было нельзя вовсе: энергия
+ * решает, работают шахты на полную или просели, и на телефоне ее не было
+ * видно нигде.
+ */
+@media (min-width: 901px) and (max-width: 1080px) {
   .res-aux { display: none; }
   /* Разделитель перед скрытой группой повис бы в конце строки. */
   .res-sep:last-of-type { display: none; }
@@ -3055,3 +3070,6 @@ button.tiny { padding: 4px 10px; font-size: 11px; flex: none; }
 
 /* Пункт меню без своей панели: он открывает карточку, а не раздел. */
 .nav-action { cursor: pointer; }
+
+/* Дефицит энергии и просевший КПД красным: это не справка, а повод действовать. */
+.level-value.lack { color: var(--err); }
