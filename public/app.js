@@ -27,7 +27,9 @@
     detailDesc: $('detail-desc'),
     detailBody: $('detail-body'),
     detailClose: $('detail-close'),
-    colonyList: $('colony-list'),
+    queueSummary: $('queue-summary'),
+    levelBuildings: $('level-buildings'),
+    levelTechs: $('level-techs'),
     layout: document.querySelector('.layout'),
     sidebar: $('sidebar'),
     navToggle: $('nav-toggle'),
@@ -980,7 +982,7 @@
     renderRichness(base);
     renderGarrison(base);
     renderStorage(base.storage);
-    renderColonyList();
+    renderOverview(base);
 
     renderJobBanner(el.buildJob, base.buildJob && {
       title: `${base.buildJob.label} → ур. ${base.buildJob.targetLevel}`,
@@ -1189,82 +1191,123 @@
   }
 
   /**
-   * Список колоний в центре управления.
+   * Центр управления: очереди и взятые уровни.
    *
-   * Паспорт выше отвечает на вопрос «что у меня здесь», список — на вопрос
-   * «где я сейчас нужен»: у какой колонии встала добыча, где кончается место
-   * и где простаивает стройка. Поэтому в строке только то, что меняет решение,
-   * а не второй полный снимок базы.
+   * Склад, недра и гарнизон показывает паспорт выше, поэтому здесь их нет —
+   * список колоний повторял те же полосы теми же числами и отвечал на уже
+   * отвеченный вопрос. Осталось то, чего в паспорте нет вовсе: что занято
+   * работой прямо сейчас и до каких уровней доросли постройки с наукой.
    *
-   * Скелет строится один раз на состав колоний, а числа обновляются на месте.
-   * Склад меняется каждую секунду, и пересобирать разметку целиком значит
-   * каждую секунду выбрасывать и создавать десятки узлов — та же причина,
-   * по которой не перерисовывается ангар.
+   * Скелеты строятся один раз на состав, значения обновляются на месте:
+   * таймеры идут каждую секунду, а состав постройки и технологии не меняют.
    */
-  let colonyListSignature = '';
+  let levelTableSignature = '';
 
-  function renderColonyList() {
-    if (!el.colonyList) return;
+  function renderOverview(base) {
+    renderQueueSummary(base);
 
-    const signature = state.bases.map((base) => base.baseId).join('|');
-    if (signature !== colonyListSignature) {
-      colonyListSignature = signature;
-      el.colonyList.innerHTML = '';
-      for (const base of state.bases) {
-        const row = document.createElement('button');
-        row.type = 'button';
-        row.className = 'colony-row';
-        row.dataset.base = base.baseId;
-        // Полосы склада те же, что в паспорте: у одинаковых чисел должен быть
-        // одинаковый вид, иначе игрок сверяет их заново глазами.
-        row.innerHTML =
-          '<span class="colony-row-head">' +
-          '<b class="colony-row-name"></b><span class="colony-row-coords"></span>' +
-          '</span><span class="colony-row-bars">' +
-          STORAGE_ROWS.map(
-            (item) =>
-              '<span class="storage-row" data-res="' + item.key + '">' +
-              '<span class="storage-name">' + icon(item.key, 'sm') + '</span>' +
-              '<b class="storage-amount"></b>' +
-              '<span class="storage-bar"><i></i></span></span>',
-          ).join('') +
-          '</span><span class="colony-row-job"></span>';
-        row.addEventListener('click', () => {
-          state.activeBaseId = base.baseId;
-          renderBaseList();
-          renderActiveBase();
-        });
-        el.colonyList.appendChild(row);
-      }
+    const signature =
+      base.baseId +
+      '#' + base.buildings.map((item) => item.type).join(',') +
+      '#' + base.technologies.map((item) => item.tech).join(',');
+    if (signature !== levelTableSignature) {
+      levelTableSignature = signature;
+      fillLevelTable(el.levelBuildings, base.buildings, (item) => item.type);
+      fillLevelTable(el.levelTechs, base.technologies, (item) => item.tech);
     }
 
-    for (const base of state.bases) {
-      const row = el.colonyList.querySelector('[data-base="' + base.baseId + '"]');
+    updateLevelTable(el.levelBuildings, base.buildings, (item) => item.type);
+    updateLevelTable(el.levelTechs, base.technologies, (item) => item.tech);
+  }
+
+  function fillLevelTable(node, items, keyOf) {
+    if (!node) return;
+    node.innerHTML = '';
+    for (const item of items) {
+      const row = document.createElement('div');
+      row.className = 'level-row';
+      row.dataset.key = keyOf(item);
+      row.innerHTML = '<span class="level-name"></span><b class="level-value"></b>';
+      row.querySelector('.level-name').textContent = item.label;
+      node.appendChild(row);
+    }
+  }
+
+  function updateLevelTable(node, items, keyOf) {
+    if (!node) return;
+    for (const item of items) {
+      const row = node.querySelector('[data-key="' + keyOf(item) + '"]');
       if (!row) continue;
+      row.querySelector('.level-value').textContent = item.level > 0 ? String(item.level) : '—';
+      // Не построенное показывается приглушенно, а не прячется: пустая строка
+      // в списке и есть ответ на вопрос «что я еще не трогал».
+      row.classList.toggle('empty', item.level === 0);
+    }
+  }
 
-      row.classList.toggle('active', base.baseId === state.activeBaseId);
-      row.querySelector('.colony-row-name').textContent = base.baseName;
-      row.querySelector('.colony-row-coords').textContent = baseCoords(base);
+  /**
+   * Четыре очереди одной сводкой.
+   *
+   * Порознь они лежат по своим разделам, и чтобы понять, простаивает ли база,
+   * приходилось обойти четыре вкладки. Свободная очередь — это не отсутствие
+   * новости, а сама новость: она означает, что мощности стоят зря.
+   */
+  function renderQueueSummary(base) {
+    if (!el.queueSummary) return;
 
-      for (const item of STORAGE_ROWS) {
-        const one = base.storage && base.storage[item.key];
-        const cell = row.querySelector('[data-res="' + item.key + '"]');
-        if (!one || !cell) continue;
-        const fill = Math.max(0, Math.min(1, one.fill));
-        cell.querySelector('.storage-bar i').style.width = (fill * 100).toFixed(1) + '%';
-        cell.querySelector('.storage-amount').textContent = fmt(one.used) + ' / ' + fmt(one.capacity);
-        cell.classList.toggle('full', one.full);
-        cell.classList.toggle('near', !one.full && one.fill >= 0.85);
-      }
+    const research = state.research && state.research.active;
+    const ship = base.shipQueue && base.shipQueue[0];
+    const defense = base.defenseQueue && base.defenseQueue[0];
 
-      // Простой стройки — не мелочь: колония с пустой очередью не строит
-      // вообще ничего, и заметить это иначе можно только зайдя в нее.
-      const job = base.buildJob;
-      const jobNode = row.querySelector('.colony-row-job');
-      jobNode.textContent = job
-        ? job.label + ' → ур. ' + job.targetLevel + ' · ' + fmtTime(job.remainingSeconds)
-        : 'стройка свободна';
-      jobNode.classList.toggle('idle', !job);
+    const unitLeft = (job) =>
+      job.nextUnitInSeconds + Math.max(0, job.remaining - 1) * job.unitSeconds;
+
+    const rows = [
+      {
+        label: 'Стройка',
+        text: base.buildJob
+          ? base.buildJob.label + ' → ур. ' + base.buildJob.targetLevel
+          : null,
+        left: base.buildJob ? base.buildJob.remainingSeconds : 0,
+      },
+      {
+        label: 'Исследование',
+        text: research ? research.label + ' → ур. ' + research.targetLevel : null,
+        left: research ? research.remainingSeconds : 0,
+      },
+      {
+        label: 'Верфь',
+        text: ship ? ship.label + ' · ' + ship.remaining + ' шт.' : null,
+        left: ship ? unitLeft(ship) : 0,
+        queued: base.shipQueue ? base.shipQueue.length - 1 : 0,
+      },
+      {
+        label: 'Оборона',
+        text: defense ? defense.label + ' · ' + defense.remaining + ' шт.' : null,
+        left: defense ? unitLeft(defense) : 0,
+        queued: base.defenseQueue ? base.defenseQueue.length - 1 : 0,
+      },
+    ];
+
+    if (!el.queueSummary.firstChild) {
+      el.queueSummary.innerHTML = rows
+        .map(
+          (row) =>
+            '<div class="queue-line" data-queue="' + row.label + '">' +
+            '<span class="queue-label">' + row.label + '</span>' +
+            '<span class="queue-what"></span>' +
+            '<b class="queue-left"></b></div>',
+        )
+        .join('');
+    }
+
+    for (const row of rows) {
+      const node = el.queueSummary.querySelector('[data-queue="' + row.label + '"]');
+      if (!node) continue;
+      const tail = row.queued > 0 ? ' · в очереди еще ' + row.queued : '';
+      node.querySelector('.queue-what').textContent = row.text ? row.text + tail : 'свободно';
+      node.querySelector('.queue-left').textContent = row.text ? fmtTime(row.left) : '';
+      node.classList.toggle('idle', !row.text);
     }
   }
 
@@ -1370,6 +1413,16 @@
     }
   }
 
+  /** Строка характеристики: подпись слева, значение справа. */
+  function specRow(label, value) {
+    const row = document.createElement('div');
+    row.className = 'spec-row';
+    const term = document.createElement('dt');
+    term.textContent = label;
+    row.append(term, value);
+    return row;
+  }
+
   function createCardShell(container, title, description, type, kind) {
     const article = document.createElement('article');
     article.className = 'card';
@@ -1395,30 +1448,50 @@
     desc.textContent = description;
     desc.hidden = !description;
 
-    const cost = document.createElement('div');
+    // Строка эффекта идет без подписи: она у нее внутри — «добыча», «вместимость»,
+    // «энергия». Подписывать ее второй раз значит написать слово дважды.
+    const combat = document.createElement('div');
+    combat.className = 'combat-line';
+
+    /*
+     * Остальные характеристики — подписанной сеткой, а не набором строк подряд.
+     * Голый ряд «1 712 · 807» под иконками не говорит, цена это, запас или
+     * прирост, а именно на него смотрят перед нажатием кнопки. Подпись слева,
+     * значение справа, колонка подписей одной ширины у всех карточек —
+     * поэтому соседние карточки сравниваются по горизонтали.
+     */
+    const spec = document.createElement('dl');
+    spec.className = 'spec';
+
+    const energy = document.createElement('dd');
+    const energyRow = specRow('Энергия', energy);
+    energyRow.hidden = true;
+
+    const cost = document.createElement('dd');
     cost.className = 'cost';
     const costOre = document.createElement('span');
     const costPolymers = document.createElement('span');
     const costPlasma = document.createElement('span');
     cost.append(costOre, costPolymers, costPlasma);
 
-    const combat = document.createElement('div');
-    combat.className = 'combat-line';
-
-    const energy = document.createElement('div');
-    energy.className = 'energy-line';
-    energy.hidden = true;
-
-    const time = document.createElement('div');
+    const time = document.createElement('dd');
     time.className = 'time';
+
+    // Цена — единственная строка с несколькими значениями сразу, и в узкую
+    // колонку она не помещается: на телефоне «807» отрывалось на свою строку
+    // и повисало без подписи. Метка помечает строку, стили разворачивают ее
+    // на всю ширину там, где места мало.
+    const costRow = specRow('Стоимость', cost);
+    costRow.classList.add('spec-cost');
+    spec.append(energyRow, costRow, specRow('Время', time));
 
     const reqs = document.createElement('div');
     reqs.className = 'reqs';
 
-    article.append(header, desc, combat, energy, cost, time, reqs);
+    article.append(header, desc, combat, spec, reqs);
     container.appendChild(article);
 
-    return { article, cover: header, level, costOre, costPolymers, costPlasma, combat, energy, time, reqs };
+    return { article, cover: header, level, costOre, costPolymers, costPlasma, combat, energy, energyRow, time, reqs };
   }
 
   function createActionCard(container, title, description, onClick, type, kind) {
@@ -1499,7 +1572,10 @@
 
   function updateBuildingCard(card, base, building) {
     if (!card) return;
-    card.level.textContent = `Ур. ${building.level}`;
+    // Текущий уровень и тот, что получится, — в одной метке. Раньше первый
+    // стоял на обложке, второй в тексте кнопки, и связать их взглядом
+    // приходилось самому.
+    card.level.textContent = `Ур. ${building.level} → ${building.nextLevel}`;
     // Тем же местом, что и боевой профиль у кораблей: короткая строка эффекта.
     card.combat.textContent = building.effect || '';
 
@@ -1517,41 +1593,41 @@
       const grow = nextUsage - usage;
       // Оболочка карточки прячет строку по умолчанию: она есть только
       // у построек, у кораблей и техники своего расхода нет.
-      card.energy.hidden = false;
+      card.energyRow.hidden = false;
       card.energy.innerHTML =
         nextUsage <= 0
-          ? `${icon('energy', 'sm')} <span>энергию не потребляет</span>`
-          : `${icon('energy', 'sm')} <span>расход ${fmtEnergy(usage)} → ${fmtEnergy(nextUsage)}</span>` +
+          ? '<span class="muted">не потребляет</span>'
+          : `<span>${fmtEnergy(usage)} → ${fmtEnergy(nextUsage)}</span>` +
             (grow > 0 ? ` <span class="grow">+${fmtEnergy(grow)}</span>` : '');
     }
     fillCost(card, building.cost, base.resources);
-    card.time.textContent = `Время постройки: ${fmtTime(building.seconds)}`;
+    card.time.textContent = fmtTime(building.seconds);
     fillRequirements(card, building.requirements);
 
     const locked = building.requirements.length > 0;
     card.article.classList.toggle('locked', locked);
     card.article.classList.toggle('built', building.level > 0);
     card.button.disabled = locked || building.busy || !building.canAfford;
+    // Целевой уровень уехал в метку на обложке, поэтому кнопка называет
+    // только действие: на узкой карточке она иначе переносится в две строки.
     card.button.textContent = building.busy
       ? 'Идет стройка'
       : building.level === 0
-        ? `Построить (ур. ${building.nextLevel})`
-        : `Улучшить до ур. ${building.nextLevel}`;
+        ? 'Построить'
+        : 'Улучшить';
   }
 
   function updateTechCard(card, base, tech) {
     if (!card) return;
-    card.level.textContent = `Ур. ${tech.level}`;
+    card.level.textContent = `Ур. ${tech.level} → ${tech.nextLevel}`;
     fillCost(card, tech.cost, base.resources);
-    card.time.textContent = `Время изучения: ${fmtTime(tech.seconds)}`;
+    card.time.textContent = fmtTime(tech.seconds);
     fillRequirements(card, tech.requirements);
 
     const locked = tech.requirements.length > 0;
     card.article.classList.toggle('locked', locked);
     card.button.disabled = locked || tech.busy || !tech.canAfford;
-    card.button.textContent = tech.busy
-      ? 'Лаборатория занята'
-      : `Изучить ур. ${tech.nextLevel}`;
+    card.button.textContent = tech.busy ? 'Лаборатория занята' : 'Изучить';
   }
 
   /** Строка боевого профиля: тип урона и слои защиты — по ней собирают контр-флот. */
@@ -1572,7 +1648,7 @@
     card.article.classList.toggle('built', ship.owned > 0);
     if (card.combat) card.combat.textContent = combatLine(ship.combat);
     fillCost(card, ship.cost, base.resources);
-    card.time.textContent = `Время постройки: ${fmtTime(ship.unitSeconds)} за штуку`;
+    card.time.textContent = `${fmtTime(ship.unitSeconds)} за штуку`;
     fillRequirements(card, ship.requirements);
 
     const locked = ship.requirements.length > 0;

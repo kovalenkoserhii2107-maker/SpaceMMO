@@ -387,11 +387,23 @@
             </div>
           </section>
 
-          <h3 class="panel-title">Колонии</h3>
-          <div class="colony-list" id="colony-list"></div>
+          <!--
+            Склад и недра показывает паспорт выше, поэтому здесь их нет: список
+            колоний повторял те же полосы теми же числами. Осталось то, чего
+            в паспорте нет вовсе, — что строится прямо сейчас и какие уровни
+            уже взяты.
+          -->
+          <h3 class="panel-title">Очереди</h3>
+          <div class="queue-summary" id="queue-summary"></div>
+
+          <h3 class="panel-title">Постройки</h3>
+          <div class="level-table" id="level-buildings"></div>
+
+          <h3 class="panel-title">Технологии</h3>
+          <div class="level-table" id="level-techs"></div>
         </section>
 
-        <section data-panel="buildings">
+        <section data-panel="buildings" hidden>
           <h3 class="panel-title">Инфраструктура</h3>
           <div id="build-job" class="job-banner" hidden></div>
           <div id="buildings" class="cards"></div>

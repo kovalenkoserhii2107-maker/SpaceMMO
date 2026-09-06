@@ -2815,63 +2815,87 @@ button.tiny { padding: 4px 10px; font-size: 11px; flex: none; }
   border-color: var(--accent);
 }
 
-/* ---------- Центр управления: список колоний ---------- */
+/* ---------- Характеристики карточки ---------- */
 
 /*
- * Строка колонии — кнопка: по ней переключается активная база. Список отвечает
- * на вопрос «где я сейчас нужен», поэтому в нем только склад и стройка.
- * Все остальное про выбранную колонию показывает паспорт выше, и дублировать
- * его в каждой строке значит сделать список нечитаемым ради полноты.
+ * Подпись слева, значение справа. Раньше строки шли просто одна под другой,
+ * и ряд «1 712 · 807» под иконками ничем не объявлял себя ценой: числа
+ * без подписи читаются как что угодно — запас, прирост, добыча.
  */
-.colony-list {
+.spec { margin: 0; display: grid; gap: 5px; }
+.spec-row {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-template-columns: minmax(70px, auto) minmax(0, 1fr);
+  align-items: baseline;
   gap: 12px;
 }
+.spec dt { font-size: 12px; color: var(--muted); }
+.spec dd { margin: 0; font-size: 13px; font-variant-numeric: tabular-nums; }
+.spec dd .muted { color: var(--muted); }
+.spec dd.time { font-size: 13px; color: var(--text); }
 
-.colony-row {
+/* ---------- Центр управления ---------- */
+
+/*
+ * Заголовки блоков внутри раздела: у .panel-title нет верхнего отступа —
+ * он рассчитан на один заголовок в начале панели. Здесь блоков четыре подряд,
+ * и без отступа каждый следующий заголовок липнет к предыдущей таблице.
+ */
+[data-panel="overview"] .panel-title:not(:first-child) { margin-top: 24px; }
+
+/*
+ * Сводка очередей. Порознь они лежат по своим разделам, и чтобы понять,
+ * простаивает ли база, приходилось обойти четыре вкладки. Свободная очередь —
+ * это не отсутствие новости, а сама новость: мощности стоят зря.
+ */
+.queue-summary {
   display: grid;
-  gap: 10px;
-  padding: 14px;
-  text-align: left;
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
+  gap: 1px;
   border: 1px solid var(--line);
   border-radius: 14px;
+  overflow: hidden;
+  background: var(--line);
+}
+.queue-line {
+  display: grid;
+  grid-template-columns: minmax(96px, auto) minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 12px;
+  padding: 11px 14px;
   background: var(--panel);
 }
-.colony-row:hover { border-color: rgba(77, 210, 255, 0.45); }
-.colony-row.active { border-color: var(--accent); }
+.queue-label { font-size: 12px; color: var(--muted); }
+.queue-what { font-size: 13px; }
+.queue-left { font-size: 13px; font-variant-numeric: tabular-nums; color: var(--accent); }
+.queue-line.idle .queue-what { color: var(--muted); }
 
-.colony-row-head {
+/*
+ * Уровни постройками и наукой. Это ответ на вопрос «где я вообще нахожусь»,
+ * и он нужен целиком и сразу: карточки показывают по одному объекту, а тут
+ * видно всю базу разом.
+ */
+.level-table {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 1px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--line);
+}
+.level-row {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 10px;
+  padding: 9px 14px;
+  background: var(--panel);
 }
-.colony-row-name { font-size: 15px; }
-.colony-row-coords {
-  font-size: 12px;
-  color: var(--accent);
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-
-.colony-row-bars { display: grid; gap: 6px; }
-
-/*
- * В списке у полосы нет подписи ресурса, только значок, поэтому первая колонка
- * сжимается по содержимому. Ширина в 88px, унаследованная от паспорта, увела бы
- * под пустое место половину строки.
- */
-.colony-row .storage-row { grid-template-columns: auto minmax(0, auto) 1fr; gap: 8px; }
-
-.colony-row-job {
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-.colony-row-job.idle { color: var(--muted); }
+.level-name { font-size: 13px; }
+.level-value { font-size: 13px; font-variant-numeric: tabular-nums; color: var(--accent); }
+/* Не построенное приглушено, а не спрятано: пустая строка и есть ответ. */
+.level-row.empty .level-name { color: var(--muted); }
+.level-row.empty .level-value { color: var(--muted); }
 
 /* ---------- Телефон: карточки в две колонки ---------- */
 
@@ -2899,6 +2923,21 @@ button.tiny { padding: 4px 10px; font-size: 11px; flex: none; }
   .card-titles h4 { font-size: 12.5px; line-height: 1.2; min-height: 2.4em; }
   .card .desc { font-size: 11px; line-height: 1.2; }
   .card .prod, .card .cost { font-size: 11px; line-height: 1.2; }
+
+  /*
+   * Принудительные две строки у цены и строки эффекта держали выравнивание
+   * соседних карточек. В две колонки на телефоне это лишние сорок пикселей
+   * на карточку, а нижний край и так ровный: кнопку прижимает margin-top: auto.
+   */
+  .card .cost, .card .combat-line { min-height: 0; }
+  .spec { gap: 4px; }
+  .spec-row { grid-template-columns: minmax(52px, auto) minmax(0, 1fr); gap: 7px; }
+  .spec dt { font-size: 10.5px; }
+  .spec dd, .spec dd.time { font-size: 11.5px; }
+  .spec-row.spec-cost { grid-template-columns: minmax(0, 1fr); gap: 1px; }
+  .queue-line { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; padding: 10px 12px; }
+  .queue-label { grid-column: 1 / -1; }
+  .level-table { grid-template-columns: 1fr; }
   .card .time { font-size: 10.5px; line-height: 1.2; }
   .energy-line { font-size: 10.5px; line-height: 1.2; min-height: 1.1em; }
   .card > button { padding: 7px; font-size: 12.5px; }
