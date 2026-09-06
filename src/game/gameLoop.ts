@@ -47,7 +47,7 @@ import {
   expeditionSlots,
   resolveExpedition,
 } from './expeditions.js';
-import { storageCapacity, storageUsed } from './market.js';
+import { hubRent, marketPrice, rushPrice, storageCapacity, storageUsed } from './market.js';
 import type { ScanPayload } from './fogOfWar.js';
 import {
   DEFENSE_TYPES,
@@ -165,9 +165,21 @@ function fleetRoster(ships: ShipCounts): UnitLoss[] {
 }
 
 
+/**
+ * Как часто собирается плата за место на хабе.
+ *
+ * Минута, а не тик: списание идет по всем командирам сразу, включая
+ * офлайновых, и делать это каждую секунду значило бы семьдесят запросов
+ * в минуту ради копеек. Долг за минуту у самого большого склада — тысячи
+ * гривны, дробить их мельче незачем.
+ */
+const RENT_INTERVAL_MS = 60_000;
+
 class GameLoop {
   private io: GameServer | null = null;
   private timer: NodeJS.Timeout | null = null;
+  private rentTimer: NodeJS.Timeout | null = null;
+  private collectingRent = false;
   private tickCount = 0;
   private ticking = false;
   /** Состояния online-командиров: commanderId -> состояние. */
@@ -184,6 +196,9 @@ class GameLoop {
     this.timer = setInterval(() => {
       void this.tick();
     }, TICK_INTERVAL_MS);
+    this.rentTimer = setInterval(() => {
+      void this.collectHubRent();
+    }, RENT_INTERVAL_MS);
     console.log(`[game-loop] запущен, интервал ${TICK_INTERVAL_MS} мс`);
   }
 
@@ -191,6 +206,10 @@ class GameLoop {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
+    }
+    if (this.rentTimer) {
+      clearInterval(this.rentTimer);
+      this.rentTimer = null;
     }
     for (const commander of this.commanders.values()) {
       await this.persistCommander(commander);
@@ -382,6 +401,59 @@ class GameLoop {
   }
 
   /* ------------------------- Действия игрока ------------------------- */
+
+  /**
+   * Доделать стройку немедленно за криптогривну.
+   *
+   * Срок просто переносится на «сейчас», а достраивает базу обычный тик своим
+   * же кодом: уровень, достижения, запись в БД — все идет тем путем, которым
+   * шло бы само. Отдельная ветка завершения разъехалась бы с основной
+   * при первой же правке.
+   *
+   * Цена считается по нынешнему рынку (см. `rushPrice`), поэтому дорожает
+   * вместе с ним. Списание условное, как на бирже: `updateMany` с `gte`
+   * не даст балансу уйти в минус и не затрет параллельную сделку.
+   */
+  async rushBuild(commanderId: string, baseId: string): Promise<ActionResult> {
+    const commander = await this.getCommander(commanderId);
+    const base = commander?.bases.get(baseId);
+    if (!commander || !base) return { ok: false, error: 'База не найдена' };
+
+    const job = base.buildJob;
+    if (!job) return { ok: false, error: 'На базе ничего не строится' };
+
+    const now = Date.now();
+    const remaining = (job.finishesAt - now) / 1000;
+    if (remaining <= 0) return { ok: false, error: 'Стройка и так вот-вот закончится' };
+
+    const total = (job.finishesAt - job.startedAt) / 1000;
+    const trades = await prisma.trade.findMany({
+      orderBy: { createdAt: 'desc' },
+      select: { resource: true, pricePerUnit: true, quantity: true },
+      take: 60,
+    });
+    const price = rushPrice(
+      upgradeCost(job.building, job.targetLevel),
+      remaining,
+      total,
+      {
+        ore: marketPrice('ORE', trades).price,
+        polymers: marketPrice('POLYMERS', trades).price,
+      },
+    );
+
+    const paid = await prisma.commander.updateMany({
+      where: { id: commanderId, credits: { gte: price } },
+      data: { credits: { decrement: price } },
+    });
+    if (paid.count === 0) return { ok: false, error: `Не хватает криптогривны: нужно ${price} ₴` };
+    this.syncCredits(commanderId, Math.max(0, commander.credits - price));
+
+    job.finishesAt = now;
+    base.jobsDirty = true;
+    await this.persistAndEmit(commanderId);
+    return { ok: true, message: `Стройка ускорена за ${price} ₴` };
+  }
 
   /** Постановка здания в стройку. Проверки и списание — только на сервере. */
   async startBuild(commanderId: string, baseId: string, type: BuildingType): Promise<ActionResult> {
@@ -774,6 +846,60 @@ class GameLoop {
    * Обновление баланса криптогривны в памяти после биржевой операции.
    * Источник правды по балансу — БД: тик его не пишет, поэтому конфликта нет.
    */
+  /**
+   * Плата за место на хабе.
+   *
+   * Второй постоянный сток криптогривны и единственный, который работает
+   * без сделок. Собирается со всех, у кого склад выше первого уровня, —
+   * и с онлайновых, и с офлайновых: место занято независимо от того,
+   * смотрит ли хозяин на экран.
+   *
+   * Списание условное, как на бирже: `updateMany` с `gte` не даст балансу
+   * уйти в минус и не затрет параллельную сделку, потому что это инкремент,
+   * а не запись. Не хватило на всю плату — не списываем ничего: долгов
+   * в игре нет, а отнимать половину значит вести учет, которого никто
+   * не увидит. Склад при этом не отбирается: он куплен и остается.
+   *
+   * За время простоя сервера плата не берется. Это осознанно — мир в это
+   * время не живет вовсе: не добывается руда, не летают флоты, и брать
+   * аренду за паузу было бы единственным, что в ней происходит.
+   */
+  private async collectHubRent(): Promise<void> {
+    if (this.collectingRent) return;
+    this.collectingRent = true;
+    try {
+      const storages = await prisma.hubStorage.findMany({
+        where: { level: { gt: 1 } },
+        select: { commanderId: true, level: true },
+      });
+      if (storages.length === 0) return;
+
+      const due = new Map<string, number>();
+      for (const row of storages) {
+        const amount = hubRent(row.level) * (RENT_INTERVAL_MS / 1000);
+        due.set(row.commanderId, (due.get(row.commanderId) ?? 0) + amount);
+      }
+
+      for (const [commanderId, amount] of due) {
+        const charge = Math.round(amount * 100) / 100;
+        if (charge <= 0) continue;
+        const paid = await prisma.commander.updateMany({
+          where: { id: commanderId, credits: { gte: charge } },
+          data: { credits: { decrement: charge } },
+        });
+        if (paid.count === 0) continue;
+        // Списание прошло мимо памяти тика: подтягиваем баланс, иначе
+        // ближайший сброс вернет старое число (правило 12).
+        const loaded = this.commanders.get(commanderId);
+        if (loaded) this.syncCredits(commanderId, Math.max(0, loaded.credits - charge));
+      }
+    } catch (error) {
+      console.error('[game-loop] плата за хаб не собралась', error);
+    } finally {
+      this.collectingRent = false;
+    }
+  }
+
   syncCredits(commanderId: string, credits: number): void {
     const commander = this.commanders.get(commanderId);
     if (!commander) return;

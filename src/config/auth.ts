@@ -3,8 +3,9 @@ import { env } from './env.js';
 /**
  * Настройки авторизации.
  *
- * Внешний провайдер один — Google. Apple требует платной подписки и ротации
- * секрета раз в полгода, Facebook — ревью приложения с непредсказуемым сроком;
+ * Внешних провайдера два — Google и Telegram. Apple требует платной подписки
+ * и ротации секрета раз в полгода, Facebook — ревью приложения
+ * с непредсказуемым сроком;
  * держать их заготовки в коде значило бы делать вид, что вход через них
  * почти готов. В перечислении `AuthProvider` они остались: убрать значение
  * из enum в PostgreSQL можно только пересозданием типа, а пользы от этого нет.
@@ -16,7 +17,19 @@ export const authConfig = {
   /** Срок жизни ссылки для смены пароля. */
   resetTtlMinutes: 30,
   providers: {
-    GOOGLE: { clientId: process.env['GOOGLE_CLIENT_ID'] ?? '' },
+    /**
+     * Google опознается публичным client id: он уезжает в браузер роутом
+     * `/api/auth/config` и секретом не является.
+     */
+    GOOGLE: { clientId: process.env['GOOGLE_CLIENT_ID'] ?? '', secret: '' },
+    /**
+     * Telegram опознается **секретом** — токеном бота, которым подписан
+     * `initData`. Поэтому он лежит в отдельном поле, а не в `clientId`:
+     * поля с этим именем отдаются клиенту, и однажды кто-нибудь дописал бы
+     * туда телеграмовский, не заметив разницы. Разные имена делают такую
+     * ошибку невозможной, а не маловероятной.
+     */
+    TELEGRAM: { clientId: '', secret: process.env['TELEGRAM_BOT_TOKEN'] ?? '' },
   },
 } as const;
 
@@ -28,7 +41,8 @@ export function isExternalProvider(value: string): value is ExternalProvider {
 }
 
 export function isProviderConfigured(provider: ExternalProvider): boolean {
-  return authConfig.providers[provider].clientId.length > 0;
+  const { clientId, secret } = authConfig.providers[provider];
+  return clientId.length > 0 || secret.length > 0;
 }
 
 /** В разработке разрешаем дефолтный секрет, но предупреждаем об этом один раз. */

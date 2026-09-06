@@ -28,6 +28,7 @@ import {
   MARKET_SHOCK_TTL_MS, SHOCK_TTL_MS,
 } from '../src/game/bot/director.js';
 import {
+  creditOutput,
   buildSeconds,
   emptyLevels,
   productionPerSecond,
@@ -49,7 +50,7 @@ import {
 import { emptyShipCounts, shipCost, shipUnitSeconds } from '../src/game/ships.js';
 import { defenseCost, defenseUnitSeconds, emptyDefenseCounts } from '../src/game/defenses.js';
 import { spentOnFleet } from '../src/game/score.js';
-import { storageUpgradeCost } from '../src/game/market.js';
+import { hubRent, rushPrice, storageUpgradeCost } from '../src/game/market.js';
 
 const results: Array<{ name: string; passed: boolean }> = [];
 
@@ -615,7 +616,7 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
         ships: { ...emptyShipCounts(), SMALL_CARGO: 20 },
       }),
     ],
-    hubStorage: { ore: 5000, polymers: 0, free: 1000, level: 4, upgradeCost: 136_000 },
+    hubStorage: { ore: 5000, polymers: 0, free: 1000, level: 4, upgradeCost: 136_000, nextRentPerHour: hubRent(4 + 1) * 3600 },
   });
   const pickup = decide(bought).find((i) => i.kind === 'PICKUP');
   check(
@@ -636,7 +637,7 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
         ships: { ...emptyShipCounts(), SMALL_CARGO: 20 },
       }),
     ],
-    hubStorage: { ore: 5000, polymers: 5000, free: 1000, level: 4, upgradeCost: 136_000 },
+    hubStorage: { ore: 5000, polymers: 5000, free: 1000, level: 4, upgradeCost: 136_000, nextRentPerHour: hubRent(4 + 1) * 3600 },
   });
   check('излишек с хаба домой не возится', !decide(selling).some((i) => i.kind === 'PICKUP'));
 }
@@ -647,7 +648,7 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
   const jammed = snapshotWith({
     character: 'TRADER',
     credits: 500_000,
-    hubStorage: { ore: 19_000, polymers: 1000, free: 480, level: 4, upgradeCost: 136_000 },
+    hubStorage: { ore: 19_000, polymers: 1000, free: 480, level: 4, upgradeCost: 136_000, nextRentPerHour: hubRent(4 + 1) * 3600 },
     market: [
       { resource: 'ORE', reference: 10, seeded: false, demand: 8000, supply: 0, skew: 1 },
       { resource: 'POLYMERS', reference: 14, seeded: false, demand: 0, supply: 0, skew: null },
@@ -667,7 +668,7 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
   const deadStock = snapshotWith({
     character: 'TRADER',
     credits: 500_000,
-    hubStorage: { ore: 0, polymers: 20_000, free: 480, level: 4, upgradeCost: 136_000 },
+    hubStorage: { ore: 0, polymers: 20_000, free: 480, level: 4, upgradeCost: 136_000, nextRentPerHour: hubRent(4 + 1) * 3600 },
     market: [
       { resource: 'ORE', reference: 10, seeded: false, demand: 0, supply: 0, skew: null },
       { resource: 'POLYMERS', reference: 14, seeded: false, demand: 0, supply: 30_000, skew: -1 },
@@ -681,7 +682,7 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
   const broke = snapshotWith({
     character: 'TRADER',
     credits: 1000,
-    hubStorage: { ore: 19_000, polymers: 1000, free: 480, level: 4, upgradeCost: 136_000 },
+    hubStorage: { ore: 19_000, polymers: 1000, free: 480, level: 4, upgradeCost: 136_000, nextRentPerHour: hubRent(4 + 1) * 3600 },
   });
   check('без денег расширение не заказывается', !decide(broke).some((i) => i.kind === 'HUB_UPGRADE'));
 }
@@ -976,6 +977,110 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
     'вывоз забирает свое с хаба, даже когда дефицита нет',
     haul?.kind === 'PICKUP' && haul.ore + haul.polymers > 0,
     haul?.kind === 'PICKUP' ? `руда ${haul.ore}, полимеры ${haul.polymers}` : 'не везет',
+  );
+}
+
+{
+  /*
+   * Плата за место на хабе — второй постоянный сток криптогривны.
+   *
+   * До нее их было ноль: комиссия берется со сделок, расширение платится один
+   * раз, а ферма капает каждую секунду. На живом стенде масса удвоилась
+   * за девять часов — ₴20.6 млн против ₴39 млн, — и цена руды пошла за ней
+   * с 5 до 19 при том же количестве товара.
+   */
+  /*
+   * Расширение оплачивается дважды: разово и потом всегда. Бот, который
+   * смотрит только на цену расширения, покупает себе вечный расход, не спросив,
+   * из чего его платить, — поэтому денег должно хватать и на само место,
+   * и на сутки его содержания.
+   */
+  const jammedHub = (credits: number) =>
+    snapshotWith({
+      character: 'TRADER',
+      credits,
+      hubStorage: { ore: 19_000, polymers: 1000, free: 480, level: 8, upgradeCost: storageUpgradeCost(9), nextRentPerHour: hubRent(9) * 3600 },
+      market: [
+        { resource: 'ORE', reference: 10, seeded: false, demand: 8000, supply: 0, skew: 1, foreignSkew: 1 },
+        { resource: 'POLYMERS', reference: 14, seeded: false, demand: 0, supply: 0, skew: null, foreignSkew: null },
+      ],
+    });
+  const bare = storageUpgradeCost(9);
+  const withRent = bare + hubRent(9) * 3600 * 24;
+  check(
+    'на голую цену расширения бот не ведется',
+    !decide(jammedHub(bare + 1)).some((i) => i.kind === 'HUB_UPGRADE'),
+    `₴${Math.round(bare).toLocaleString('ru-RU')} мало: содержание еще ₴${Math.round(withRent - bare).toLocaleString('ru-RU')} в сутки`,
+  );
+  check(
+    'с запасом на сутки содержания — расширяет',
+    decide(jammedHub(withRent + 1)).some((i) => i.kind === 'HUB_UPGRADE'),
+  );
+
+  /*
+   * Спешка — третий сток и первый, который выбирают сами. Цена привязана
+   * к рыночной стоимости работы, а не к константе: руда за сутки прошла путь
+   * от 5 до 23, и любая постоянная цена устарела бы за это время.
+   */
+  const work = { ore: 1000, polymers: 500, plasma: 100 };
+  const cheap = rushPrice(work, 100, 100, { ore: 5, polymers: 4 });
+  const dear = rushPrice(work, 100, 100, { ore: 25, polymers: 20 });
+  check('дорожает товар — дорожает и спешка', dear > cheap * 4, `${cheap} против ${dear}`);
+  check(
+    'почти готовое доделать почти бесплатно',
+    rushPrice(work, 1, 100, { ore: 5, polymers: 4 }) < cheap / 50,
+  );
+  check('доделывать нечего — платить не за что', rushPrice(work, 0, 100, { ore: 5, polymers: 4 }) === 0);
+  check(
+    'плазма считается по цене руды',
+    rushPrice({ ore: 0, polymers: 0, plasma: 100 }, 10, 10, { ore: 7, polymers: 3 }) === 700,
+  );
+
+  /*
+   * Доля не должна запирать то, что в нее физически не помещается.
+   *
+   * Живой стенд встал на этом целиком: все семь ботов замерли и не строили
+   * четыре часа подряд, причем ресурсов у каждого хватало с избытком. Крамару
+   * доля разрешала тратить, только накопив 63 149 руды, а рудный склад держит
+   * 59 800 — цель была недостижима физически. Спасательный люк в правилах был,
+   * но сравнивал стоимость с общей вместимостью трех складов, а запирает
+   * всегда один из них.
+   */
+  const trapped = snapshotWith({
+    character: 'TRADER',
+    bases: [
+      testBase('home', {
+        // Рудный склад мал, и доля от него меньше цены следующего реактора.
+        levels: { ...emptyLevels(), ORE_MINE: 8, POLYMER_PLANT: 8, PLASMA_REACTOR: 10, POWER_PLANT: 10, SCIENCE_CENTER: 6, SHIPYARD: 6, ORE_STORAGE: 5, POLYMER_STORAGE: 9, PLASMA_STORAGE: 9 },
+        resources: { ore: 17_700, polymers: 120_000, plasma: 30_000 },
+      }),
+    ],
+  });
+  const move = decide(trapped).find((i) => i.kind === 'BUILD');
+  check(
+    'недостижимое для доли здание оплачивается из общего запаса',
+    move?.kind === 'BUILD',
+    move?.kind === 'BUILD' ? `${move.building} — ${move.why}` : 'бот замер',
+  );
+
+  check('первый уровень бесплатен', hubRent(1) === 0 && hubRent(0) === 0);
+  check('плата растет тем же шагом, что и цена места', Math.abs(hubRent(9) / hubRent(8) - 2) < 1e-9, `${(hubRent(9) / hubRent(8)).toFixed(2)}×`);
+  check(
+    'плата — доля от цены самого места',
+    Math.abs(hubRent(8) * 3600 - storageUpgradeCost(8) * 0.03) < 1e-6,
+    `₴${Math.round(hubRent(8) * 3600).toLocaleString('ru-RU')} в час при цене места ₴${storageUpgradeCost(8).toLocaleString('ru-RU')}`,
+  );
+
+  /*
+   * Ферма растет с той же крутизной, что и шахта: при 1.1 она обгоняла ее
+   * с каждым уровнем, и разрыв копился до полутора раз к пятнадцатому.
+   */
+  const farm = (level: number) => creditOutput({ ...emptyLevels(), CRYPTO_FARM: level });
+  check('ферма без уровня не дает ничего', farm(0) === 0);
+  check(
+    'ферма растет как шахта, а не круче',
+    Math.abs(farm(10) / farm(5) - (10 * 1.07 ** 10) / (5 * 1.07 ** 5)) < 1e-9,
+    `${(farm(10) / farm(5)).toFixed(2)}× за пять уровней`,
   );
 }
 

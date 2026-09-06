@@ -5,6 +5,23 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Space Strategy MMO — Командный центр</title>
   <link rel="stylesheet" href="/styles.css" />
+  <meta name="theme-color" content="#04060d" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" href="/icons/icon-192.png" sizes="192x192" type="image/png" />
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+  <!--
+    Установка на домашний экран. iOS не читает manifest для этого целиком,
+    поэтому имя, значок и режим ему задаются своими мета-тегами.
+
+    Строка статуса намеренно `black`, а не `black-translucent`: полупрозрачная
+    пускает контент под вырез экрана, и шапка с ресурсами уехала бы под часы.
+    Разбираться с safe-area стоит вместе с остальной мобильной версткой,
+    а не ради одного тега.
+  -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+  <meta name="apple-mobile-web-app-title" content="SpaceMMO" />
+  <meta name="mobile-web-app-capable" content="yes" />
 </head>
 <body>
 <!--
@@ -872,6 +889,12 @@
     </section>
   </div>
 
+  <!--
+    Мини-приложение Telegram. Скрипт кладет в window.Telegram.WebApp тему,
+    размеры окна и подписанный initData. Вне Telegram он просто ничего
+    не создает, и клиент работает как обычно — отдельной сборки не нужно.
+  -->
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="/socket.io/socket.io.js"></script>
   <script src="/app.js"></script>
 </body>

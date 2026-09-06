@@ -2789,3 +2789,28 @@ button.tiny { padding: 4px 10px; font-size: 11px; flex: none; }
   .bot-form button { grid-column: 1 / -1; }
 }
 
+
+/*
+ * Кнопка спешки в полосе ожидания.
+ *
+ * Стоит в одной строке с процентом и общим временем, потому что это про то же
+ * самое — про оставшееся время, только с возможностью его купить. Отдельной
+ * строкой она разрывала бы полосу пополам, а полоса и так узкая.
+ */
+.job-banner .job-rush {
+  margin-left: auto;
+  padding: 2px 10px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.job-banner .job-rush:hover {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: var(--accent);
+}

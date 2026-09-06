@@ -984,6 +984,7 @@
       title: `${base.buildJob.label} → ур. ${base.buildJob.targetLevel}`,
       remainingSeconds: base.buildJob.remainingSeconds,
       totalSeconds: base.buildJob.totalSeconds,
+      onRush: () => send(`/api/bases/${base.baseId}/rush`),
     });
     renderJobBanner(el.researchJob, state.research.active && {
       title: `${state.research.active.label} → ур. ${state.research.active.targetLevel}`,
@@ -1196,8 +1197,22 @@
       node.innerHTML =
         '<div class="job-title"><span></span><b></b></div>' +
         '<div class="bar"><i></i></div>' +
-        '<div class="job-meta"><span></span><span></span></div>';
+        '<div class="job-meta"><span></span><span></span><button type="button" class="job-rush" hidden>Ускорить</button></div>';
     }
+
+    /*
+     * Кнопка спешки живет только там, где спешка возможна. Полоса ожидания
+     * одна на четыре очереди, а доделать за криптогривну пока можно лишь
+     * стройку — поэтому кнопка не рисуется по умолчанию, а включается тем,
+     * кто передал обработчик.
+     *
+     * Цену не показываем: ее считает сервер по нынешнему рынку, и между
+     * показом и нажатием она успевает измениться. Отказ с точной суммой
+     * придет в панель сообщений — это честнее, чем цифра, которой уже нет.
+     */
+    const rush = node.querySelector('.job-rush');
+    rush.hidden = typeof job.onRush !== 'function';
+    rush.onclick = job.onRush || null;
     const done = job.totalSeconds > 0 ? (job.totalSeconds - job.remainingSeconds) / job.totalSeconds : 1;
     const percent = Math.min(100, Math.max(0, done * 100));
 
@@ -6696,9 +6711,50 @@
 
   void initGoogleSignIn();
 
+  /*
+   * Вход внутри Telegram.
+   *
+   * Мини-приложение открывается уже опознанным: Telegram кладет в initData
+   * подписанные данные пользователя, и спрашивать пароль в этой обертке
+   * незачем — там нет ни клавиатуры под почту, ни смысла заводить второй
+   * способ входа. Подпись проверяет сервер (правило 3); клиент только
+   * передает строку как есть.
+   *
+   * Сохраненный токен имеет приоритет: если игрок уже вошел, дергать
+   * Telegram незачем.
+   */
+  async function signInWithTelegram() {
+    const webApp = window.Telegram && window.Telegram.WebApp;
+    if (!webApp || !webApp.initData) return false;
+
+    // Разворачиваем окно и снимаем свайп-закрытие: иначе карту нельзя
+    // потянуть пальцем — жест уходит Telegram и сворачивает приложение.
+    if (typeof webApp.expand === 'function') webApp.expand();
+    if (typeof webApp.disableVerticalSwipes === 'function') webApp.disableVerticalSwipes();
+    if (typeof webApp.ready === 'function') webApp.ready();
+
+    const result = await api('/api/auth/oauth/telegram', {
+      method: 'POST',
+      body: JSON.stringify({ idToken: webApp.initData }),
+    });
+    if (!result.ok) {
+      showAuthMessage(el.authMessage, result.data.error || 'Telegram не пустил', false);
+      return false;
+    }
+
+    state.token = result.data.token;
+    localStorage.setItem(TOKEN_KEY, state.token);
+    await startSession();
+    return true;
+  }
+
   if (state.token) {
     startSession().catch(() => showScreen('auth'));
   } else {
-    showScreen('auth');
+    signInWithTelegram()
+      .catch(() => false)
+      .then((entered) => {
+        if (!entered) showScreen('auth');
+      });
   }
 })();

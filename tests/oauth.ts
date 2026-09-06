@@ -8,7 +8,12 @@
  * Запуск: npm run test:oauth
  */
 import { SignJWT, exportJWK, generateKeyPair, type JWK } from 'jose';
-import { verifyGoogleIdToken, type GoogleVerifier } from '../src/services/authService.js';
+import { createHmac } from 'node:crypto';
+import {
+  verifyGoogleIdToken,
+  verifyTelegramInitData,
+  type GoogleVerifier,
+} from '../src/services/authService.js';
 
 const results: Array<{ name: string; passed: boolean }> = [];
 
@@ -111,6 +116,77 @@ console.log('\n=== 3. Незаданный client id ===');
   const blind = await verifyGoogleIdToken(await idToken(), { keys: google.publicKey, clientId: '' });
   check('без настроенного client id не пускает никого', blind === null);
   check('ключ проверки экспортируется как JWK', typeof publicJwk.n === 'string');
+}
+
+/* --------------------- Telegram: подпись initData --------------------- */
+
+console.log('\n=== Telegram ===');
+
+const BOT_TOKEN = '1234567:test-bot-token';
+
+/** Собирает `initData` ровно так, как его подписывает Telegram. */
+function initData(
+  fields: Record<string, string>,
+  token = BOT_TOKEN,
+): string {
+  const checkString = Object.entries(fields)
+    .map(([key, value]) => `${key}=${value}`)
+    .sort()
+    .join('\n');
+  const secretKey = createHmac('sha256', 'WebAppData').update(token).digest();
+  const hash = createHmac('sha256', secretKey).update(checkString).digest('hex');
+  const params = new URLSearchParams(fields);
+  params.set('hash', hash);
+  return params.toString();
+}
+
+const now = Date.now();
+const fresh = () => ({
+  auth_date: String(Math.floor(now / 1000)),
+  query_id: 'AAH1',
+  user: JSON.stringify({ id: 42, first_name: 'Сергій', username: 'lorawan' }),
+});
+
+{
+  const ok = verifyTelegramInitData(initData(fresh()), BOT_TOKEN, now);
+  check('честная подпись принимается', ok?.providerId === '42', ok?.providerId);
+  check(
+    'почта собирается служебная, как у ботов',
+    ok?.email === 'tg-42@telegram.local',
+    ok?.email,
+  );
+}
+
+{
+  // Подпись чужим токеном — самый важный отказ: без него вход превращается
+  // в «предъяви любую строку с полем hash».
+  const alien = verifyTelegramInitData(initData(fresh(), 'другой-токен'), BOT_TOKEN, now);
+  check('подпись чужим токеном не проходит', alien === null);
+
+  const tampered = initData(fresh()).replace('id%22%3A42', 'id%22%3A43');
+  check('подмена пользователя ломает подпись', verifyTelegramInitData(tampered, BOT_TOKEN, now) === null);
+
+  check('без hash не пускает', verifyTelegramInitData('auth_date=1&user=%7B%7D', BOT_TOKEN, now) === null);
+  check('пустая строка не пускает', verifyTelegramInitData('', BOT_TOKEN, now) === null);
+}
+
+{
+  // Просроченная подпись — это чужая сохраненная ссылка, а не длинная сессия:
+  // Telegram выдает свежий initData при каждом открытии приложения.
+  const old = initData({ ...fresh(), auth_date: String(Math.floor(now / 1000) - 60 * 60 * 25) });
+  check('вчерашняя подпись не принимается', verifyTelegramInitData(old, BOT_TOKEN, now) === null);
+
+  const edge = initData({ ...fresh(), auth_date: String(Math.floor(now / 1000) - 60 * 60 * 23) });
+  check('вчерашняя, но в пределах суток — принимается', verifyTelegramInitData(edge, BOT_TOKEN, now) !== null);
+}
+
+{
+  // Без токена в окружении проверка не должна пускать никого сама по себе:
+  // сервер отвечает 501 раньше, но полагаться на один заслон нельзя.
+  check('без токена бота не пускает никого', verifyTelegramInitData(initData(fresh()), '', now) === null);
+
+  const noUser = initData({ auth_date: String(Math.floor(now / 1000)), query_id: 'AAH1' });
+  check('без пользователя в нагрузке не пускает', verifyTelegramInitData(noUser, BOT_TOKEN, now) === null);
 }
 
 const failed = results.filter((r) => !r.passed);

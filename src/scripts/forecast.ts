@@ -96,7 +96,9 @@ import { fleetCapacity } from '../game/fleets.js';
 import {
   buyerEscrow,
   buyerFee,
+  hubRent,
   marketPrice,
+  rushPrice,
   matchPrice,
   sellerFee,
   storageCapacity as hubCapacity,
@@ -150,12 +152,16 @@ interface Bot {
   ships: ShipCounts;
   defenses: DefenseCounts;
   hub: { ore: number; polymers: number; level: number };
-  build: { type: BuildingType; left: number } | null;
+  build: { type: BuildingType; left: number; total: number } | null;
   research: { tech: TechnologyType; left: number } | null;
   shipJobs: Array<{ type: ShipType; count: number; left: number }>;
   defenseJobs: Array<{ type: DefenseType; count: number; left: number }>;
   mined: number;
   earned: number;
+  /** Сколько уплачено за место на хабе — второй постоянный сток денег. */
+  rentPaid: number;
+  /** Сколько потрачено на спешку — третий сток, и единственный по своей воле. */
+  rushed: number;
 }
 
 interface Order {
@@ -196,6 +202,8 @@ function freshBot(row: (typeof ROSTER)[number]): Bot {
     defenseJobs: [],
     mined: 0,
     earned: 0,
+    rentPaid: 0,
+    rushed: 0,
   };
 }
 
@@ -384,6 +392,7 @@ function snapshotOf(bot: Bot, exchange: Exchange): BotSnapshot {
       free: Math.max(0, hubCapacity(bot.hub.level) - storageUsed(bot.hub)),
       level: bot.hub.level,
       upgradeCost: storageUpgradeCost(bot.hub.level + 1),
+      nextRentPerHour: hubRent(bot.hub.level + 1) * 3600,
     },
   };
 }
@@ -403,10 +412,8 @@ function apply(bot: Bot, intents: BotIntent[], exchange: Exchange, byName: Map<s
         const cost = upgradeCost(intent.building, bot.levels[intent.building] + 1);
         if (!hasEnoughResources(bot.stock, cost)) break;
         subtractResources(bot.stock, cost);
-        bot.build = {
-          type: intent.building,
-          left: buildSeconds(intent.building, bot.levels[intent.building] + 1, NEUTRAL_MODIFIERS, speed),
-        };
+        const seconds = buildSeconds(intent.building, bot.levels[intent.building] + 1, NEUTRAL_MODIFIERS, speed);
+        bot.build = { type: intent.building, left: seconds, total: seconds };
         break;
       }
       case 'RESEARCH': {
@@ -460,6 +467,25 @@ function apply(bot: Bot, intents: BotIntent[], exchange: Exchange, byName: Map<s
         bot.stock.polymers += polymers;
         break;
       }
+      case 'RUSH': {
+        /*
+         * Спешка: срок стройки схлопывается, а деньги уходят из мира.
+         * Цена та же, что в бою, — по нынешнему рынку, поэтому сток растет
+         * вместе с инфляцией сам.
+         */
+        if (!bot.build) break;
+        const cost = upgradeCost(bot.build.type, bot.levels[bot.build.type] + 1);
+        const price = rushPrice(cost, bot.build.left, bot.build.total, {
+          ore: marketPrice('ORE', exchange.trades).price,
+          polymers: marketPrice('POLYMERS', exchange.trades).price,
+        });
+        if (bot.credits < price) break;
+        bot.credits -= price;
+        bot.rushed += price;
+        bot.build.left = 0;
+        break;
+      }
+
       case 'HUB_UPGRADE': {
         const price = storageUpgradeCost(bot.hub.level + 1);
         if (bot.credits < price) break;
@@ -515,6 +541,16 @@ function tick(bot: Bot): void {
   const money = creditOutput(bot.levels, cryptoBonus(bot.techs)) * efficiency * STEP;
   bot.credits += money;
   bot.earned += money;
+
+  /*
+   * Плата за место на хабе. Не хватило на всю — не платим ничего: долгов
+   * в игре нет, а склад не отбирается. Так же считает и живой цикл.
+   */
+  const rent = hubRent(bot.hub.level) * STEP;
+  if (rent > 0 && bot.credits >= rent) {
+    bot.credits -= rent;
+    bot.rentPaid += rent;
+  }
 
   if (bot.build) {
     bot.build.left -= STEP;
@@ -606,6 +642,12 @@ console.log(
   `\n  ИТОГ: верфь лучшая ${Math.max(...yards)} / средняя ${(yards.reduce((a, b) => a + b, 0) / yards.length).toFixed(1)}` +
     ` | масса ₴${money(last?.money ?? 0)} | добыто ${money(last?.goods ?? 0)} ед` +
     ` | ₴ на единицу ${((last?.money ?? 0) / Math.max(1, last?.goods ?? 1)).toFixed(2)}`,
+);
+console.log(
+  `  ДЕНЬГИ: намыто ₴${money(bots.reduce((sum, bot) => sum + bot.earned, 0))}` +
+    ` | уплачено за хаб ₴${money(bots.reduce((sum, bot) => sum + bot.rentPaid, 0))}` +
+    ` | на спешку ₴${money(bots.reduce((sum, bot) => sum + bot.rushed, 0))}` +
+    ` | хабы ${bots.map((bot) => bot.hub.level).join('/')}`,
 );
 
 console.log('\n  день |      масса ₴ |   добыто ед | ₴/ед | руда | полимеры | сделок | фермы');

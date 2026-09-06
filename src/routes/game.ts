@@ -78,6 +78,18 @@ gameRouter.post('/bases/:baseId/build', async (req, res: Response<ActionResponse
   res.status(result.ok ? 200 : 409).json(result);
 });
 
+/**
+ * Доделать стройку немедленно за криптогривну.
+ *
+ * Цену не принимаем от клиента и даже не показываем в теле запроса: она
+ * считается по нынешнему рынку на сервере (правило 3), и между показом
+ * и нажатием могла измениться.
+ */
+gameRouter.post('/bases/:baseId/rush', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const result = await gameLoop.rushBuild(currentCommander(req).id, req.params.baseId);
+  res.status(result.ok ? 200 : 409).json(result);
+});
+
 /** Запустить исследование в лаборатории базы. */
 gameRouter.post('/bases/:baseId/research', async (req, res: Response<ActionResponse | ErrorResponse>) => {
   const tech = (req.body as { tech?: unknown } | undefined)?.tech;

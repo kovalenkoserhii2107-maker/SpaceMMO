@@ -28,7 +28,7 @@ import {
 } from './budget.js';
 // Справочная цена одна на всех: бот держит коридор вокруг нее, а интерфейс
 // той же величиной показывает игроку, дорого сейчас или дешево.
-import { marketPrice } from '../market.js';
+import { hubRent, marketPrice } from '../market.js';
 import { deliver } from '../../services/mailService.js';
 import { COMBAT_TYPES, SHIP_TYPES, SQUADRON_TYPES, emptyShipCounts, type ShipCounts } from '../ships.js';
 import { fleetSize, fleetCapacity } from '../fleets.js';
@@ -334,6 +334,7 @@ async function buildSnapshot(
       free: Math.max(0, hubCapacity(hubStock?.level ?? 1) - ((hubStock?.ore ?? 0) + (hubStock?.polymers ?? 0))),
       level: hubStock?.level ?? 1,
       upgradeCost: storageUpgradeCost((hubStock?.level ?? 1) + 1),
+      nextRentPerHour: hubRent((hubStock?.level ?? 1) + 1) * 3600,
     },
     colonizing: commander.fleets.some((fleet) => fleet.mission === 'COLONIZE'),
   };
@@ -411,6 +412,9 @@ async function execute(
       const result = await fillOrder(commanderId, intent.orderId, intent.amount);
       return result;
     }
+
+    case 'RUSH':
+      return gameLoop.rushBuild(commanderId, intent.baseId);
 
     case 'HUB_UPGRADE': {
       return upgradeStorage(commanderId);

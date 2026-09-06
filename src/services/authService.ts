@@ -4,7 +4,7 @@
  * Пароли хешируются scrypt из стандартной библиотеки: соль на каждый пароль,
  * сравнение постоянным по времени. Сессия — JWT, подписанный секретом сервера.
  */
-import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../db/prisma.js';
@@ -334,10 +334,97 @@ export async function verifyGoogleIdToken(
   }
 }
 
+/**
+ * Сколько живет подпись Telegram.
+ *
+ * `initData` выдается один раз на открытие мини-приложения и дальше не
+ * меняется, поэтому короткое окно рвало бы длинные сессии. Сутки — тот же
+ * срок, что у нашего же токена доступа: дольше держать чужую подпись
+ * без нужды, короче — выкидывать игрока посреди игры.
+ */
+const TELEGRAM_INIT_DATA_TTL_SECONDS = 60 * 60 * 24;
+
+/**
+ * Проверка `initData` мини-приложения Telegram.
+ *
+ * Telegram не выдает токенов и не держит JWKS: он подписывает строку запроса
+ * ключом, выведенным из токена бота. Проверка целиком локальная и умещается
+ * в `node:crypto` — сети здесь нет вовсе, в отличие от Google.
+ *
+ * Порядок задан протоколом и важен целиком: из строки убирается `hash`,
+ * остальные пары сортируются по ключу и склеиваются через перевод строки.
+ * Ключ считается как HMAC от **имени** «WebAppData» с токеном бота в роли
+ * ключа — стороны здесь переставлены местами относительно привычного, и
+ * перепутать их значит принимать любую подпись.
+ *
+ * Сравнение хешей идет постоянным по времени: обычное сравнение строк выходит
+ * из цикла на первом несовпавшем байте, и по времени ответа подпись
+ * подбирается побайтово.
+ *
+ * Токен бота передается параметром по той же причине, по какой параметром
+ * идут ключи Google и `rng` в бою: настоящий вход берет секрет из окружения,
+ * а тест подставляет свой и проверяет ровно те отказы, ради которых проверка
+ * и написана.
+ */
+export function verifyTelegramInitData(
+  initData: string,
+  botToken: string = authConfig.providers.TELEGRAM.secret,
+  now: number = Date.now(),
+): ProviderProfile | null {
+  if (!initData || !botToken) return null;
+
+  let params: URLSearchParams;
+  try {
+    params = new URLSearchParams(initData);
+  } catch {
+    return null;
+  }
+
+  const hash = params.get('hash') ?? '';
+  if (!hash) return null;
+  params.delete('hash');
+
+  const checkString = [...params.entries()]
+    .map(([key, value]) => `${key}=${value}`)
+    .sort()
+    .join('\n');
+
+  const secretKey = createHmac('sha256', 'WebAppData').update(botToken).digest();
+  const expected = createHmac('sha256', secretKey).update(checkString).digest('hex');
+
+  const given = Buffer.from(hash, 'hex');
+  const mine = Buffer.from(expected, 'hex');
+  if (given.length !== mine.length || !timingSafeEqual(given, mine)) return null;
+
+  // Просроченная подпись — это чужая переписанная ссылка, а не длинная сессия:
+  // Telegram выдает свежий `initData` при каждом открытии.
+  const authDate = Number(params.get('auth_date'));
+  if (!Number.isFinite(authDate) || authDate <= 0) return null;
+  if (now / 1000 - authDate > TELEGRAM_INIT_DATA_TTL_SECONDS) return null;
+
+  let profile: { id?: unknown };
+  try {
+    profile = JSON.parse(params.get('user') ?? '{}') as { id?: unknown };
+  } catch {
+    return null;
+  }
+  const id = typeof profile.id === 'number' && Number.isFinite(profile.id) ? String(profile.id) : '';
+  if (!id) return null;
+
+  /*
+   * Почты Telegram не дает вовсе, а колонка обязательная и уникальная.
+   * Собираем служебный адрес тем же приемом, каким живут боты
+   * (`bot-…@bots.local`): ящика за ним нет и не предполагается, письма туда
+   * не уходят, а роль у него одна — быть уникальным ключом строки.
+   */
+  return { providerId: id, email: `tg-${id}@telegram.local` };
+}
+
 async function verifyProviderToken(
   provider: ExternalProvider,
   idToken: string,
 ): Promise<ProviderProfile | null> {
+  if (provider === 'TELEGRAM') return verifyTelegramInitData(idToken);
   if (provider !== 'GOOGLE') return null;
   return verifyGoogleIdToken(idToken);
 }

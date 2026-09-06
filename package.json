@@ -12,6 +12,7 @@
     "generate": "tsx src/scripts/generateSystem.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy",
     "check:rules": "tsx src/scripts/checkRules.ts",
     "forecast": "tsx src/scripts/forecast.ts",
     "audit": "tsc -p tsconfig.audit.json",

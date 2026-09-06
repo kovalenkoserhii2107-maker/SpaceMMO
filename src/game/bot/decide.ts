@@ -12,6 +12,8 @@
  * изменится, бот узнает об этом сам.
  */
 import {
+  type StorageCapacities,
+  creditOutput,
   BUILDING_TYPES,
   emptyLevels,
   energyEfficiency,
@@ -24,7 +26,6 @@ import {
   STORED_RESOURCES,
   type StoredResource,
   storageCapacities,
-  storageCapacity,
   systemModifiers,
   upgradeCost,
   type BuildingLevels,
@@ -50,9 +51,10 @@ import {
   type ShipType,
 } from '../ships.js';
 import { canJump, fleetCapacity, planFlight, type GalaxyPoint } from '../fleets.js';
-import { storageUpgradeCost } from '../market.js';
+import { hubRent, storageUpgradeCost } from '../market.js';
 import { hopeless } from './directives.js';
 import {
+  cryptoBonus,
   colonySlots,
   economyBonuses,
   missingTechRequirements,
@@ -255,6 +257,15 @@ export interface BotSnapshot {
     /** Уровень склада и цена следующего: расширение платится криптогривной. */
     level: number;
     upgradeCost: number;
+    /**
+     * Во что обойдется следующий уровень в час — навсегда.
+     *
+     * Цена расширения платится один раз, а место на хабе стоит денег каждую
+     * секунду, и растет эта плата вдвое с каждым уровнем. Бот, который смотрит
+     * только на цену расширения, покупает себе вечный расход, не спросив,
+     * из чего его платить.
+     */
+    nextRentPerHour: number;
   };
   /** Уже отправлен ли колониальный рейс: два на одну планету не нужны. */
   colonizing: boolean;
@@ -278,6 +289,8 @@ export type BotIntent =
   | { kind: 'PICKUP'; baseId: string; ore: number; polymers: number; why: string }
   /** Расширить склад на хабе — платится криптогривной. */
   | { kind: 'HUB_UPGRADE'; why: string }
+  /** Доделать стройку немедленно за криптогривну. */
+  | { kind: 'RUSH'; baseId: string; why: string }
   /** Призыв к соседям: против серийного агрессора в одиночку не выстоять. */
   | { kind: 'RALLY'; commanderId: string; nickname: string; raids: number; why: string }
   | {
@@ -328,15 +341,28 @@ function wallet(stock: ResourceAmounts, share: number): ResourceAmounts {
  * Поэтому недостижимая для доли цель оплачивается из общего запаса. Дележ при
  * этом не ломается: такая покупка случается редко и ровно тогда, когда
  * альтернатива — стоять.
+ *
+ * Считать «недостижимость» надо по каждому ресурсу отдельно, и это не мелочь.
+ * Пока сравнение шло с общей вместимостью всех трех складов, спасательный люк
+ * не открывался вовсе: сумма трех складов велика, а запирает всегда один
+ * из них. Живой стенд встал на этом целиком — все семь ботов замерли и
+ * не строили четыре часа подряд, причем у каждого ресурсов на руках хватало
+ * с избытком. Крамару доля разрешала тратить, только накопив 63 149 руды,
+ * а рудный склад держит 59 800: цель была недостижима физически, и никакое
+ * терпение не помогало.
+ *
+ * Дыра открылась, когда склады разделили по ресурсам, а проверку оставили
+ * общей. Полимерная переоценка ее только доломала: цены в полимерах выросли
+ * в 1.9 раза и перевалили за потолок сразу у всех.
  */
 function canAfford(
   stock: ResourceAmounts,
-  capacity: number,
+  capacity: StorageCapacities,
   share: number,
   cost: ResourceAmounts,
 ): boolean {
   if (hasEnoughResources(wallet(stock, share), cost)) return true;
-  const beyondShare = costUnits(cost) > capacity * share;
+  const beyondShare = STORED_RESOURCES.some((resource) => cost[resource] > capacity[resource] * share);
   return beyondShare && hasEnoughResources(stock, cost);
 }
 
@@ -726,7 +752,7 @@ function laggingShip(
   levels: BuildingLevels,
   techs: TechLevels,
   stock: ResourceAmounts,
-  budget: { capacity: number; share: number; reserved: Set<StoredResource> },
+  budget: { capacity: StorageCapacities; share: number; reserved: Set<StoredResource> },
 ): { ship: ShipType; count: number } | null {
   const purse = wallet(stock, budget.share);
   const totalValue = spentOnFleet(ships);
@@ -790,7 +816,7 @@ function laggingDefense(
   levels: BuildingLevels,
   techs: TechLevels,
   stock: ResourceAmounts,
-  budget: { capacity: number; share: number; reserved: Set<StoredResource> },
+  budget: { capacity: StorageCapacities; share: number; reserved: Set<StoredResource> },
 ): { defense: DefenseType; count: number } | null {
   const purse = wallet(stock, budget.share);
   const totalValue = spentOnDefense(defenses);
@@ -1133,7 +1159,7 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
 
   for (const base of snapshot.bases) {
     const stock = base.resources;
-    const capacity = storageCapacity(base.levels);
+    const capacity = storageCapacities(base.levels);
 
     /*
      * Порог, за которым копить уже бессмысленно: хотя бы один склад у потолка,
@@ -1722,6 +1748,24 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
   }
 
   /*
+   * Спешка за криптогривну: единственное, на что бот тратит деньги по своей
+   * воле, и потому единственный сток, который зависит от его решения.
+   *
+   * Условие не про жадность, а про смысл: спешить стоит, когда деньги
+   * все равно лежат без дела. Мерой служит собственный часовой доход
+   * с фермы — если стройку можно доделать дешевле, чем ферма приносит за час,
+   * а на счету при этом больше суток такого дохода, то держать эти деньги
+   * незачем: время дороже.
+   *
+   * Без этого правила сток остался бы нулевым: боты копили миллионы
+   * и не тратили их ни на что, кроме редкого расширения склада.
+   */
+  const hourlyCredits = creditOutput(capital.levels, cryptoBonus(snapshot.techs)) * 3600;
+  if (capital.building && hourlyCredits > 0 && snapshot.credits > hourlyCredits * 24) {
+    intents.push({ kind: 'RUSH', baseId: capital.id, why: 'деньги лежат без дела, а стройка идет' });
+  }
+
+  /*
    * Склад хаба тесен — расширяем, благо теперь это вопрос денег.
    *
    * Без этого бот запирался намертво: продать некому, значит место
@@ -1747,12 +1791,25 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
     const demand = snapshot.market.find((ref) => ref.resource === resource)?.demand ?? 0;
     return onHub > 0 && demand > 0;
   });
-  if (
-    hubCapacity > 0 &&
-    hubTotal >= hubCapacity * 0.8 &&
-    liquid &&
-    snapshot.credits >= snapshot.hubStorage.upgradeCost
-  ) {
+  /*
+   * Расширение оплачивается дважды: разово и потом всегда.
+   *
+   * Место на хабе стоит криптогривны каждую секунду, и плата удваивается
+   * с каждым уровнем — на десятом это ₴87 тысяч в час. Бот, который смотрит
+   * только на цену расширения, покупает себе вечный расход, не спросив,
+   * из чего его платить.
+   *
+   * Проверка простая: денег должно хватать и на само расширение, и на сутки
+   * его содержания. Сутки — потому что это горизонт, на котором бот сам себя
+   * видит: за это время он успевает и продать, и построить, и пересмотреть
+   * план. Привязывать проверку к отдаче фермы нельзя — у торговца ее может
+   * не быть вовсе, а живет он с продаж, и тогда правило запретило бы ему
+   * расширяться навсегда.
+   */
+  const yearOfRent = snapshot.hubStorage.nextRentPerHour * 24;
+  const affordableRent = snapshot.credits >= snapshot.hubStorage.upgradeCost + yearOfRent;
+
+  if (hubCapacity > 0 && hubTotal >= hubCapacity * 0.8 && liquid && affordableRent) {
     intents.push({ kind: 'HUB_UPGRADE', why: 'склад на хабе забит ходовым товаром' });
   }
 
@@ -2100,7 +2157,7 @@ export function emptyBotSnapshot(character: BotCharacter): BotSnapshot {
     fleetPeak: 0,
     warsAgainstMe: 0,
     orderBook: [],
-    hubStorage: { ore: 0, polymers: 0, free: 0, level: 1, upgradeCost: storageUpgradeCost(2) },
+    hubStorage: { ore: 0, polymers: 0, free: 0, level: 1, upgradeCost: storageUpgradeCost(2), nextRentPerHour: hubRent(2) * 3600 },
     colonizing: false,
   };
 }
