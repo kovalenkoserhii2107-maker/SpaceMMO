@@ -177,6 +177,15 @@
     mailTo: $('mail-to'),
     mailSubject: $('mail-subject'),
     mailBody: $('mail-body'),
+    installGroup: $('install-group'),
+    installNav: $('install-nav'),
+    installCard: $('install-card'),
+    installTitle: $('install-title'),
+    installText: $('install-text'),
+    installSteps: $('install-steps'),
+    installGo: $('install-go'),
+    installLater: $('install-later'),
+    installClose: $('install-close'),
     mailCompose: $('mail-compose'),
     mailComposeToggle: $('mail-compose-toggle'),
     mailSend: $('mail-send'),
@@ -352,6 +361,10 @@
 
   function showScreen(name) {
     for (const [key, node] of Object.entries(screens)) node.hidden = key !== name;
+    if (name === 'dashboard') {
+      syncInstallOffer();
+      offerInstallOnce();
+    }
   }
 
   function showAuthMessage(node, text, ok) {
@@ -722,6 +735,178 @@
     el.connStatus.textContent = online ? 'онлайн' : 'офлайн';
     el.connStatus.className = `status ${online ? 'online' : 'offline'}`;
   }
+
+  /*
+   * Регистрация service worker'а. Он ничего не кеширует и нужен ровно затем,
+   * чтобы Chrome счел страницу устанавливаемой и выдал `beforeinstallprompt`.
+   * Не зарегистрировался — игра работает как работала, пропадает только
+   * предложение установки одной кнопкой.
+   */
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js').catch(() => {
+        /* молча: без него теряется удобство, а не работоспособность */
+      });
+    });
+  }
+
+  /* ---------- Установка на домашний экран ---------- */
+
+  /*
+   * Две платформы решают это по-разному, и обойтись одной веткой нельзя.
+   *
+   * Chrome отдает событие `beforeinstallprompt`, которое можно придержать
+   * и выстрелить им по кнопке — установка происходит в один клик. Safari
+   * такого события не имеет вовсе и никогда не будет: на iPhone установка
+   * делается руками через «Поделиться», и единственное, чем мы можем помочь, —
+   * показать, куда нажимать.
+   *
+   * Отказ не закрывает дорогу насовсем: карточка больше не всплывает, но
+   * пункт меню остается. Уже установленное приложение не предлагает
+   * установиться повторно — там ни карточки, ни пункта.
+   */
+  const install = { prompt: null, shown: false };
+
+  const INSTALL_DISMISSED = 'install-dismissed';
+
+  function installed() {
+    return (
+      window.matchMedia('(display-mode: standalone)').matches ||
+      window.navigator.standalone === true
+    );
+  }
+
+  /*
+   * iPad с iPadOS 13+ представляется MacIntel, и по одному userAgent его
+   * не отличить от настольного Safari — выдает только наличие касаний.
+   */
+  function isIOS() {
+    return (
+      /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+    );
+  }
+
+  /* Хранилище может быть недоступно (приватный режим) — это не повод падать. */
+  function installDismissed() {
+    try {
+      return localStorage.getItem(INSTALL_DISMISSED) === '1';
+    } catch {
+      return false;
+    }
+  }
+
+  function rememberInstallDismissed() {
+    try {
+      localStorage.setItem(INSTALL_DISMISSED, '1');
+    } catch {
+      /* нечего делать: в следующий раз просто спросим снова */
+    }
+  }
+
+  /** Наполнение карточки зависит от того, чем платформа может помочь. */
+  function fillInstallCard() {
+    const steps = [];
+    let text = '';
+
+    if (install.prompt) {
+      text = 'Игра встанет на рабочий стол своим значком и будет открываться на весь экран, без адресной строки.';
+      el.installGo.hidden = false;
+    } else if (isIOS()) {
+      text = 'Safari ставит приложения вручную. Это три касания:';
+      steps.push(
+        'Нажмите «Поделиться» — квадрат со стрелкой вверх, внизу экрана.',
+        'Пролистайте список и выберите «На экран «Домой»».',
+        'Нажмите «Добавить» в правом верхнем углу.',
+      );
+      el.installGo.hidden = true;
+    } else {
+      // Chrome не дал события: страница уже установлена в другом профиле,
+      // браузер другой или условия установки не выполнены. Остается меню.
+      text = 'Откройте меню браузера и выберите «Установить приложение» или «Добавить на главный экран».';
+      el.installGo.hidden = true;
+    }
+
+    el.installText.textContent = text;
+    el.installSteps.innerHTML = '';
+    for (const step of steps) {
+      const li = document.createElement('li');
+      li.textContent = step;
+      el.installSteps.appendChild(li);
+    }
+    el.installSteps.hidden = steps.length === 0;
+  }
+
+  function showInstallCard() {
+    if (installed()) return;
+    fillInstallCard();
+    el.installCard.hidden = false;
+  }
+
+  function hideInstallCard() {
+    el.installCard.hidden = true;
+  }
+
+  /** Пункт меню есть всегда, пока игра не установлена. */
+  function syncInstallOffer() {
+    const hide = installed();
+    el.installGroup.hidden = hide;
+    if (hide) hideInstallCard();
+  }
+
+  /**
+   * Первое предложение — с задержкой и только на рабочем экране.
+   *
+   * На экране логина оно ни к чему: игрок еще не решил, нужна ли ему игра.
+   * Пауза дает Chrome время прислать `beforeinstallprompt`, иначе карточка
+   * успела бы показать инструкцию для меню там, где возможна кнопка.
+   */
+  function offerInstallOnce() {
+    if (install.shown || installed() || installDismissed()) return;
+    install.shown = true;
+    setTimeout(() => {
+      if (!installed() && !installDismissed()) showInstallCard();
+    }, 2500);
+  }
+
+  window.addEventListener('beforeinstallprompt', (event) => {
+    // Свое предложение показывается в свой момент, поэтому браузерное гасим.
+    event.preventDefault();
+    install.prompt = event;
+    syncInstallOffer();
+    if (!el.installCard.hidden) fillInstallCard();
+  });
+
+  window.addEventListener('appinstalled', () => {
+    install.prompt = null;
+    hideInstallCard();
+    syncInstallOffer();
+  });
+
+  el.installNav.addEventListener('click', () => {
+    closeNav();
+    showInstallCard();
+  });
+
+  el.installGo.addEventListener('click', async () => {
+    if (!install.prompt) return;
+    hideInstallCard();
+    install.prompt.prompt();
+    try {
+      await install.prompt.userChoice;
+    } finally {
+      // Событие одноразовое: второй раз тем же объектом не выстрелить.
+      install.prompt = null;
+      syncInstallOffer();
+    }
+  });
+
+  // Отказ прячет карточку навсегда, крестик — только до следующего захода.
+  el.installLater.addEventListener('click', () => {
+    rememberInstallDismissed();
+    hideInstallCard();
+  });
+  el.installClose.addEventListener('click', hideInstallCard);
 
   /* ---------- Вкладки ---------- */
 

@@ -79,6 +79,11 @@
     </symbol>
 
     <!-- Навигация: штриховые значки разделов -->
+    <symbol id="ico-nav-install" viewBox="0 0 24 24">
+      <rect x="6.2" y="2.6" width="11.6" height="18.8" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.7"/>
+      <path d="M12 7.4v6.6M9.4 11.6 12 14.2l2.6-2.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M10.4 17.9h3.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+    </symbol>
     <symbol id="ico-nav-overview" viewBox="0 0 24 24">
       <rect x="3.2" y="3.2" width="7.2" height="9.4" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.7"/>
       <rect x="13.6" y="3.2" width="7.2" height="5.6" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.7"/>
@@ -284,6 +289,25 @@
       <!-- Затемнение под выехавшим меню: на телефоне тап мимо меню его закрывает. -->
       <div class="nav-scrim" id="nav-scrim" hidden></div>
 
+      <!--
+        Предложение поставить игру на домашний экран. Показывается один раз
+        при первом заходе и дальше живет пунктом меню: отказ не должен
+        закрывать дорогу насовсем, а повторное напоминание раздражает.
+      -->
+      <div class="install-card" id="install-card" hidden>
+        <div class="install-head">
+          <svg class="ico" aria-hidden="true"><use href="#ico-nav-install"/></svg>
+          <b id="install-title">Установить игру</b>
+          <button type="button" class="install-close" id="install-close" aria-label="Закрыть">×</button>
+        </div>
+        <p class="install-text" id="install-text"></p>
+        <ol class="install-steps" id="install-steps" hidden></ol>
+        <div class="install-actions">
+          <button type="button" class="primary" id="install-go" hidden>Установить</button>
+          <button type="button" class="ghost" id="install-later">Не сейчас</button>
+        </div>
+      </div>
+
       <aside class="sidebar" id="sidebar">
         <nav class="nav" id="tabs">
           <div class="nav-group">
@@ -321,6 +345,11 @@
             <h2 class="nav-title">Инструменты</h2>
             <button type="button" class="tab" data-tab="simulator"><svg class="ico" aria-hidden="true"><use href="#ico-nav-simulator"/></svg><span>Боевой симулятор</span></button>
             <button type="button" class="tab" data-tab="mail"><svg class="ico" aria-hidden="true"><use href="#ico-mail"/></svg><span>Центр связи</span></button>
+          </div>
+
+          <div class="nav-group" id="install-group" hidden>
+            <h2 class="nav-title">Приложение</h2>
+            <button type="button" class="tab nav-action" id="install-nav"><svg class="ico" aria-hidden="true"><use href="#ico-nav-install"/></svg><span>Установить игру</span></button>
           </div>
 
           <div class="nav-group" id="admin-group" hidden>
