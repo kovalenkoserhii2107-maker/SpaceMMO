@@ -80,7 +80,6 @@
     garrisonDefense: $('garrison-defense'),
     garrisonDefenseTotal: $('garrison-defense-total'),
     storage: $('storage'),
-    storageText: $('storage-text'),
     storageRows: $('storage-rows'),
     storageNote: $('storage-note'),
     tabs: $('tabs'),
@@ -1172,7 +1171,7 @@
     renderColonyArt(base);
     renderRichness(base);
     renderGarrison(base);
-    renderStorage(base.storage);
+    renderStorage(base);
     renderOverview(base);
 
     renderJobBanner(el.buildJob, base.buildJob && {
@@ -1321,7 +1320,21 @@
    * общий, и одна полоса отвечала за все три ресурса разом — по ней нельзя было
    * понять, какой именно уперся в потолок. Теперь полоса на каждый.
    */
-  function renderStorage(storage) {
+  /**
+   * Три склада: сколько лежит, с какой скоростью прибывает и что уцелеет при набеге.
+   *
+   * Общей суммы по трем складам здесь нет намеренно. Лимиты поресурсные, и
+   * «занято 38 030 из 43 311» не отвечает ни на один вопрос: руда может стоять
+   * на полном складе с остановленной добычей, пока итог бодро показывает
+   * свободное место.
+   *
+   * Полоса разбита на две части, потому что вопрос к складу не один. Первая —
+   * несгораемый запас: его прячет само хранилище, и он остается при любом
+   * исходе боя. Вторая — то, что вывезет победитель. Одной полосой это
+   * не показать, а числом под ней видно, сколько именно бункеруется.
+   */
+  function renderStorage(base) {
+    const storage = base.storage;
     if (!storage) return;
 
     if (!el.storageRows.firstChild) {
@@ -1329,24 +1342,42 @@
         (row) =>
           `<div class="storage-row" data-res="${row.key}">` +
           `<span class="storage-name">${icon(row.key, 'sm')} ${row.label}</span>` +
-          `<b class="storage-amount"></b>` +
-          `<div class="storage-bar"><i></i></div>` +
-          `</div>`,
+          '<b class="storage-amount"></b>' +
+          '<span class="storage-rate"></span>' +
+          '<div class="storage-bar"><i class="bar-safe"></i><i class="bar-risk"></i></div>' +
+          '<small class="storage-split"></small>' +
+          '</div>',
       ).join('');
     }
 
     let full = false;
     let near = false;
-    const risky = [];
 
     for (const row of STORAGE_ROWS) {
       const one = storage[row.key];
       if (!one) continue;
 
       const node = el.storageRows.querySelector(`[data-res="${row.key}"]`);
-      const fill = Math.max(0, Math.min(1, one.fill));
-      node.querySelector('.storage-bar i').style.width = `${(fill * 100).toFixed(1)}%`;
+      const capacity = one.capacity || 1;
+      // Несгораемым может быть только то, что действительно лежит: на пустом
+      // складе прятать нечего, хотя доля вместимости у него та же.
+      const safe = Math.min(one.used, one.protectedAmount);
+      const risk = Math.max(0, one.used - safe);
+
+      node.querySelector('.bar-safe').style.width = `${((safe / capacity) * 100).toFixed(1)}%`;
+      node.querySelector('.bar-risk').style.width = `${((risk / capacity) * 100).toFixed(1)}%`;
       node.querySelector('.storage-amount').textContent = `${fmt(one.used)} / ${fmt(one.capacity)}`;
+
+      // На полном складе шахта стоит: показывать ее проектную скорость значит
+      // спорить с полосой, которая уперлась в край.
+      const rate = node.querySelector('.storage-rate');
+      rate.textContent = one.full ? 'добыча стоит' : fmtRate(base.productionPerSecond[row.key]);
+      rate.classList.toggle('stopped', Boolean(one.full));
+
+      node.querySelector('.storage-split').textContent =
+        risk > 0
+          ? `в бункере ${fmt(safe)} · под грабеж ${fmt(risk)}`
+          : `в бункере все ${fmt(safe)}`;
 
       const rowNear = !one.full && one.fill >= 0.85;
       node.classList.toggle('full', one.full);
@@ -1354,10 +1385,9 @@
 
       full = full || one.full;
       near = near || rowNear;
-      if (one.vulnerable > 0) risky.push(`${row.label.toLowerCase()} ${fmt(one.vulnerable)}`);
 
-      // Та же метка уходит на строку ресурсов в шапке — но теперь адресно,
-      // на тот ресурс, у которого кончилось место, а не на всю строку разом.
+      // Та же метка уходит на строку ресурсов в шапке — адресно, на тот ресурс,
+      // у которого кончилось место, а не на всю строку разом.
       const chip = el[`res${row.key[0].toUpperCase()}${row.key.slice(1)}`];
       const cell = chip ? chip.closest('.res') : null;
       if (cell) {
@@ -1366,175 +1396,16 @@
       }
     }
 
-    el.storageText.textContent = `Занято: ${fmt(storage.used)} / ${fmt(storage.capacity)}`;
     el.storage.classList.toggle('full', full);
     el.storage.classList.toggle('near', near);
 
-    // Уязвимый излишек появляется только за порогом 90% вместимости,
-    // поэтому на полупустых складах про грабеж молчим — там терять нечего.
-    const risk = risky.length ? ` Под грабеж попадает: ${risky.join(', ')}.` : '';
+    // Про грабеж теперь говорит каждая строка своими числами, поэтому общая
+    // сноска осталась только на то, чего в строках нет, — на остановку добычи.
     const filled = STORAGE_ROWS.filter((row) => storage[row.key] && storage[row.key].full)
       .map((row) => row.label.toLowerCase());
-
     el.storageNote.textContent = filled.length
-      ? `Склад заполнен: ${filled.join(', ')}. Добыча ${filled.length > 1 ? 'этих ресурсов остановлена' : 'этого ресурса остановлена'}.${risk}`
-      : `Место есть во всех трех хранилищах.${risk}`;
-  }
-
-  /**
-   * Центр управления: очереди и взятые уровни.
-   *
-   * Склад, недра и гарнизон показывает паспорт выше, поэтому здесь их нет —
-   * список колоний повторял те же полосы теми же числами и отвечал на уже
-   * отвеченный вопрос. Осталось то, чего в паспорте нет вовсе: что занято
-   * работой прямо сейчас и до каких уровней доросли постройки с наукой.
-   *
-   * Скелеты строятся один раз на состав, значения обновляются на месте:
-   * таймеры идут каждую секунду, а состав постройки и технологии не меняют.
-   */
-  let levelTableSignature = '';
-
-  function renderOverview(base) {
-    renderEnergyStats(base);
-    renderQueueSummary(base);
-
-    const signature =
-      base.baseId +
-      '#' + base.buildings.map((item) => item.type).join(',') +
-      '#' + base.technologies.map((item) => item.tech).join(',');
-    if (signature !== levelTableSignature) {
-      levelTableSignature = signature;
-      fillLevelTable(el.levelBuildings, base.buildings, (item) => item.type);
-      fillLevelTable(el.levelTechs, base.technologies, (item) => item.tech);
-    }
-
-    updateLevelTable(el.levelBuildings, base.buildings, (item) => item.type);
-    updateLevelTable(el.levelTechs, base.technologies, (item) => item.tech);
-  }
-
-  /**
-   * Энергия развернуто: выработка, потребление, остаток и КПД шахт.
-   *
-   * В шапке под нее одна ячейка, и там показан расход — по нему видно, когда
-   * пора ставить станцию. Но «сколько всего дают» и «сколько еще свободно»
-   * из одного числа не достать, а именно они решают, потянет ли база
-   * следующую шахту.
-   */
-  function renderEnergyStats(base) {
-    if (!el.energyStats) return;
-    const energy = base.energy || { output: 0, usage: 0, efficiency: 1 };
-    const free = energy.output - energy.usage;
-    const rows = [
-      ['Выработка', fmt(Math.round(energy.output)), ''],
-      ['Потребление', fmt(Math.round(energy.usage)), ''],
-      ['Свободно', fmt(Math.round(free)), free < 0 ? 'lack' : ''],
-      ['Мощность шахт', Math.round(energy.efficiency * 100) + '%', energy.efficiency < 1 ? 'lack' : ''],
-    ];
-
-    if (!el.energyStats.firstChild) {
-      el.energyStats.innerHTML = rows
-        .map((row) => '<div class="level-row" data-key="' + row[0] + '">' +
-          '<span class="level-name">' + row[0] + '</span><b class="level-value"></b></div>')
-        .join('');
-    }
-    for (const [label, value, flag] of rows) {
-      const node = el.energyStats.querySelector('[data-key="' + label + '"]');
-      if (!node) continue;
-      const cell = node.querySelector('.level-value');
-      cell.textContent = value;
-      cell.classList.toggle('lack', flag === 'lack');
-    }
-  }
-
-  function fillLevelTable(node, items, keyOf) {
-    if (!node) return;
-    node.innerHTML = '';
-    for (const item of items) {
-      const row = document.createElement('div');
-      row.className = 'level-row';
-      row.dataset.key = keyOf(item);
-      row.innerHTML = '<span class="level-name"></span><b class="level-value"></b>';
-      row.querySelector('.level-name').textContent = item.label;
-      node.appendChild(row);
-    }
-  }
-
-  function updateLevelTable(node, items, keyOf) {
-    if (!node) return;
-    for (const item of items) {
-      const row = node.querySelector('[data-key="' + keyOf(item) + '"]');
-      if (!row) continue;
-      row.querySelector('.level-value').textContent = item.level > 0 ? String(item.level) : '—';
-      // Не построенное показывается приглушенно, а не прячется: пустая строка
-      // в списке и есть ответ на вопрос «что я еще не трогал».
-      row.classList.toggle('empty', item.level === 0);
-    }
-  }
-
-  /**
-   * Четыре очереди одной сводкой.
-   *
-   * Порознь они лежат по своим разделам, и чтобы понять, простаивает ли база,
-   * приходилось обойти четыре вкладки. Свободная очередь — это не отсутствие
-   * новости, а сама новость: она означает, что мощности стоят зря.
-   */
-  function renderQueueSummary(base) {
-    if (!el.queueSummary) return;
-
-    const research = state.research && state.research.active;
-    const ship = base.shipQueue && base.shipQueue[0];
-    const defense = base.defenseQueue && base.defenseQueue[0];
-
-    const unitLeft = (job) =>
-      job.nextUnitInSeconds + Math.max(0, job.remaining - 1) * job.unitSeconds;
-
-    const rows = [
-      {
-        label: 'Стройка',
-        text: base.buildJob
-          ? base.buildJob.label + ' → ур. ' + base.buildJob.targetLevel
-          : null,
-        left: base.buildJob ? base.buildJob.remainingSeconds : 0,
-      },
-      {
-        label: 'Исследование',
-        text: research ? research.label + ' → ур. ' + research.targetLevel : null,
-        left: research ? research.remainingSeconds : 0,
-      },
-      {
-        label: 'Верфь',
-        text: ship ? ship.label + ' · ' + ship.remaining + ' шт.' : null,
-        left: ship ? unitLeft(ship) : 0,
-        queued: base.shipQueue ? base.shipQueue.length - 1 : 0,
-      },
-      {
-        label: 'Оборона',
-        text: defense ? defense.label + ' · ' + defense.remaining + ' шт.' : null,
-        left: defense ? unitLeft(defense) : 0,
-        queued: base.defenseQueue ? base.defenseQueue.length - 1 : 0,
-      },
-    ];
-
-    if (!el.queueSummary.firstChild) {
-      el.queueSummary.innerHTML = rows
-        .map(
-          (row) =>
-            '<div class="queue-line" data-queue="' + row.label + '">' +
-            '<span class="queue-label">' + row.label + '</span>' +
-            '<span class="queue-what"></span>' +
-            '<b class="queue-left"></b></div>',
-        )
-        .join('');
-    }
-
-    for (const row of rows) {
-      const node = el.queueSummary.querySelector('[data-queue="' + row.label + '"]');
-      if (!node) continue;
-      const tail = row.queued > 0 ? ' · в очереди еще ' + row.queued : '';
-      node.querySelector('.queue-what').textContent = row.text ? row.text + tail : 'свободно';
-      node.querySelector('.queue-left').textContent = row.text ? fmtTime(row.left) : '';
-      node.classList.toggle('idle', !row.text);
-    }
+      ? `Склад заполнен: ${filled.join(', ')}. Добыча ${filled.length > 1 ? 'этих ресурсов остановлена' : 'этого ресурса остановлена'}.`
+      : 'Место есть во всех трех хранилищах.';
   }
 
   function renderJobBanner(node, job) {

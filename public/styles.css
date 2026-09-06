@@ -575,17 +575,42 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   transition: width 0.4s ease;
 }
 /*
- * Три строки: иконка с названием, числа, полоса. Полоса тянется на остаток
- * ширины, числа выровнены колонкой — так три склада читаются сравнением,
- * а не тремя отдельными блоками.
+ * Склад — три яруса: название с запасом, полоса, разбор под ней.
+ *
+ * В одну строку это не укладывается: полосе нужна вся ширина, чтобы на ней
+ * читались две части — несгораемая и та, что вывезет победитель, — а под
+ * полосой стоят числа этих частей и текущая добыча. Одна строка на ресурс
+ * вмещала только «сколько лежит», то есть меньше половины вопросов к складу.
  */
-.storage-rows { display: grid; gap: 6px; }
+.storage-rows { display: grid; gap: 12px; }
 .storage-row {
   display: grid;
-  grid-template-columns: minmax(88px, auto) minmax(0, auto) 1fr;
-  align-items: center;
-  gap: 10px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "name  rate  amount"
+    "bar   bar   bar"
+    "split split split";
+  align-items: baseline;
+  gap: 4px 10px;
 }
+.storage-name { grid-area: name; }
+.storage-amount { grid-area: amount; }
+.storage-row .storage-bar { grid-area: bar; }
+.storage-split { grid-area: split; font-size: 11px; color: var(--muted); }
+/*
+ * Добыча стоит в верхней строке, рядом с названием, а не под полосой:
+ * «добыча стоит» вместе с разбором бункера в одну строку не помещалось,
+ * и разбор переносился, разрывая ряд. Наверху места хватает — название
+ * короткое, а числа прижаты к правому краю.
+ */
+.storage-rate {
+  grid-area: rate;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.storage-rate.stopped { color: var(--err); }
 .storage-name {
   display: flex;
   align-items: center;
@@ -601,17 +626,49 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 }
 .storage-row .storage-bar { margin: 0; }
 
-/* Метки ставятся на строку своего ресурса, а не на весь блок сразу. */
-.storage-row.near .storage-bar i { background: linear-gradient(90deg, var(--warn), #fb923c); }
-.storage-row.full .storage-bar i { background: linear-gradient(90deg, var(--err), #fb7185); }
+/*
+ * Полоса из двух отрезков. Цвета закреплены за смыслом, а не за состоянием
+ * склада: холодный — то, что хранилище прячет при поражении, красный — то,
+ * что победитель вывезет. Красить их по заполненности значило бы потерять
+ * ровно то различие, ради которого полоса и разбита.
+ */
+.storage-bar { display: flex; }
+.storage-bar i { border-radius: 0; }
+.storage-bar .bar-safe { background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+.storage-bar .bar-risk { background: rgba(248, 113, 113, 0.55); }
+
 .storage-row.full .storage-amount { color: var(--err); }
 .storage-row.near .storage-amount { color: var(--warn); }
 
-@media (max-width: 520px) {
-  /* Узкий экран: числа уезжают под название, полоса занимает всю ширину. */
-  .storage-row { grid-template-columns: 1fr auto; }
-  .storage-row .storage-bar { grid-column: 1 / -1; }
+/* ---------- Раскрывающийся блок паспорта ---------- */
+
+/*
+ * Недра — справка о планете: их смотрят один раз при заселении, а место
+ * они занимали постоянно. Свернуто по умолчанию, разворачивается кликом.
+ * `details` вместо своей механики: она работает без скрипта, с клавиатуры
+ * и с экранным диктором.
+ */
+.colony-fold > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
+.colony-fold > summary::-webkit-details-marker { display: none; }
+.colony-fold > summary::after {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-right: 1.6px solid currentColor;
+  border-bottom: 1.6px solid currentColor;
+  transform: rotate(45deg) translate(-1px, -1px);
+  transition: transform 0.2s ease;
+  opacity: 0.7;
+}
+.colony-fold[open] > summary::after { transform: rotate(-135deg) translate(-2px, -2px); }
+.colony-fold > summary:hover { color: var(--accent); }
+.colony-fold[open] > .richness { margin-top: 12px; }
 
 .storage-note { margin: 0; font-size: 12px; color: var(--muted); }
 .storage.near .storage-note { color: var(--warn); }
