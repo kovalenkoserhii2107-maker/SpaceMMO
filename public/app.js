@@ -1454,37 +1454,57 @@
   }
 
   /**
-   * Энергия развернуто: выработка, потребление, остаток и КПД шахт.
+   * Энергия: полоса баланса и кольцо мощности шахт.
    *
-   * В шапке под нее одна ячейка, и там показан расход — по нему видно, когда
-   * пора ставить станцию. Но «сколько всего дают» и «сколько еще свободно»
-   * из одного числа не достать, а именно они решают, потянет ли база
-   * следующую шахту.
+   * Четырьмя строками чисел это уже показывали, и числа были верные — только
+   * читать их приходилось по очереди и складывать в голове. Вопросов к энергии
+   * ровно два: хватает ли ее и не просела ли из-за нехватки добыча. Полоса
+   * отвечает на первый одним взглядом, кольцо на второй.
+   *
+   * Выработка и потребление остались числами под полосой: полоса показывает
+   * отношение, а планировать следующую шахту приходится в абсолютных величинах.
+   *
+   * Скелет строится один раз, значения обновляются на месте — блок
+   * перерисовывается каждую секунду вместе со всем снимком.
    */
   function renderEnergyStats(base) {
     if (!el.energyStats) return;
     const energy = base.energy || { output: 0, usage: 0, efficiency: 1 };
-    const free = energy.output - energy.usage;
-    const rows = [
-      ['Выработка', fmt(Math.round(energy.output)), ''],
-      ['Потребление', fmt(Math.round(energy.usage)), ''],
-      ['Свободно', fmt(Math.round(free)), free < 0 ? 'lack' : ''],
-      ['Мощность шахт', Math.round(energy.efficiency * 100) + '%', energy.efficiency < 1 ? 'lack' : ''],
-    ];
+    const free = Math.round(energy.output - energy.usage);
+    const power = Math.round(energy.efficiency * 100);
+    const lack = free < 0;
 
     if (!el.energyStats.firstChild) {
-      el.energyStats.innerHTML = rows
-        .map((row) => '<div class="level-row" data-key="' + row[0] + '">' +
-          '<span class="level-name">' + row[0] + '</span><b class="level-value"></b></div>')
-        .join('');
+      el.energyStats.innerHTML =
+        '<div class="nrg-top"><span class="nrg-label">Баланс энергии</span>' +
+        '<b class="nrg-pill"></b></div>' +
+        '<div class="nrg-bar"><i></i></div>' +
+        '<div class="nrg-legend"><span>Потребление <b class="nrg-usage"></b></span>' +
+        '<span>Выработка <b class="nrg-output"></b></span></div>' +
+        '<div class="nrg-mine"><div class="nrg-ring"><span></span></div>' +
+        '<div><div class="nrg-mine-title">Мощность шахт</div>' +
+        '<div class="nrg-mine-note"></div></div></div>';
     }
-    for (const [label, value, flag] of rows) {
-      const node = el.energyStats.querySelector('[data-key="' + label + '"]');
-      if (!node) continue;
-      const cell = node.querySelector('.level-value');
-      cell.textContent = value;
-      cell.classList.toggle('lack', flag === 'lack');
-    }
+
+    // Доля занятой мощности. При нулевой выработке любая нагрузка — это сто
+    // процентов дефицита, иначе полоса осталась бы пустой на мертвой базе.
+    const used = energy.output > 0
+      ? Math.min(100, Math.round((energy.usage / energy.output) * 100))
+      : energy.usage > 0 ? 100 : 0;
+
+    el.energyStats.classList.toggle('is-lack', lack);
+    el.energyStats.querySelector('.nrg-pill').textContent =
+      lack ? `${free} дефицит` : `+${free} свободно`;
+    el.energyStats.querySelector('.nrg-bar i').style.width = `${used}%`;
+    el.energyStats.querySelector('.nrg-usage').textContent = fmt(Math.round(energy.usage));
+    el.energyStats.querySelector('.nrg-output').textContent = fmt(Math.round(energy.output));
+
+    const ring = el.energyStats.querySelector('.nrg-ring');
+    ring.style.setProperty('--p', String(power));
+    ring.classList.toggle('down', power < 100);
+    ring.querySelector('span').textContent = `${power}%`;
+    el.energyStats.querySelector('.nrg-mine-note').textContent =
+      power < 100 ? 'Добыча снижена: энергии не хватает' : 'Добыча идет на полную';
   }
 
   function fillLevelTable(node, items, keyOf) {
@@ -6519,7 +6539,10 @@
         const goto = document.createElement('button');
         goto.type = 'button';
         goto.className = 'ghost';
-        goto.textContent = 'К планете';
+        // В тревоге о чужом зонде координаты ведут не к своей планете,
+        // а к дому нарушителя — и подпись должна говорить об этом прямо,
+        // иначе кнопка выглядит предложением слетать к самому себе.
+        goto.textContent = message.payload && message.payload.alert ? 'К нарушителю' : 'К планете';
         goto.addEventListener('click', () => void openPlanetFromMail(planetTarget));
         actions.appendChild(goto);
       }

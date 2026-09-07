@@ -1482,7 +1482,15 @@ class GameLoop {
       if (defenderId && outcome.alert !== 'NONE') {
         const home = await prisma.base.findFirst({
           where: { commanderId: fleet.commanderId },
-          select: { planet: { select: { name: true, system: { select: { name: true } } } } },
+          select: {
+            planet: {
+              select: {
+                name: true,
+                position: true,
+                system: { select: { name: true, galaxyX: true, galaxyY: true } },
+              },
+            },
+          },
         });
         await this.notify(
           buildIntrusionMail({
@@ -1495,6 +1503,13 @@ class GameLoop {
               select: { nickname: true },
             }))?.nickname ?? 'неизвестный' : 'неизвестный',
             spyHome: home ? `${home.planet.name} (${home.planet.system.name})` : null,
+            spyHomeLocation: home
+              ? {
+                  galaxyX: home.planet.system.galaxyX,
+                  galaxyY: home.planet.system.galaxyY,
+                  position: home.planet.position,
+                }
+              : null,
             droneLost: outcome.droneLost,
           }),
         );

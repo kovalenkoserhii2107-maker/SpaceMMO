@@ -682,6 +682,8 @@ export interface IntrusionMailInput {
   detail: EspionageDetail;
   spyName: string;
   spyHome: string | null;
+  /** Куда лететь к нарушителю. Уходит в письмо только со ступени ORIGIN. */
+  spyHomeLocation: { galaxyX: number; galaxyY: number; position: number } | null;
   droneLost: boolean;
 }
 
@@ -703,6 +705,7 @@ export function buildIntrusionMail(input: IntrusionMailInput): OutgoingMessage[]
               : 'Он сосчитал вымпелы на орбите, не разобрав классов.';
 
   const shot = droneLost ? ' Дрон сбит.' : '';
+  const knowsOrigin = alert === 'ORIGIN' || alert === 'ORIGIN_AND_LEAK';
 
   const body =
     alert === 'PRESENCE'
@@ -719,7 +722,24 @@ export function buildIntrusionMail(input: IntrusionMailInput): OutgoingMessage[]
       type: 'SPY_REPORT',
       subject: alert === 'PRESENCE' ? `Чужой зонд над ${planetName}` : `«${spyName}» шпионил за ${planetName}`,
       body,
-      payload: { planetName, alert, spyName: alert === 'PRESENCE' ? null : spyName, spyHome, droneLost },
+      /*
+       * Нагрузка не несет больше, чем сообщает текст.
+       *
+       * Дом нарушителя и его координаты кладутся только с той ступени,
+       * на которой их называет само письмо. Раньше `spyHome` уходил всегда,
+       * и карточка тревоги честно рисовала «пришел с ...» там, где по лестнице
+       * заметности этого знать было нельзя: на ступени IDENTITY цель узнает
+       * имя, но не адрес. Лестница затем и нужна, чтобы «кто-то пролетал»
+       * не превращалось в «вот его адрес, летите мстить».
+       */
+      payload: {
+        planetName,
+        alert,
+        spyName: alert === 'PRESENCE' ? null : spyName,
+        spyHome: knowsOrigin ? spyHome : null,
+        location: knowsOrigin ? input.spyHomeLocation : null,
+        droneLost,
+      },
     },
   ];
 }
