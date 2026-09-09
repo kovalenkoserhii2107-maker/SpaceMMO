@@ -3231,3 +3231,38 @@ button.tiny { padding: 4px 10px; font-size: 11px; flex: none; }
 }
 .nrg-mine-title { font-size: 13px; }
 .nrg-mine-note { font-size: 11px; color: var(--muted); line-height: 1.3; }
+
+/*
+ * Значок остатка энергии в шапке. Крупным в ячейке идет расход — он растет
+ * вместе с базой и потому интуитивен, — а остаток стоит рядом со знаком:
+ * именно он отвечает, потянет ли база следующую шахту.
+ */
+.res-free {
+  font-size: 12px;
+  color: var(--ok);
+  font-variant-numeric: tabular-nums;
+  padding: 1px 6px;
+  border-radius: 7px;
+  background: rgba(74, 222, 128, 0.12);
+}
+.res-free.lack { color: var(--err); background: rgba(248, 113, 113, 0.14); }
+
+/*
+ * Кнопка отмены рядом со спешкой. Обе стоят в строке деталей ожидания,
+ * обе второстепенны по отношению к самой полосе, поэтому и выглядят
+ * одинаково скромно — решение принимается по таймеру, а не по кнопке.
+ */
+.job-cancel {
+  margin-left: auto;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--muted);
+  cursor: pointer;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+}
+.job-cancel:hover { color: var(--err); border-color: rgba(248, 113, 113, 0.5); }
+.job-rush + .job-cancel { margin-left: 8px; }

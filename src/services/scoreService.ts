@@ -22,8 +22,12 @@ import {
   sealScore,
   spentOnBuildings,
   spentOnDefense,
+  spentOnDefenseQueue,
   spentOnFleet,
   spentOnResearch,
+  spentOnResearchJob,
+  spentOnShipQueue,
+  spentOnUpgrade,
   type ScoreBreakdown,
 } from '../game/score.js';
 
@@ -94,7 +98,18 @@ async function computeAll(): Promise<{ players: ScoreRow[]; syndicates: Syndicat
       syndicate: { select: { id: true, name: true, tag: true } },
       researches: true,
       hubStorages: true,
-      bases: { include: { ships: true, defenses: true } },
+      // Очереди входят в выборку затем, что оплаченное, но не готовое —
+      // это тоже вложенные и не потерянные ресурсы (см. score.ts).
+      bases: {
+        include: {
+          ships: true,
+          defenses: true,
+          buildJob: true,
+          shipJobs: { select: { type: true, remaining: true } },
+          defenseJobs: { select: { type: true, remaining: true } },
+        },
+      },
+      researchJob: true,
       fleets: true,
     },
   });
@@ -121,6 +136,11 @@ async function computeAll(): Promise<{ players: ScoreRow[]; syndicates: Syndicat
       const defenses: DefenseCounts = emptyDefenseCounts();
       for (const row of base.defenses) if (isDefenseType(row.type)) defenses[row.type] = row.count;
       defenseValue += spentOnDefense(defenses);
+
+      // Незаконченное идет в ту же графу, в которую превратится.
+      if (base.buildJob) buildings += spentOnUpgrade(base.buildJob.building, base.buildJob.targetLevel);
+      fleetValue += spentOnShipQueue(base.shipJobs);
+      defenseValue += spentOnDefenseQueue(base.defenseJobs);
     }
 
     // Товар на складе хаба тоже принадлежит игроку: он его добыл и не потерял.
@@ -164,7 +184,11 @@ async function computeAll(): Promise<{ players: ScoreRow[]; syndicates: Syndicat
         fleet: fleetValue,
         defense: defenseValue,
         buildings,
-        research: spentOnResearch(techs),
+        research:
+          spentOnResearch(techs) +
+          (commander.researchJob
+            ? spentOnResearchJob(commander.researchJob.tech, commander.researchJob.targetLevel)
+            : 0),
       }),
     };
   });

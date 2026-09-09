@@ -95,6 +95,7 @@
     resPolymers: $('res-polymers'),
     resPlasma: $('res-plasma'),
     resEnergy: $('res-energy'),
+    resFree: $('res-free'),
     resEfficiency: $('res-efficiency'),
     rateOre: $('rate-ore'),
     ratePolymers: $('rate-polymers'),
@@ -1149,6 +1150,19 @@
     el.rateAntimatter.textContent = `+${base.productionPerSecond.antimatter.toFixed(3)}/с`;
     el.rateEnergy.textContent = `из ${fmt(base.energy.output)}`;
 
+    /*
+     * Остаток стоит значком рядом с расходом, а не вместо него.
+     *
+     * Заменять им расход нельзя: новая шахта увеличивает потребление,
+     * и число на экране падало бы — это читается как «шахты уменьшают расход».
+     * Но и без остатка не обойтись: «потянет ли база следующую шахту» —
+     * вопрос именно к нему, а считать его в уме из двух чисел незачем.
+     * Поэтому крупным идет расход, значком — остаток со знаком.
+     */
+    const freeEnergy = Math.round(base.energy.output - base.energy.usage);
+    el.resFree.textContent = freeEnergy >= 0 ? `+${fmt(freeEnergy)}` : fmt(freeEnergy);
+    el.resFree.classList.toggle('lack', freeEnergy < 0);
+
     // Те же три состояния, что и у полосы склада: запас, впритык, дефицит.
     const load = base.energy.output > 0 ? base.energy.usage / base.energy.output : 0;
     el.resEnergy.style.color = load >= 1 ? 'var(--err)' : load >= 0.85 ? 'var(--warn)' : '';
@@ -1179,11 +1193,13 @@
       remainingSeconds: base.buildJob.remainingSeconds,
       totalSeconds: base.buildJob.totalSeconds,
       onRush: () => send(`/api/bases/${base.baseId}/rush`),
+      onCancel: () => send(`/api/bases/${base.baseId}/build/cancel`),
     });
     renderJobBanner(el.researchJob, state.research.active && {
       title: `${state.research.active.label} → ур. ${state.research.active.targetLevel}`,
       remainingSeconds: state.research.active.remainingSeconds,
       totalSeconds: state.research.active.totalSeconds,
+      onCancel: () => send(`/api/bases/${base.baseId}/research/cancel`),
     });
 
     renderCards(base);
@@ -1623,7 +1639,9 @@
       node.innerHTML =
         '<div class="job-title"><span></span><b></b></div>' +
         '<div class="bar"><i></i></div>' +
-        '<div class="job-meta"><span></span><span></span><button type="button" class="job-rush" hidden>Ускорить</button></div>';
+        '<div class="job-meta"><span></span><span></span>' +
+        '<button type="button" class="job-rush" hidden>Ускорить</button>' +
+        '<button type="button" class="job-cancel" hidden>Отменить</button></div>';
     }
 
     /*
@@ -1639,6 +1657,13 @@
     const rush = node.querySelector('.job-rush');
     rush.hidden = typeof job.onRush !== 'function';
     rush.onclick = job.onRush || null;
+
+    // Отмена — там же и по тому же правилу: рисуется у тех очередей,
+    // которые ее умеют. Возврат полный, поэтому подтверждения не спрашиваем:
+    // терять нечего, кроме уже потраченного времени.
+    const cancel = node.querySelector('.job-cancel');
+    cancel.hidden = typeof job.onCancel !== 'function';
+    cancel.onclick = job.onCancel || null;
     const done = job.totalSeconds > 0 ? (job.totalSeconds - job.remainingSeconds) / job.totalSeconds : 1;
     const percent = Math.min(100, Math.max(0, done * 100));
 
@@ -2046,7 +2071,7 @@
    * Полоса первого заказа показывает текущую единицу, остальные ждут своей
    * очереди и стоят на нуле: верфь собирает заказы подряд, а не разом.
    */
-  function renderUnitQueue(node, jobs, emptyText) {
+  function renderUnitQueue(node, jobs, emptyText, onCancel) {
     node.innerHTML = '';
     if (!jobs.length) {
       const empty = document.createElement('div');
@@ -2080,14 +2105,21 @@
         `<b>${index === 0 ? 'осталось ' : 'готово через '}${fmtTime(totalSeconds)}</b></div>` +
         '<div class="bar"><i></i></div>' +
         `<div class="job-meta"><span>собрано ${done} из ${job.quantity}</span>` +
-        `<span>${index === 0 ? `выпуск через ${fmtTime(job.nextUnitInSeconds)}` : 'ждет очереди'} · по ${fmtTime(job.unitSeconds)} за штуку</span></div>`;
+        `<span>${index === 0 ? `выпуск через ${fmtTime(job.nextUnitInSeconds)}` : 'ждет очереди'} · по ${fmtTime(job.unitSeconds)} за штуку</span>` +
+        (typeof onCancel === 'function' ? '<button type="button" class="job-cancel">Отменить</button>' : '') +
+        '</div>';
       item.querySelector('.bar > i').style.width = `${Math.min(100, Math.max(0, progress * 100)).toFixed(1)}%`;
+      // Возвращается за неотгруженные корпуса; наполовину собранный текущий
+      // сгорает, иначе отмена за секунду до выпуска собирала бы флот даром.
+      const cancel = item.querySelector('.job-cancel');
+      if (cancel) cancel.onclick = () => onCancel(job.id);
       node.appendChild(item);
     });
   }
 
   function renderQueue(base) {
-    renderUnitQueue(el.shipQueue, base.shipQueue, 'Очередь верфи пуста');
+    renderUnitQueue(el.shipQueue, base.shipQueue, 'Очередь верфи пуста', (jobId) =>
+      send(`/api/bases/${base.baseId}/ships/cancel`, { jobId }));
   }
 
   /* ------------------------- Подробности постройки ------------------------- */
@@ -4702,7 +4734,8 @@
       rosterKeys.defense,
       'Планета не укреплена. Турели строятся ниже.',
     );
-    renderUnitQueue(el.defenseQueue, base.defenseQueue, 'Очередь обороны пуста');
+    renderUnitQueue(el.defenseQueue, base.defenseQueue, 'Очередь обороны пуста', (jobId) =>
+      send(`/api/bases/${base.baseId}/defenses/cancel`, { jobId }));
   }
 
 

@@ -13,10 +13,10 @@
  *
  * Модуль чистый: только формулы, без обращения к БД.
  */
-import { BUILDING_TYPES, upgradeCost, type BuildingLevels, type ResourceAmounts } from './rules.js';
-import { researchCost, TECHNOLOGY_TYPES, type TechLevels } from './techTree.js';
-import { shipCost, SHIP_TYPES, type ShipCounts } from './ships.js';
-import { defenseCost, DEFENSE_TYPES, type DefenseCounts } from './defenses.js';
+import { BUILDING_TYPES, upgradeCost, type BuildingLevels, type BuildingType, type ResourceAmounts } from './rules.js';
+import { researchCost, TECHNOLOGY_TYPES, type TechLevels, type TechnologyType } from './techTree.js';
+import { shipCost, SHIP_TYPES, type ShipCounts, type ShipType } from './ships.js';
+import { defenseCost, DEFENSE_TYPES, type DefenseCounts, type DefenseType } from './defenses.js';
 
 /** Стоимость в единицах ресурсов: три вида складываются напрямую. */
 export function costUnits(cost: ResourceAmounts): number {
@@ -56,6 +56,34 @@ export function spentOnFleet(ships: ShipCounts): number {
 
 export function spentOnDefense(defenses: DefenseCounts): number {
   return DEFENSE_TYPES.reduce((total, type) => total + costUnits(defenseCost(type)) * defenses[type], 0);
+}
+
+/*
+ * Оплаченное, но еще не готовое.
+ *
+ * Ресурсы за стройку, науку и заказ верфи списываются в момент заказа,
+ * а в счет попадают только после завершения — и все это время они исчезали
+ * из рейтинга вовсе. Игрок, поставивший в очередь линкора на неделю, платил
+ * за это местом в таблице, хотя не потерял ничего: заказ никуда не делся,
+ * он строится.
+ *
+ * Считается наравне с готовым и в той же графе, в которую превратится:
+ * корпуса на стапеле — это флот, начатый уровень шахты — это постройки.
+ */
+export function spentOnUpgrade(building: BuildingType, targetLevel: number): number {
+  return costUnits(upgradeCost(building, targetLevel));
+}
+
+export function spentOnResearchJob(tech: TechnologyType, targetLevel: number): number {
+  return costUnits(researchCost(tech, targetLevel));
+}
+
+export function spentOnShipQueue(jobs: Array<{ type: ShipType; remaining: number }>): number {
+  return jobs.reduce((total, job) => total + costUnits(shipCost(job.type)) * job.remaining, 0);
+}
+
+export function spentOnDefenseQueue(jobs: Array<{ type: DefenseType; remaining: number }>): number {
+  return jobs.reduce((total, job) => total + costUnits(defenseCost(job.type)) * job.remaining, 0);
 }
 
 /**

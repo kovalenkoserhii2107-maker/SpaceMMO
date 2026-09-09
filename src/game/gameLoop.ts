@@ -82,6 +82,10 @@ import {
   hasEnoughResources,
   missingBuildingRequirements,
   multiplyResources,
+  refundToStore,
+  storageCapacities,
+  STORED_RESOURCES,
+  type ResourceAmounts,
   storageCapacityForLevel,
   subtractResources,
   upgradeCost,
@@ -455,6 +459,117 @@ class GameLoop {
     return { ok: true, message: `Стройка ускорена за ${price} ₴` };
   }
 
+  /**
+   * Отмена работ: стройки, исследования и заказов верфи с обороной.
+   *
+   * Возвращается полная стоимость. Незавершенная работа не произвела ничего,
+   * поэтому удерживать с нее долю не за что — платой за отмену служит
+   * потраченное время, и оно уже не вернется. Частичная готовность текущей
+   * единицы в заказе сгорает: она наполовину собрана, и вернуть за нее
+   * материалы значило бы собирать корабли бесплатно, отменяя заказ
+   * за секунду до выпуска.
+   *
+   * Излишек сверх вместимости склада теряется, и об этом говорится прямо:
+   * пока стройка шла, шахты работали, и место могло кончиться.
+   */
+  private describeLoss(lost: ResourceAmounts): string {
+    const labels: Record<(typeof STORED_RESOURCES)[number], string> = {
+      ore: 'руда',
+      polymers: 'полимеры',
+      plasma: 'плазма',
+    };
+    const parts = STORED_RESOURCES.filter((resource) => lost[resource] > 0).map(
+      (resource) => `${labels[resource]} ${Math.round(lost[resource])}`,
+    );
+    return parts.length ? ` Не поместилось на склад: ${parts.join(', ')}.` : '';
+  }
+
+  async cancelBuild(commanderId: string, baseId: string): Promise<ActionResult> {
+    const commander = await this.getCommander(commanderId);
+    const base = commander?.bases.get(baseId);
+    if (!commander || !base) return { ok: false, error: 'База не найдена' };
+
+    const job = base.buildJob;
+    if (!job) return { ok: false, error: 'На базе ничего не строится' };
+
+    const refund = upgradeCost(job.building, job.targetLevel);
+    const lost = refundToStore(base.resources, storageCapacities(base.levels), refund);
+    base.buildJob = null;
+    base.dirty = true;
+    base.jobsDirty = true;
+
+    await this.persistAndEmit(commanderId);
+    return { ok: true, message: `Стройка отменена, ресурсы возвращены.${this.describeLoss(lost)}` };
+  }
+
+  async cancelResearch(commanderId: string): Promise<ActionResult> {
+    const commander = await this.getCommander(commanderId);
+    if (!commander) return { ok: false, error: 'Командир не найден' };
+
+    const job = commander.research;
+    if (!job) return { ok: false, error: 'Ничего не изучается' };
+
+    // Ресурсы списывались с той базы, с которой запущено исследование,
+    // и вернуться должны туда же — иначе отмена стала бы способом
+    // перекладывать материалы между колониями без флота.
+    const base = commander.bases.get(job.baseId);
+    if (!base) return { ok: false, error: 'Лаборатория, с которой шло исследование, недоступна' };
+
+    const refund = researchCost(job.tech, job.targetLevel);
+    const lost = refundToStore(base.resources, storageCapacities(base.levels), refund);
+    commander.research = null;
+    commander.researchDirty = true;
+    base.dirty = true;
+
+    await this.persistAndEmit(commanderId);
+    return { ok: true, message: `Исследование отменено, ресурсы возвращены.${this.describeLoss(lost)}` };
+  }
+
+  async cancelShipJob(commanderId: string, baseId: string, jobId: string): Promise<ActionResult> {
+    return this.cancelUnitJob(commanderId, baseId, jobId, 'ships');
+  }
+
+  async cancelDefenseJob(commanderId: string, baseId: string, jobId: string): Promise<ActionResult> {
+    return this.cancelUnitJob(commanderId, baseId, jobId, 'defenses');
+  }
+
+  private async cancelUnitJob(
+    commanderId: string,
+    baseId: string,
+    jobId: string,
+    kind: 'ships' | 'defenses',
+  ): Promise<ActionResult> {
+    const commander = await this.getCommander(commanderId);
+    const base = commander?.bases.get(baseId);
+    if (!commander || !base) return { ok: false, error: 'База не найдена' };
+
+    const queue = kind === 'ships' ? base.shipJobs : base.defenseJobs;
+    const index = queue.findIndex((job) => job.id === jobId);
+    if (index < 0) return { ok: false, error: 'Заказ не найден' };
+
+    const job = queue[index]!;
+    const unitCost = kind === 'ships'
+      ? shipCost(job.type as ShipType)
+      : defenseCost(job.type as DefenseType);
+    const refund = multiplyResources(unitCost, job.remaining);
+    const lost = refundToStore(base.resources, storageCapacities(base.levels), refund);
+
+    queue.splice(index, 1);
+    // Снятие головы очереди сдвигает срок следующего заказа: он больше
+    // не ждет отмененного, и выпуск начинается от текущего момента.
+    const head = queue[0];
+    if (index === 0 && head) head.nextUnitAt = Date.now() + head.unitSeconds * 1000;
+
+    base.dirty = true;
+    base.jobsDirty = true;
+
+    await this.persistAndEmit(commanderId);
+    return {
+      ok: true,
+      message: `Заказ отменен: возвращено за ${job.remaining} шт.${this.describeLoss(lost)}`,
+    };
+  }
+
   /** Постановка здания в стройку. Проверки и списание — только на сервере. */
   async startBuild(commanderId: string, baseId: string, type: BuildingType): Promise<ActionResult> {
     // Командир нужен целиком, а не одна база: скорость стройки задают
@@ -559,15 +674,17 @@ class GameLoop {
       buildSpeedup(commander.techs),
     );
     subtractResources(base.resources, cost);
-    base.shipJobs.push({
-      id: randomUUID(),
-      type,
-      quantity,
-      remaining: quantity,
-      unitSeconds,
-      nextUnitAt: this.queueEndsAt(base.shipJobs, now) + unitSeconds * 1000,
-      createdAt: now,
-    });
+    if (!this.mergeIntoQueue(base.shipJobs, type, quantity, unitSeconds)) {
+      base.shipJobs.push({
+        id: randomUUID(),
+        type,
+        quantity,
+        remaining: quantity,
+        unitSeconds,
+        nextUnitAt: this.queueEndsAt(base.shipJobs, now) + unitSeconds * 1000,
+        createdAt: now,
+      });
+    }
     base.dirty = true;
     base.jobsDirty = true;
 
@@ -579,6 +696,33 @@ class GameLoop {
    * Отправка флота. Проверки состава, груза и топлива — только здесь;
    * корабли, груз и плазма списываются с базы отправления сразу.
    */
+  /**
+   * Дозаказ в хвост очереди вместо новой строки.
+   *
+   * Заказать десять истребителей тремя нажатиями и получить три одинаковых
+   * строки — это отчет о том, как игрок нажимал кнопку, а не о том, что
+   * строится. В очереди важен состав, поэтому однотипный заказ прибавляется
+   * к последнему.
+   *
+   * Сливается только с последним и только при совпавшей длительности. Первое
+   * условие сохраняет порядок: слияние с серединой очереди пропустило бы
+   * вперед то, что игрок поставил позже. Второе — честность сроков: верфь
+   * могли улучшить между заказами, и корабли той же модели строятся уже
+   * быстрее; сложить их в одну строку значило бы соврать про время.
+   */
+  private mergeIntoQueue<T extends { type: string; quantity: number; remaining: number; unitSeconds: number }>(
+    queue: T[],
+    type: string,
+    quantity: number,
+    unitSeconds: number,
+  ): boolean {
+    const last = queue[queue.length - 1];
+    if (!last || last.type !== type || last.unitSeconds !== unitSeconds) return false;
+    last.quantity += quantity;
+    last.remaining += quantity;
+    return true;
+  }
+
   async sendFleet(
     commanderId: string,
     baseId: string,
@@ -963,15 +1107,17 @@ class GameLoop {
       buildSpeedup(commander.techs),
     );
     subtractResources(base.resources, cost);
-    base.defenseJobs.push({
-      id: randomUUID(),
-      type,
-      quantity,
-      remaining: quantity,
-      unitSeconds,
-      nextUnitAt: this.queueEndsAt(base.defenseJobs, now) + unitSeconds * 1000,
-      createdAt: now,
-    });
+    if (!this.mergeIntoQueue(base.defenseJobs, type, quantity, unitSeconds)) {
+      base.defenseJobs.push({
+        id: randomUUID(),
+        type,
+        quantity,
+        remaining: quantity,
+        unitSeconds,
+        nextUnitAt: this.queueEndsAt(base.defenseJobs, now) + unitSeconds * 1000,
+        createdAt: now,
+      });
+    }
     base.dirty = true;
     base.jobsDirty = true;
 

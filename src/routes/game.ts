@@ -90,6 +90,44 @@ gameRouter.post('/bases/:baseId/rush', async (req, res: Response<ActionResponse 
   res.status(result.ok ? 200 : 409).json(result);
 });
 
+/*
+ * Отмена работ.
+ *
+ * Возвращается полная стоимость: незавершенная работа не произвела ничего,
+ * и удерживать с нее долю не за что — платой служит потраченное время.
+ * Идентификатор заказа приходит от клиента, но проверяется по базе командира
+ * (правило 11 по духу): чужой заказ по прямому id не найдется.
+ */
+gameRouter.post('/bases/:baseId/build/cancel', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const result = await gameLoop.cancelBuild(currentCommander(req).id, req.params.baseId);
+  res.status(result.ok ? 200 : 409).json(result);
+});
+
+gameRouter.post('/bases/:baseId/research/cancel', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const result = await gameLoop.cancelResearch(currentCommander(req).id);
+  res.status(result.ok ? 200 : 409).json(result);
+});
+
+gameRouter.post('/bases/:baseId/ships/cancel', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const jobId = (req.body as { jobId?: unknown } | undefined)?.jobId;
+  if (typeof jobId !== 'string' || jobId.length === 0) {
+    res.status(400).json({ error: 'Не указан заказ' });
+    return;
+  }
+  const result = await gameLoop.cancelShipJob(currentCommander(req).id, req.params.baseId, jobId);
+  res.status(result.ok ? 200 : 409).json(result);
+});
+
+gameRouter.post('/bases/:baseId/defenses/cancel', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const jobId = (req.body as { jobId?: unknown } | undefined)?.jobId;
+  if (typeof jobId !== 'string' || jobId.length === 0) {
+    res.status(400).json({ error: 'Не указан заказ' });
+    return;
+  }
+  const result = await gameLoop.cancelDefenseJob(currentCommander(req).id, req.params.baseId, jobId);
+  res.status(result.ok ? 200 : 409).json(result);
+});
+
 /** Запустить исследование в лаборатории базы. */
 gameRouter.post('/bases/:baseId/research', async (req, res: Response<ActionResponse | ErrorResponse>) => {
   const tech = (req.body as { tech?: unknown } | undefined)?.tech;

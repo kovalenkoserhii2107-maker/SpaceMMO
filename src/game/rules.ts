@@ -657,6 +657,30 @@ export function hasEnoughResources(stock: ResourceAmounts, cost: ResourceAmounts
   return stock.ore >= cost.ore && stock.polymers >= cost.polymers && stock.plasma >= cost.plasma;
 }
 
+/**
+ * Возврат ресурсов на склад с учетом потолка.
+ *
+ * Отмена возвращает то, что было списано, но склад за это время мог
+ * наполниться: добыча шла, пока стройка стояла. Излишек девать некуда,
+ * и он теряется — но не молча: функция возвращает потерянное, чтобы
+ * интерфейс сказал об этом прямо, а не оставил игрока гадать, почему
+ * вернулось меньше обещанного.
+ */
+export function refundToStore(
+  stock: ResourceAmounts,
+  capacity: StorageCapacities,
+  refund: ResourceAmounts,
+): ResourceAmounts {
+  const lost: ResourceAmounts = { ore: 0, polymers: 0, plasma: 0 };
+  for (const resource of STORED_RESOURCES) {
+    const room = Math.max(0, capacity[resource] - stock[resource]);
+    const fits = Math.min(refund[resource], room);
+    stock[resource] += fits;
+    lost[resource] = refund[resource] - fits;
+  }
+  return lost;
+}
+
 export function subtractResources(stock: ResourceAmounts, cost: ResourceAmounts): void {
   stock.ore -= cost.ore;
   stock.polymers -= cost.polymers;
