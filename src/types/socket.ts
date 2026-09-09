@@ -241,6 +241,9 @@ export interface FleetSnapshot {
   status: 'OUTBOUND' | 'RETURNING';
   originPlanetId: string;
   originPlanetName: string;
+  /** Системы концов рейса: по ним макро-карта рисует межзвездный перелет. */
+  fromSystemId: string;
+  toSystemId: string | null;
   targetKind: 'PLANET' | 'HUB' | 'DEEP_SPACE';
   targetPlanetId: string | null;
   targetHubId: string | null;

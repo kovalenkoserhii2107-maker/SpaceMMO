@@ -2844,6 +2844,11 @@ function toFleetRuntime(row: FleetRow): FleetRuntimeState {
     originBaseId: row.originBaseId,
     originPlanetId: row.originPlanetId,
     originPlanetName: row.originPlanet.name,
+    // Системы отправления и назначения нужны макро-карте: там рейс идет
+    // между звездами, а планет на ней нет вовсе.
+    fromSystemId: row.originPlanet.systemId,
+    toSystemId:
+      row.targetPlanet?.systemId ?? row.targetHub?.systemId ?? row.targetSystemId ?? null,
     targetKind: row.targetSystemId ? 'DEEP_SPACE' : row.targetHubId ? 'HUB' : 'PLANET',
     targetPlanetId: row.targetPlanetId,
     targetHubId: row.targetHubId,

@@ -9,6 +9,7 @@ import { gameLoop } from '../game/gameLoop.js';
 import {
   RESOURCE_LABELS,
   storageCapacity,
+  hubRent,
   storageUpgradeCost,
   storageUsed,
   tradeTotal,
@@ -38,6 +39,14 @@ export interface MarketView {
     upgradeCost: number;
     nextLevel: number;
     nextCapacity: number;
+    /**
+     * Аренда места: сколько склад стоит сейчас и сколько будет стоить после
+     * расширения. Расширение оплачивается дважды — разово ценой уровня
+     * и дальше платой навсегда, — и вторую половину счета игрок обязан
+     * видеть до нажатия кнопки, а не узнавать из убывающего баланса.
+     */
+    rentPerHour: number;
+    nextRentPerHour: number;
   } | null;
   book: Record<TradeResource, { buy: PublicOrder[]; sell: PublicOrder[] }>;
   /** Что происходит с ценой: рыночная, лучшие заявки, спред, перекос. */
@@ -269,6 +278,8 @@ export async function getMarketView(commanderId: string): Promise<MarketView> {
       upgradeCost: storageUpgradeCost(level + 1),
       nextLevel: level + 1,
       nextCapacity: storageCapacity(level + 1),
+      rentPerHour: Math.round(hubRent(level) * 3600),
+      nextRentPerHour: Math.round(hubRent(level + 1) * 3600),
     },
     book,
     // Считает сервер: цена — игровая величина, и клиент ее не выводит (правило 3).

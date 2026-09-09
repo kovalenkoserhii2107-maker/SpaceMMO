@@ -105,6 +105,8 @@ export interface FleetRuntimeState {
   status: 'OUTBOUND' | 'RETURNING';
   originBaseId: string;
   originPlanetId: string;
+  fromSystemId: string;
+  toSystemId: string | null;
   originPlanetName: string;
   /// Цель — планета или торговый хаб.
   targetKind: 'PLANET' | 'HUB' | 'DEEP_SPACE';
@@ -602,6 +604,8 @@ export function fleetSnapshots(commander: CommanderRuntimeState, now: number): F
       status: fleet.status,
       originPlanetId: fleet.originPlanetId,
       originPlanetName: fleet.originPlanetName,
+      fromSystemId: fleet.fromSystemId,
+      toSystemId: fleet.toSystemId,
       targetKind: fleet.targetKind,
       targetPlanetId: fleet.targetPlanetId,
       targetHubId: fleet.targetHubId,

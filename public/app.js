@@ -126,6 +126,7 @@
     resCredits: $('res-credits'),
     hubStorage: $('hub-storage'),
     upgradeStorage: $('upgrade-storage'),
+    hubTransport: $('hub-transport'),
     orderSide: $('order-side'),
     orderResource: $('order-resource'),
     orderQuantity: $('order-quantity'),
@@ -151,6 +152,9 @@
     bookTrader: $('book-trader'),
     tradesMore: $('trades-more'),
     cargoOreLabel: $('cargo-ore-label'),
+    cargoOreMax: $('cargo-ore-max'),
+    cargoPolymersMax: $('cargo-polymers-max'),
+    cargoPlasmaMax: $('cargo-plasma-max'),
     cargoPolymersLabel: $('cargo-polymers-label'),
     cargoPlasma: $('cargo-plasma'),
     cargoPlasmaField: $('cargo-plasma-field'),
@@ -1208,6 +1212,7 @@
     renderDefenses(base);
     renderFleetList();
     renderFleetMarkers();
+    renderGalaxyFleetMarkers();
     if (map.data) renderPlanetInfo();
   }
 
@@ -3353,6 +3358,56 @@
   }
 
   /** Список миссий зависит от того, что выбрано: планета или хаб. */
+  /**
+   * Сколько груза вообще есть под рукой.
+   *
+   * Источник зависит от миссии, и это не мелочь: при вывозе с хаба грузят
+   * то, что лежит на станции, во всех прочих рейсах — то, что на базе.
+   * Показать не тот остаток значит предложить погрузить то, чего нет.
+   *
+   * Трюмы здесь не учитываются намеренно: их считает сервер по составу
+   * эскадры вместе с топливом и вернет отказ с точной цифрой. Обещать
+   * вместимость до выбора кораблей было бы враньем.
+   */
+  function cargoAvailable() {
+    const base = activeBase();
+    if (map.mission === 'HUB_PICKUP') {
+      const storage = market.data && market.data.storage;
+      return {
+        ore: storage ? storage.ore : 0,
+        polymers: storage ? storage.polymers : 0,
+        plasma: 0,
+      };
+    }
+    return {
+      ore: base ? Math.floor(base.resources.ore) : 0,
+      polymers: base ? Math.floor(base.resources.polymers) : 0,
+      plasma: base ? Math.floor(base.resources.plasma) : 0,
+    };
+  }
+
+  function syncCargoLimits() {
+    const available = cargoAvailable();
+    const pickup = map.mission === 'HUB_PICKUP';
+    const fields = [
+      ['ore', 'Руда', pickup ? 'Забрать руды' : 'Руда', el.cargoOre, el.cargoOreMax, el.cargoOreLabel],
+      ['polymers', 'Полимеры', pickup ? 'Забрать полимеров' : 'Полимеры', el.cargoPolymers, el.cargoPolymersMax, el.cargoPolymersLabel],
+      ['plasma', 'Плазма', 'Плазма', el.cargoPlasma, el.cargoPlasmaMax, el.cargoPlasmaLabel],
+    ];
+
+    for (const [resource, , label, input, max, caption] of fields) {
+      const amount = available[resource];
+      caption.innerHTML = `${icon(resource, 'sm')} ${label} <em class="field-have">${fmt(amount)}</em>`;
+      input.max = String(amount);
+      max.disabled = amount <= 0;
+      max.onclick = (event) => {
+        event.preventDefault();
+        input.value = String(amount);
+        schedulePlan();
+      };
+    }
+  }
+
   function syncMissionOptions() {
     const target = dispatchTarget();
     const kind = target ? target.kind : map.selectedKind;
@@ -3414,9 +3469,7 @@
     syncFleetFields();
 
     const pickup = map.mission === 'HUB_PICKUP';
-    // Подпись перерисовывается вместе с иконкой: textContent стер бы SVG из разметки.
-    el.cargoOreLabel.innerHTML = `${icon('ore', 'sm')} ${pickup ? 'Забрать руды' : 'Руда'}`;
-    el.cargoPolymersLabel.innerHTML = `${icon('polymers', 'sm')} ${pickup ? 'Забрать полимеров' : 'Полимеры'}`;
+    syncCargoLimits();
 
     // Хаб торгует только рудой и полимерами, плазму туда не возят.
     const hubRun = pickup || map.mission === 'HUB_DELIVERY';
@@ -3861,6 +3914,18 @@
     }
   }
 
+  /* От склада на хабе до рейса за ним — один шаг. */
+  el.hubTransport.addEventListener('click', async () => {
+    showPanel('map');
+    await loadMap();
+    const hub = map.data && map.data.hub;
+    if (!hub) return;
+    selectHub(hub);
+    map.mission = 'HUB_DELIVERY';
+    syncMissionOptions();
+    schedulePlan();
+  });
+
   /* Шаг 1: набрать весь доступный флот или очистить состав. */
   el.fleetAll.addEventListener('click', () => {
     const base = activeBase();
@@ -4003,22 +4068,41 @@
 
   /* ---------- 1. Состояние рынка ---------- */
 
+  /**
+   * Склад на хабе.
+   *
+   * Раньше это была строка из шести значений подряд, в которой остаток
+   * по руде стоял рядом с балансом криптогривны и ничем от него не отличался.
+   * Теперь каждый ресурс идет своей полосой, а рядом — свободное место
+   * и плата за аренду: расширение оплачивается дважды, и вторую половину
+   * счета видеть надо до нажатия кнопки, а не по убывающему балансу.
+   */
   function renderHubStorage() {
     const storage = market.data.storage;
     if (!storage) {
       el.hubStorage.innerHTML = '<span class="muted">Торгового хаба в этой системе нет.</span>';
       el.upgradeStorage.hidden = true;
+      el.hubTransport.hidden = true;
       return;
     }
+
     const used = storage.ore + storage.polymers;
-    const fill = storage.capacity > 0 ? Math.min(1, used / storage.capacity) : 0;
+    const row = (label, resource, amount) => {
+      const share = storage.capacity > 0 ? Math.min(1, amount / storage.capacity) : 0;
+      return (
+        `<div class="mk-store-row"><span class="mk-store-name">${icon(resource, 'sm')} ${label}</span>` +
+        `<b class="mk-store-amount">${fmt(amount)}</b>` +
+        `<span class="storage-bar"><i class="bar-safe" style="width:${(share * 100).toFixed(1)}%"></i></span></div>`
+      );
+    };
+
     el.hubStorage.innerHTML =
-      `<span>${escapeHtml(market.data.hub?.name ?? 'Хаб')} · склад ур. ${storage.level}</span>` +
-      `<span class="bar"><i style="width:${(fill * 100).toFixed(1)}%"></i></span>` +
-      `<span><b>${fmt(used)}</b> / ${fmt(storage.capacity)}</span>` +
-      `<span class="mk-res">${icoTag('ORE')}<b>${fmt(storage.ore)}</b></span>` +
-      `<span class="mk-res">${icoTag('POLYMERS')}<b>${fmt(storage.polymers)}</b></span>` +
-      `<span class="mk-res">${icon('credits', 'sm')}<b>${fmt(market.data.credits)}</b></span>`;
+      `<div class="mk-store-head"><span>${escapeHtml(market.data.hub?.name ?? 'Хаб')} · склад ур. ${storage.level}</span>` +
+      `<b>${fmt(used)} / ${fmt(storage.capacity)}</b></div>` +
+      row('Руда', 'ore', storage.ore) +
+      row('Полимеры', 'polymers', storage.polymers) +
+      `<div class="mk-store-foot"><span>Свободно <b>${fmt(storage.free)}</b></span>` +
+      `<span>Аренда <b>${fmt(storage.rentPerHour)} ₴</b> в час</span></div>`;
 
     // Расширение платится криптогривной, а не товаром со склада: товаром
     // платить приходилось ровно тогда, когда места нет, и нужного ресурса
@@ -4027,7 +4111,9 @@
     el.upgradeStorage.hidden = false;
     el.upgradeStorage.disabled = !afford;
     el.upgradeStorage.textContent =
-      `Расширить до ур. ${storage.nextLevel} → ${fmt(storage.nextCapacity)} · ${fmt(storage.upgradeCost)} ₴`;
+      `Расширить до ур. ${storage.nextLevel} → ${fmt(storage.nextCapacity)} · ` +
+      `${fmt(storage.upgradeCost)} ₴ и ${fmt(storage.nextRentPerHour)} ₴ в час`;
+    el.hubTransport.hidden = false;
   }
 
   /**
@@ -4887,7 +4973,7 @@
       const response = await fetch('/api/galaxy', { headers: authHeaders() });
       if (!response.ok) return;
       galaxy.data = await response.json();
-      if (galaxy.mode === 'galaxy') renderGalaxy();
+      if (galaxy.mode === 'galaxy') { renderGalaxy(); renderGalaxyFleetMarkers(); }
       updateMapCaption();
     } catch (error) {
       /* подтянется при следующем открытии карты */
@@ -4912,6 +4998,64 @@
       width: GALAXY.margin * 2 + (bounds.maxX - bounds.minX) * GALAXY.step,
       height: GALAXY.margin * 2 + (bounds.maxY - bounds.minY) * GALAXY.step,
     };
+  }
+
+  /**
+   * Рейсы на макро-карте.
+   *
+   * Внутрисистемные перелеты сюда не идут: их концы совпадают в одной точке,
+   * маркер стоял бы на месте и только загораживал систему. Макро-карта
+   * показывает то, чего не видно на круговой, — дорогу между звездами.
+   *
+   * Слой снимается и кладется заново, а не перерисовывается вся карта:
+   * миниатюры систем тяжелые, а маркер двигается каждую секунду.
+   */
+  function renderGalaxyFleetMarkers() {
+    if (!galaxy.data) return;
+    const svg = el.galaxyMap;
+    for (const node of [...svg.querySelectorAll('.fleet-layer')]) node.remove();
+
+    const systems = galaxy.data.systems;
+    if (!systems.length) return;
+    const bounds = {
+      minX: Math.min(...systems.map((s) => s.galaxyX)),
+      maxX: Math.max(...systems.map((s) => s.galaxyX)),
+      minY: Math.min(...systems.map((s) => s.galaxyY)),
+      maxY: Math.max(...systems.map((s) => s.galaxyY)),
+    };
+    const byId = new Map(systems.map((s) => [s.systemId, s]));
+
+    const layer = svgEl('g', { class: 'fleet-layer' });
+    const now = Date.now();
+    let drawn = 0;
+
+    for (const fleet of state.fleets) {
+      if (!fleet.toSystemId || fleet.toSystemId === fleet.fromSystemId) continue;
+      const from = byId.get(fleet.fromSystemId);
+      const to = byId.get(fleet.toSystemId);
+      if (!from || !to) continue;
+
+      const outbound = fleet.status === 'OUTBOUND';
+      const a = galaxyPoint(outbound ? from : to, bounds);
+      const b = galaxyPoint(outbound ? to : from, bounds);
+      const legStart = outbound ? fleet.departedAt : fleet.arrivesAt;
+      const legEnd = outbound ? fleet.arrivesAt : fleet.returnsAt;
+      const progress = Math.min(1, Math.max(0, (now - legStart) / Math.max(1, legEnd - legStart)));
+
+      layer.appendChild(svgEl('line', {
+        class: `fleet-path${fleet.mission === 'ATTACK' ? ' hostile' : ''}`,
+        x1: a.x, y1: a.y, x2: b.x, y2: b.y,
+      }));
+      layer.appendChild(svgEl('circle', {
+        class: `fleet-marker${fleet.mission === 'ATTACK' ? ' hostile' : ''}`,
+        cx: a.x + (b.x - a.x) * progress,
+        cy: a.y + (b.y - a.y) * progress,
+        r: 4,
+      }));
+      drawn += 1;
+    }
+
+    if (drawn > 0) svg.appendChild(layer);
   }
 
   function renderGalaxy() {
@@ -5065,7 +5209,7 @@
       markActiveTab();
     }
 
-    if (mode === 'galaxy') renderGalaxy();
+    if (mode === 'galaxy') { renderGalaxy(); renderGalaxyFleetMarkers(); }
     updateMapCaption();
   }
 
