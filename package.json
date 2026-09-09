@@ -13,6 +13,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "migrate:deploy": "prisma migrate deploy",
+    "migrate:copy": "tsx src/scripts/migrateDatabase.ts",
     "check:rules": "tsx src/scripts/checkRules.ts",
     "forecast": "tsx src/scripts/forecast.ts",
     "audit": "tsc -p tsconfig.audit.json",
