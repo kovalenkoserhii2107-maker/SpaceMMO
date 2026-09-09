@@ -3266,3 +3266,17 @@ button.tiny { padding: 4px 10px; font-size: 11px; flex: none; }
 }
 .job-cancel:hover { color: var(--err); border-color: rgba(248, 113, 113, 0.5); }
 .job-rush + .job-cancel { margin-left: 8px; }
+
+/*
+ * Паспорт единицы: две колонки «характеристика — значение». Таблица проекции
+ * у построек широкая и с шапкой, здесь шапка не нужна — строк мало и каждая
+ * подписана слева.
+ */
+.detail-sheet th {
+  text-align: left;
+  font-weight: 400;
+  color: var(--muted);
+  white-space: nowrap;
+  padding-right: 16px;
+}
+.detail-sheet td { font-variant-numeric: tabular-nums; }

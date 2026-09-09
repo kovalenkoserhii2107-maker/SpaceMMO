@@ -10,9 +10,10 @@ import { prisma } from '../db/prisma.js';
 import { attackWarning } from '../services/warService.js';
 import { getLeaderboard } from '../services/scoreService.js';
 import { getBuildingProjection } from '../services/buildingService.js';
+import { getTechnologyProjection } from '../services/technologyService.js';
 import { currentCommander, requireAuth, requireCommander } from './middleware.js';
 import { amountsOrNull, cargoOrNull, positiveInt, shipCountsOrNull } from './validation.js';
-import type { BuildingProjection } from '../types/socket.js';
+import type { BuildingProjection, TechnologyProjection } from '../types/socket.js';
 import type {
   ActionResponse,
   ErrorResponse,
@@ -89,6 +90,25 @@ gameRouter.post('/bases/:baseId/rush', async (req, res: Response<ActionResponse 
   const result = await gameLoop.rushBuild(currentCommander(req).id, req.params.baseId);
   res.status(result.ok ? 200 : 409).json(result);
 });
+
+/** Подробности технологии: десять уровней вперед, как у построек. */
+gameRouter.get(
+  '/bases/:baseId/technologies/:tech',
+  async (req, res: Response<TechnologyProjection | ErrorResponse>) => {
+    const tech = req.params.tech;
+    if (!isTechnologyType(tech)) {
+      res.status(400).json({ error: 'Неизвестная технология' });
+      return;
+    }
+
+    const projection = await getTechnologyProjection(currentCommander(req).id, req.params.baseId, tech);
+    if (!projection) {
+      res.status(404).json({ error: 'База не найдена' });
+      return;
+    }
+    res.json(projection);
+  },
+);
 
 /*
  * Отмена работ.

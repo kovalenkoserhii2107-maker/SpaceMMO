@@ -79,6 +79,20 @@ export interface BuildingProjection {
   rows: BuildingProjectionRow[];
 }
 
+/**
+ * Карточка технологии в подробностях. Строки те же, что у построек: у уровня
+ * технологии тоже есть цена, срок и величина эффекта, и рисует их один
+ * и тот же компонент.
+ */
+export interface TechnologyProjection {
+  tech: TechnologyType;
+  label: string;
+  description: string;
+  level: number;
+  outputLabel: string | null;
+  rows: BuildingProjectionRow[];
+}
+
 export interface TechnologyCard {
   tech: TechnologyType;
   label: string;
@@ -115,6 +129,12 @@ export interface ShipCard {
   owned: number;
   canAfford: boolean;
   requirements: Requirement[];
+  /**
+   * Летные данные: трюм, скорость и расход. В снимке, а не отдельным роутом —
+   * они статичны для класса и весят десяток чисел, тогда как проекция построек
+   * это восемьдесят строк расчета.
+   */
+  flight: { speed: number; cargo: number; fuelPerSecond: number; antimatterPerDistance: number };
 }
 
 export interface DefenseCard {

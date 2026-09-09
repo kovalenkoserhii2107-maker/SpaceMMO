@@ -82,6 +82,12 @@ interface FlightProfile {
   antimatterPerDistance: number;
 }
 
+/** Летные данные класса. Нужны карточке подробностей: трюм и скорость решают
+ * выбор транспорта не меньше цены, а вычислять их на клиенте нельзя (правило 3). */
+export function flightProfile(type: ShipType): FlightProfile {
+  return { ...FLIGHT_PROFILES[type] };
+}
+
 const FLIGHT_PROFILES: Record<ShipType, FlightProfile> = {
   PROBE: { speed: 200, cargo: 0, fuelPerSecond: 0.05, antimatterPerDistance: 0.2 },
   SMALL_CARGO: { speed: 100, cargo: 2000, fuelPerSecond: 0.4, antimatterPerDistance: 1.5 },

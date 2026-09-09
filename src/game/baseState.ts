@@ -47,7 +47,7 @@ import {
   type TechLevels,
   type TechnologyType,
 } from './techTree.js';
-import { describeComposition, MISSION_LABELS, type FleetMission } from './fleets.js';
+import { describeComposition, flightProfile, MISSION_LABELS, type FleetMission } from './fleets.js';
 import { defenseCombatProfile, shipCombatProfile } from './combat.js';
 import {
   DEFENSE_TYPES,
@@ -557,6 +557,7 @@ function shipCard(type: ShipType, state: BaseRuntimeState, commander: CommanderR
     label: shipLabel(type),
     description: shipDescription(type),
     combat: shipCombatProfile(type),
+    flight: flightProfile(type),
     cost,
     unitSeconds: shipUnitSeconds(
       type,

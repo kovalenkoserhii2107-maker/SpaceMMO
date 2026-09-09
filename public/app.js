@@ -1697,31 +1697,32 @@
       for (const building of base.buildings) {
         const card = createActionCard(el.buildings, building.label, '', () =>
           send(`/api/bases/${base.baseId}/build`, { type: building.type }), building.type, 'building');
-        // Обложка открывает подробности, кнопка строит. Разные действия
-        // на одной карточке, поэтому кликом различаются и зоны.
-        card.article.classList.add('detailed');
-        card.cover.tabIndex = 0;
-        card.cover.setAttribute('role', 'button');
-        card.cover.setAttribute('aria-label', `${building.label}: подробности`);
-        const open = () => openBuildingDetail(base.baseId, building.type);
-        card.cover.addEventListener('click', open);
-        card.cover.addEventListener('keydown', (event) => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            open();
-          }
-        });
+        makeDetailed(card, building.label, () => openBuildingDetail(base.baseId, building.type));
         cards.buildings.set(building.type, card);
       }
       for (const tech of base.technologies) {
-        cards.technologies.set(tech.tech, createActionCard(el.technologies, tech.label, tech.description, () =>
-          send(`/api/bases/${base.baseId}/research`, { tech: tech.tech }), tech.tech, 'tech'));
+        const card = createActionCard(el.technologies, tech.label, tech.description, () =>
+          send(`/api/bases/${base.baseId}/research`, { tech: tech.tech }), tech.tech, 'tech');
+        makeDetailed(card, tech.label, () => openTechnologyDetail(base.baseId, tech.tech));
+        cards.technologies.set(tech.tech, card);
       }
       for (const ship of base.ships) {
-        cards.ships.set(ship.type, createShipCard(el.ships, ship, base.baseId));
+        const card = createShipCard(el.ships, ship, base.baseId);
+        // Замыкание берет карточку из снимка на момент открытия, а не тот
+        // объект, что был при сборке: числа в снимке меняются каждую секунду.
+        makeDetailed(card, ship.label, () => {
+          const fresh = (activeBase()?.ships || []).find((row) => row.type === ship.type);
+          openUnitDetail(fresh || ship, 'ship');
+        });
+        cards.ships.set(ship.type, card);
       }
       for (const item of base.defenseCards) {
-        cards.defenses.set(item.type, createDefenseCard(el.defenses, item, base.baseId));
+        const card = createDefenseCard(el.defenses, item, base.baseId);
+        makeDetailed(card, item.label, () => {
+          const fresh = (activeBase()?.defenseCards || []).find((row) => row.type === item.type);
+          openUnitDetail(fresh || item, 'defense');
+        });
+        cards.defenses.set(item.type, card);
       }
     }
 
@@ -1754,6 +1755,27 @@
     term.innerHTML = labelHtml;
     row.append(term, value);
     return row;
+  }
+
+  /**
+   * Обложка открывает подробности, кнопка строит.
+   *
+   * Разные действия на одной карточке, поэтому и зоны разные: по картинке
+   * узнают, по кнопке заказывают. Обложка получает роль кнопки и фокус —
+   * иначе с клавиатуры подробности недостижимы вовсе.
+   */
+  function makeDetailed(card, label, open) {
+    card.article.classList.add('detailed');
+    card.cover.tabIndex = 0;
+    card.cover.setAttribute('role', 'button');
+    card.cover.setAttribute('aria-label', `${label}: подробности`);
+    card.cover.addEventListener('click', open);
+    card.cover.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        open();
+      }
+    });
   }
 
   function createCardShell(container, title, description, type, kind) {
@@ -2133,8 +2155,31 @@
    * Данные приходят отдельным запросом, а не в снимке: снимок уходит каждую
    * секунду, а таблица нужна, только пока карточка открыта.
    */
-  async function openBuildingDetail(baseId, type) {
+  function openDetailShell() {
     el.detailScrim.hidden = false;
+    el.detailBody.innerHTML = '';
+    el.detailTitle.textContent = '';
+    el.detailLevel.textContent = '';
+    el.detailDesc.textContent = '';
+    el.detailArt.innerHTML = '';
+    el.detailClose.focus();
+  }
+
+  function openBuildingDetail(baseId, type) {
+    return openProjectionDetail(`/api/bases/${baseId}/buildings/${type}`, 'building');
+  }
+
+  function openTechnologyDetail(baseId, tech) {
+    return openProjectionDetail(`/api/bases/${baseId}/technologies/${tech}`, 'tech');
+  }
+
+  /*
+   * Таблица уровней одна на постройки и технологии: у уровня технологии тоже
+   * есть цена, срок и величина эффекта. Различаются они только адресом запроса
+   * и папкой с иллюстрацией.
+   */
+  async function openProjectionDetail(url, kind) {
+    openDetailShell();
     el.detailBody.innerHTML = '<p class="detail-note">Считаю…</p>';
     el.detailTitle.textContent = '';
     el.detailLevel.textContent = '';
@@ -2142,7 +2187,8 @@
     el.detailArt.innerHTML = '';
     el.detailClose.focus();
 
-    const { ok, data } = await api(`/api/bases/${baseId}/buildings/${type}`);
+    el.detailBody.innerHTML = '<p class="detail-note">Считаю…</p>';
+    const { ok, data } = await api(url);
     // Панель могли закрыть, пока считался ответ, — тогда рисовать нечего.
     if (el.detailScrim.hidden) return;
     if (!ok) {
@@ -2152,10 +2198,69 @@
 
     el.detailTitle.textContent = data.label;
     el.detailLevel.textContent =
-      data.level > 0 ? `Сейчас уровень ${data.level}` : 'Еще не построено';
+      data.level > 0
+        ? `Сейчас уровень ${data.level}`
+        : kind === 'tech' ? 'Еще не изучено' : 'Еще не построено';
     el.detailDesc.textContent = data.description;
-    el.detailArt.appendChild(artNode(data.type, data.label, 'building'));
+    el.detailArt.appendChild(artNode(data.type || data.tech, data.label, kind));
     el.detailBody.innerHTML = detailTable(data);
+  }
+
+  /**
+   * Паспорт корабля или установки.
+   *
+   * Проекции уровней у них нет и быть не может — их не улучшают, их строят
+   * штуками. Поэтому карточка отвечает на другой вопрос: что эта единица
+   * умеет и чего стоит. Данные берутся из снимка, который и так пришел,
+   * — отдельный запрос ради десятка статичных чисел был бы расточительством.
+   */
+  function openUnitDetail(card, kind) {
+    openDetailShell();
+
+    el.detailTitle.textContent = card.label;
+    el.detailLevel.textContent =
+      kind === 'ship' ? `В ангаре: ${fmt(card.owned)}` : `На позиции: ${fmt(card.owned)}`;
+    el.detailDesc.textContent = card.description;
+    el.detailArt.appendChild(artNode(card.type, card.label, kind));
+
+    const rows = [];
+    const combat = card.combat;
+    if (combat) {
+      rows.push(['Атака', combat.attack > 0 ? fmt(combat.attack) : 'без оружия']);
+      rows.push(['Щит', combat.shield > 0 ? fmt(combat.shield) : 'нет']);
+      rows.push(['Корпус', fmt(combat.hull)]);
+      if (combat.note) rows.push(['Особенность', combat.note]);
+    }
+
+    // Летные данные есть только у кораблей: установка обороны никуда не летит.
+    const flight = card.flight;
+    if (flight) {
+      rows.push(['Трюм', flight.cargo > 0 ? fmt(flight.cargo) : 'нет']);
+      rows.push(['Скорость', fmt(flight.speed)]);
+      rows.push(['Плазма в секунду полета', String(flight.fuelPerSecond)]);
+      rows.push(['Антиматерия на прыжок', String(flight.antimatterPerDistance)]);
+    }
+
+    const cost = [
+      card.cost.ore ? `${icon('ore', 'sm')} ${fmt(card.cost.ore)}` : '',
+      card.cost.polymers ? `${icon('polymers', 'sm')} ${fmt(card.cost.polymers)}` : '',
+      card.cost.plasma ? `${icon('plasma', 'sm')} ${fmt(card.cost.plasma)}` : '',
+    ].filter(Boolean).join(' ');
+    rows.push(['Стоимость за штуку', cost || '—']);
+    rows.push(['Сборка за штуку', fmtTime(card.unitSeconds)]);
+    if (card.requirements && card.requirements.length) {
+      rows.push([
+        'Требуется',
+        card.requirements.map((req) => `${req.label} ур. ${req.level}`).join(', '),
+      ]);
+    }
+
+    el.detailBody.innerHTML =
+      '<table class="detail-table detail-sheet"><tbody>' +
+      rows.map(([label, value]) => `<tr><th>${escapeHtml(label)}</th><td>${value}</td></tr>`).join('') +
+      '</tbody></table>' +
+      '<p class="detail-note">Атака, щит и корпус показаны без боевых технологий: ' +
+      'оружейная, щитовая и бронебойная поднимают их на 10% за уровень каждая.</p>';
   }
 
   function detailTable(data) {
