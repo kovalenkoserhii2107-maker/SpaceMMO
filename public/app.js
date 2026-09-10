@@ -110,6 +110,7 @@
     missionMenu: $('mission-menu'),
     missionWarning: $('mission-warning'),
     fleetInputs: $('fleet-inputs'),
+    fleetEmpty: $('fleet-empty'),
     fleetAll: $('fleet-all'),
     fleetNone: $('fleet-none'),
     dispatchTarget: $('dispatch-target'),
@@ -3604,9 +3605,28 @@
       }
     }
 
+    /*
+    * В подписи и остаток, и трюм. Грузоподъемность класса решает состав рейса
+    * не меньше, чем его наличие: везти тысячу руды пятью истребителями нельзя,
+    * а увидеть это раньше отказа сервера было негде. У кого трюма нет вовсе —
+    * так и написано, а не пропущено: пустое место читается как «не знаю»,
+    * а тут ответ известен точно.
+    */
+    const cargoOf = new Map(
+      (base.ships || []).map((card) => [card.type, card.flight ? card.flight.cargo : null]),
+    );
     for (const [type, label] of Object.entries(SHIP_LABELS)) {
       const owned = base.fleet[type];
-      fleetInputs[type].caption.textContent = `${label} (${owned})`;
+      const cargo = cargoOf.get(type);
+      const hold =
+        cargo === null || cargo === undefined
+          ? ''
+          : cargo > 0
+            ? `трюм ${fmt(cargo)}`
+            : 'без трюма';
+      // Трюм подписью помельче: он справка, а не то, что вводят.
+      fleetInputs[type].caption.innerHTML =
+        `${escapeHtml(label)} (${owned})${hold ? `<em class="field-hold">${hold}</em>` : ''}`;
       fleetInputs[type].input.max = String(owned);
       fleetInputs[type].max.disabled = owned <= 0;
     }
@@ -3648,12 +3668,37 @@
   function syncFleetFields() {
     const base = activeBase();
     const allowed = new Set(shipsForMission(map.mission));
+    let shown = 0;
+    let missing = 0;
+
     for (const [type, refs] of Object.entries(fleetInputs)) {
       const owned = base ? base.fleet[type] || 0 : 0;
       const off = !allowed.has(type) || owned <= 0;
       refs.field.hidden = off;
       if (off && refs.input.value !== '0') refs.input.value = '0';
+      if (!off) shown += 1;
+      // Класс миссии подходит, но его нет в ангаре — это и есть причина пустоты.
+      if (allowed.has(type) && owned <= 0) missing += 1;
     }
+
+    /*
+     * Пустой состав объясняется, а не показывается пустотой.
+     *
+     * Два правила сходятся в один экран: миссии вроде разведки и переработки
+     * оставляют один класс, а класс без единицы в ангаре не показывается вовсе.
+     * У кого нет переработчика, тот на «Переработке обломков» видел форму
+     * без единого поля и не мог понять, сломалось это или так задумано.
+     */
+    if (!el.fleetEmpty) return;
+    if (shown > 0) {
+      el.fleetEmpty.hidden = true;
+      return;
+    }
+    el.fleetEmpty.hidden = false;
+    const needed = [...allowed].map((type) => SHIP_LABELS[type].toLowerCase()).join(' или ');
+    el.fleetEmpty.textContent = missing > 0
+      ? `Для этого действия годятся только ${needed}, а их нет в ангаре. Постройте на верфи.`
+      : 'В ангаре пусто: рейс не из чего собрать. Загляните на верфь.';
   }
 
   function readComposition() {

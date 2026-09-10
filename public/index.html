@@ -930,6 +930,12 @@
               </label>
             </div>
             <div id="fleet-inputs" class="fleet-inputs"></div>
+            <!--
+              Объяснение пустого состава. Два правила — «миссии нужен свой
+              класс» и «класса без единицы в ангаре не показываем» — сходятся
+              в пустую форму, и без подписи она выглядит поломкой.
+            -->
+            <p id="fleet-empty" class="mission-warning" hidden></p>
             <div class="step-actions">
               <button type="button" class="ghost" id="fleet-all">Выбрать все</button>
               <button type="button" class="ghost" id="fleet-none">Очистить</button>

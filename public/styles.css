@@ -3334,3 +3334,12 @@ button.tiny { padding: 4px 10px; font-size: 11px; flex: none; }
   .mk-store-row { grid-template-columns: 1fr auto; }
   .mk-store-row .storage-bar { grid-column: 1 / -1; }
 }
+
+/* Трюм в подписи поля состава — справка, а не то, что вводят. */
+.field-hold {
+  display: block;
+  font-style: normal;
+  font-size: 11px;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
