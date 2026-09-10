@@ -3506,8 +3506,8 @@
         (slots ? `слотов экспедиций: <b>${slots.used}</b> из <b>${slots.total}</b>` : '');
       el.dispatch.hidden = !base;
       if (base) {
-        syncMissionOptions();
         renderFleetInputs();
+        syncMissionOptions();
         renderDispatchTarget();
       }
       return;
@@ -3525,8 +3525,8 @@
         : `<b>${hub.name}</b><br>нейтральная торговая станция`;
       el.dispatch.hidden = !base;
       if (base) {
-        syncMissionOptions();
         renderFleetInputs();
+        syncMissionOptions();
         renderDispatchTarget();
       }
       return;
@@ -3551,8 +3551,8 @@
 
       el.dispatch.hidden = !base || !coord;
       if (!el.dispatch.hidden) {
-        syncMissionOptions();
         renderFleetInputs();
+        syncMissionOptions();
         renderDispatchTarget();
       }
       return;
@@ -3561,8 +3561,8 @@
     el.planetInfo.innerHTML = planetDetailsHtml(planet, false);
     el.dispatch.hidden = !base || (!map.coordTarget && planet.planetId === base.planetId);
     if (!el.dispatch.hidden) {
-      syncMissionOptions();
       renderFleetInputs();
+      syncMissionOptions();
       renderDispatchTarget();
     }
   }
@@ -3669,7 +3669,19 @@
     const base = activeBase();
     const allowed = new Set(shipsForMission(map.mission));
     let shown = 0;
-    let missing = 0;
+
+    /*
+     * Пока поля не созданы, судить не о чем.
+     *
+     * Порядок вызовов это уже гарантирует, но полагаться на него одного
+     * нельзя: пустой перебор дает «ноль показанных, ноль недостающих» —
+     * ровно ту же пару, что и по-настоящему пустой ангар, — и форма
+     * объявляла пустым ангар, полный кораблей.
+     */
+    if (Object.keys(fleetInputs).length === 0) {
+      if (el.fleetEmpty) el.fleetEmpty.hidden = true;
+      return;
+    }
 
     for (const [type, refs] of Object.entries(fleetInputs)) {
       const owned = base ? base.fleet[type] || 0 : 0;
@@ -3677,8 +3689,6 @@
       refs.field.hidden = off;
       if (off && refs.input.value !== '0') refs.input.value = '0';
       if (!off) shown += 1;
-      // Класс миссии подходит, но его нет в ангаре — это и есть причина пустоты.
-      if (allowed.has(type) && owned <= 0) missing += 1;
     }
 
     /*
@@ -3695,8 +3705,19 @@
       return;
     }
     el.fleetEmpty.hidden = false;
+
+    /*
+     * Текст выбирается по миссии, а не по счетчикам.
+     *
+     * Счетчики уже соврали однажды: на пустом списке полей они давали
+     * «ноль показанных, ноль недостающих» — ту же пару, что и по-настоящему
+     * пустой ангар, — и форма объявляла пустым ангар с одиннадцатью
+     * переработчиками. Ограничила ли миссия набор классов, известно точно
+     * и ни от чего не зависит.
+     */
+    const restricted = allowed.size < Object.keys(SHIP_LABELS).length;
     const needed = [...allowed].map((type) => SHIP_LABELS[type].toLowerCase()).join(' или ');
-    el.fleetEmpty.textContent = missing > 0
+    el.fleetEmpty.textContent = restricted
       ? `Для этого действия годятся только ${needed}, а их нет в ангаре. Постройте на верфи.`
       : 'В ангаре пусто: рейс не из чего собрать. Загляните на верфь.';
   }
