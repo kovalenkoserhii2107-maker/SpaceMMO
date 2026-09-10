@@ -3086,7 +3086,7 @@
       layer.appendChild(svgEl('circle', { class: 'fleet-marker', cx, cy, r: 5 }));
 
       const label = svgEl('text', { x: cx, y: cy - 12, class: 'planet-label' });
-      label.textContent = `${fleet.missionLabel} · ${fleet.etaSeconds} с`;
+      label.textContent = `${fleet.missionLabel} · ${fmtTime(fleet.etaSeconds)}`;
       layer.appendChild(label);
     }
 
@@ -5108,16 +5108,19 @@
       const legEnd = outbound ? fleet.arrivesAt : fleet.returnsAt;
       const progress = Math.min(1, Math.max(0, (now - legStart) / Math.max(1, legEnd - legStart)));
 
+      // Классы те же, что на карте системы: рейс должен выглядеть рейсом
+      // на обеих картах, а не двумя разными сущностями.
       layer.appendChild(svgEl('line', {
-        class: `fleet-path${fleet.mission === 'ATTACK' ? ' hostile' : ''}`,
-        x1: a.x, y1: a.y, x2: b.x, y2: b.y,
+        class: 'fleet-line', x1: a.x, y1: a.y, x2: b.x, y2: b.y,
       }));
-      layer.appendChild(svgEl('circle', {
-        class: `fleet-marker${fleet.mission === 'ATTACK' ? ' hostile' : ''}`,
-        cx: a.x + (b.x - a.x) * progress,
-        cy: a.y + (b.y - a.y) * progress,
-        r: 4,
-      }));
+
+      const cx = a.x + (b.x - a.x) * progress;
+      const cy = a.y + (b.y - a.y) * progress;
+      layer.appendChild(svgEl('circle', { class: 'fleet-marker', cx, cy, r: 5 }));
+
+      const label = svgEl('text', { x: cx, y: cy - 12, class: 'planet-label' });
+      label.textContent = `${fleet.missionLabel} · ${fmtTime(fleet.etaSeconds)}`;
+      layer.appendChild(label);
       drawn += 1;
     }
 
