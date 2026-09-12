@@ -79,6 +79,7 @@ import {
   emptyTechLevels,
   researchCost,
   researchSeconds,
+  TECHNOLOGY_TYPES,
   timeCompressionDrain,
   type TechLevels,
   type TechnologyType,
@@ -622,6 +623,25 @@ const { bots, log } = run(days);
 const money = (value: number): string => Math.round(value).toLocaleString('ru-RU');
 
 console.log(`=== Прогон ${days} сут, ${bots.length} ботов ===\n`);
+/** Короткие ярлыки технологий: полные названия в строку прогона не помещаются. */
+const TECH_SHORT: Record<TechnologyType, string> = {
+  ENERGY_TECH: 'энерг',
+  COMPUTING_TECH: 'выч',
+  WEAPONS_TECH: 'оруж',
+  SHIELDS_TECH: 'щит',
+  ARMOR_TECH: 'брон',
+  MINING_TECH: 'горн',
+  COMBUSTION_DRIVE: 'тяга',
+  HYPERSPACE_PHYSICS: 'гипф',
+  HYPERDRIVE: 'гипд',
+  ASTROPHYSICS: 'астр',
+  ROBOTICS: 'робо',
+  CRYPTO_TECH: 'крип',
+  VAULT_TECH: 'бунк',
+  ESPIONAGE: 'шпио',
+  TIME_COMPRESSION: 'врем',
+};
+
 for (const bot of bots) {
   const fleet = Object.entries(bot.ships)
     .filter(([, count]) => count > 0)
@@ -632,7 +652,15 @@ for (const bot of bots) {
       ` завод ${String(bot.levels.POLYMER_PLANT).padStart(2)} реактор ${String(bot.levels.PLASMA_REACTOR).padStart(2)}` +
       ` энерг ${String(bot.levels.POWER_PLANT).padStart(2)} верфь ${String(bot.levels.SHIPYARD).padStart(2)}` +
       ` наука ${String(bot.levels.SCIENCE_CENTER).padStart(2)} | ₴${money(bot.credits).padStart(12)}\n` +
-      `              флот ${fleet || '—'}`,
+      `              флот ${fleet || '—'}\n` +
+      /*
+       * Наука объявлена главными воротами месяца, а в прогоне ее не было видно
+       * вовсе: по составу флота не понять, чего именно не хватает классу —
+       * уровня верфи или технологии.
+       */
+      `              наука ${TECHNOLOGY_TYPES.filter((tech) => bot.techs[tech] > 0)
+        .map((tech) => `${TECH_SHORT[tech]}${bot.techs[tech]}`)
+        .join(' ') || '—'}`,
   );
 }
 

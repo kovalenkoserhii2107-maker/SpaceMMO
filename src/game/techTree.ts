@@ -4,6 +4,7 @@
  */
 import {
   NEUTRAL_MODIFIERS,
+  taperedScale,
   type BuildingLevels,
   type EconomyBonuses,
   type ResourceAmounts,
@@ -291,7 +292,7 @@ const VAULT_OVERRUN_FACTOR = 3;
 
 export function researchCost(tech: TechnologyType, targetLevel: number): ResourceAmounts {
   const { cost } = TECHNOLOGIES[tech];
-  let scale = Math.pow(cost.factor, targetLevel - 1);
+  let scale = taperedScale(cost.factor, targetLevel);
   if (tech === 'VAULT_TECH' && targetLevel > VAULT_SOFT_CAP) {
     scale *= Math.pow(VAULT_OVERRUN_FACTOR, targetLevel - VAULT_SOFT_CAP);
   }
