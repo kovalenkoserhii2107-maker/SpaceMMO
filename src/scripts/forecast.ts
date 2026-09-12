@@ -83,7 +83,7 @@ import {
   type TechLevels,
   type TechnologyType,
 } from '../game/techTree.js';
-import { emptyShipCounts, shipCost, shipUnitSeconds, type ShipCounts, type ShipType } from '../game/ships.js';
+import { emptyShipCounts, missingShipRequirements, shipCost, shipLabel, shipUnitSeconds, SHIP_TYPES, type ShipCounts, type ShipType } from '../game/ships.js';
 import {
   defenseCost,
   defenseEnergyUsage,
@@ -643,6 +643,27 @@ console.log(
     ` | масса ₴${money(last?.money ?? 0)} | добыто ${money(last?.goods ?? 0)} ед` +
     ` | ₴ на единицу ${((last?.money ?? 0) / Math.max(1, last?.goods ?? 1)).toFixed(2)}`,
 );
+/*
+ * Ворота контента — главное, чего прогон долго не показывал.
+ *
+ * Состав флота для этого не годится: переработчик, колонизатор и зонд
+ * заказываются под задачу, а не долей эскадры, и их отсутствие в списке
+ * не значит, что класс недоступен. Мерить надо открытость самого класса.
+ */
+const unlocked = new Map<string, number>();
+for (const bot of bots) {
+  for (const type of SHIP_TYPES) {
+    if (missingShipRequirements(type, bot.levels, bot.techs).length === 0) {
+      unlocked.set(type, (unlocked.get(type) ?? 0) + 1);
+    }
+  }
+}
+console.log(
+  '  ВОРОТА: ' +
+    SHIP_TYPES.map((type) => `${shipLabel(type)} ${unlocked.get(type) ?? 0}/${bots.length}`)
+      .join(' · '),
+);
+
 console.log(
   `  ДЕНЬГИ: намыто ₴${money(bots.reduce((sum, bot) => sum + bot.earned, 0))}` +
     ` | уплачено за хаб ₴${money(bots.reduce((sum, bot) => sum + bot.rentPaid, 0))}` +
