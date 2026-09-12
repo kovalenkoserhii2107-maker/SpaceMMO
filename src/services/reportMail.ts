@@ -227,12 +227,24 @@ export function buildSpyMail(input: SpyMailInput): OutgoingMessage[] {
   }
 
   if (!payload.colonized) {
+    /*
+     * У необитаемой планеты в отчете есть ровно одно содержание — недра.
+     *
+     * Ради них зонд туда и летит: выбор места под колонию решается богатством,
+     * а не тем, что «следов активности не обнаружено». Раньше богатство
+     * из письма выбрасывалось, и отчет о пустой планете не сообщал ничего.
+     *
+     * Лестница заметности тут ни при чем: прятать нечего и не от кого,
+     * хозяина у планеты нет, а тип и размер видны на карте и так.
+     */
     return [
       {
         recipientId: input.commanderId,
         type: 'SPY_REPORT',
-        subject: `Разведка: ${planetName} необитаема`,
-        body: `Зонд обследовал ${planetName} (система ${systemName}). Колонии нет, следов активности не обнаружено.`,
+        subject: `Разведка: ${planetName} свободна`,
+        body:
+          `Зонд обследовал ${planetName} (система ${systemName}). Колонии нет, ` +
+          'место свободно — в отчете разбор недр.',
         payload: {
           planetName,
           systemName,
@@ -240,6 +252,7 @@ export function buildSpyMail(input: SpyMailInput): OutgoingMessage[] {
           location: input.location,
           outcome: input.outcome,
           colonized: false,
+          richness: payload.richness,
         },
       },
     ];

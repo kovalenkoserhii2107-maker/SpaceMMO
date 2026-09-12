@@ -6429,6 +6429,30 @@
    * картинка, а причина пустоты названа: «зонд не дотянулся» — это не то же
    * самое, что «там ничего нет», и решают эти две новости разное.
    */
+  /** Недра шкалой. Один блок на два случая: обитаемая планета и свободная. */
+  function spyRichness(richness) {
+    const grid = document.createElement('div');
+    grid.className = 'spy-richness';
+    for (const [key, label] of [
+      ['ore', 'Руда'],
+      ['polymers', 'Полимеры'],
+      ['plasma', 'Плазма'],
+      ['energy', 'Инсоляция'],
+      ['antimatter', 'Антиматерия'],
+    ]) {
+      const value = richness[key];
+      if (typeof value !== 'number') continue;
+      const row = document.createElement('div');
+      row.className = 'spy-rich-row';
+      row.innerHTML =
+        `<span>${label}</span>` +
+        `<span class="spy-bar"><i style="width:${Math.min(100, (value / 2) * 100).toFixed(0)}%"></i></span>` +
+        `<b>×${value.toFixed(2)}</b>`;
+      grid.appendChild(row);
+    }
+    return spySection('Богатство недр', grid, '');
+  }
+
   function renderSpyReport(report) {
     const card = document.createElement('article');
     card.className = 'spy-report';
@@ -6483,34 +6507,19 @@
     if (!report.colonized) {
       const empty = document.createElement('p');
       empty.className = 'spy-blocked';
-      empty.textContent = 'Колонии нет, следов активности не обнаружено.';
+      empty.textContent = 'Колонии нет — место свободно.';
       card.appendChild(empty);
+      /*
+       * Недра рисуются и здесь, а раньше отчет обрывался строкой выше.
+       * Ради них пустую планету и разведывают: выбор места под колонию
+       * решается богатством, а не тем, что следов активности не обнаружено.
+       */
+      if (report.richness) card.appendChild(spyRichness(report.richness));
       return card;
     }
 
     /* Недра: та же шкала, что в паспорте колонии — единица посередине. */
-    if (report.richness) {
-      const grid = document.createElement('div');
-      grid.className = 'spy-richness';
-      for (const [key, label] of [
-        ['ore', 'Руда'],
-        ['polymers', 'Полимеры'],
-        ['plasma', 'Плазма'],
-        ['energy', 'Инсоляция'],
-        ['antimatter', 'Антиматерия'],
-      ]) {
-        const value = report.richness[key];
-        if (typeof value !== 'number') continue;
-        const row = document.createElement('div');
-        row.className = 'spy-rich-row';
-        row.innerHTML =
-          `<span>${label}</span>` +
-          `<span class="spy-bar"><i style="width:${Math.min(100, (value / 2) * 100).toFixed(0)}%"></i></span>` +
-          `<b>×${value.toFixed(2)}</b>`;
-        grid.appendChild(row);
-      }
-      card.appendChild(spySection('Богатство недр', grid, ''));
-    }
+    if (report.richness) card.appendChild(spyRichness(report.richness));
 
     /* Склад. */
     const stock = report.resources;
