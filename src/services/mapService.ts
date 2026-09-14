@@ -123,12 +123,17 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
     }
 
     const scan = scanByPlanet.get(planet.id);
-    return foreignPlanetView(
+    const view = foreignPlanetView(
       facts,
       // Снимок разведки пишет Game Loop, структура данных известна заранее.
       scan ? { data: scan.data as unknown as ScanPayload, scannedAt: scan.scannedAt } : null,
       now,
     );
+    // Членство в синдикате публично: его видно и в составе синдиката, и в рейтинге.
+    return {
+      ...view,
+      ally: Boolean(viewer?.syndicateId && planet.base && planet.base.commander.syndicateId === viewer.syndicateId),
+    };
   });
 
   const storage = hub?.storages[0] ?? null;

@@ -236,6 +236,8 @@ interface FleetRequestBody {
   pickup?: { ore?: unknown; polymers?: unknown; plasma?: unknown };
   /** Оставить флот у цели. Действует только там, где выбор вообще есть. */
   oneWay?: unknown;
+  /** Срок удержания в часах. */
+  holdHours?: unknown;
 }
 
 function readTarget(
@@ -390,6 +392,13 @@ gameRouter.post('/bases/:baseId/fleets', async (req, res: Response<ActionRespons
     { ...cargo, antimatter },
     pickup,
     body.oneWay === true,
+    typeof body.holdHours === 'number' ? body.holdHours : 0,
   );
+  res.status(result.ok ? 200 : 409).json(result);
+});
+
+/** Отозвать флот с удержания. */
+gameRouter.post('/fleets/:fleetId/recall', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const result = await gameLoop.recallFleet(currentCommander(req).id, req.params.fleetId);
   res.status(result.ok ? 200 : 409).json(result);
 });

@@ -169,6 +169,8 @@ export interface PlanetView {
   colonized: boolean | null;
   owner: string | null;
   isOwn: boolean;
+  /** Колония участника своего синдиката: ее можно взять на удержание. */
+  ally?: boolean;
   richness: ScanPayload['richness'] | null;
   buildings: BuildingLevels | null;
   resources: ScanPayload['resources'] | null;

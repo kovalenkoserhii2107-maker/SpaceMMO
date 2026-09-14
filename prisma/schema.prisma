@@ -818,15 +818,18 @@ model Fleet {
   /// Сожженная плазма за весь маршрут (списана при отправке).
   fuelSpent       Float
   /// Сожженная антиматерия — только для межзвездных прыжков.
-  antimatterSpent Float   @default(0)
+  antimatterSpent Float     @default(0)
   /// Прыжок между системами, а не полет внутри одной.
-  interstellar    Boolean @default(false)
+  interstellar    Boolean   @default(false)
   /// Рейс без возврата: флот остается в точке назначения.
   /// У колонизации и дислокации это свойство самой миссии, а транспорт
   /// летит и туда-обратно, и в один конец — поэтому признак хранится.
-  oneWay          Boolean @default(false)
+  oneWay          Boolean   @default(false)
   /// Прыжок через Браму: по нему считается пропускная способность врат.
-  viaGate         Boolean @default(false)
+  viaGate         Boolean   @default(false)
+  /// Удержание: сколько секунд стоять у союзника и до какого момента.
+  holdSeconds     Int       @default(0)
+  holdUntil       DateTime?
   /// Расстояние в орбитах и скорость флота — для отображения.
   distance        Int
   speed           Float
@@ -1074,6 +1077,7 @@ enum FleetMission {
   COLONIZE
   KISH_DELIVERY
   KISH_PICKUP
+  HOLD
 }
 
 enum ExpeditionOutcome {
@@ -1087,6 +1091,8 @@ enum ExpeditionOutcome {
 enum FleetStatus {
   OUTBOUND
   RETURNING
+  /// Стоит на орбите союзника и защищает его до конца срока.
+  HOLDING
 }
 
 enum BuildingType {

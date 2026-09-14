@@ -258,7 +258,8 @@ export interface FleetSnapshot {
   id: string;
   mission: FleetMission;
   missionLabel: string;
-  status: 'OUTBOUND' | 'RETURNING';
+  status: 'OUTBOUND' | 'RETURNING' | 'HOLDING';
+  holdUntil: number | null;
   originPlanetId: string;
   originPlanetName: string;
   /** Системы концов рейса: по ним макро-карта рисует межзвездный перелет. */

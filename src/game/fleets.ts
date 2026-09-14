@@ -5,7 +5,7 @@
 import { GATE_ANTIMATTER_SHARE, GATE_JUMP_SECONDS, GATE_POSITION } from './syndicate.js';
 import type { ResourceAmounts } from './rules.js';
 import type { TechLevels } from './techTree.js';
-import { SHIP_TYPES, shipLabel, type ShipCounts, type ShipType } from './ships.js';
+import { emptyShipCounts, SHIP_TYPES, shipLabel, type ShipCounts, type ShipType } from './ships.js';
 import { hasWeapons } from './combat.js';
 
 const FLEET_MISSIONS = [
@@ -20,6 +20,7 @@ const FLEET_MISSIONS = [
   'COLONIZE',
   'KISH_DELIVERY',
   'KISH_PICKUP',
+  'HOLD',
 ] as const;
 export type FleetMission = (typeof FLEET_MISSIONS)[number];
 
@@ -64,6 +65,7 @@ export const MISSION_LABELS: Record<FleetMission, string> = {
   HUB_PICKUP: 'Вывоз с хаба',
   KISH_DELIVERY: 'Доставка в Кіш',
   KISH_PICKUP: 'Вывоз из казны Коша',
+  HOLD: 'Удержание',
   ATTACK: 'Атака',
   DEPLOY: 'Дислокация',
   EXPEDITION: 'Экспедиция',
@@ -323,6 +325,10 @@ export function validateComposition(mission: FleetMission, ships: ShipCounts): s
   if (mission === 'ATTACK' && !hasWeapons(ships)) {
     return 'Для атаки нужен хотя бы один вооруженный корабль';
   }
+  // Удержание — это защита: грузовики на чужой орбите никого не прикроют.
+  if (mission === 'HOLD' && !hasWeapons(ships)) {
+    return 'Для удержания нужен хотя бы один вооруженный корабль';
+  }
   if (mission === 'EXPEDITION' && ships.PROBE === fleetSize(ships)) {
     return 'Одни зонды не выдержат экспедицию — нужен хотя бы один корабль с трюмом';
   }
@@ -367,4 +373,45 @@ export function describeComposition(ships: ShipCounts): string {
   return SHIP_TYPES.filter((type) => ships[type] > 0)
     .map((type) => `${shipLabel(type)} ×${ships[type]}`)
     .join(', ');
+}
+
+/** Сроки удержания на выбор, в часах. */
+export const HOLD_HOURS = [1, 4, 8, 24] as const;
+
+export function isHoldHours(value: unknown): value is (typeof HOLD_HOURS)[number] {
+  return typeof value === 'number' && (HOLD_HOURS as readonly number[]).includes(value);
+}
+
+/**
+ * Дележ уцелевших защитников между базой и флотами на удержании.
+ *
+ * Бой считает защитника одной стороной, а корабли у нее разных владельцев.
+ * Уцелевшие каждого класса делятся пропорционально вкладу, округление
+ * вниз, а остаток отдается тем, у кого этого класса было больше всего:
+ * так сумма совпадает с итогом боя до корабля, и никто не получает
+ * больше, чем привел.
+ */
+export function splitSurvivors(survivors: ShipCounts, parts: ShipCounts[]): ShipCounts[] {
+  const result = parts.map(() => emptyShipCounts());
+  for (const type of SHIP_TYPES) {
+    const total = parts.reduce((sum, part) => sum + part[type], 0);
+    if (total <= 0) continue;
+    const alive = Math.min(total, Math.max(0, Math.floor(survivors[type])));
+    let given = 0;
+    parts.forEach((part, index) => {
+      const share = Math.floor((part[type] * alive) / total);
+      result[index]![type] = share;
+      given += share;
+    });
+    let rest = alive - given;
+    const order = parts.map((_, index) => index).sort((a, b) => parts[b]![type] - parts[a]![type]);
+    for (const index of order) {
+      if (rest <= 0) break;
+      if (result[index]![type] < parts[index]![type]) {
+        result[index]![type] += 1;
+        rest -= 1;
+      }
+    }
+  }
+  return result;
 }

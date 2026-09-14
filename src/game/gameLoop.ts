@@ -38,6 +38,9 @@ import {
   fleetSize,
   isHubMission,
   isKishMission,
+  HOLD_HOURS,
+  isHoldHours,
+  splitSurvivors,
   MISSION_LABELS,
   planFlight,
   validateCargo,
@@ -887,6 +890,8 @@ class GameLoop {
     pickup: { ore: number; polymers: number; plasma?: number } = { ore: 0, polymers: 0 },
     /** Оставить флот в точке назначения. Учитывается только там, где есть выбор. */
     requestedOneWay = false,
+    /** Срок удержания в часах — только для миссии удержания. */
+    holdHours = 0,
   ): Promise<ActionResult> {
     const commander = await this.getCommander(commanderId);
     const base = commander?.bases.get(baseId);
@@ -1010,6 +1015,23 @@ class GameLoop {
         }
       }
 
+      /*
+       * Удержание — флот встает на орбиту союзника и защищает его до конца
+       * срока, оставаясь своим. Отдать корабли насовсем можно и раньше —
+       * транспортом в один конец; удержание нужно, чтобы помочь и забрать.
+       */
+      if (mission === 'HOLD') {
+        if (!planet.base || planet.base.commanderId === commanderId) {
+          return { ok: false, error: 'Удерживать можно только колонию союзника — свою охраняет дислокация' };
+        }
+        if (!(await sameSyndicate(commanderId, planet.base.commanderId))) {
+          return { ok: false, error: 'Удерживать можно только колонию участника своего синдиката' };
+        }
+        if (!isHoldHours(holdHours)) {
+          return { ok: false, error: `Срок удержания: ${HOLD_HOURS.join(', ')} ч` };
+        }
+      }
+
       if (mission === 'COLONIZE') {
         if (planet.base) {
           return { ok: false, error: 'Планета уже заселена — колонию основать негде' };
@@ -1062,7 +1084,7 @@ class GameLoop {
     // Хаб торгует лишь рудой и полимерами, поэтому плазму туда не грузим.
     const empty = { ore: 0, polymers: 0, plasma: 0 };
     const outboundCargo =
-      mission === 'HUB_PICKUP' || mission === 'KISH_PICKUP'
+      mission === 'HUB_PICKUP' || mission === 'KISH_PICKUP' || mission === 'HOLD'
         ? empty
         : mission === 'HUB_DELIVERY'
         ? { ...cargo, plasma: 0 }
@@ -1148,7 +1170,9 @@ class GameLoop {
 
     const now = Date.now();
     const arrivesAt = now + plan.flightSeconds * 1000;
-    const returnsAt = arrivesAt + plan.flightSeconds * 1000;
+    // Удержание стоит у союзника свой срок, и только потом летит домой.
+    const holdMs = mission === 'HOLD' ? holdHours * 3_600_000 : 0;
+    const returnsAt = arrivesAt + holdMs + plan.flightSeconds * 1000;
 
     base.resources.ore -= outboundCargo.ore;
     base.resources.polymers -= outboundCargo.polymers;
@@ -1199,6 +1223,8 @@ class GameLoop {
         antimatterSpent: plan.antimatter,
         interstellar: plan.kind === 'INTERSTELLAR',
         viaGate: plan.viaGate === true,
+        holdSeconds: holdMs / 1000,
+        holdUntil: holdMs > 0 ? new Date(arrivesAt + holdMs) : null,
         distance: plan.distance,
         speed: plan.speed,
         departedAt: new Date(now),
@@ -1325,6 +1351,41 @@ class GameLoop {
     if (!commander) return;
     commander.credits = credits;
     this.emitUser(commanderId);
+  }
+
+  /**
+   * Отзыв флота с удержания — в пути или уже на орбите.
+   *
+   * Стоящий на орбите летит домой полный путь, а развернутый в пути — столько,
+   * сколько уже пролетел. Условный UPDATE по статусу: отзыв в тот же миг,
+   * когда вышел срок, не развернет флот дважды.
+   */
+  async recallFleet(commanderId: string, fleetId: string): Promise<ActionResult> {
+    const fleet = await prisma.fleet.findUnique({ where: { id: fleetId } });
+    if (!fleet || fleet.commanderId !== commanderId) return { ok: false, error: 'Флот не найден' };
+    if (fleet.mission !== 'HOLD' || (fleet.status !== 'OUTBOUND' && fleet.status !== 'HOLDING')) {
+      return { ok: false, error: 'Отозвать можно только флот, идущий на удержание или стоящий на нем' };
+    }
+    const now = Date.now();
+    const backMs = fleet.status === 'HOLDING' ? holdFlightMs(fleet) : Math.max(0, now - fleet.departedAt.getTime());
+    const updated = await prisma.fleet.updateMany({
+      where: { id: fleetId, status: fleet.status },
+      data: {
+        status: 'RETURNING',
+        returnsAt: new Date(now + backMs),
+        holdUntil: null,
+        ...(fleet.status === 'OUTBOUND' ? { arrivesAt: new Date(now) } : {}),
+      },
+    });
+    if (updated.count === 0) return { ok: false, error: 'Флот уже возвращается' };
+
+    const commander = this.commanders.get(commanderId);
+    if (commander) {
+      const rows = await prisma.fleet.findMany({ where: { commanderId }, include: FLEET_INCLUDE, orderBy: { arrivesAt: 'asc' } });
+      commander.fleets = rows.map(toFleetRuntime);
+      this.emitUser(commanderId);
+    }
+    return { ok: true, message: `Флот отозван: дома через ${Math.ceil(backMs / 1000)} с` };
   }
 
   /** Орбита, координаты и система цели — нужны для предрасчета маршрута. */
@@ -1693,6 +1754,7 @@ class GameLoop {
         OR: [
           { status: 'OUTBOUND', arrivesAt: { lte: timestamp } },
           { status: 'RETURNING', returnsAt: { lte: timestamp } },
+          { status: 'HOLDING', holdUntil: { lte: timestamp } },
         ],
       },
       include: FLEET_INCLUDE,
@@ -1707,6 +1769,9 @@ class GameLoop {
       try {
         if (fleet.status === 'OUTBOUND') {
           await this.handleArrival(fleet, now);
+        } else if (fleet.status === 'HOLDING') {
+          // Срок удержания вышел — домой; время возврата посчитано еще при вылете.
+          await prisma.fleet.updateMany({ where: { id: fleet.id, status: 'HOLDING' }, data: { status: 'RETURNING' } });
         } else {
           await this.handleReturn(fleet);
         }
@@ -1737,6 +1802,24 @@ class GameLoop {
    * и груз зачислился бы дважды.
    */
   private async handleArrival(fleet: FleetRow, now: number): Promise<void> {
+    if (fleet.mission === 'HOLD' && fleet.targetPlanetId) {
+      // Союзник мог выйти из синдиката или потерять колонию, пока флот летел.
+      const host = await prisma.base.findUnique({
+        where: { planetId: fleet.targetPlanetId },
+        select: { commanderId: true },
+      });
+      if (!host || !(await sameSyndicate(fleet.commanderId, host.commanderId))) {
+        const flightMs = holdFlightMs(fleet);
+        await prisma.fleet.update({
+          where: { id: fleet.id },
+          data: { status: 'RETURNING', returnsAt: new Date(now + flightMs), holdUntil: null },
+        });
+        return;
+      }
+      await prisma.fleet.update({ where: { id: fleet.id }, data: { status: 'HOLDING' } });
+      return;
+    }
+
     if (fleet.mission === 'TRANSPORT' && fleet.targetPlanetId) {
       const targetBase = await prisma.base.findUnique({ where: { planetId: fleet.targetPlanetId } });
       if (!targetBase) {
@@ -2344,6 +2427,16 @@ class GameLoop {
 
       const defenderShips = emptyShipCounts();
       for (const ship of base.ships) defenderShips[ship.type] = ship.count;
+      // Флоты союзников на удержании встают в бой рядом с кораблями базы.
+      const holders = await tx.fleet.findMany({
+        where: { targetPlanetId: planetId, mission: 'HOLD', status: 'HOLDING' },
+        include: { commander: { select: { nickname: true } } },
+      });
+      const baseShips = { ...defenderShips };
+      const holderShips = holders.map((holder) => shipsFromFleetColumns(holder));
+      for (const ships of holderShips) {
+        for (const type of SHIP_TYPES) defenderShips[type] += ships[type];
+      }
       const defenderDefenses = emptyDefenseCounts();
       for (const item of base.defenses) defenderDefenses[item.type] = item.count;
 
@@ -2366,11 +2459,36 @@ class GameLoop {
       );
 
       // Потери защитника: корабли и оборона списываются безвозвратно.
+      // Уцелевшие делятся между базой и флотами на удержании пропорционально вкладу.
+      const shares = splitSurvivors(outcome.defenderSurvivorShips, [baseShips, ...holderShips]);
+      const baseSurvivors = shares[0]!;
       for (const type of SHIP_TYPES) {
         await tx.ship.upsert({
           where: { baseId_type: { baseId: defenderBaseId, type } },
-          create: { baseId: defenderBaseId, type, count: outcome.defenderSurvivorShips[type] },
-          update: { count: outcome.defenderSurvivorShips[type] },
+          create: { baseId: defenderBaseId, type, count: baseSurvivors[type] },
+          update: { count: baseSurvivors[type] },
+        });
+      }
+      for (const [index, holder] of holders.entries()) {
+        const left = shares[index + 1]!;
+        const before = holderShips[index]!;
+        if (fleetSize(left) === 0) {
+          await tx.fleet.delete({ where: { id: holder.id } });
+        } else {
+          await tx.fleet.update({ where: { id: holder.id }, data: shipColumnsOf(left) });
+        }
+        const lost = fleetSize(before) - fleetSize(left);
+        await tx.message.create({
+          data: {
+            recipientId: holder.commanderId,
+            type: 'FLEET',
+            subject: `Удержание: бой у ${planet.name}`,
+            body:
+              `Флот на удержании у планеты ${planet.name} принял бой вместе с ее защитниками. ` +
+              (fleetSize(left) === 0
+                ? `Флот погиб целиком: ${lost} кораблей.`
+                : `Потеряно кораблей: ${lost}, уцелело ${fleetSize(left)} — удержание продолжается.`),
+          },
         });
       }
       for (const type of DEFENSE_TYPES) {
@@ -3370,6 +3488,54 @@ function shipsLost(before: ShipCounts, after: ShipCounts): ShipCounts {
   return lost;
 }
 
+/**
+ * Длительность пути в одну сторону у рейса на удержание.
+ *
+ * Берется из пары «конец удержания — возврат»: обе метки ставятся при вылете
+ * и больше не меняются. Время прилета для этого не годится — отзыв в пути
+ * переписывает его на момент разворота.
+ */
+function holdFlightMs(fleet: { holdUntil: Date | null; returnsAt: Date; arrivesAt: Date; departedAt: Date }): number {
+  if (fleet.holdUntil) return Math.max(0, fleet.returnsAt.getTime() - fleet.holdUntil.getTime());
+  return Math.max(0, fleet.arrivesAt.getTime() - fleet.departedAt.getTime());
+}
+
+/** Состав флота из колонок записи полета. */
+function shipsFromFleetColumns(row: Prisma.FleetModel): ShipCounts {
+  return {
+    PROBE: row.probes,
+    SMALL_CARGO: row.smallCargo,
+    LARGE_CARGO: row.largeCargo,
+    LIGHT_FIGHTER: row.lightFighters,
+    HEAVY_FIGHTER: row.heavyFighters,
+    CRUISER: row.cruisers,
+    FRIGATE: row.frigates,
+    BOMBER: row.bombers,
+    BATTLESHIP: row.battleships,
+    CARRIER: row.carriers,
+    RECYCLER: row.recyclers,
+    COLONY_SHIP: row.colonyShips,
+  };
+}
+
+/** Колонки записи полета из состава флота. */
+function shipColumnsOf(ships: ShipCounts): Prisma.FleetUpdateInput {
+  return {
+    probes: ships.PROBE,
+    smallCargo: ships.SMALL_CARGO,
+    largeCargo: ships.LARGE_CARGO,
+    lightFighters: ships.LIGHT_FIGHTER,
+    heavyFighters: ships.HEAVY_FIGHTER,
+    cruisers: ships.CRUISER,
+    frigates: ships.FRIGATE,
+    bombers: ships.BOMBER,
+    battleships: ships.BATTLESHIP,
+    carriers: ships.CARRIER,
+    recyclers: ships.RECYCLER,
+    colonyShips: ships.COLONY_SHIP,
+  };
+}
+
 /** Часовое окно пропускной способности Брамы. */
 const GATE_WINDOW_MS = 60 * 60 * 1000;
 
@@ -3438,6 +3604,7 @@ function toFleetRuntime(row: FleetRow): FleetRuntimeState {
     id: row.id,
     mission: row.mission,
     status: row.status,
+    holdUntil: row.holdUntil?.getTime() ?? null,
     originBaseId: row.originBaseId,
     originPlanetId: row.originPlanetId,
     originPlanetName: row.originPlanet.name,

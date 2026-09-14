@@ -36,6 +36,8 @@ import {
   watchUpgradeCost,
   withdrawAllowance,
 } from '../src/game/syndicate.js';
+import { splitSurvivors } from '../src/game/fleets.js';
+import { emptyShipCounts } from '../src/game/ships.js';
 
 const results: Array<{ name: string; passed: boolean }> = [];
 function check(name: string, passed: boolean, detail?: string): void {
@@ -155,6 +157,21 @@ console.log('\n=== 4. Тексты ===');
   check('имя ранга: пробелы схлопываются', normalizeRankName('  Старший   пилот ') === 'Старший пилот');
   check('имя ранга: разметка не проходит', normalizeRankName('<b>Босс</b>') === null);
   check('имя ранга: одна буква — мало', normalizeRankName('А') === null);
+}
+
+console.log('\n=== 5. Удержание: дележ уцелевших ===');
+{
+  const base = { ...emptyShipCounts(), LIGHT_FIGHTER: 30, CRUISER: 2 };
+  const ally = { ...emptyShipCounts(), LIGHT_FIGHTER: 10, CRUISER: 1 };
+  const survivors = { ...emptyShipCounts(), LIGHT_FIGHTER: 20, CRUISER: 1 };
+  const [baseLeft, allyLeft] = splitSurvivors(survivors, [base, ally]) as [typeof base, typeof base];
+  check('уцелевшие делятся пропорционально вкладу', baseLeft.LIGHT_FIGHTER === 15 && allyLeft.LIGHT_FIGHTER === 5);
+  check('сумма долей совпадает с итогом боя', baseLeft.CRUISER + allyLeft.CRUISER === 1);
+  check('остаток уходит тому, у кого класса было больше', baseLeft.CRUISER === 1 && allyLeft.CRUISER === 0);
+  const wiped = splitSurvivors(emptyShipCounts(), [base, ally]);
+  check('разгром обнуляет всех', wiped.every((part) => part.LIGHT_FIGHTER === 0 && part.CRUISER === 0));
+  const [solo] = splitSurvivors({ ...emptyShipCounts(), LIGHT_FIGHTER: 99 }, [base]) as [typeof base];
+  check('никто не получает больше, чем привел', solo.LIGHT_FIGHTER === 30);
 }
 
 const passed = results.filter((r) => r.passed).length;

@@ -163,6 +163,8 @@
     cargoAntimatterMax: $('cargo-antimatter-max'),
     cargoAntimatterLabel: $('cargo-antimatter-label'),
     cargoAntimatterField: $('cargo-antimatter-field'),
+    holdRow: $('hold-row'),
+    holdHours: $('hold-hours'),
     cargoInputs: $('cargo-inputs'),
     adminSearch: $('admin-search'),
     ratingNote: $('rating-note'),
@@ -2552,6 +2554,12 @@
   const MISSION_OPTIONS = {
     /* Своя колония: атаковать себя нельзя, зато можно перебросить туда флот. */
     OWN_PLANET: [['TRANSPORT', 'Транспортировка'], ['DEPLOY', 'Дислокация']],
+    /* Колония участника своего синдиката: помочь, прикрыть, посмотреть. Атаки нет — своих не бьют. */
+    ALLY_PLANET: [
+      ['HOLD', 'Удержание'],
+      ['TRANSPORT', 'Отправить груз или помощь'],
+      ['SCAN', 'Разведка зондом'],
+    ],
     /* Чужая колония. Порядок как у игрока в голове: напасть, помочь, посмотреть. */
     ENEMY_PLANET: [
       ['ATTACK', 'Атака'],
@@ -3206,7 +3214,8 @@
           : byId.get(fleet.targetPlanetId);
       if (!origin || !target) continue;
 
-      const outbound = fleet.status === 'OUTBOUND';
+      // Флот на удержании стоит у цели: маркер там, где закончился путь туда.
+      const outbound = fleet.status === 'OUTBOUND' || fleet.status === 'HOLDING';
       const from = outbound ? origin : target;
       const to = outbound ? target : origin;
       const legStart = outbound ? fleet.departedAt : fleet.arrivesAt;
@@ -3585,7 +3594,9 @@
         ? MISSION_OPTIONS.FREE_PLANET
         : unknown
           ? MISSION_OPTIONS.UNKNOWN_PLANET
-          : planet
+          : planet && target.ally
+            ? MISSION_OPTIONS.ALLY_PLANET
+            : planet
             ? MISSION_OPTIONS.ENEMY_PLANET
             : MISSION_OPTIONS[kind] || MISSION_OPTIONS.UNKNOWN_PLANET;
     const options = [...base];
@@ -3657,7 +3668,9 @@
 
     // Переработчики летят за обломками, а не с грузом: трюмы должны быть пусты.
     // Разведке трюмы тоже ни к чему — зонд везет данные, а не ресурсы.
-    const harvest = map.mission === 'HARVEST' || map.mission === 'SCAN';
+    // Удержание тоже без груза: флот встает на орбиту защищать, а не везти.
+    el.holdRow.hidden = map.mission !== 'HOLD';
+    const harvest = map.mission === 'HARVEST' || map.mission === 'SCAN' || map.mission === 'HOLD';
     el.cargoInputs.hidden = harvest;
     if (harvest) {
       el.cargoOre.value = '0';
@@ -3997,6 +4010,7 @@
         place: `система ${map.data.systemName} · орбита ${planet.position}`,
         owner: planet.owner,
         isOwn: planet.isOwn,
+        ally: Boolean(planet.ally),
         // На карте это три состояния, а не два: у неразведанной планеты
         // владелец скрыт туманом войны, и пустой владелец не значит «свободна».
         colonized: planet.colonized,
@@ -4121,6 +4135,7 @@
       ...target,
       mission: map.mission,
       oneWay: el.oneWay.checked,
+      holdHours: map.mission === 'HOLD' ? Number(el.holdHours.value) : 0,
       ships: readComposition(),
       cargo: pickup ? { ore: 0, polymers: 0, plasma: 0 } : { ...amounts, antimatter },
       pickup: pickup ? { ...amounts } : { ore: 0, polymers: 0, plasma: 0 },
@@ -4171,7 +4186,9 @@
       const title = document.createElement('b');
       const direction = fleet.status === 'OUTBOUND'
         ? `${fleet.originPlanetName} → ${fleet.targetName}`
-        : `${fleet.targetName} → ${fleet.originPlanetName} (возврат)`;
+        : fleet.status === 'HOLDING'
+          ? `${fleet.targetName} (на удержании)`
+          : `${fleet.targetName} → ${fleet.originPlanetName} (возврат)`;
       const cargo = fleet.cargo.ore + fleet.cargo.polymers > 0
         ? `, груз ${icon('ore', 'sm')} ${fmt(fleet.cargo.ore)} · ` +
           `${icon('polymers', 'sm')} ${fmt(fleet.cargo.polymers)}` +
@@ -4181,9 +4198,22 @@
       const meta = document.createElement('span');
       // Строка груза содержит иконки-разметку, поэтому только innerHTML:
       // через textContent теги вывалились бы в интерфейс текстом.
+      const holdLeft = fleet.status === 'HOLDING' && fleet.holdUntil
+        ? Math.max(0, Math.ceil((fleet.holdUntil - Date.now()) / 1000))
+        : null;
       meta.innerHTML =
-        `${escapeHtml(fleet.composition)}${cargo} · прибытие через ${fmtTime(fleet.etaSeconds)}`;
+        `${escapeHtml(fleet.composition)}${cargo} · ` +
+        (holdLeft !== null ? `удержание еще ${fmtTime(holdLeft)}` : `прибытие через ${fmtTime(fleet.etaSeconds)}`);
       item.append(title, meta);
+      // Удержание можно прервать: флот идет домой, а не стоит до конца срока.
+      if (fleet.mission === 'HOLD' && (fleet.status === 'OUTBOUND' || fleet.status === 'HOLDING')) {
+        const recall = document.createElement('button');
+        recall.type = 'button';
+        recall.className = 'ghost tiny';
+        recall.textContent = 'Отозвать';
+        recall.addEventListener('click', () => void send(`/api/fleets/${fleet.id}/recall`, {}));
+        item.appendChild(recall);
+      }
       node.appendChild(item);
     }
   }
@@ -5323,7 +5353,8 @@
       const to = byId.get(fleet.toSystemId);
       if (!from || !to) continue;
 
-      const outbound = fleet.status === 'OUTBOUND';
+      // Флот на удержании стоит у цели: маркер там, где закончился путь туда.
+      const outbound = fleet.status === 'OUTBOUND' || fleet.status === 'HOLDING';
       const a = galaxyPoint(outbound ? from : to, bounds);
       const b = galaxyPoint(outbound ? to : from, bounds);
       const legStart = outbound ? fleet.departedAt : fleet.arrivesAt;

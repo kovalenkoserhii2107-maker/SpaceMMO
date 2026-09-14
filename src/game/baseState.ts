@@ -112,7 +112,9 @@ export interface ShipJobState {
 export interface FleetRuntimeState {
   id: string;
   mission: FleetMission;
-  status: 'OUTBOUND' | 'RETURNING';
+  status: 'OUTBOUND' | 'RETURNING' | 'HOLDING';
+  /** До какого момента флот стоит на удержании у союзника. */
+  holdUntil: number | null;
   originBaseId: string;
   originPlanetId: string;
   fromSystemId: string;
@@ -763,6 +765,7 @@ export function fleetSnapshots(commander: CommanderRuntimeState, now: number): F
       mission: fleet.mission,
       missionLabel: MISSION_LABELS[fleet.mission],
       status: fleet.status,
+      holdUntil: fleet.holdUntil,
       originPlanetId: fleet.originPlanetId,
       originPlanetName: fleet.originPlanetName,
       fromSystemId: fleet.fromSystemId,
