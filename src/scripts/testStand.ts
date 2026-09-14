@@ -52,7 +52,15 @@ for (const commander of [admiral, pilot]) {
 }
 await prisma.commander.updateMany({
   where: { id: { in: [admiral.id, pilot.id] } },
-  data: { credits: 10000, syndicateId: null, syndicateRole: null },
+  data: {
+    credits: 10000,
+    syndicateId: null,
+    syndicateRole: null,
+    syndicateRankId: null,
+    syndicateJoinedAt: null,
+    syndicateLeftAt: null,
+    syndicateMerit: 0,
+  },
 });
 
 for (const commander of [admiral, pilot]) {

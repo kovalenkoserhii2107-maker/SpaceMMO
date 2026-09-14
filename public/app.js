@@ -455,8 +455,22 @@
     });
   }
 
+  /**
+   * Версия игры в меню и на экране входа. Номер приходит с сервера, а не
+   * записан в разметке: после выкатки его видно сразу, и игрок сверяет письмо
+   * об обновлении с тем, что у него действительно открыто.
+   */
+  function showVersion(version) {
+    if (!version) return;
+    for (const node of document.querySelectorAll('[data-version]')) {
+      node.textContent = `Версия ${version}`;
+      node.hidden = false;
+    }
+  }
+
   async function initGoogleSignIn() {
     const config = await api('/api/auth/config');
+    if (config.ok) showVersion(config.data.version);
     const clientId = config.ok ? config.data.googleClientId : null;
     if (!clientId) {
       el.googleNote.hidden = false;
@@ -4878,7 +4892,7 @@
 
   /** Войны синдикатов: объявлять и мириться могут лидер и офицеры. */
   function renderSyndicateDiplomacy(mine) {
-    const canDeclare = mine.role === 'LEADER' || mine.role === 'OFFICER';
+    const canDeclare = Boolean(mine.canDeclare);
 
     const header = document.createElement('div');
     header.className = 'queue-item';
@@ -4886,7 +4900,7 @@
       `<b>Синдикат [${mine.tag}] ${mine.name}</b>` +
       `<span>${canDeclare
         ? 'ты можешь объявлять войну и заключать мир от лица синдиката'
-        : 'войну объявляют лидер и офицеры — личные войны недоступны'}</span>`;
+        : 'войну и мир от лица синдиката объявляют ранги с правом дипломатии'}</span>`;
     el.diplomacy.appendChild(header);
 
     const others = (war.data.otherSyndicates || []);
@@ -5447,8 +5461,15 @@
   /* ---------- Синдикаты ---------- */
 
   const syndicate = { data: null };
-  const ROLE_LABELS = { LEADER: 'лидер', OFFICER: 'офицер', MEMBER: 'участник' };
-  const TX_LABELS = { DONATION: 'пожертвование', FOUNDING: 'основание', PAYOUT: 'выплата' };
+  const TX_LABELS = {
+    DONATION: 'пожертвование',
+    FOUNDING: 'основание',
+    PAYOUT: 'выдача из казны',
+    TAX: 'налог',
+    ENTRY_FEE: 'вступительный взнос',
+    KISH_UPGRADE: 'развитие Коша',
+  };
+  const RECRUITMENT_LABELS = { OPEN: 'открыт', APPLICATION: 'по заявке', CLOSED: 'закрыт' };
 
   async function loadSyndicate() {
     const result = await api('/api/syndicates');
@@ -5460,13 +5481,13 @@
   }
 
   /**
-   * Форма рассылки видна только тем, кто вправе ее отправить.
+   * Форма рассылки видна только тем, чей ранг дает право рассылки.
    * Право проверяет и сервер, но прятать заведомо запрещенную кнопку честнее,
    * чем показывать ее и отвечать отказом.
    */
   function syncBroadcastForm() {
     const mine = syndicate.data && syndicate.data.mine;
-    el.mailBroadcast.hidden = !mine || (mine.role !== 'LEADER' && mine.role !== 'OFFICER');
+    el.mailBroadcast.hidden = !mine || !mine.me.permissions.includes('BROADCAST');
   }
 
   /** Отправка действия синдиката с последующим обновлением панели. */
@@ -5493,73 +5514,163 @@
     else renderSyndicateList(data);
   }
 
+  /*
+   * Мелкие строители разметки панели синдиката. Текст игроков — кодекс,
+   * названия, позывные — кладется только через textContent: кодекс пишут
+   * люди, и разметка в нем должна оставаться текстом.
+   */
+  function synEl(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined && text !== null) node.textContent = text;
+    return node;
+  }
+
+  function synButton(label, className, onClick, disabled) {
+    const node = synEl('button', className, label);
+    node.type = 'button';
+    node.disabled = Boolean(disabled);
+    if (onClick) node.addEventListener('click', onClick);
+    return node;
+  }
+
+  function synCard(title) {
+    const card = synEl('div', 'hub-card');
+    card.appendChild(synEl('h3', 'section-title', title));
+    return card;
+  }
+
+  function synField(label, input) {
+    const field = synEl('label', 'field');
+    field.appendChild(synEl('span', null, label));
+    field.appendChild(input);
+    return field;
+  }
+
+  function synNumber(value, min, max) {
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = String(min);
+    if (max !== undefined) input.max = String(max);
+    input.step = '1';
+    input.value = String(value);
+    return input;
+  }
+
+  /**
+   * Целое из поля. Пустое или дробное уходит как `null`, и сервер отвечает
+   * отказом с объяснением: подставить ноль молча значило бы обнулить налог
+   * или взнос нечаянной очисткой поля.
+   */
+  function synInt(input) {
+    const value = input.value.trim();
+    return /^\d+$/.test(value) ? parseInt(value, 10) : null;
+  }
+
+  /**
+   * Кнопка необратимого действия срабатывает со второго нажатия.
+   * Модальные подтверждения в игре запрещены, а роспуск сжигает казну
+   * и передача лидерства не отменяется — одного случайного касания мало.
+   */
+  function synConfirm(label, confirmLabel, className, onConfirm) {
+    const node = synButton(label, className, () => {
+      if (node.dataset.armed === '1') {
+        onConfirm();
+        return;
+      }
+      node.dataset.armed = '1';
+      node.textContent = confirmLabel;
+      setTimeout(() => {
+        node.dataset.armed = '';
+        node.textContent = label;
+      }, 4000);
+    });
+    return node;
+  }
+
+  function synDateTime(ms) {
+    return new Date(ms).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  }
+
   /* --- без синдиката: список и создание --- */
   function renderSyndicateList(data) {
-    const grid = document.createElement('div');
-    grid.className = 'syndicate-grid';
+    const grid = synEl('div', 'syndicate-grid');
 
-    const create = document.createElement('div');
-    create.className = 'hub-card';
-    create.innerHTML =
-      '<h3 class="section-title">Создать синдикат</h3>' +
-      `<div class="hub-storage">Основание стоит <b>${fmt(data.foundingCost)}</b> ${icon('credits', 'sm')} ` +
-      `(на счету ${fmt(data.credits)}). Основатель становится лидером.</div>`;
-
-    const nameField = document.createElement('label');
-    nameField.className = 'field';
-    nameField.innerHTML = '<span>Название</span>';
-    const nameInput = document.createElement('input');
-    nameInput.type = 'text';
-    nameInput.maxLength = 32;
-    nameField.appendChild(nameInput);
-
-    const tagField = document.createElement('label');
-    tagField.className = 'field';
-    tagField.innerHTML = '<span>Тег (2-5 символов)</span>';
-    const tagInput = document.createElement('input');
-    tagInput.type = 'text';
-    tagInput.maxLength = 5;
-    tagField.appendChild(tagInput);
-
-    const createButton = document.createElement('button');
-    createButton.type = 'button';
-    createButton.className = 'primary';
-    createButton.textContent = 'Основать синдикат';
-    createButton.disabled = data.credits < data.foundingCost;
-    createButton.addEventListener('click', () =>
-      syndicateAction('/api/syndicates', { name: nameInput.value, tag: tagInput.value }));
-
-    create.append(nameField, tagField, createButton);
-
-    const list = document.createElement('div');
-    list.className = 'hub-card';
-    list.innerHTML = '<h3 class="section-title">Действующие синдикаты</h3>';
-
-    if (!data.list.length) {
-      const empty = document.createElement('div');
-      empty.className = 'hub-storage';
-      empty.textContent = 'Синдикатов пока нет — станешь первым.';
-      list.appendChild(empty);
+    const create = synCard('Создать синдикат');
+    const cost = synEl('div', 'hub-storage');
+    cost.innerHTML =
+      `Основание стоит <b>${fmt(data.foundingCost)}</b> ${icon('credits', 'sm')} ` +
+      `(на счету ${fmt(data.credits)}). Основатель становится главарем, а Кіш встает в системе его столицы.`;
+    create.appendChild(cost);
+    if (data.cooldownUntil) {
+      create.appendChild(synEl('div', 'hub-storage warn',
+        `После выхода из синдиката вступить или основать новый можно с ${synDateTime(data.cooldownUntil)}`));
     }
 
+    const nameInput = synEl('input');
+    nameInput.type = 'text';
+    nameInput.maxLength = 32;
+    const tagInput = synEl('input');
+    tagInput.type = 'text';
+    tagInput.maxLength = 5;
+    create.append(
+      synField('Название', nameInput),
+      synField('Тег (2-5 символов)', tagInput),
+      synButton('Основать синдикат', 'primary',
+        () => syndicateAction('/api/syndicates', { name: nameInput.value, tag: tagInput.value }),
+        data.credits < data.foundingCost || Boolean(data.cooldownUntil)),
+    );
+
+    const list = synCard('Действующие синдикаты');
+    if (!data.list.length) list.appendChild(synEl('div', 'hub-storage', 'Синдикатов пока нет — станешь первым.'));
+
     for (const item of data.list) {
-      const row = document.createElement('div');
-      row.className = 'queue-item member-row';
+      const row = synEl('div', 'queue-item member-row syndicate-row');
+      const info = synEl('div');
+      info.appendChild(synEl('b', null, `[${item.tag}] ${item.name}`));
+      info.appendChild(synEl('div', 'role',
+        `главарь: ${item.leader} · участников ${item.members}/${item.memberCap} · Кіш ур. ${item.kishLevel} · ` +
+        `набор ${RECRUITMENT_LABELS[item.recruitment] || item.recruitment} · налог ${item.taxRate}%` +
+        (item.entryFee > 0 ? ` · взнос ${fmt(item.entryFee)} ₴` : '') +
+        (item.minScore > 0 ? ` · рейтинг от ${fmt(item.minScore)}` : '')));
 
-      const info = document.createElement('div');
-      info.innerHTML =
-        `<b>[${item.tag}] ${item.name}</b>` +
-        `<div class="role">лидер: ${item.leader} · участников: ${item.members}</div>`;
-
-      const action = document.createElement('button');
-      action.type = 'button';
-      action.className = 'ghost';
-      if (item.applicationStatus === 'PENDING') {
-        action.textContent = 'Заявка отправлена';
-        action.disabled = true;
+      const full = item.members >= item.memberCap;
+      const joinLabel = item.recruitment === 'OPEN' ? 'Вступить' : 'Подать заявку';
+      let action;
+      if (item.applicationStatus === 'PENDING') action = synButton('Заявка отправлена', 'ghost', null, true);
+      else if (item.recruitment === 'CLOSED') action = synButton('Набор закрыт', 'ghost', null, true);
+      else if (full) action = synButton('Мест нет', 'ghost', null, true);
+      else if (data.cooldownUntil) action = synButton('Пауза после выхода', 'ghost', null, true);
+      else if (item.hasCodex) {
+        // Кодекс читается до вступления: кнопка раскрывает его под строкой,
+        // а вступить можно только отметив, что принял именно эту редакцию.
+        action = synButton(`Кодекс и ${joinLabel.toLowerCase()}`, 'ghost', async () => {
+          const existing = row.querySelector('.syndicate-codex');
+          if (existing) {
+            existing.remove();
+            return;
+          }
+          const result = await api(`/api/syndicates/${item.id}/codex`);
+          const codex = result.ok && result.data.codex;
+          const block = synEl('div', 'syndicate-codex');
+          if (!codex) {
+            block.appendChild(synEl('div', 'hub-storage', 'Кодекс снят — можно вступать без него.'));
+            block.appendChild(synButton(joinLabel, 'primary', () => syndicateAction(`/api/syndicates/${item.id}/apply`, {})));
+          } else {
+            block.appendChild(synEl('pre', 'codex-text', codex.text));
+            const agree = synEl('label', 'codex-accept');
+            const box = document.createElement('input');
+            box.type = 'checkbox';
+            agree.append(box, synEl('span', null, 'Прочитал и принимаю кодекс'));
+            const confirm = synButton(joinLabel, 'primary',
+              () => syndicateAction(`/api/syndicates/${item.id}/apply`, { codexId: codex.id }), true);
+            box.addEventListener('change', () => { confirm.disabled = !box.checked; });
+            block.append(agree, confirm);
+          }
+          row.appendChild(block);
+        });
       } else {
-        action.textContent = 'Подать заявку';
-        action.addEventListener('click', () => syndicateAction(`/api/syndicates/${item.id}/apply`));
+        action = synButton(joinLabel, 'ghost', () => syndicateAction(`/api/syndicates/${item.id}/apply`, {}));
       }
 
       row.append(info, action);
@@ -5573,181 +5684,311 @@
   /* --- свой синдикат --- */
   function renderMySyndicate(data) {
     const mine = data.mine;
-    const canReview = mine.role === 'LEADER' || mine.role === 'OFFICER';
-    const isLeader = mine.role === 'LEADER';
+    const me = mine.me;
+    const can = (permission) => me.permissions.includes(permission);
+    const myRank = mine.ranks.find((rank) => rank.id === me.rankId);
+    const myPosition = me.isLeader ? 0 : (myRank ? myRank.position : 99);
 
-    const header = document.createElement('div');
-    header.className = 'syndicate-header';
-    header.innerHTML =
-      `<div><h3><span class="tag">[${mine.tag}]</span> ${mine.name}</h3>` +
-      `<div class="role">твоя роль: <b>${ROLE_LABELS[mine.role]}</b> · участников: ${mine.members.length} · ` +
-      `основан ${new Date(mine.createdAt).toLocaleDateString('ru-RU')}</div></div>` +
-      `<div class="bank">банк синдиката<b>${fmt(mine.bank)} ${icon('credits', 'sm')}</b>` +
-      `личный счет: ${fmt(data.credits)} ${icon('credits', 'sm')}</div>`;
+    const header = synEl('div', 'syndicate-header');
+    const title = synEl('div');
+    const h3 = synEl('h3');
+    h3.append(synEl('span', 'tag', `[${mine.tag}] `), document.createTextNode(mine.name));
+    title.append(h3, synEl('div', 'role',
+      `твой ранг: ${me.rankName} · участников ${mine.members.length}/${mine.kish.memberCap} · ` +
+      `основан ${new Date(mine.createdAt).toLocaleDateString('ru-RU')}`));
+    const bankBox = synEl('div', 'bank');
+    bankBox.innerHTML =
+      `казна синдиката<b>${fmt(mine.bank)} ${icon('credits', 'sm')}</b>` +
+      `личный счет: ${fmt(data.credits)} ${icon('credits', 'sm')}`;
+    header.append(title, bankBox);
     el.syndicatePanel.appendChild(header);
 
-    const grid = document.createElement('div');
-    grid.className = 'syndicate-grid';
+    /* Кіш и казна */
+    const top = synEl('div', 'syndicate-grid');
 
-    // Пожертвования
-    const bank = document.createElement('div');
-    bank.className = 'hub-card';
-    bank.innerHTML = '<h3 class="section-title">Пожертвование в банк</h3>';
-    const donateForm = document.createElement('div');
-    donateForm.className = 'donate-form';
-    const amount = document.createElement('input');
-    amount.type = 'number';
-    amount.min = '1';
-    amount.value = '100';
-    const donateButton = document.createElement('button');
-    donateButton.type = 'button';
-    donateButton.className = 'primary';
-    donateButton.textContent = 'Внести';
-    donateButton.addEventListener('click', () =>
-      syndicateAction('/api/syndicates/donate', { amount: Number(amount.value) }));
-    donateForm.append(amount, donateButton);
-    bank.appendChild(donateForm);
+    const kish = synCard('Кіш');
+    kish.appendChild(synEl('div', 'hub-storage',
+      `Уровень ${mine.kish.level} · система ${mine.kish.systemName || 'не определена'} · ` +
+      `мест занято ${mine.members.length} из ${mine.kish.memberCap}`));
+    kish.appendChild(synEl('div', 'hub-storage',
+      `Следующий уровень добавит одно место за ${fmt(mine.kish.nextLevelCost)} ₴ из казны.`));
+    if (can('KISH')) {
+      kish.appendChild(synButton(`Повысить Кіш до ${mine.kish.level + 1} ур.`, 'primary',
+        () => syndicateAction('/api/syndicates/kish/upgrade'), mine.bank < mine.kish.nextLevelCost));
+    }
 
-    const log = document.createElement('div');
-    log.className = 'queue';
+    const treasury = synCard('Казна');
+    const donateForm = synEl('div', 'donate-form');
+    const amount = synNumber(100, 1);
+    donateForm.append(amount, synButton('Внести', 'primary',
+      () => syndicateAction('/api/syndicates/donate', { amount: synInt(amount) })));
+    treasury.appendChild(donateForm);
+
+    if (can('WITHDRAW')) {
+      const payoutForm = synEl('div', 'syndicate-form');
+      payoutForm.appendChild(synEl('div', 'hub-storage',
+        me.withdrawLeft === null
+          ? 'Выдача из казны: без предела'
+          : `Выдача из казны: осталось ${fmt(me.withdrawLeft)} ₴ на сутки`));
+      const whom = synEl('select');
+      for (const member of mine.members) {
+        const option = synEl('option', null, member.nickname);
+        option.value = member.commanderId;
+        whom.appendChild(option);
+      }
+      const sum = synNumber(100, 1);
+      const line = synEl('div', 'row');
+      line.append(whom, sum, synButton('Выдать', 'ghost',
+        () => syndicateAction(`/api/syndicates/members/${whom.value}/payout`, { amount: synInt(sum) })));
+      payoutForm.appendChild(line);
+      treasury.appendChild(payoutForm);
+    }
+
+    const log = synEl('div', 'queue');
     for (const tx of mine.transactions) {
-      const row = document.createElement('div');
-      row.className = 'queue-item';
-      const title = document.createElement('b');
-      title.innerHTML = `${tx.nickname || 'система'} — ${fmt(tx.amount)} ${icon('credits', 'sm')}`;
-      const meta = document.createElement('span');
-      meta.textContent = `${TX_LABELS[tx.kind] || tx.kind} · ${new Date(tx.createdAt).toLocaleString('ru-RU')}`;
-      row.append(title, meta);
+      const row = synEl('div', 'queue-item');
+      const head = synEl('b');
+      head.append(document.createTextNode(`${tx.nickname || tx.actor || 'система'} — ${fmt(tx.amount)} `));
+      head.insertAdjacentHTML('beforeend', icon('credits', 'sm'));
+      const meta = [TX_LABELS[tx.kind] || tx.kind];
+      if (tx.kind === 'PAYOUT' && tx.actor) meta.push(`выдал ${tx.actor}`);
+      if (tx.comment) meta.push(tx.comment);
+      meta.push(new Date(tx.createdAt).toLocaleString('ru-RU'));
+      row.append(head, synEl('span', null, meta.join(' · ')));
       log.appendChild(row);
     }
-    if (!mine.transactions.length) {
-      const empty = document.createElement('div');
-      empty.className = 'queue-item';
-      empty.textContent = 'Операций пока не было';
-      log.appendChild(empty);
+    if (!mine.transactions.length) log.appendChild(synEl('div', 'queue-item', 'Операций пока не было'));
+    treasury.appendChild(log);
+
+    top.append(kish, treasury);
+    el.syndicatePanel.appendChild(top);
+
+    /* Налог и правила набора */
+    const middle = synEl('div', 'syndicate-grid');
+
+    const tax = synCard('Налог с крипто-фермы');
+    tax.appendChild(synEl('div', 'hub-storage', `Сейчас ${mine.tax.rate}%`));
+    if (mine.tax.pendingRate !== null && mine.tax.effectiveAt) {
+      tax.appendChild(synEl('div', 'hub-storage warn',
+        `С ${synDateTime(mine.tax.effectiveAt)} — ${mine.tax.pendingRate}%`));
     }
-    bank.appendChild(log);
+    tax.appendChild(synEl('div', 'hub-storage',
+      'Налог удерживается с дохода крипто-фермы и уходит в казну. Повышение вступает в силу через сутки, снижение — сразу.'));
+    if (can('TAX')) {
+      const rate = synNumber(mine.tax.pendingRate ?? mine.tax.rate, 0, mine.tax.maxRate);
+      const line = synEl('div', 'syndicate-form');
+      line.append(synField(`Ставка, % (0–${mine.tax.maxRate})`, rate),
+        synButton('Установить', 'ghost', () => syndicateAction('/api/syndicates/tax', { rate: synInt(rate) })));
+      tax.appendChild(line);
+    }
 
-    // Состав
-    const roster = document.createElement('div');
-    roster.className = 'hub-card';
-    roster.innerHTML = '<h3 class="section-title">Состав синдиката</h3>';
+    const rules = synCard('Правила набора');
+    rules.appendChild(synEl('div', 'hub-storage',
+      `Набор ${RECRUITMENT_LABELS[mine.rules.recruitment]} · взнос ${fmt(mine.rules.entryFee)} ₴ · ` +
+      `рейтинг кандидата от ${fmt(mine.rules.minScore)}`));
+    if (can('RULES')) {
+      const mode = synEl('select');
+      for (const [value, label] of Object.entries(RECRUITMENT_LABELS)) {
+        const option = synEl('option', null, label);
+        option.value = value;
+        option.selected = value === mine.rules.recruitment;
+        mode.appendChild(option);
+      }
+      const fee = synNumber(mine.rules.entryFee, 0, data.limits.maxEntryFee);
+      const minScore = synNumber(mine.rules.minScore, 0);
+      const form = synEl('div', 'syndicate-form');
+      form.append(
+        synField('Набор', mode),
+        synField('Вступительный взнос, ₴', fee),
+        synField('Минимальный рейтинг', minScore),
+        synButton('Сохранить правила', 'ghost', () => syndicateAction('/api/syndicates/rules', {
+          recruitment: mode.value,
+          entryFee: synInt(fee),
+          minScore: synInt(minScore),
+        })),
+      );
+      rules.appendChild(form);
+    }
 
+    middle.append(tax, rules);
+    el.syndicatePanel.appendChild(middle);
+
+    /* Кодекс */
+    const codex = synCard('Кодекс');
+    if (mine.codex) {
+      codex.appendChild(synEl('pre', 'codex-text', mine.codex.text));
+      codex.appendChild(synEl('div', 'hub-storage',
+        `редакция от ${synDateTime(mine.codex.updatedAt)}${mine.codex.author ? ` · ${mine.codex.author}` : ''}`));
+    } else {
+      codex.appendChild(synEl('div', 'hub-storage', 'Кодекса пока нет: кандидаты вступают без него.'));
+    }
+    if (can('CODEX')) {
+      const area = synEl('textarea', 'syndicate-textarea');
+      area.maxLength = data.limits.codexMaxLength;
+      area.value = mine.codex ? mine.codex.text : '';
+      const counter = synEl('div', 'hub-storage');
+      const sync = () => { counter.textContent = `${area.value.length} / ${data.limits.codexMaxLength}`; };
+      area.addEventListener('input', sync);
+      sync();
+      codex.append(area, counter, synButton('Сохранить редакцию', 'ghost',
+        () => syndicateAction('/api/syndicates/codex', { text: area.value })));
+      codex.appendChild(synEl('div', 'hub-storage', 'Участники получат новую редакцию письмом. Пустой текст снимает кодекс.'));
+    }
+    el.syndicatePanel.appendChild(codex);
+
+    /* Состав и ранги */
+    const bottom = synEl('div', 'syndicate-grid');
+
+    const roster = synCard('Состав');
+    const assignable = mine.ranks.filter((rank) => rank.position !== 0 && (me.isLeader || rank.position > myPosition));
     for (const member of mine.members) {
-      const row = document.createElement('div');
-      row.className = 'queue-item member-row';
-      const info = document.createElement('div');
-      info.innerHTML =
-        `<b>${member.nickname}</b><div class="role ${member.role}">${ROLE_LABELS[member.role]} · ` +
-        `боев ${member.battlesWon}/${member.battlesLost}</div>`;
+      const row = synEl('div', 'queue-item member-row');
+      const info = synEl('div');
+      info.appendChild(synEl('b', null, member.nickname));
+      info.appendChild(synEl('div', `role${member.isLeader ? ' LEADER' : ''}`,
+        `${member.rankName} · заслуги ${fmt(member.merit)} · налог сегодня ${fmt(member.taxToday)} ₴ · ` +
+        `боев ${member.battlesWon}/${member.battlesLost}`));
 
-      const actions = document.createElement('div');
-      actions.className = 'member-actions';
-      // Лидер правит всем составом, офицер может исключить рядового.
-      if (!isLeader && mine.role === 'OFFICER' && member.role === 'MEMBER') {
-        const kick = document.createElement('button');
-        kick.type = 'button';
-        kick.className = 'ghost';
-        kick.textContent = 'Исключить';
-        kick.addEventListener('click', () =>
-          syndicateAction(`/api/syndicates/members/${member.commanderId}/kick`));
-        actions.appendChild(kick);
+      const actions = synEl('div', 'member-actions');
+      if (member.outrankedByMe && can('PROMOTE') && assignable.length) {
+        const select = synEl('select');
+        for (const rank of assignable) {
+          const option = synEl('option', null, rank.name);
+          option.value = rank.id;
+          option.selected = rank.id === member.rankId;
+          select.appendChild(option);
+        }
+        select.addEventListener('change', () =>
+          syndicateAction(`/api/syndicates/members/${member.commanderId}/rank`, { rankId: select.value }));
+        actions.appendChild(select);
       }
-
-      if (isLeader && member.role !== 'LEADER') {
-        const crown = document.createElement('button');
-        crown.type = 'button';
-        crown.className = 'ghost';
-        crown.textContent = 'Сделать лидером';
-        crown.addEventListener('click', () =>
-          syndicateAction(`/api/syndicates/members/${member.commanderId}/role`, { role: 'LEADER' }));
-        actions.appendChild(crown);
-
-        const promote = document.createElement('button');
-        promote.type = 'button';
-        promote.className = 'ghost';
-        promote.textContent = member.role === 'OFFICER' ? 'Снять офицера' : 'В офицеры';
-        promote.addEventListener('click', () =>
-          syndicateAction(`/api/syndicates/members/${member.commanderId}/role`, {
-            role: member.role === 'OFFICER' ? 'MEMBER' : 'OFFICER',
-          }));
-
-        const kick = document.createElement('button');
-        kick.type = 'button';
-        kick.className = 'ghost';
-        kick.textContent = 'Исключить';
-        kick.addEventListener('click', () =>
-          syndicateAction(`/api/syndicates/members/${member.commanderId}/kick`));
-
-        actions.append(promote, kick);
+      if (member.outrankedByMe && can('KICK')) {
+        actions.appendChild(synConfirm('Исключить', 'Точно исключить?', 'ghost',
+          () => syndicateAction(`/api/syndicates/members/${member.commanderId}/kick`)));
       }
-
+      if (me.isLeader && !member.isLeader) {
+        actions.appendChild(synConfirm('Сделать главарем', 'Передать лидерство?', 'ghost',
+          () => syndicateAction(`/api/syndicates/members/${member.commanderId}/leader`)));
+      }
       row.append(info, actions);
       roster.appendChild(row);
     }
 
-    grid.append(bank, roster);
-    el.syndicatePanel.appendChild(grid);
-
-    // Заявки видны только тем, кто их разбирает
-    if (canReview) {
-      const applications = document.createElement('div');
-      applications.className = 'hub-card';
-      applications.innerHTML = '<h3 class="section-title">Заявки на вступление</h3>';
-
-      if (!mine.applications.length) {
-        const empty = document.createElement('div');
-        empty.className = 'hub-storage';
-        empty.textContent = 'Новых заявок нет';
-        applications.appendChild(empty);
+    const ranks = synCard('Ранги');
+    const labelOf = new Map(data.permissionCatalog.map((item) => [item.key, item.label]));
+    for (const rank of mine.ranks) {
+      if (!me.isLeader) {
+        const row = synEl('div', 'queue-item');
+        row.appendChild(synEl('b', null, `${rank.name} · участников ${rank.members}`));
+        const rights = rank.position === 0
+          ? 'все права'
+          : (rank.permissions.map((key) => labelOf.get(key) || key).join(', ') || 'без прав');
+        row.appendChild(synEl('span', null,
+          rights + (rank.permissions.includes('WITHDRAW') ? ` · выдача до ${fmt(rank.dailyWithdrawLimit)} ₴ в сутки` : '')));
+        ranks.appendChild(row);
+        continue;
       }
+      ranks.appendChild(rankEditor(rank, data, labelOf));
+    }
+    if (me.isLeader && mine.ranks.length < data.limits.maxRanks) {
+      ranks.appendChild(synEl('h4', 'rank-new-title', 'Новый ранг'));
+      ranks.appendChild(rankEditor(null, data, labelOf));
+    }
 
+    bottom.append(roster, ranks);
+    el.syndicatePanel.appendChild(bottom);
+
+    /* Заявки */
+    if (can('APPLICATIONS')) {
+      const applications = synCard('Заявки на вступление');
+      if (!mine.applications.length) applications.appendChild(synEl('div', 'hub-storage', 'Новых заявок нет'));
       for (const application of mine.applications) {
-        const row = document.createElement('div');
-        row.className = 'queue-item member-row';
-        const info = document.createElement('div');
-        info.innerHTML =
-          `<b>${application.nickname}</b><div class="role">подана ` +
-          `${new Date(application.createdAt).toLocaleString('ru-RU')}</div>`;
-
-        const actions = document.createElement('div');
-        actions.className = 'member-actions';
-        const accept = document.createElement('button');
-        accept.type = 'button';
-        accept.className = 'primary';
-        accept.textContent = 'Принять';
-        accept.addEventListener('click', () =>
-          syndicateAction(`/api/syndicates/applications/${application.id}/approve`));
-        const reject = document.createElement('button');
-        reject.type = 'button';
-        reject.className = 'ghost';
-        reject.textContent = 'Отклонить';
-        reject.addEventListener('click', () =>
-          syndicateAction(`/api/syndicates/applications/${application.id}/reject`));
-
-        actions.append(accept, reject);
+        const row = synEl('div', 'queue-item member-row');
+        const info = synEl('div');
+        info.append(synEl('b', null, application.nickname),
+          synEl('div', 'role', `подана ${new Date(application.createdAt).toLocaleString('ru-RU')}`));
+        const actions = synEl('div', 'member-actions');
+        actions.append(
+          synButton('Принять', 'primary', () => syndicateAction(`/api/syndicates/applications/${application.id}/approve`)),
+          synButton('Отклонить', 'ghost', () => syndicateAction(`/api/syndicates/applications/${application.id}/reject`)),
+        );
         row.append(info, actions);
         applications.appendChild(row);
       }
       el.syndicatePanel.appendChild(applications);
     }
 
-    // Выход и роспуск
-    const footer = document.createElement('div');
-    footer.className = 'hub-card';
-    const exit = document.createElement('button');
-    exit.type = 'button';
-    exit.className = 'ghost';
-    if (isLeader) {
-      exit.textContent = 'Распустить синдикат';
-      exit.addEventListener('click', () => syndicateAction('/api/syndicates/disband'));
-      footer.innerHTML = '<div class="hub-storage">Роспуск вернет остаток банка лидеру.</div>';
+    /* Выход и роспуск */
+    const footer = synEl('div', 'hub-card');
+    if (me.isLeader) {
+      footer.appendChild(synEl('div', 'hub-storage', 'Роспуск сожжет казну синдиката целиком — она никому не вернется.'));
+      footer.appendChild(synConfirm('Распустить синдикат', 'Точно? Казна сгорит', 'ghost',
+        () => syndicateAction('/api/syndicates/disband')));
     } else {
-      exit.textContent = 'Покинуть синдикат';
-      exit.addEventListener('click', () => syndicateAction('/api/syndicates/leave'));
+      footer.appendChild(synEl('div', 'hub-storage', 'После выхода вступить в другой синдикат можно только через сутки.'));
+      footer.appendChild(synConfirm('Покинуть синдикат', 'Точно выйти?', 'ghost',
+        () => syndicateAction('/api/syndicates/leave')));
     }
-    footer.appendChild(exit);
     el.syndicatePanel.appendChild(footer);
+  }
+
+  /**
+   * Редактор ранга. Вершина — ранг главаря: переименовать его можно,
+   * а права и место нет, поэтому эти поля у него выключены.
+   */
+  function rankEditor(rank, data, labelOf) {
+    const isTop = Boolean(rank) && rank.position === 0;
+    const box = synEl('div', 'rank-editor');
+
+    const name = synEl('input');
+    name.type = 'text';
+    name.maxLength = 24;
+    name.value = rank ? rank.name : '';
+    const position = synNumber(rank ? rank.position : 1, isTop ? 0 : 1, 99);
+    position.disabled = isTop;
+    const limit = synNumber(rank ? rank.dailyWithdrawLimit : 0, 0);
+    limit.disabled = isTop;
+
+    const head = synEl('div', 'row');
+    head.append(synField('Название', name), synField('Место (1 — выше)', position), synField('Выдача в сутки, ₴', limit));
+    box.appendChild(head);
+
+    const grid = synEl('div', 'perm-grid');
+    const boxes = [];
+    for (const item of data.permissionCatalog) {
+      const label = synEl('label');
+      const check = document.createElement('input');
+      check.type = 'checkbox';
+      check.value = item.key;
+      check.checked = isTop || Boolean(rank && rank.permissions.includes(item.key));
+      check.disabled = isTop;
+      boxes.push(check);
+      label.append(check, synEl('span', null, labelOf.get(item.key) || item.key));
+      grid.appendChild(label);
+    }
+    box.appendChild(grid);
+
+    const payload = () => ({
+      name: name.value,
+      position: synInt(position),
+      permissions: boxes.filter((item) => item.checked).map((item) => item.value),
+      dailyWithdrawLimit: synInt(limit),
+    });
+
+    const actions = synEl('div', 'row');
+    if (rank) {
+      actions.appendChild(synButton('Сохранить', 'ghost',
+        () => syndicateAction(`/api/syndicates/ranks/${rank.id}`, payload())));
+      if (!isTop) {
+        actions.appendChild(synConfirm('Удалить', 'Точно удалить?', 'ghost',
+          () => syndicateAction(`/api/syndicates/ranks/${rank.id}/delete`)));
+      }
+      actions.appendChild(synEl('span', 'hub-storage', `участников: ${rank.members}`));
+    } else {
+      actions.appendChild(synButton('Создать ранг', 'primary', () => syndicateAction('/api/syndicates/ranks', payload())));
+    }
+    box.appendChild(actions);
+    return box;
   }
 
 

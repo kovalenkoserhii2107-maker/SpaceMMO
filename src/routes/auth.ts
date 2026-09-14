@@ -11,6 +11,7 @@ import {
 } from '../services/authService.js';
 import { authConfig, isExternalProvider } from '../config/auth.js';
 import { env } from '../config/env.js';
+import { GAME_VERSION } from '../config/version.js';
 import { currentAccount, requireAuth } from './middleware.js';
 import type { AuthConfigResponse, AuthResponse, ErrorResponse, SessionResponse } from '../types/api.js';
 
@@ -72,7 +73,7 @@ authRouter.post('/login', async (req, res: Response<AuthResponse | ErrorResponse
  */
 authRouter.get('/config', (_req, res: Response<AuthConfigResponse>) => {
   const clientId = authConfig.providers.GOOGLE.clientId;
-  res.json({ googleClientId: clientId.length > 0 ? clientId : null });
+  res.json({ googleClientId: clientId.length > 0 ? clientId : null, version: GAME_VERSION });
 });
 
 /** Вход через стороннего провайдера. Ключа нет — 501. */

@@ -3,19 +3,39 @@ import { gameLoop } from '../game/gameLoop.js';
 import { validateBody, validateSubject } from '../services/mailService.js';
 import {
   applyToSyndicate,
+  assignRank,
   broadcast,
+  createRank,
   createSyndicate,
+  deleteRank,
   disbandSyndicate,
   donate,
+  getCodex,
   getOverview,
   kickMember,
   leaveSyndicate,
+  MAX_ENTRY_FEE,
   normalizeName,
   normalizeTag,
+  payout,
   reviewApplication,
-  setRole,
+  setTaxRate,
+  transferLeadership,
+  updateCodex,
+  updateRank,
+  updateRules,
+  upgradeKish,
+  type RankInput,
   type SyndicateOverview,
+  type SyndicateResult,
 } from '../services/syndicateService.js';
+import {
+  CODEX_MAX_LENGTH,
+  MAX_TAX_RATE,
+  isSyndicatePermission,
+  normalizeCodex,
+  normalizeRankName,
+} from '../game/syndicate.js';
 import { currentCommander, requireAuth, requireCommander } from './middleware.js';
 import type { ActionResponse, ErrorResponse } from '../types/api.js';
 
@@ -48,10 +68,33 @@ syndicateRouter.post('/', async (req, res: Response<ActionResponse | ErrorRespon
   res.status(result.ok ? 200 : result.status).json(result.ok ? result : { error: result.error });
 });
 
-/** Подать заявку на вступление. */
-syndicateRouter.post('/:syndicateId/apply', async (req, res: Response<ActionResponse | ErrorResponse>) => {
-  const result = await applyToSyndicate(currentCommander(req).id, req.params.syndicateId);
+/**
+ * Целое число из тела запроса. `Number()` здесь нельзя (правило 13): он
+ * превращает `null`, пустую строку и `[]` в ноль, и пустое поле формы
+ * молча обнуляло бы взнос или налог вместо отказа.
+ */
+function integerIn(value: unknown, min: number, max: number): number | null {
+  if (typeof value !== 'number' || !Number.isInteger(value)) return null;
+  return value >= min && value <= max ? value : null;
+}
+
+function send(res: Response<ActionResponse | ErrorResponse>, result: SyndicateResult): void {
   res.status(result.ok ? 200 : result.status).json(result.ok ? result : { error: result.error });
+}
+
+/** Кодекс синдиката — кандидат читает его до подачи заявки. */
+syndicateRouter.get('/:syndicateId/codex', async (req, res) => {
+  res.json({ codex: await getCodex(req.params.syndicateId) });
+});
+
+/** Подать заявку на вступление. При открытом наборе — вступить сразу. */
+syndicateRouter.post('/:syndicateId/apply', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const codexId = (req.body as { codexId?: unknown } | undefined)?.codexId;
+  send(res, await applyToSyndicate(
+    currentCommander(req).id,
+    req.params.syndicateId,
+    typeof codexId === 'string' ? codexId : null,
+  ));
 });
 
 /** Одобрить заявку. Право лидера и офицеров. */
@@ -66,22 +109,116 @@ syndicateRouter.post('/applications/:id/reject', async (req, res: Response<Actio
   res.status(result.ok ? 200 : result.status).json(result.ok ? result : { error: result.error });
 });
 
-/** Исключить участника. Право лидера. */
+/** Исключить участника: право исключать и ранг выше. */
 syndicateRouter.post('/members/:commanderId/kick', async (req, res: Response<ActionResponse | ErrorResponse>) => {
-  const result = await kickMember(currentCommander(req).id, req.params.commanderId);
-  res.status(result.ok ? 200 : result.status).json(result.ok ? result : { error: result.error });
+  send(res, await kickMember(currentCommander(req).id, req.params.commanderId));
 });
 
-/** Назначить офицером или вернуть в участники. Право лидера. */
-syndicateRouter.post('/members/:commanderId/role', async (req, res: Response<ActionResponse | ErrorResponse>) => {
-  const role = (req.body as { role?: unknown } | undefined)?.role;
-  if (role !== 'OFFICER' && role !== 'MEMBER' && role !== 'LEADER') {
-    res.status(400).json({ error: 'Неизвестная роль' });
+/** Назначить участнику ранг: право назначать, и ранг ниже своего. */
+syndicateRouter.post('/members/:commanderId/rank', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const rankId = (req.body as { rankId?: unknown } | undefined)?.rankId;
+  if (typeof rankId !== 'string') {
+    res.status(400).json({ error: 'Не указан ранг' });
     return;
   }
+  send(res, await assignRank(currentCommander(req).id, req.params.commanderId, rankId));
+});
 
-  const result = await setRole(currentCommander(req).id, req.params.commanderId, role);
-  res.status(result.ok ? 200 : result.status).json(result.ok ? result : { error: result.error });
+/** Передать лидерство. Право главаря. */
+syndicateRouter.post('/members/:commanderId/leader', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  send(res, await transferLeadership(currentCommander(req).id, req.params.commanderId));
+});
+
+/** Выдать участнику криптогривну из казны в пределах дневного лимита ранга. */
+syndicateRouter.post('/members/:commanderId/payout', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const amount = integerIn((req.body as { amount?: unknown } | undefined)?.amount, 1, 1_000_000_000);
+  if (amount === null) {
+    res.status(400).json({ error: 'Сумма: целое число больше нуля' });
+    return;
+  }
+  send(res, await payout(currentCommander(req).id, req.params.commanderId, amount));
+});
+
+function parseRank(body: unknown): RankInput | string {
+  const raw = (body ?? {}) as { name?: unknown; position?: unknown; permissions?: unknown; dailyWithdrawLimit?: unknown };
+  const name = normalizeRankName(raw.name);
+  if (!name) return 'Название ранга: от 2 до 24 букв, цифр, пробелов или дефисов';
+  const position = integerIn(raw.position, 0, 99);
+  if (position === null) return 'Место ранга: целое число от 0 до 99';
+  if (!Array.isArray(raw.permissions) || !raw.permissions.every(isSyndicatePermission)) {
+    return 'Неизвестное право в списке';
+  }
+  const dailyWithdrawLimit = integerIn(raw.dailyWithdrawLimit, 0, 1_000_000_000);
+  if (dailyWithdrawLimit === null) return 'Дневной лимит выдачи: целое число от нуля';
+  return { name, position, permissions: [...new Set(raw.permissions)], dailyWithdrawLimit };
+}
+
+/** Ранги правит главарь. */
+syndicateRouter.post('/ranks', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const input = parseRank(req.body);
+  if (typeof input === 'string') {
+    res.status(400).json({ error: input });
+    return;
+  }
+  send(res, await createRank(currentCommander(req).id, input));
+});
+
+syndicateRouter.post('/ranks/:rankId', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const input = parseRank(req.body);
+  if (typeof input === 'string') {
+    res.status(400).json({ error: input });
+    return;
+  }
+  send(res, await updateRank(currentCommander(req).id, req.params.rankId, input));
+});
+
+syndicateRouter.post('/ranks/:rankId/delete', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  send(res, await deleteRank(currentCommander(req).id, req.params.rankId));
+});
+
+/** Правила набора: режим, минимальный рейтинг, вступительный взнос. */
+syndicateRouter.post('/rules', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const body = (req.body ?? {}) as { recruitment?: unknown; minScore?: unknown; entryFee?: unknown };
+  if (body.recruitment !== 'OPEN' && body.recruitment !== 'APPLICATION' && body.recruitment !== 'CLOSED') {
+    res.status(400).json({ error: 'Неизвестный режим набора' });
+    return;
+  }
+  const minScore = integerIn(body.minScore, 0, 1_000_000_000_000);
+  const entryFee = integerIn(body.entryFee, 0, MAX_ENTRY_FEE);
+  if (minScore === null) {
+    res.status(400).json({ error: 'Минимальный рейтинг: целое число от нуля' });
+    return;
+  }
+  if (entryFee === null) {
+    res.status(400).json({ error: `Взнос: целое число от 0 до ${MAX_ENTRY_FEE}` });
+    return;
+  }
+  send(res, await updateRules(currentCommander(req).id, { recruitment: body.recruitment, minScore, entryFee }));
+});
+
+/** Ставка налога с крипто-фермы. */
+syndicateRouter.post('/tax', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const rate = integerIn((req.body as { rate?: unknown } | undefined)?.rate, 0, MAX_TAX_RATE);
+  if (rate === null) {
+    res.status(400).json({ error: `Налог: целое число от 0 до ${MAX_TAX_RATE}` });
+    return;
+  }
+  send(res, await setTaxRate(currentCommander(req).id, rate));
+});
+
+/** Новая редакция кодекса. Пустой текст снимает кодекс. */
+syndicateRouter.post('/codex', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const text = normalizeCodex((req.body as { text?: unknown } | undefined)?.text);
+  if (text === null) {
+    res.status(400).json({ error: `Кодекс: текст до ${CODEX_MAX_LENGTH} знаков` });
+    return;
+  }
+  send(res, await updateCodex(currentCommander(req).id, text));
+});
+
+/** Повысить Кіш из казны. */
+syndicateRouter.post('/kish/upgrade', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  send(res, await upgradeKish(currentCommander(req).id));
 });
 
 /** Рассылка по синдикату: одно письмо всему составу. */

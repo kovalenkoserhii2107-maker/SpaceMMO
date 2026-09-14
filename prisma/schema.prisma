@@ -67,18 +67,29 @@ model Commander {
   battlesWon  Int @default(0)
   battlesLost Int @default(0)
 
-  /// Членство в синдикате (Этап 9).
-  syndicateId   String?
-  syndicateRole SyndicateRole?
+  /// Членство в синдикате.
+  syndicateId       String?
+  /// Прежняя роль. Устарела вместе с появлением рангов и читается только затем,
+  /// чтобы разложить по стартовым рангам тех, кто вступил до них.
+  syndicateRole     SyndicateRole?
+  syndicateRankId   String?
+  syndicateJoinedAt DateTime?
+  /// Когда командир сам вышел из синдиката — от этого считается пауза перед новым.
+  syndicateLeftAt   DateTime?
+  /// Заслуги в текущем синдикате: взносы и налог. При вступлении обнуляются.
+  syndicateMerit    Int            @default(0)
 
   createdAt  DateTime @default(now())
   lastSeenAt DateTime @default(now())
 
-  user             User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  syndicate        Syndicate?             @relation("SyndicateMembers", fields: [syndicateId], references: [id], onDelete: SetNull)
-  leadingSyndicate Syndicate?             @relation("SyndicateLeader")
-  applications     SyndicateApplication[] @relation("ApplicationAuthor")
-  reviewed         SyndicateApplication[] @relation("ApplicationReviewer")
+  user             User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  syndicate        Syndicate?              @relation("SyndicateMembers", fields: [syndicateId], references: [id], onDelete: SetNull)
+  syndicateRank    SyndicateRank?          @relation("SyndicateRankMembers", fields: [syndicateRankId], references: [id], onDelete: SetNull)
+  codexVersions    SyndicateCodexVersion[] @relation("SyndicateCodexAuthor")
+  syndicateActions SyndicateTransaction[]  @relation("SyndicateTxActor")
+  leadingSyndicate Syndicate?              @relation("SyndicateLeader")
+  applications     SyndicateApplication[]  @relation("ApplicationAuthor")
+  reviewed         SyndicateApplication[]  @relation("ApplicationReviewer")
   bankOperations   SyndicateTransaction[]
   bases            Base[]
   researches       Research[]
@@ -86,19 +97,19 @@ model Commander {
   researchHelpers  ResearchHelper[]
   fleets           Fleet[]
   fleetTemplates   FleetTemplate[]
-  inbox            Message[]              @relation("MessageRecipient")
-  sentMessages     Message[]              @relation("MessageSender")
+  inbox            Message[]               @relation("MessageRecipient")
+  sentMessages     Message[]               @relation("MessageSender")
   scans            PlanetScan[]
   hubStorages      HubStorage[]
   orders           MarketOrder[]
   barterOffers     BarterOffer[]
-  purchases        Trade[]                @relation("TradeBuyer")
-  sales            Trade[]                @relation("TradeSeller")
+  purchases        Trade[]                 @relation("TradeBuyer")
+  sales            Trade[]                 @relation("TradeSeller")
   expeditions      ExpeditionReport[]
-  attacksMade      BattleReport[]         @relation("BattleAttacker")
-  attacksTaken     BattleReport[]         @relation("BattleDefender")
-  warsStarted      WarDeclaration[]       @relation("WarAggressor")
-  warsAgainst      WarDeclaration[]       @relation("WarTarget")
+  attacksMade      BattleReport[]          @relation("BattleAttacker")
+  attacksTaken     BattleReport[]          @relation("BattleDefender")
+  warsStarted      WarDeclaration[]        @relation("WarAggressor")
+  warsAgainst      WarDeclaration[]        @relation("WarTarget")
   achievements     CommanderAchievement[]
   bot              Bot?
 
@@ -155,13 +166,34 @@ model Syndicate {
 
   createdAt DateTime @default(now())
 
-  leader       Commander              @relation("SyndicateLeader", fields: [leaderId], references: [id], onDelete: Cascade)
-  members      Commander[]            @relation("SyndicateMembers")
+  /// Правила набора: открыт, по заявке или закрыт.
+  recruitment SyndicateRecruitment @default(APPLICATION)
+  /// Минимальный счет рейтинга, с которым можно вступить.
+  minScore    Int                  @default(0)
+  /// Вступительный взнос в казну, криптогривна.
+  entryFee    Int                  @default(0)
+
+  /// Налог с крипто-фермы участников, в процентах.
+  taxRate        Int       @default(0)
+  /// Новая ставка вступает в силу не сразу: участник должен успеть узнать о ней.
+  pendingTaxRate Int?
+  taxEffectiveAt DateTime?
+
+  /// Кіш — хаб синдиката. Система заполняется при первом обращении у синдикатов,
+  /// основанных до его появления: у них ее просто нет.
+  kishSystemId String?
+  kishLevel    Int     @default(1)
+
+  leader       Commander               @relation("SyndicateLeader", fields: [leaderId], references: [id], onDelete: Cascade)
+  members      Commander[]             @relation("SyndicateMembers")
+  kishSystem   SolarSystem?            @relation("SyndicateKish", fields: [kishSystemId], references: [id], onDelete: SetNull)
+  ranks        SyndicateRank[]
+  codex        SyndicateCodexVersion[]
   bank         SyndicateBank?
   applications SyndicateApplication[]
   transactions SyndicateTransaction[]
-  warsStarted  SyndicateWar[]         @relation("SyndicateWarAggressor")
-  warsAgainst  SyndicateWar[]         @relation("SyndicateWarTarget")
+  warsStarted  SyndicateWar[]          @relation("SyndicateWarAggressor")
+  warsAgainst  SyndicateWar[]          @relation("SyndicateWarTarget")
 
   @@map("syndicates")
 }
@@ -185,21 +217,77 @@ model SyndicateTransaction {
   kind        SyndicateTxKind
   amount      Float
   comment     String?
+  /// Кто совершил операцию, если это не сам участник строки: при выдаче
+  /// из казны получатель — `commanderId`, выдавший — `actorId`.
+  actorId     String?
   createdAt   DateTime        @default(now())
 
   syndicate Syndicate  @relation(fields: [syndicateId], references: [id], onDelete: Cascade)
   commander Commander? @relation(fields: [commanderId], references: [id], onDelete: SetNull)
+  actor     Commander? @relation("SyndicateTxActor", fields: [actorId], references: [id], onDelete: SetNull)
 
   @@index([syndicateId, createdAt])
   @@map("syndicate_transactions")
 }
 
 /// Заявка на вступление. Одобряет лидер или офицер.
-model SyndicateApplication {
-  id          String            @id @default(cuid())
+/// Ранг синдиката: название, место в иерархии и права.
+/// Место (`position`) решает, кто над кем: ноль — вершина, действовать
+/// можно только на тех, чей ранг ниже своего.
+model SyndicateRank {
+  id                 String                @id @default(cuid())
+  syndicateId        String
+  name               String
+  position           Int
+  permissions        SyndicatePermission[]
+  /// Сколько криптогривны обладатель ранга может выдать из казны за сутки.
+  dailyWithdrawLimit Int                   @default(0)
+  createdAt          DateTime              @default(now())
+
+  syndicate Syndicate   @relation(fields: [syndicateId], references: [id], onDelete: Cascade)
+  members   Commander[] @relation("SyndicateRankMembers")
+
+  @@unique([syndicateId, name])
+  @@map("syndicate_ranks")
+}
+
+/// Версия кодекса. Текущая — последняя; прежние хранятся, чтобы было видно,
+/// на каких условиях вступал каждый.
+model SyndicateCodexVersion {
+  id          String   @id @default(cuid())
+  syndicateId String
+  text        String
+  authorId    String?
+  createdAt   DateTime @default(now())
+
+  syndicate Syndicate  @relation(fields: [syndicateId], references: [id], onDelete: Cascade)
+  author    Commander? @relation("SyndicateCodexAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([syndicateId, createdAt])
+  @@map("syndicate_codex_versions")
+}
+
+/// Налог участника за сутки. Без внешних ключей намеренно: пишется в сбросе
+/// тика, и исчезнувший между кешем и записью синдикат не должен ронять
+/// всю транзакцию сохранения.
+model SyndicateTaxLedger {
+  id          String   @id @default(cuid())
   syndicateId String
   commanderId String
-  status      ApplicationStatus @default(PENDING)
+  day         DateTime @db.Date
+  amount      Int      @default(0)
+
+  @@unique([syndicateId, commanderId, day])
+  @@map("syndicate_tax_ledger")
+}
+
+model SyndicateApplication {
+  id             String            @id @default(cuid())
+  syndicateId    String
+  commanderId    String
+  status         ApplicationStatus @default(PENDING)
+  /// Версия кодекса, которую кандидат принял, подавая заявку.
+  codexVersionId String?
 
   createdAt    DateTime  @default(now())
   resolvedAt   DateTime?
@@ -244,6 +332,28 @@ enum SyndicateTxKind {
   DONATION
   FOUNDING
   PAYOUT
+  TAX
+  ENTRY_FEE
+  KISH_UPGRADE
+}
+
+enum SyndicatePermission {
+  APPLICATIONS
+  KICK
+  PROMOTE
+  BROADCAST
+  WITHDRAW
+  TAX
+  CODEX
+  RULES
+  DIPLOMACY
+  KISH
+}
+
+enum SyndicateRecruitment {
+  OPEN
+  APPLICATION
+  CLOSED
 }
 
 /// Каталог достижений. Наполняется при старте сервера.
@@ -303,6 +413,7 @@ model SolarSystem {
   createdAt DateTime      @default(now())
 
   planets     Planet[]
+  kishes      Syndicate[]        @relation("SyndicateKish")
   hub         TradeHub?
   fleets      Fleet[]
   expeditions ExpeditionReport[]

@@ -198,6 +198,13 @@ export interface CommanderRuntimeState {
    * в БД инкрементом.
    */
   minedCredits: number;
+  /**
+   * Синдикат и его расписание налога. Держится в памяти ради сброса:
+   * налог удерживается в той же транзакции, что и намытое, и ходить
+   * за ставкой в базу на каждом сбросе незачем. Смену членства и ставки
+   * сервис синдиката сообщает тику сам.
+   */
+  syndicate: { id: string; tax: { taxRate: number; pendingTaxRate: number | null; taxEffectiveAt: number | null } } | null;
   bases: Map<string, BaseRuntimeState>;
   /** Флоты игрока в полете. Источник правды — БД, здесь кэш для отрисовки. */
   fleets: FleetRuntimeState[];

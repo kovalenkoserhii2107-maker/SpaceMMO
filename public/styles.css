@@ -1920,6 +1920,33 @@ button.tiny { padding: 4px 10px; font-size: 11px; flex: none; }
 .syndicate-header .bank b { display: block; font-size: 20px; color: #7ee787; }
 
 .member-row { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+/* Синдикат: строка списка раскрывается кодексом под собой, а не в модальном окне. */
+.syndicate-row { flex-wrap: wrap; }
+.syndicate-codex { flex-basis: 100%; display: grid; gap: 8px; }
+.codex-text {
+  margin: 0;
+  padding: 10px 12px;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+.codex-accept { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+.syndicate-form { display: grid; gap: 8px; margin-top: 10px; }
+.syndicate-form .row, .rank-editor .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; }
+.syndicate-textarea { width: 100%; min-height: 160px; resize: vertical; font: inherit; box-sizing: border-box; }
+.rank-editor { display: grid; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.rank-editor .field { flex: 1 1 120px; }
+.rank-new-title { margin: 12px 0 0; font-size: 13px; }
+.perm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px 12px; font-size: 12px; }
+.perm-grid label { display: flex; gap: 6px; align-items: center; }
+.hub-storage.warn { color: var(--accent-2); }
+
 .member-row .role { font-size: 11px; color: var(--muted); }
 .member-row .role.LEADER { color: var(--accent); }
 .member-row .role.OFFICER { color: var(--accent-2); }
@@ -3359,3 +3386,7 @@ button.tiny { padding: 4px 10px; font-size: 11px; flex: none; }
   color: var(--accent);
   font-variant-numeric: tabular-nums;
 }
+
+/* Версия игры: служебная подпись, не должна спорить с меню. */
+.game-version { margin: 12px 0 0; font-size: 11px; color: var(--muted); text-align: center; letter-spacing: 0.02em; }
+.nav-version { margin: 16px 12px 8px; text-align: left; }

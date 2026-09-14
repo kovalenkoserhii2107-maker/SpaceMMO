@@ -63,6 +63,8 @@ import { resolveEspionage, espionageSeed } from './espionage.js';
 import { plunderAmount, resolveBattle, type SideForces, type UnitLoss } from './combat.js';
 import { checkArchitect, checkPirateBane } from '../services/achievementService.js';
 import { canAttack, declareWar } from '../services/warService.js';
+import { sameSyndicate } from '../services/syndicateAccess.js';
+import { effectiveTaxRate, splitTax } from './syndicate.js';
 import { countUnread, deliver, type OutgoingMessage } from '../services/mailService.js';
 import {
   buildBattleMail,
@@ -277,6 +279,7 @@ class GameLoop {
         researches: true,
         researchJob: true,
         researchHelpers: true,
+        syndicate: { select: { id: true, taxRate: true, pendingTaxRate: true, taxEffectiveAt: true } },
         fleets: {
           orderBy: { arrivesAt: 'asc' },
           include: { originPlanet: true, targetPlanet: true, targetHub: true, targetSystem: true },
@@ -305,6 +308,16 @@ class GameLoop {
       research: null,
       researchDirty: false,
       minedCredits: 0,
+      syndicate: row.syndicate
+        ? {
+            id: row.syndicate.id,
+            tax: {
+              taxRate: row.syndicate.taxRate,
+              pendingTaxRate: row.syndicate.pendingTaxRate,
+              taxEffectiveAt: row.syndicate.taxEffectiveAt?.getTime() ?? null,
+            },
+          }
+        : null,
       bases: new Map(),
       fleets: row.fleets.map(toFleetRuntime),
     };
@@ -952,6 +965,9 @@ class GameLoop {
          *
          * Если война уже идет — личная или синдикатная, — объявление не нужно.
          */
+        if (await sameSyndicate(commanderId, planet.base.commanderId)) {
+          return { ok: false, error: 'Нельзя атаковать участника своего синдиката' };
+        }
         if (!(await canAttack(commanderId, planet.base.commanderId))) {
           const declared = await declareWar(commanderId, planet.base.commanderId);
           // Отказ здесь означает, что воевать с этой целью нельзя в принципе
@@ -1144,6 +1160,19 @@ class GameLoop {
       console.error('[game-loop] плата за хаб не собралась', error);
     } finally {
       this.collectingRent = false;
+    }
+  }
+
+  /** Смена членства: налог с фермы уходит в казну нового синдиката или не уходит никуда. */
+  syncSyndicate(commanderId: string, syndicate: CommanderRuntimeState['syndicate']): void {
+    const commander = this.commanders.get(commanderId);
+    if (commander) commander.syndicate = syndicate;
+  }
+
+  /** Смена ставки налога: у всех загруженных участников синдиката сразу. */
+  syncSyndicateTax(syndicateId: string, tax: NonNullable<CommanderRuntimeState['syndicate']>['tax']): void {
+    for (const commander of this.commanders.values()) {
+      if (commander.syndicate?.id === syndicateId) commander.syndicate = { id: syndicateId, tax };
     }
   }
 
@@ -2727,15 +2756,47 @@ class GameLoop {
      * секунд незачем, а за час они складываются в заметную сумму.
      */
     const mined = Math.floor(commander.minedCredits);
+    /*
+     * Налог синдиката удерживается здесь же, в той же транзакции: намытое
+     * и налог с него либо записываются вместе, либо не записываются вовсе.
+     *
+     * Казна правится условным `updateMany`, а журнал налога — таблица без
+     * внешних ключей: синдикат могут распустить между загрузкой командира
+     * и сбросом, и тогда налог просто никуда не зачислится, а не уронит
+     * сохранение всего остального состояния.
+     */
+    const syndicate = commander.syndicate;
+    const { tax, kept } = syndicate
+      ? splitTax(mined, effectiveTaxRate(syndicate.tax, Date.now()))
+      : { tax: 0, kept: mined };
     if (mined > 0) {
       commander.minedCredits -= mined;
-      commander.credits += mined;
+      commander.credits += kept;
       operations.push(
         prisma.commander.update({
           where: { id: commander.commanderId },
-          data: { credits: { increment: mined } },
+          data: {
+            credits: { increment: kept },
+            ...(tax > 0 ? { syndicateMerit: { increment: tax } } : {}),
+          },
         }),
       );
+      if (syndicate && tax > 0) {
+        const day = utcDay(new Date());
+        operations.push(
+          prisma.syndicateBank.updateMany({
+            where: { syndicateId: syndicate.id },
+            data: { credits: { increment: tax } },
+          }),
+          prisma.syndicateTaxLedger.upsert({
+            where: {
+              syndicateId_commanderId_day: { syndicateId: syndicate.id, commanderId: commander.commanderId, day },
+            },
+            create: { syndicateId: syndicate.id, commanderId: commander.commanderId, day, amount: tax },
+            update: { amount: { increment: tax } },
+          }),
+        );
+      }
     }
 
     for (const base of commander.bases.values()) {
@@ -2914,8 +2975,19 @@ class GameLoop {
         base.jobsDirty = true;
       }
       commander.researchDirty = researchWasDirty;
+      // Намытое не записалось — возвращаем его в счетчик, иначе оно пропало бы
+      // насовсем: в базе прибавки нет, а в памяти счетчик уже уменьшен.
+      if (mined > 0) {
+        commander.minedCredits += mined;
+        commander.credits -= kept;
+      }
     }
   }
+}
+
+/** Сутки по UTC — ключ журнала налога. */
+function utcDay(date: Date): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
 }
 
 /** Prisma требует индексируемый тип для Json-полей, обычные объекты не подходят. */

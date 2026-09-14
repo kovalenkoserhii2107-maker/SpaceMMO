@@ -3,6 +3,8 @@
  * Война нужна, чтобы вылет с миссией «Атака» вообще разрешался.
  */
 import { prisma } from '../db/prisma.js';
+import { membershipOf, requirePermission, sameSyndicate } from './syndicateAccess.js';
+import { hasPermission } from '../game/syndicate.js';
 import { expeditionSlots } from '../game/expeditions.js';
 import { emptyTechLevels } from '../game/techTree.js';
 
@@ -39,7 +41,7 @@ export interface DiplomacyView {
     declaredAt: number | null;
   }>;
   /** Синдикат командира: от него зависят права на объявление войны. */
-  syndicate: { id: string; name: string; tag: string; role: string } | null;
+  syndicate: { id: string; name: string; tag: string; rankName: string; canDeclare: boolean } | null;
   /** Синдикаты, с которыми идет война. */
   syndicateWars: SyndicateWarView[];
   /** Другие синдикаты — цели для объявления войны. */
@@ -171,6 +173,7 @@ export async function getDiplomacy(commanderId: string): Promise<DiplomacyView> 
 
   const techLevels = emptyTechLevels();
   for (const research of techs) techLevels[research.tech] = research.level;
+  const diplomacyAccess = mySyndicate ? await membershipOf(commanderId) : null;
 
   return {
     syndicate: mySyndicate
@@ -178,7 +181,8 @@ export async function getDiplomacy(commanderId: string): Promise<DiplomacyView> 
           id: mySyndicate.id,
           name: mySyndicate.name,
           tag: mySyndicate.tag,
-          role: me?.syndicateRole ?? 'MEMBER',
+          rankName: diplomacyAccess?.ok ? diplomacyAccess.rankName : '—',
+          canDeclare: diplomacyAccess?.ok ? hasPermission(diplomacyAccess, 'DIPLOMACY') : false,
         }
       : null,
     syndicateWars,
@@ -277,6 +281,9 @@ export async function declareWar(commanderId: string, targetId: string): Promise
    */
   const target = await prisma.commander.findUnique({ where: { id: targetId } });
   if (!target) return { ok: false, error: 'Командир не найден' };
+  if (await sameSyndicate(commanderId, targetId)) {
+    return { ok: false, error: 'Нельзя воевать с участником своего синдиката' };
+  }
 
   const existing = await prisma.warDeclaration.findFirst({
     where: {
@@ -299,6 +306,7 @@ export async function declareWar(commanderId: string, targetId: string): Promise
  * `null` — предупреждать не о чем: война уже идет или цели нет.
  */
 export async function attackWarning(commanderId: string, targetId: string): Promise<string | null> {
+  if (await sameSyndicate(commanderId, targetId)) return 'Это участник твоего синдиката: атаковать своих нельзя.';
   if (await canAttack(commanderId, targetId)) return null;
 
   const target = await prisma.commander.findUnique({
@@ -331,20 +339,18 @@ export async function declarePeace(commanderId: string, targetId: string): Promi
 
 /* ------------------------- Дипломатия синдикатов ------------------------- */
 
-/** Право объявлять войну от лица синдиката есть у лидера и офицеров. */
+/** Право объявлять войну и мир от лица синдиката — право дипломатии в ранге. */
 async function requireWarRights(
   commanderId: string,
 ): Promise<{ ok: true; syndicateId: string } | { ok: false; error: string }> {
-  const commander = await prisma.commander.findUnique({
-    where: { id: commanderId },
-    select: { syndicateId: true, syndicateRole: true },
-  });
-
-  if (!commander?.syndicateId) return { ok: false, error: 'Ты не состоишь в синдикате' };
-  if (commander.syndicateRole !== 'LEADER' && commander.syndicateRole !== 'OFFICER') {
-    return { ok: false, error: 'Войну объявляют только лидер и офицеры синдиката' };
+  const access = await requirePermission(commanderId, 'DIPLOMACY');
+  if (!access.ok) {
+    return {
+      ok: false,
+      error: access.status === 403 ? 'Войну и мир от лица синдиката объявляют ранги с правом дипломатии' : access.error,
+    };
   }
-  return { ok: true, syndicateId: commander.syndicateId };
+  return { ok: true, syndicateId: access.syndicateId };
 }
 
 export async function declareSyndicateWar(
@@ -403,6 +409,10 @@ export async function declareSyndicatePeace(
  * через личное объявление: запись общая для обеих сторон.
  */
 export async function canAttack(attackerId: string, defenderId: string): Promise<boolean> {
+  // Своих не атакуют ни при какой войне: личная война, объявленная до вступления,
+  // тоже перестает действовать, пока оба в одном синдикате.
+  if (await sameSyndicate(attackerId, defenderId)) return false;
+
   const [attacker, defender] = await Promise.all([
     prisma.commander.findUnique({ where: { id: attackerId }, select: { syndicateId: true } }),
     prisma.commander.findUnique({ where: { id: defenderId }, select: { syndicateId: true } }),

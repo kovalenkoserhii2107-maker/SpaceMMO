@@ -52,6 +52,7 @@ export async function listCommanders(search?: string): Promise<CommanderSummary[
     include: {
       user: { select: { email: true, role: true } },
       syndicate: { select: { name: true, tag: true } },
+      syndicateRank: { select: { name: true } },
       bases: { select: { planet: { select: { name: true } } } },
     },
     orderBy: { nickname: 'asc' },
@@ -67,7 +68,7 @@ export async function listCommanders(search?: string): Promise<CommanderSummary[
     bases: row.bases.length,
     homePlanet: row.bases[0]?.planet.name ?? null,
     syndicate: row.syndicate
-      ? { name: row.syndicate.name, tag: row.syndicate.tag, role: row.syndicateRole ?? 'MEMBER' }
+      ? { name: row.syndicate.name, tag: row.syndicate.tag, role: row.syndicateRank?.name ?? 'участник' }
       : null,
     battlesWon: row.battlesWon,
     battlesLost: row.battlesLost,

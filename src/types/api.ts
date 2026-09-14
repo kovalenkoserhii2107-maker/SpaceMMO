@@ -55,6 +55,8 @@ export interface AuthResponse {
  */
 export interface AuthConfigResponse {
   googleClientId: string | null;
+  /** Версия игры: видна и на экране входа, и в меню. */
+  version: string;
 }
 
 /** Текущая сессия: аккаунт, командир и доступные аватары. */
