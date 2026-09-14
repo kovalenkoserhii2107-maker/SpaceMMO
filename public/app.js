@@ -1200,11 +1200,22 @@
       onRush: () => send(`/api/bases/${base.baseId}/rush`),
       onCancel: () => send(`/api/bases/${base.baseId}/build/cancel`),
     });
-    renderJobBanner(el.researchJob, state.research.active && {
-      title: `${state.research.active.label} → ур. ${state.research.active.targetLevel}`,
-      remainingSeconds: state.research.active.remainingSeconds,
-      totalSeconds: state.research.active.totalSeconds,
+    const research = state.research.active;
+    const join = base.researchJoin;
+    renderJobBanner(el.researchJob, research && {
+      title: `${research.label} → ур. ${research.targetLevel}`,
+      remainingSeconds: research.remainingSeconds,
+      totalSeconds: research.totalSeconds,
       onCancel: () => send(`/api/bases/${base.baseId}/research/cancel`),
+      note: researchNote(research, join),
+      // Кнопка видна и тогда, когда ресурсов не хватает, — выключенной:
+      // игрок должен знать, что лаборатория этой базы могла бы помочь.
+      joinLabel: join && join.available
+        ? `Взять ${Math.round(join.share * 100)}% · быстрее на ${fmtTime(join.savedSeconds)}`
+        : null,
+      onJoin: join && join.available && join.canAfford
+        ? () => send(`/api/bases/${base.baseId}/research/join`)
+        : null,
     });
 
     renderCards(base);
@@ -1634,6 +1645,37 @@
   }
 
 
+  /**
+   * Кто работает над исследованием и во что обойдется помощь этой базы.
+   *
+   * Технологии общие на все колонии, поэтому одна и та же полоса видна
+   * с любой базы — и вопрос у игрока всегда один: чем может помочь та,
+   * на которой он сейчас стоит. У помощниц стоит взятая доля: по одному
+   * уровню не понять, сколько работы лаборатория на себя взяла.
+   */
+  function researchNote(research, join) {
+    const lines = [];
+    const participants = Array.isArray(research.participants) ? research.participants : [];
+    if (participants.length > 1) {
+      const names = participants.map((row) =>
+        `${row.baseName} ур. ${row.labLevel}${row.lead ? '' : ` · ${Math.round(row.share * 100)}%`}`);
+      lines.push(`Лаборатории: ${names.join(' · ')}`);
+    }
+    if (join && join.available) {
+      const price = ['ore', 'polymers', 'plasma']
+        .filter((key) => join.price[key] > 0)
+        .map((key) => `${RESOURCE_WORDS[key]} ${Math.round(join.price[key]).toLocaleString('ru-RU')}`)
+        .join(', ');
+      lines.push(`Помощь этой базы: ${Math.round(join.share * 100)}% срока за ${price || 'бесплатно'}` +
+        `${join.canAfford ? '' : ' — не хватает ресурсов'}`);
+    } else if (join && join.reason) {
+      lines.push(join.reason);
+    }
+    return lines.join('\n');
+  }
+
+  const RESOURCE_WORDS = { ore: 'руда', polymers: 'полимеры', plasma: 'плазма' };
+
   function renderJobBanner(node, job) {
     if (!job) {
       node.hidden = true;
@@ -1647,8 +1689,24 @@
         '<div class="bar"><i></i></div>' +
         '<div class="job-meta"><span></span><span></span>' +
         '<button type="button" class="job-rush" hidden>Ускорить</button>' +
-        '<button type="button" class="job-cancel" hidden>Отменить</button></div>';
+        '<button type="button" class="job-cancel" hidden>Отменить</button></div>' +
+        '<div class="job-note" hidden></div>' +
+        '<button type="button" class="job-join" hidden></button>';
     }
+
+    /*
+     * Строка состава и кнопка присоединения живут только у исследования:
+     * это единственная очередь, общая на все колонии. Остальным полосам
+     * нечего сюда передать, и элементы у них просто скрыты.
+     */
+    const note = node.querySelector('.job-note');
+    note.hidden = !job.note;
+    note.textContent = job.note || '';
+    const join = node.querySelector('.job-join');
+    join.hidden = !job.joinLabel;
+    join.textContent = job.joinLabel || '';
+    join.disabled = typeof job.onJoin !== 'function';
+    join.onclick = job.onJoin || null;
 
     /*
      * Кнопка спешки живет только там, где спешка возможна. Полоса ожидания

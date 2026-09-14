@@ -39,7 +39,9 @@ import {
   researchCost,
   timeCompressionDrain,
   vaultBonus,
+  researchJoinQuote,
   researchSeconds,
+  type ResearchJoinQuote,
   techDescription,
   techLabel,
   TECHNOLOGY_TYPES,
@@ -124,6 +126,16 @@ export interface FleetRuntimeState {
   returnsAt: number;
 }
 
+export interface ResearchHelperState {
+  baseId: string;
+  /** Уровень лаборатории на момент присоединения: вклад фиксируется им. */
+  labLevel: number;
+  /** Уплачено за присоединение — при отмене возвращается этой же базе. */
+  paid: { ore: number; polymers: number; plasma: number };
+  /** Сколько секунд срезала: из них восстанавливается полный срок исследования. */
+  savedSeconds: number;
+}
+
 export interface ResearchJobState {
   tech: TechnologyType;
   targetLevel: number;
@@ -131,6 +143,10 @@ export interface ResearchJobState {
   baseId: string;
   startedAt: number;
   finishesAt: number;
+  /** Уровень ведущей лаборатории на момент запуска — по нему считался срок. */
+  labLevel: number;
+  /** Лаборатории других колоний, присоединившиеся к работе. */
+  helpers: ResearchHelperState[];
 }
 
 export interface BaseRuntimeState {
@@ -262,6 +278,35 @@ export function accrue(
   state.dirty = true;
 }
 
+function researchJoinSnapshot(
+  commander: CommanderRuntimeState,
+  state: BaseRuntimeState,
+  now: number,
+): BaseSnapshot['researchJoin'] {
+  const check = researchJoinCheck(commander, state, now);
+  if (check.kind === 'none') return null;
+  if (check.kind === 'blocked') {
+    return {
+      available: false,
+      reason: check.reason,
+      share: 0,
+      labLevel: state.levels.SCIENCE_CENTER,
+      savedSeconds: 0,
+      price: { ore: 0, polymers: 0, plasma: 0 },
+      canAfford: false,
+    };
+  }
+  return {
+    available: true,
+    reason: null,
+    share: check.quote.share,
+    labLevel: state.levels.SCIENCE_CENTER,
+    savedSeconds: check.quote.savedSeconds,
+    price: check.quote.price,
+    canAfford: hasEnoughResources(state.resources, check.quote.price),
+  };
+}
+
 export function toSnapshot(state: BaseRuntimeState, commander: CommanderRuntimeState, now: number): BaseSnapshot {
   const bonuses = economyBonuses(commander.techs);
   const modifiers = systemModifiers(state.anomaly);
@@ -322,6 +367,7 @@ export function toSnapshot(state: BaseRuntimeState, commander: CommanderRuntimeS
       : null,
     buildings: BUILDING_TYPES.map((type) => buildingCard(type, state, commander)),
     technologies: TECHNOLOGY_TYPES.map((tech) => technologyCard(tech, state, commander)),
+    researchJoin: researchJoinSnapshot(commander, state, now),
     ships: SHIP_TYPES.map((type) => shipCard(type, state, commander)),
     defenseCards: DEFENSE_TYPES.map((type) => defenseCard(type, state, commander)),
     fleet: { ...state.ships },
@@ -584,9 +630,75 @@ export function researchSnapshot(commander: CommanderRuntimeState, now: number):
           baseId: commander.research.baseId,
           totalSeconds: Math.round((commander.research.finishesAt - commander.research.startedAt) / 1000),
           remainingSeconds: Math.max(0, Math.ceil((commander.research.finishesAt - now) / 1000)),
+          participants: [
+            { baseId: commander.research.baseId, labLevel: commander.research.labLevel, share: 0, lead: true },
+            ...commander.research.helpers.map((helper) => ({
+              baseId: helper.baseId,
+              labLevel: helper.labLevel,
+              share: fullResearchSeconds(commander.research!) > 0
+                ? helper.savedSeconds / fullResearchSeconds(commander.research!)
+                : 0,
+              lead: false,
+            })),
+          ].map((row) => ({ ...row, baseName: commander.bases.get(row.baseId)?.name ?? '—' })),
         }
       : null,
   };
+}
+
+/**
+ * Полный срок исследования на момент запуска, до всякой помощи.
+ *
+ * Отдельно не хранится: он складывается из нынешнего срока и того, что срезали
+ * помощницы. Доля каждой следующей меряется от него же, иначе вторая
+ * помощница считала бы свою четверть от уже урезанного срока и получала
+ * меньше, чем заплатила.
+ */
+export function fullResearchSeconds(job: ResearchJobState): number {
+  return (job.finishesAt - job.startedAt) / 1000 + job.helpers.reduce((sum, helper) => sum + helper.savedSeconds, 0);
+}
+
+export type ResearchJoinCheck =
+  | { kind: 'none' }
+  | { kind: 'blocked'; reason: string }
+  | { kind: 'ready'; quote: ResearchJoinQuote };
+
+/**
+ * Может ли лаборатория этой базы присоединиться к идущему исследованию.
+ *
+ * Одна проверка на снимок и на само действие: иначе интерфейс однажды
+ * предложил бы кнопку, на которую сервер ответит отказом, или цену,
+ * которая разойдется со списанной.
+ *
+ * «Нечего показывать» и «нельзя» — разные ответы. Ведущей и уже
+ * присоединившейся лаборатории предлагать нечего; базе без лаборатории
+ * и почти готовому исследованию есть что объяснить.
+ */
+export function researchJoinCheck(
+  commander: CommanderRuntimeState,
+  base: BaseRuntimeState,
+  now: number,
+): ResearchJoinCheck {
+  const job = commander.research;
+  if (!job) return { kind: 'none' };
+  if (job.baseId === base.id || job.helpers.some((helper) => helper.baseId === base.id)) {
+    return { kind: 'none' };
+  }
+  if (base.levels.SCIENCE_CENTER < 1) {
+    return { kind: 'blocked', reason: 'На этой базе нет лаборатории' };
+  }
+  const quote = researchJoinQuote({
+    tech: job.tech,
+    targetLevel: job.targetLevel,
+    leadLevel: job.labLevel,
+    joiningLevel: base.levels.SCIENCE_CENTER,
+    remainingSeconds: (job.finishesAt - now) / 1000,
+    totalSeconds: fullResearchSeconds(job),
+  });
+  if (quote.savedSeconds < 1) {
+    return { kind: 'blocked', reason: 'Исследование почти готово — ускорять нечего' };
+  }
+  return { kind: 'ready', quote };
 }
 
 /** Снимки флотов в полете: клиент сам плавно двигает маркеры по меткам времени. */

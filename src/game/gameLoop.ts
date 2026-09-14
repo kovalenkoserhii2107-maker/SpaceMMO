@@ -22,6 +22,7 @@ import {
   accrue,
   type DefenseJobState,
   fleetSnapshots,
+  researchJoinCheck,
   researchSnapshot,
   toSnapshot,
   type BaseRuntimeState,
@@ -275,6 +276,7 @@ class GameLoop {
       include: {
         researches: true,
         researchJob: true,
+        researchHelpers: true,
         fleets: {
           orderBy: { arrivesAt: 'asc' },
           include: { originPlanet: true, targetPlanet: true, targetHub: true, targetSystem: true },
@@ -317,6 +319,15 @@ class GameLoop {
         baseId: row.researchJob.baseId,
         startedAt: row.researchJob.startedAt.getTime(),
         finishesAt: row.researchJob.finishesAt.getTime(),
+        // У заданий, запущенных до появления помощников, уровня нет:
+        // подставляется нынешний уровень ведущей, когда базы загружены.
+        labLevel: row.researchJob.labLevel ?? -1,
+        helpers: row.researchHelpers.map((helper) => ({
+          baseId: helper.baseId,
+          labLevel: helper.labLevel,
+          paid: { ore: helper.ore, polymers: helper.polymers, plasma: helper.plasma },
+          savedSeconds: helper.savedSeconds,
+        })),
       };
     }
 
@@ -400,6 +411,10 @@ class GameLoop {
         dirty: false,
         jobsDirty: false,
       });
+    }
+
+    if (commander.research && commander.research.labLevel < 0) {
+      commander.research.labLevel = commander.bases.get(commander.research.baseId)?.levels.SCIENCE_CENTER ?? 0;
     }
 
     this.commanders.set(commander.commanderId, commander);
@@ -538,6 +553,17 @@ class GameLoop {
 
     const refund = researchCost(job.tech, job.targetLevel);
     const lost = refundToStore(base.resources, storageCapacities(base.levels), refund);
+    // Помощникам — уплаченное за присоединение, каждому на свою базу
+    // и по тому же правилу: переложить ресурсы между колониями отменой нельзя.
+    for (const helper of job.helpers) {
+      const helperBase = commander.bases.get(helper.baseId);
+      if (!helperBase) continue;
+      const helperLost = refundToStore(helperBase.resources, storageCapacities(helperBase.levels), helper.paid);
+      lost.ore += helperLost.ore;
+      lost.polymers += helperLost.polymers;
+      lost.plasma += helperLost.plasma;
+      helperBase.dirty = true;
+    }
     commander.research = null;
     commander.researchDirty = true;
     base.dirty = true;
@@ -654,12 +680,68 @@ class GameLoop {
       systemModifiers(base.anomaly),
     );
     subtractResources(base.resources, cost);
-    commander.research = { tech, targetLevel, baseId, startedAt: now, finishesAt: now + seconds * 1000 };
+    commander.research = {
+      tech,
+      targetLevel,
+      baseId,
+      startedAt: now,
+      finishesAt: now + seconds * 1000,
+      labLevel: base.levels.SCIENCE_CENTER,
+      helpers: [],
+    };
     commander.researchDirty = true;
     base.dirty = true;
 
     await this.persistAndEmit(commanderId);
     return { ok: true, message: `Исследование начато, ${seconds} с до завершения` };
+  }
+
+  /**
+   * Присоединить лабораторию другой колонии к идущему исследованию.
+   *
+   * Второго исследования запустить нельзя — технологии общие на командира, —
+   * но простаивать лаборатории незачем: она берет на себя долю того, что уже
+   * идет, срезает эту долю всего срока и доплачивает ту же долю всей цены
+   * со своего склада.
+   * Цену и новый срок считает `researchJoinCheck` — тот же, что рисует
+   * предложение в интерфейсе.
+   */
+  async joinResearch(commanderId: string, baseId: string): Promise<ActionResult> {
+    const commander = await this.getCommander(commanderId);
+    const base = commander?.bases.get(baseId);
+    if (!commander || !base) return { ok: false, error: 'База не найдена' };
+
+    const job = commander.research;
+    if (!job) return { ok: false, error: 'Ничего не изучается — присоединяться не к чему' };
+
+    const now = Date.now();
+    const check = researchJoinCheck(commander, base, now);
+    if (check.kind === 'none') return { ok: false, error: 'Лаборатория этой базы уже работает над исследованием' };
+    if (check.kind === 'blocked') return { ok: false, error: check.reason };
+
+    const { quote } = check;
+    if (!hasEnoughResources(base.resources, quote.price)) {
+      return { ok: false, error: 'Недостаточно ресурсов для присоединения' };
+    }
+
+    subtractResources(base.resources, quote.price);
+    job.helpers.push({
+      baseId,
+      labLevel: base.levels.SCIENCE_CENTER,
+      paid: { ...quote.price },
+      savedSeconds: quote.savedSeconds,
+    });
+    job.finishesAt = now + quote.remainingSeconds * 1000;
+    commander.researchDirty = true;
+    base.dirty = true;
+
+    await this.persistAndEmit(commanderId);
+    return {
+      ok: true,
+      message:
+        `Лаборатория взяла на себя ${Math.round(quote.share * 100)}% исследования: ` +
+        `срок короче на ${quote.savedSeconds} с`,
+    };
   }
 
   /** Заказ кораблей на верфи. Заказы выполняются очередью, корабли выходят поштучно. */
@@ -2780,6 +2862,7 @@ class GameLoop {
           }),
         );
       }
+      operations.push(prisma.researchHelper.deleteMany({ where: { commanderId: commander.commanderId } }));
       operations.push(prisma.researchJob.deleteMany({ where: { commanderId: commander.commanderId } }));
       if (commander.research) {
         operations.push(
@@ -2791,9 +2874,25 @@ class GameLoop {
               targetLevel: commander.research.targetLevel,
               startedAt: new Date(commander.research.startedAt),
               finishesAt: new Date(commander.research.finishesAt),
+              labLevel: commander.research.labLevel,
             },
           }),
         );
+        if (commander.research.helpers.length > 0) {
+          operations.push(
+            prisma.researchHelper.createMany({
+              data: commander.research.helpers.map((helper) => ({
+                commanderId: commander.commanderId,
+                baseId: helper.baseId,
+                labLevel: helper.labLevel,
+                ore: helper.paid.ore,
+                polymers: helper.paid.polymers,
+                plasma: helper.paid.plasma,
+                savedSeconds: helper.savedSeconds,
+              })),
+            }),
+          );
+        }
       }
     }
 

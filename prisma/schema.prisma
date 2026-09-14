@@ -83,6 +83,7 @@ model Commander {
   bases            Base[]
   researches       Research[]
   researchJob      ResearchJob?
+  researchHelpers  ResearchHelper[]
   fleets           Fleet[]
   fleetTemplates   FleetTemplate[]
   inbox            Message[]              @relation("MessageRecipient")
@@ -387,15 +388,16 @@ model Base {
   lastTickAt DateTime @default(now())
   createdAt  DateTime @default(now())
 
-  commander   Commander    @relation(fields: [commanderId], references: [id], onDelete: Cascade)
-  planet      Planet       @relation(fields: [planetId], references: [id], onDelete: Cascade)
-  fleets      Fleet[]
-  buildJob    BuildJob?
-  shipJobs    ShipJob[]
-  ships       Ship[]
-  defenses    Defense[]
-  defenseJobs DefenseJob[]
-  researchJob ResearchJob?
+  commander    Commander       @relation(fields: [commanderId], references: [id], onDelete: Cascade)
+  planet       Planet          @relation(fields: [planetId], references: [id], onDelete: Cascade)
+  fleets       Fleet[]
+  buildJob     BuildJob?
+  researchHelp ResearchHelper?
+  shipJobs     ShipJob[]
+  ships        Ship[]
+  defenses     Defense[]
+  defenseJobs  DefenseJob[]
+  researchJob  ResearchJob?
 
   @@index([commanderId])
   @@map("bases")
@@ -438,11 +440,40 @@ model ResearchJob {
   targetLevel Int
   startedAt   DateTime       @default(now())
   finishesAt  DateTime
+  /// Уровень ведущей лаборатории на момент запуска. Срок считался по нему,
+  /// и пересчет при присоединении помощника должен исходить из него же,
+  /// а не из нынешнего уровня. У заданий старше помощников поля нет.
+  labLevel    Int?
 
   commander Commander @relation(fields: [commanderId], references: [id], onDelete: Cascade)
   base      Base      @relation(fields: [baseId], references: [id], onDelete: Cascade)
 
   @@map("research_jobs")
+}
+
+/// Лаборатория другой колонии, присоединившаяся к идущему исследованию.
+/// Привязана к командиру, а не к заданию: задание переписывается при каждом
+/// сбросе удалением и созданием, и помощники пишутся тем же способом рядом.
+model ResearchHelper {
+  id           String   @id @default(cuid())
+  commanderId  String
+  baseId       String   @unique
+  /// Уровень лаборатории на момент присоединения: вклад фиксируется им.
+  labLevel     Int
+  /// Уплачено за присоединение — возвращается этой же базе при отмене.
+  ore          Int
+  polymers     Int
+  plasma       Int
+  /// Сколько секунд срезано: из них восстанавливается полный срок исследования,
+  /// от которого меряется доля следующей помощницы.
+  savedSeconds Int
+  joinedAt     DateTime @default(now())
+
+  commander Commander @relation(fields: [commanderId], references: [id], onDelete: Cascade)
+  base      Base      @relation(fields: [baseId], references: [id], onDelete: Cascade)
+
+  @@index([commanderId])
+  @@map("research_helpers")
 }
 
 /// Корабли, стоящие на базе. Перемещение флота — Этап 3.

@@ -198,6 +198,21 @@ export interface BaseSnapshot {
   } | null;
   buildings: BuildingCard[];
   technologies: TechnologyCard[];
+  /**
+   * Присоединение лаборатории этой базы к идущему исследованию.
+   * `null` — предлагать нечего: исследования нет или база уже в нем участвует.
+   */
+  researchJoin: {
+    available: boolean;
+    /** Почему нельзя — только при `available: false`. */
+    reason: string | null;
+    /** Доля всего срока и всей цены, которую возьмет на себя эта лаборатория. */
+    share: number;
+    labLevel: number;
+    savedSeconds: number;
+    price: { ore: number; polymers: number; plasma: number };
+    canAfford: boolean;
+  } | null;
   ships: ShipCard[];
   defenseCards: DefenseCard[];
   fleet: ShipCounts;
@@ -231,6 +246,11 @@ export interface ResearchSnapshot {
     baseId: string;
     totalSeconds: number;
     remainingSeconds: number;
+    /**
+     * Кто работает над исследованием: ведущая первой. `share` — доля всего
+     * исследования, взятая помощницей (у ведущей ноль).
+     */
+    participants: Array<{ baseId: string; baseName: string; labLevel: number; share: number; lead: boolean }>;
   } | null;
 }
 

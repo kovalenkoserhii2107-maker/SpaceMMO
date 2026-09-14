@@ -3264,6 +3264,22 @@ button.tiny { padding: 4px 10px; font-size: 11px; flex: none; }
 .job-cancel:hover { color: var(--err); border-color: rgba(248, 113, 113, 0.5); }
 .job-rush + .job-cancel { margin-left: 8px; }
 
+/* Состав исследования: строки переносятся явно, а не сливаются в одну. */
+.job-banner .job-note { font-size: 11px; color: var(--muted); white-space: pre-line; }
+.job-join {
+  justify-self: start;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--accent);
+  cursor: pointer;
+  border: 1px solid rgba(77, 210, 255, 0.45);
+  border-radius: 8px;
+  background: transparent;
+}
+.job-join:hover:not(:disabled) { background: rgba(77, 210, 255, 0.1); }
+.job-join:disabled { color: var(--muted); border-color: var(--line); cursor: not-allowed; }
+
 /*
  * Паспорт единицы: две колонки «характеристика — значение». Таблица проекции
  * у построек широкая и с шапкой, здесь шапка не нужна — строк мало и каждая

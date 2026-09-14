@@ -128,6 +128,12 @@ gameRouter.post('/bases/:baseId/research/cancel', async (req, res: Response<Acti
   res.status(result.ok ? 200 : 409).json(result);
 });
 
+/** Присоединить лабораторию базы к идущему исследованию командира. */
+gameRouter.post('/bases/:baseId/research/join', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const result = await gameLoop.joinResearch(currentCommander(req).id, req.params.baseId);
+  res.status(result.ok ? 200 : 409).json(result);
+});
+
 gameRouter.post('/bases/:baseId/ships/cancel', async (req, res: Response<ActionResponse | ErrorResponse>) => {
   const jobId = (req.body as { jobId?: unknown } | undefined)?.jobId;
   if (typeof jobId !== 'string' || jobId.length === 0) {

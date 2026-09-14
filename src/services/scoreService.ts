@@ -110,6 +110,7 @@ async function computeAll(): Promise<{ players: ScoreRow[]; syndicates: Syndicat
         },
       },
       researchJob: true,
+      researchHelpers: { select: { ore: true, polymers: true, plasma: true } },
       fleets: true,
     },
   });
@@ -187,7 +188,11 @@ async function computeAll(): Promise<{ players: ScoreRow[]; syndicates: Syndicat
         research:
           spentOnResearch(techs) +
           (commander.researchJob
-            ? spentOnResearchJob(commander.researchJob.tech, commander.researchJob.targetLevel)
+            ? spentOnResearchJob(
+                commander.researchJob.tech,
+                commander.researchJob.targetLevel,
+                commander.researchHelpers,
+              )
             : 0),
       }),
     };
