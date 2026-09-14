@@ -29,6 +29,14 @@ import {
   kishUpgradeCost,
   memberCap,
   outranks,
+  academyUpgradeCost,
+  SYNDICATE_TECHS,
+  SYNDICATE_TECH_EFFECTS,
+  SYNDICATE_TECH_LABELS,
+  syndicateResearchSeconds,
+  syndicateTechCost,
+  type SyndicateTech,
+  type TreasuryCost,
   watchRadius,
   watchUpgradeCost,
   withdrawAllowance,
@@ -39,6 +47,7 @@ import {
   membershipOf,
   requireLeader,
   requirePermission,
+  syndicateTechState,
   withdrawnToday,
   type Membership,
 } from './syndicateAccess.js';
@@ -121,6 +130,21 @@ export interface SyndicateView {
     systemName: string | null;
     memberCap: number;
     nextLevelCost: number;
+  };
+  academy: {
+    level: number;
+    nextLevelCost: TreasuryCost;
+    techs: Array<{
+      tech: SyndicateTech;
+      label: string;
+      effect: string;
+      level: number;
+      nextCost: TreasuryCost;
+      seconds: number;
+      /** Можно ли изучать следующий уровень прямо сейчас: Академія позволяет и она свободна. */
+      available: boolean;
+    }>;
+    research: { tech: SyndicateTech; label: string; targetLevel: number; remainingSeconds: number; totalSeconds: number } | null;
   };
   watch: {
     level: number;
@@ -268,6 +292,7 @@ export async function getCodex(
 
 async function getSyndicateView(syndicateId: string, viewerId: string): Promise<SyndicateView | null> {
   await ensureSyndicateSetup(syndicateId);
+  await settleSyndicateResearch(syndicateId);
   const access = await membershipOf(viewerId);
   if (!access.ok || access.syndicateId !== syndicateId) return null;
 
@@ -302,6 +327,8 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
 
   const taxByMember = new Map(taxRows.map((row) => [row.commanderId, row.amount]));
   const incoming = await watchIncoming(syndicateId, syndicate.watchLevel, syndicate.kishSystem);
+  const techState = await syndicateTechState(syndicateId);
+  const now = Date.now();
   const schedule = commitSchedule(syndicate);
   const allowance = withdrawAllowance(access, access.dailyWithdrawLimit, spentToday);
 
@@ -330,6 +357,31 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
       systemName: syndicate.kishSystem?.name ?? null,
       memberCap: memberCap(syndicate.kishLevel),
       nextLevelCost: kishUpgradeCost(syndicate.kishLevel + 1),
+    },
+    academy: {
+      level: syndicate.academyLevel,
+      nextLevelCost: academyUpgradeCost(syndicate.academyLevel + 1),
+      techs: SYNDICATE_TECHS.map((tech) => {
+        const level = techState.levels[tech];
+        return {
+          tech,
+          label: SYNDICATE_TECH_LABELS[tech],
+          effect: SYNDICATE_TECH_EFFECTS[tech],
+          level,
+          nextCost: syndicateTechCost(level + 1),
+          seconds: syndicateResearchSeconds(level + 1, syndicate.academyLevel),
+          available: !techState.research && syndicate.academyLevel >= level + 1,
+        };
+      }),
+      research: techState.research
+        ? {
+            tech: techState.research.tech,
+            label: SYNDICATE_TECH_LABELS[techState.research.tech],
+            targetLevel: techState.research.targetLevel,
+            remainingSeconds: Math.max(0, Math.ceil((techState.research.finishesAt - now) / 1000)),
+            totalSeconds: syndicateResearchSeconds(techState.research.targetLevel, syndicate.academyLevel),
+          }
+        : null,
     },
     watch: {
       level: syndicate.watchLevel,
@@ -1043,6 +1095,156 @@ export async function upgradeKish(commanderId: string): Promise<SyndicateResult>
   return { ok: true, message: `Кіш теперь ${target} уровня: мест ${memberCap(target)}` };
 }
 
+/* ------------------------- Академія ------------------------- */
+
+/** Списание цены из казны одним условным UPDATE: гривна и ресурсы — все или ничего. */
+async function payFromTreasury(tx: Prisma.TransactionClient, syndicateId: string, cost: TreasuryCost): Promise<void> {
+  const paid = await tx.syndicateBank.updateMany({
+    where: {
+      syndicateId,
+      credits: { gte: cost.credits },
+      ore: { gte: cost.ore },
+      polymers: { gte: cost.polymers },
+    },
+    data: {
+      credits: { decrement: cost.credits },
+      ore: { decrement: cost.ore },
+      polymers: { decrement: cost.polymers },
+    },
+  });
+  if (paid.count === 0) {
+    throw new SyndicateError(
+      `В казне нужно ${cost.credits} ₴, ${cost.ore} руды и ${cost.polymers} полимеров`,
+      409,
+    );
+  }
+}
+
+/** Вложено в единицах, один к одному, как и во всем рейтинге. */
+function costUnits(cost: TreasuryCost): number {
+  return cost.credits + cost.ore + cost.polymers;
+}
+
+/**
+ * Завершение изучения по сроку.
+ *
+ * Тик синдикаты в памяти не держит, поэтому изучение закрывается лениво —
+ * при первом обращении после срока. Бонусы до этого момента все равно
+ * действуют: и тик, и чтение из базы считают уровень по сроку, а не по записи.
+ */
+async function settleSyndicateResearch(syndicateId: string): Promise<void> {
+  const job = await prisma.syndicateResearch.findUnique({ where: { syndicateId } });
+  if (!job || job.finishesAt.getTime() > Date.now()) return;
+  await prisma.$transaction(async (tx) => {
+    const removed = await tx.syndicateResearch.deleteMany({ where: { id: job.id } });
+    if (removed.count === 0) return;
+    await tx.syndicateTechnology.upsert({
+      where: { syndicateId_tech: { syndicateId, tech: job.tech } },
+      create: { syndicateId, tech: job.tech, level: job.targetLevel },
+      update: { level: job.targetLevel },
+    });
+  });
+}
+
+/** Постройка и повышение Академії из казны: гривна, руда и полимеры. */
+export async function upgradeAcademy(commanderId: string): Promise<SyndicateResult> {
+  const access = await requirePermission(commanderId, 'ACADEMY');
+  if (!access.ok) return access;
+
+  const syndicate = await prisma.syndicate.findUnique({ where: { id: access.syndicateId } });
+  if (!syndicate) return { ok: false, error: 'Синдикат не найден', status: 404 };
+  const target = syndicate.academyLevel + 1;
+  const cost = academyUpgradeCost(target);
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      await payFromTreasury(tx, access.syndicateId, cost);
+      const raised = await tx.syndicate.updateMany({
+        where: { id: access.syndicateId, academyLevel: syndicate.academyLevel },
+        data: { academyLevel: target, investedValue: { increment: costUnits(cost) } },
+      });
+      if (raised.count === 0) throw new SyndicateError('Академію уже повысили', 409);
+      await tx.syndicateTransaction.create({
+        data: {
+          syndicateId: access.syndicateId,
+          actorId: commanderId,
+          kind: 'ACADEMY_UPGRADE',
+          amount: cost.credits,
+          ore: cost.ore,
+          polymers: cost.polymers,
+          comment: `Академія → ур. ${target}`,
+        },
+      });
+    });
+  } catch (error) {
+    return toError(error, 'Не удалось повысить Академію');
+  }
+  return {
+    ok: true,
+    message: target === 1 ? 'Академія построена: открыты технологии первого уровня' : `Академія ${target} уровня`,
+  };
+}
+
+/**
+ * Запуск изучения технологии синдиката.
+ *
+ * Изучение одно за раз, уровень не выше уровня Академії, цена — из казны.
+ * Бонусы получают участники, пробывшие в синдикате двое суток.
+ */
+export async function startSyndicateResearch(commanderId: string, tech: SyndicateTech): Promise<SyndicateResult> {
+  const access = await requirePermission(commanderId, 'ACADEMY');
+  if (!access.ok) return access;
+  await settleSyndicateResearch(access.syndicateId);
+
+  const syndicate = await prisma.syndicate.findUnique({ where: { id: access.syndicateId } });
+  if (!syndicate) return { ok: false, error: 'Синдикат не найден', status: 404 };
+  const state = await syndicateTechState(access.syndicateId);
+  if (state.research) return { ok: false, error: 'Академія уже занята изучением', status: 409 };
+
+  const target = state.levels[tech] + 1;
+  if (syndicate.academyLevel < target) {
+    return { ok: false, error: `Для ${target} уровня нужна Академія ${target} уровня`, status: 409 };
+  }
+  const cost = syndicateTechCost(target);
+  const seconds = syndicateResearchSeconds(target, syndicate.academyLevel);
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      await payFromTreasury(tx, access.syndicateId, cost);
+      await tx.syndicateResearch.create({
+        data: {
+          syndicateId: access.syndicateId,
+          tech,
+          targetLevel: target,
+          finishesAt: new Date(Date.now() + seconds * 1000),
+        },
+      });
+      await tx.syndicate.update({
+        where: { id: access.syndicateId },
+        data: { investedValue: { increment: costUnits(cost) } },
+      });
+      await tx.syndicateTransaction.create({
+        data: {
+          syndicateId: access.syndicateId,
+          actorId: commanderId,
+          kind: 'SYNDICATE_RESEARCH',
+          amount: cost.credits,
+          ore: cost.ore,
+          polymers: cost.polymers,
+          comment: `${SYNDICATE_TECH_LABELS[tech]} → ур. ${target}`,
+        },
+      });
+    });
+  } catch (error) {
+    if (isUniqueViolation(error)) return { ok: false, error: 'Академія уже занята изучением', status: 409 };
+    return toError(error, 'Не удалось начать изучение');
+  }
+
+  gameLoop.syncSyndicateTechs(access.syndicateId, await syndicateTechState(access.syndicateId));
+  const hours = Math.round((seconds / 3600) * 10) / 10;
+  return { ok: true, message: `${SYNDICATE_TECH_LABELS[tech]} → ур. ${target}: изучение ${hours} ч` };
+}
+
 /** Постройка и повышение Дозора из казны — то же право, что развитие Коша. */
 export async function upgradeWatch(commanderId: string): Promise<SyndicateResult> {
   const access = await requirePermission(commanderId, 'KISH');
@@ -1369,14 +1571,29 @@ async function syncCredits(commanderId: string): Promise<void> {
   if (commander) gameLoop.syncCredits(commanderId, commander.credits);
 }
 
-/** Тик держит синдикат и налог командира в памяти — после смены членства их надо обновить. */
+/**
+ * Тик держит синдикат командира в памяти — налог, срок вступления и технологии.
+ * После смены членства их надо обновить: иначе налог ушел бы в прежнюю казну,
+ * а бонусы остались бы у того, кто из синдиката уже вышел.
+ */
 async function syncMembership(commanderId: string): Promise<void> {
   const commander = await prisma.commander.findUnique({
     where: { id: commanderId },
-    select: { syndicate: { select: { id: true, taxRate: true, pendingTaxRate: true, taxEffectiveAt: true } } },
+    select: {
+      syndicateJoinedAt: true,
+      syndicate: { select: { id: true, taxRate: true, pendingTaxRate: true, taxEffectiveAt: true } },
+    },
   });
-  gameLoop.syncSyndicate(
-    commanderId,
-    commander?.syndicate ? { id: commander.syndicate.id, tax: scheduleOf(commander.syndicate) } : null,
-  );
+  if (!commander?.syndicate) {
+    gameLoop.syncSyndicate(commanderId, null);
+    return;
+  }
+  const state = await syndicateTechState(commander.syndicate.id);
+  gameLoop.syncSyndicate(commanderId, {
+    id: commander.syndicate.id,
+    tax: scheduleOf(commander.syndicate),
+    joinedAt: commander.syndicateJoinedAt?.getTime() ?? null,
+    techs: state.levels,
+    research: state.research,
+  });
 }

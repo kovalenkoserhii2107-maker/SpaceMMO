@@ -1,3 +1,4 @@
+import { commanderSyndicateBuffs } from '../game/baseState.js';
 import { Router, type Response } from 'express';
 import { gameLoop } from '../game/gameLoop.js';
 import { isBuildingType } from '../game/rules.js';
@@ -330,7 +331,7 @@ gameRouter.post('/bases/:baseId/fleets/preview', async (req, res: Response<Fligh
     commander.techs,
     { position: base.position, system: base.galaxy },
     target,
-    { oneWay },
+    { oneWay, cargoMultiplier: commanderSyndicateBuffs(commander).cargo },
   );
 
   // Предупреждение считается только для атаки и только по живой цели:

@@ -186,6 +186,8 @@ model Syndicate {
   /// «Дозор» — модуль Коша: видно вооруженные флоты, летящие к участникам.
   /// Ноль — не построен.
   watchLevel   Int     @default(0)
+  /// «Академія» — модуль Коша; уровень — потолок уровня любой технологии синдиката.
+  academyLevel Int     @default(0)
 
   /// Счетчики рейтингов синдиката. Копятся в момент события, а не выводятся
   /// из текущего состава: бой и взнос засчитываются тому синдикату, в котором
@@ -203,6 +205,8 @@ model Syndicate {
   ranks        SyndicateRank[]
   codex        SyndicateCodexVersion[]
   kishFleets   Fleet[]                 @relation("KishFleets")
+  technologies SyndicateTechnology[]
+  research     SyndicateResearch?
   bank         SyndicateBank?
   applications SyndicateApplication[]
   transactions SyndicateTransaction[]
@@ -362,6 +366,8 @@ enum SyndicateTxKind {
   WATCH_UPGRADE
   RESOURCE_DELIVERY
   RESOURCE_PICKUP
+  ACADEMY_UPGRADE
+  SYNDICATE_RESEARCH
 }
 
 enum SyndicatePermission {
@@ -375,6 +381,7 @@ enum SyndicatePermission {
   RULES
   DIPLOMACY
   KISH
+  ACADEMY
 }
 
 enum SyndicateRecruitment {
@@ -1137,4 +1144,41 @@ enum PlanetType {
   GAS_GIANT
   VOLCANIC
   TOXIC
+}
+
+/// Технологии синдиката: действуют на участников, пробывших в нем двое суток.
+enum SyndicateTechType {
+  MINING
+  CONSTRUCTION
+  CARGO
+  TRADE
+  VAULT
+  COUNTERINTEL
+}
+
+model SyndicateTechnology {
+  id          String            @id @default(cuid())
+  syndicateId String
+  tech        SyndicateTechType
+  level       Int               @default(0)
+
+  syndicate Syndicate @relation(fields: [syndicateId], references: [id], onDelete: Cascade)
+
+  @@unique([syndicateId, tech])
+  @@map("syndicate_technologies")
+}
+
+/// Идущее изучение синдиката: одно за раз. Завершается лениво — по сроку,
+/// при первом обращении, а не тиком: тик синдикаты в памяти не держит.
+model SyndicateResearch {
+  id          String            @id @default(cuid())
+  syndicateId String            @unique
+  tech        SyndicateTechType
+  targetLevel Int
+  startedAt   DateTime          @default(now())
+  finishesAt  DateTime
+
+  syndicate Syndicate @relation(fields: [syndicateId], references: [id], onDelete: Cascade)
+
+  @@map("syndicate_research")
 }

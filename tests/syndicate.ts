@@ -6,7 +6,14 @@
  * Запуск: npm run test:syndicate
  */
 import {
+  BUFF_TENURE_MS,
   DEFAULT_RANKS,
+  academyUpgradeCost,
+  effectiveSyndicateTechs,
+  emptySyndicateTechLevels,
+  syndicateBuffs,
+  syndicateResearchSeconds,
+  syndicateTechCost,
   MAX_TAX_RATE,
   SYNDICATE_PERMISSIONS,
   TAX_DELAY_MS,
@@ -49,6 +56,31 @@ console.log('\n=== 1б. Дозор ===');
   check('граница круга включается', isWatched(3, 6) && !isWatched(3, 6.01));
   check('первый уровень стоит 20 тысяч, дальше удваивается',
     watchUpgradeCost(1) === 20_000 && watchUpgradeCost(2) === 40_000 && watchUpgradeCost(5) === 320_000);
+}
+
+console.log('\n=== 1в. Академія и технологии ===');
+{
+  const first = syndicateTechCost(1);
+  const seventh = syndicateTechCost(7);
+  check('первый уровень технологии — базовая цена', first.credits === 10_000 && first.ore === 10_000);
+  check('каждый уровень втрое дороже предыдущего',
+    syndicateTechCost(2).credits === 30_000 && seventh.credits === 7_290_000, `седьмой ${seventh.credits}`);
+  check('Академія дорожает вдвое', academyUpgradeCost(1).credits === 30_000 && academyUpgradeCost(3).credits === 120_000);
+  check('лишние уровни Академії ускоряют изучение',
+    syndicateResearchSeconds(3, 5) < syndicateResearchSeconds(3, 3), `${syndicateResearchSeconds(3, 3)} с → ${syndicateResearchSeconds(3, 5)} с`);
+
+  const levels = { ...emptySyndicateTechLevels(), MINING: 7, TRADE: 40, COUNTERINTEL: 7 };
+  const now = 10 * BUFF_TENURE_MS;
+  const newcomer = syndicateBuffs(levels, now - BUFF_TENURE_MS + 1, now);
+  check('новичку младше двух суток бонусов нет', newcomer.mining === 1 && newcomer.counterIntel === 0);
+  const veteran = syndicateBuffs(levels, now - BUFF_TENURE_MS, now);
+  check('седьмой уровень добычи дает +21%', Math.abs(veteran.mining - 1.21) < 1e-9);
+  check('скидка на комиссию не уводит ее в минус', veteran.tradeFee === 0);
+  check('контрразведка: +1 уровень за каждые три', veteran.counterIntel === 2);
+
+  const done = effectiveSyndicateTechs(emptySyndicateTechLevels(), { tech: 'CARGO', targetLevel: 2, finishesAt: 100 }, 100);
+  const pending = effectiveSyndicateTechs(emptySyndicateTechLevels(), { tech: 'CARGO', targetLevel: 2, finishesAt: 101 }, 100);
+  check('завершенное по сроку изучение действует до записи', done.CARGO === 2 && pending.CARGO === 0);
 }
 
 console.log('\n=== 2. Налог с фермы ===');

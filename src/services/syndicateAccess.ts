@@ -10,10 +10,17 @@ import { prisma } from '../db/prisma.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import {
   DEFAULT_RANKS,
+  NEUTRAL_SYNDICATE_BUFFS,
+  effectiveSyndicateTechs,
+  emptySyndicateTechLevels,
   hasPermission,
   legacyRankPosition,
+  syndicateBuffs,
   type MemberAuthority,
+  type SyndicateBuffs,
   type SyndicatePermission,
+  type SyndicateTech,
+  type SyndicateTechLevels,
 } from '../game/syndicate.js';
 
 export interface Membership extends MemberAuthority {
@@ -180,4 +187,48 @@ export async function withdrawnToday(
     _sum: { amount: true },
   });
   return sum._sum.amount ?? 0;
+}
+
+export interface SyndicateTechState {
+  levels: SyndicateTechLevels;
+  research: { tech: SyndicateTech; targetLevel: number; finishesAt: number } | null;
+}
+
+/** Уровни технологий синдиката и идущее изучение — как они лежат в базе. */
+export async function syndicateTechState(
+  syndicateId: string,
+  client: Tx | typeof prisma = prisma,
+): Promise<SyndicateTechState> {
+  const [technologies, research] = await Promise.all([
+    client.syndicateTechnology.findMany({ where: { syndicateId }, select: { tech: true, level: true } }),
+    client.syndicateResearch.findUnique({ where: { syndicateId } }),
+  ]);
+  const levels = emptySyndicateTechLevels();
+  for (const row of technologies) levels[row.tech] = row.level;
+  return {
+    levels,
+    research: research
+      ? { tech: research.tech, targetLevel: research.targetLevel, finishesAt: research.finishesAt.getTime() }
+      : null,
+  };
+}
+
+/**
+ * Бонусы синдиката для командира, которого может не быть в памяти тика.
+ *
+ * Прилет флота, грабеж и сделка на бирже случаются и у офлайновых
+ * игроков, поэтому бонусы читаются из базы, а не из кеша тика.
+ */
+export async function syndicateBuffsFor(commanderId: string, now = Date.now()): Promise<SyndicateBuffs> {
+  const row = await prisma.commander.findUnique({
+    where: { id: commanderId },
+    select: { syndicateId: true, syndicateJoinedAt: true },
+  });
+  if (!row?.syndicateId) return NEUTRAL_SYNDICATE_BUFFS;
+  const state = await syndicateTechState(row.syndicateId);
+  return syndicateBuffs(
+    effectiveSyndicateTechs(state.levels, state.research, now),
+    row.syndicateJoinedAt?.getTime() ?? null,
+    now,
+  );
 }

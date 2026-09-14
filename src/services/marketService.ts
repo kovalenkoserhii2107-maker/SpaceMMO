@@ -3,6 +3,7 @@
  * Все проверки и переводы — на сервере и в транзакции: товар и криптогривна
  * блокируются в момент выставления ордера, поэтому продать одно и то же дважды нельзя.
  */
+import { syndicateBuffsFor } from './syndicateAccess.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { prisma } from '../db/prisma.js';
 import { gameLoop } from '../game/gameLoop.js';
@@ -663,6 +664,8 @@ async function matchOrder(
     const sellerId = order.side === 'SELL' ? order.commanderId : other.commanderId;
     const buyerId = order.side === 'SELL' ? other.commanderId : order.commanderId;
     const buyerBid = order.side === 'SELL' ? other.pricePerUnit : order.pricePerUnit;
+    // «Торговые связи» синдиката снижают комиссию каждой стороне по-своему.
+    const [sellerBuffs, buyerBuffs] = await Promise.all([syndicateBuffsFor(sellerId), syndicateBuffsFor(buyerId)]);
 
     // Товар уже в залоге у продавца, деньги — у покупателя. Осталось развести.
     const buyerStorage = await tx.hubStorage.upsert({
@@ -675,7 +678,7 @@ async function matchOrder(
 
     await tx.commander.update({
       where: { id: sellerId },
-      data: { credits: { increment: total - sellerFee(total) } },
+      data: { credits: { increment: total - sellerFee(total, sellerBuffs.tradeFee) } },
     });
 
     /*
@@ -683,7 +686,7 @@ async function matchOrder(
      * значит он переплатил в залог, и разницу надо вернуть. Без этого
      * выставившийся дороже терял бы всю выгоду от встречи посередине.
      */
-    const refund = buyerEscrow(volume, buyerBid) - (total + buyerFee(total));
+    const refund = buyerEscrow(volume, buyerBid) - (total + buyerFee(total, buyerBuffs.tradeFee));
     if (refund > 0) {
       await tx.commander.update({ where: { id: buyerId }, data: { credits: { increment: refund } } });
     }
@@ -847,7 +850,7 @@ export async function fillOrder(
         // и единственный, работающий на больших оборотах.
         await tx.commander.update({
           where: { id: order.commanderId },
-          data: { credits: { increment: total - sellerFee(total) } },
+          data: { credits: { increment: total - sellerFee(total, (await syndicateBuffsFor(order.commanderId)).tradeFee) } },
         });
       } else {
         // Мы продаем: товар уходит со склада, криптогривна покупателя уже в залоге.
@@ -868,7 +871,7 @@ export async function fillOrder(
           'У покупателя не хватает места на складе хаба');
         await tx.commander.update({
           where: { id: commanderId },
-          data: { credits: { increment: total - sellerFee(total) } },
+          data: { credits: { increment: total - sellerFee(total, (await syndicateBuffsFor(commanderId)).tradeFee) } },
         });
       }
 

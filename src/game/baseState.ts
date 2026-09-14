@@ -1,4 +1,12 @@
 /** Состояние игрока и его баз в памяти Game Loop + снимки для клиента. */
+import {
+  NEUTRAL_SYNDICATE_BUFFS,
+  effectiveSyndicateTechs,
+  syndicateBuffs,
+  type SyndicateBuffs,
+  type SyndicateTech,
+  type SyndicateTechLevels,
+} from './syndicate.js';
 import type {
   BaseSnapshot,
   BuildingCard,
@@ -205,7 +213,14 @@ export interface CommanderRuntimeState {
    * за ставкой в базу на каждом сбросе незачем. Смену членства и ставки
    * сервис синдиката сообщает тику сам.
    */
-  syndicate: { id: string; tax: { taxRate: number; pendingTaxRate: number | null; taxEffectiveAt: number | null } } | null;
+  syndicate: {
+    id: string;
+    tax: { taxRate: number; pendingTaxRate: number | null; taxEffectiveAt: number | null };
+    /** Когда командир вступил: бонусы технологий действуют через двое суток. */
+    joinedAt: number | null;
+    techs: SyndicateTechLevels;
+    research: { tech: SyndicateTech; targetLevel: number; finishesAt: number } | null;
+  } | null;
   bases: Map<string, BaseRuntimeState>;
   /** Флоты игрока в полете. Источник правды — БД, здесь кэш для отрисовки. */
   fleets: FleetRuntimeState[];
@@ -233,6 +248,8 @@ export function accrue(
    * на базе, поэтому база их не хранит, а только досыпает в общий счетчик.
    */
   commander?: { minedCredits: number },
+  /** Множитель добычи от технологий синдиката: у командира без синдиката единица. */
+  miningMultiplier = 1,
 ): void {
   if (!Number.isFinite(seconds) || seconds <= 0) return;
 
@@ -245,7 +262,7 @@ export function accrue(
   const perSecond = productionPerSecond(
     state.levels,
     state.richness,
-    economyBonuses(techs),
+    { ...economyBonuses(techs), mining: economyBonuses(techs).mining * miningMultiplier },
     defenseEnergyUsage(state.defenses),
     systemModifiers(state.anomaly),
     // Тот же расход, что и в снимке для клиента: иначе интерфейс показывал бы
@@ -315,8 +332,32 @@ function researchJoinSnapshot(
   };
 }
 
-export function toSnapshot(state: BaseRuntimeState, commander: CommanderRuntimeState, now: number): BaseSnapshot {
+
+/**
+ * Бонусы технологий синдиката для командира в памяти тика.
+ *
+ * Завершенное по сроку изучение уже действует, даже если его еще никто
+ * не записал в базу: синдикаты тик в памяти не держит и завершает их лениво.
+ */
+export function commanderSyndicateBuffs(commander: CommanderRuntimeState, now = Date.now()): SyndicateBuffs {
+  const syndicate = commander.syndicate;
+  if (!syndicate) return NEUTRAL_SYNDICATE_BUFFS;
+  return syndicateBuffs(effectiveSyndicateTechs(syndicate.techs, syndicate.research, now), syndicate.joinedAt, now);
+}
+
+/** Экономические бонусы командира: свои технологии и технологии синдиката. */
+export function commanderEconomyBonuses(commander: CommanderRuntimeState, now = Date.now()): ReturnType<typeof economyBonuses> {
   const bonuses = economyBonuses(commander.techs);
+  return { ...bonuses, mining: bonuses.mining * commanderSyndicateBuffs(commander, now).mining };
+}
+
+/** Ускорение стройки и сборки: робототехника, сжатие времени и артель синдиката. */
+export function commanderBuildSpeedup(commander: CommanderRuntimeState, now = Date.now()): number {
+  return buildSpeedup(commander.techs) * commanderSyndicateBuffs(commander, now).construction;
+}
+
+export function toSnapshot(state: BaseRuntimeState, commander: CommanderRuntimeState, now: number): BaseSnapshot {
+  const bonuses = commanderEconomyBonuses(commander);
   const modifiers = systemModifiers(state.anomaly);
   const defenseDrain = defenseEnergyUsage(state.defenses);
   const output = energyOutput(state.levels, state.richness, bonuses);
@@ -418,7 +459,7 @@ function defenseCard(
       type,
       state.levels.SHIPYARD,
       systemModifiers(state.anomaly),
-      buildSpeedup(commander.techs),
+      commanderBuildSpeedup(commander),
     ),
     owned: state.defenses[type],
     canAfford: hasEnoughResources(state.resources, cost),
@@ -446,7 +487,7 @@ function buildingCard(
     level: state.levels[type],
     nextLevel,
     cost,
-    seconds: buildSeconds(type, nextLevel, systemModifiers(state.anomaly), buildSpeedup(commander.techs)),
+    seconds: buildSeconds(type, nextLevel, systemModifiers(state.anomaly), commanderBuildSpeedup(commander)),
     canAfford: hasEnoughResources(state.resources, cost),
     requirements: missing,
     effect: buildingEffect(type, state, commander, nextLevel),
@@ -489,7 +530,7 @@ function buildingEffect(
   nextLevel: number,
 ): { icon: string | null; text: string } | null {
   const level = state.levels[type];
-  const bonuses = economyBonuses(commander.techs);
+  const bonuses = commanderEconomyBonuses(commander);
   const modifiers = systemModifiers(state.anomaly);
   const drain = defenseEnergyUsage(state.defenses);
   const techDrain = timeCompressionDrain(commander.techs);
@@ -530,7 +571,7 @@ function buildingEffect(
   }
 
   if (type === 'SHIPYARD') {
-    const speedup = buildSpeedup(commander.techs);
+    const speedup = commanderBuildSpeedup(commander);
     const now = shipUnitSeconds('LIGHT_FIGHTER', level, modifiers, speedup);
     const after = shipUnitSeconds('LIGHT_FIGHTER', nextLevel, modifiers, speedup);
     // Формулировка короткая намеренно: в три строки она ломала выравнивание
@@ -619,7 +660,7 @@ function shipCard(type: ShipType, state: BaseRuntimeState, commander: CommanderR
       type,
       state.levels.SHIPYARD,
       systemModifiers(state.anomaly),
-      buildSpeedup(commander.techs),
+      commanderBuildSpeedup(commander),
     ),
     owned: state.ships[type],
     canAfford: hasEnoughResources(state.resources, cost),

@@ -5592,6 +5592,8 @@
     WATCH_UPGRADE: 'развитие Дозора',
     RESOURCE_DELIVERY: 'доставка в казну',
     RESOURCE_PICKUP: 'вывоз из казны',
+    ACADEMY_UPGRADE: 'развитие Академії',
+    SYNDICATE_RESEARCH: 'наука синдиката',
   };
   const RECRUITMENT_LABELS = { OPEN: 'открыт', APPLICATION: 'по заявке', CLOSED: 'закрыт' };
 
@@ -5890,6 +5892,12 @@
       } else {
         head.append(document.createTextNode(`${fmt(tx.amount)} `));
         head.insertAdjacentHTML('beforeend', icon('credits', 'sm'));
+        // Академія и наука платятся и гривной, и ресурсами — показываем все.
+        const extra = ['ore', 'polymers', 'plasma'].filter((key) => tx[key] > 0);
+        if (extra.length) {
+          head.insertAdjacentHTML('beforeend',
+            ' · ' + extra.map((key) => `${icon(key, 'sm')} ${fmt(tx[key])}`).join(' · '));
+        }
       }
       const meta = [TX_LABELS[tx.kind] || tx.kind];
       if (tx.kind === 'PAYOUT' && tx.actor) meta.push(`выдал ${tx.actor}`);
@@ -5903,6 +5911,7 @@
 
     top.append(kish, treasury);
     el.syndicatePanel.appendChild(top);
+    el.syndicatePanel.appendChild(renderAcademy(mine, can('ACADEMY')));
 
     /* Налог и правила набора */
     const middle = synEl('div', 'syndicate-grid');
@@ -6071,6 +6080,57 @@
         () => syndicateAction('/api/syndicates/leave')));
     }
     el.syndicatePanel.appendChild(footer);
+  }
+
+  /** Цена из казны строкой: гривна и ресурсы. */
+  function treasuryCostText(cost) {
+    return `${fmt(cost.credits)} ₴ · ${fmt(cost.ore)} руды · ${fmt(cost.polymers)} полимеров`;
+  }
+
+  function treasuryCovers(mine, cost) {
+    return mine.bank >= cost.credits && mine.treasury.ore >= cost.ore && mine.treasury.polymers >= cost.polymers;
+  }
+
+  /**
+   * Академія — модуль Коша и технологии синдиката. Список технологий виден
+   * всем участникам: бонусы получают все, и знать, что уже изучено и что
+   * изучается, нужно не только тем, кто решает.
+   */
+  function renderAcademy(mine, canManage) {
+    const academy = mine.academy;
+    const card = synCard('Академія');
+    card.appendChild(synEl('div', 'hub-storage', academy.level > 0
+      ? `Уровень ${academy.level}: технологии изучаются до ${academy.level} уровня. ` +
+        'Бонусы получают участники, пробывшие в синдикате двое суток.'
+      : 'Не построена. Академія открывает технологии синдиката: их бонусы получают все участники, ' +
+        'пробывшие в синдикате двое суток.'));
+    if (canManage) {
+      card.appendChild(synButton(
+        `${academy.level > 0 ? `Повысить Академію до ${academy.level + 1} ур.` : 'Построить Академію'} — ` +
+          treasuryCostText(academy.nextLevelCost),
+        'ghost', () => syndicateAction('/api/syndicates/academy/upgrade'),
+        !treasuryCovers(mine, academy.nextLevelCost)));
+    }
+    if (academy.research) {
+      card.appendChild(synEl('div', 'hub-storage warn',
+        `Изучается: ${academy.research.label} → ур. ${academy.research.targetLevel}, ` +
+        `осталось ${fmtTime(academy.research.remainingSeconds)}`));
+    }
+    for (const tech of academy.techs) {
+      const row = synEl('div', 'queue-item member-row');
+      const info = synEl('div');
+      info.appendChild(synEl('b', null, `${tech.label} · ур. ${tech.level}`));
+      info.appendChild(synEl('div', 'role',
+        `${tech.effect} · следующий: ${treasuryCostText(tech.nextCost)} · ${fmtTime(tech.seconds)}`));
+      row.appendChild(info);
+      if (canManage) {
+        row.appendChild(synButton('Изучать', 'ghost',
+          () => syndicateAction('/api/syndicates/research', { tech: tech.tech }),
+          !tech.available || !treasuryCovers(mine, tech.nextCost)));
+      }
+      card.appendChild(row);
+    }
+    return card;
   }
 
   /**
@@ -7550,6 +7610,7 @@
     { key: 'total', label: 'Общий' },
     { key: 'military', label: 'Военный' },
     { key: 'economy', label: 'Экономика' },
+    { key: 'science', label: 'Наука' },
   ];
   let ratingBoards = null;
 
@@ -7581,7 +7642,7 @@
     const sorted = [...syndicates].sort((a, b) => (b[key] || 0) - (a[key] || 0) || a.name.localeCompare(b.name, 'ru'));
 
     el.ratingHead.innerHTML =
-      '<tr><th>#</th><th>Синдикат</th><th>Общий</th><th>Военный</th><th>Экономика</th>' +
+      '<tr><th>#</th><th>Синдикат</th><th>Общий</th><th>Военный</th><th>Экономика</th><th>Наука</th>' +
       '<th>Вложено в Кіш</th><th>Состав</th><th>В среднем</th></tr>';
 
     el.ratingRows.innerHTML = '';
@@ -7591,13 +7652,13 @@
       tr.innerHTML =
         `<td>${index + 1}</td>` +
         `<td><span class="rating-tag">[${escapeHtml(row.tag)}]</span> ${escapeHtml(row.name)}</td>` +
-        `<td>${cell('total')}</td><td>${cell('military')}</td><td>${cell('economy')}</td>` +
+        `<td>${cell('total')}</td><td>${cell('military')}</td><td>${cell('economy')}</td><td>${cell('science')}</td>` +
         `<td>${fmt(row.invested)}</td><td>${row.members}</td><td>${fmt(row.average)}</td>`;
       el.ratingRows.appendChild(tr);
     });
 
     if (!syndicates.length) {
-      el.ratingRows.innerHTML = '<tr><td colspan="8">Синдикатов пока нет</td></tr>';
+      el.ratingRows.innerHTML = '<tr><td colspan="9">Синдикатов пока нет</td></tr>';
     }
   }
 

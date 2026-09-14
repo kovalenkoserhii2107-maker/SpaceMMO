@@ -9,6 +9,7 @@
  * игрок решает «стоит ли мне идти на три уровня вверх», и ему нужен итог
  * этого решения, а не разница между двумя гипотетическими будущими.
  */
+import { commanderBuildSpeedup, commanderEconomyBonuses } from '../game/baseState.js';
 import { gameLoop } from '../game/gameLoop.js';
 import {
   BUILDING_DESCRIPTIONS,
@@ -24,7 +25,7 @@ import {
   type BuildingLevels,
   type BuildingType,
 } from '../game/rules.js';
-import { buildSpeedup, cryptoBonus, economyBonuses, timeCompressionDrain } from '../game/techTree.js';
+import { cryptoBonus, timeCompressionDrain } from '../game/techTree.js';
 import { defenseEnergyUsage } from '../game/defenses.js';
 import type { BuildingProjection, BuildingProjectionRow } from '../types/socket.js';
 
@@ -56,7 +57,7 @@ export async function getBuildingProjection(
   const base = commander?.bases.get(baseId);
   if (!commander || !base) return null;
 
-  const bonuses = economyBonuses(commander.techs);
+  const bonuses = commanderEconomyBonuses(commander);
   const modifiers = systemModifiers(base.anomaly);
   const drain = defenseEnergyUsage(base.defenses);
   const techDrain = timeCompressionDrain(commander.techs);
@@ -97,7 +98,7 @@ export async function getBuildingProjection(
       level: target,
       current,
       cost: current ? null : upgradeCost(type, target),
-      seconds: current ? null : buildSeconds(type, target, modifiers, buildSpeedup(commander.techs)),
+      seconds: current ? null : buildSeconds(type, target, modifiers, commanderBuildSpeedup(commander)),
       output: output === null ? null : Math.round(output),
       outputGain:
         output === null || baseOutput === null ? null : Math.round(output - baseOutput),

@@ -22,6 +22,8 @@ import {
   accrue,
   type DefenseJobState,
   fleetSnapshots,
+  commanderBuildSpeedup,
+  commanderSyndicateBuffs,
   researchJoinCheck,
   researchSnapshot,
   toSnapshot,
@@ -64,8 +66,23 @@ import { resolveEspionage, espionageSeed } from './espionage.js';
 import { plunderAmount, resolveBattle, type SideForces, type UnitLoss } from './combat.js';
 import { checkArchitect, checkPirateBane } from '../services/achievementService.js';
 import { canAttack, declareWar } from '../services/warService.js';
-import { membershipOf, sameSyndicate, withdrawnToday } from '../services/syndicateAccess.js';
-import { effectiveTaxRate, hasPermission, KISH_POSITION, splitTax, withdrawAllowance } from './syndicate.js';
+import {
+  membershipOf,
+  sameSyndicate,
+  syndicateBuffsFor,
+  withdrawnToday,
+  type SyndicateTechState,
+} from '../services/syndicateAccess.js';
+import {
+  effectiveTaxRate,
+  emptySyndicateTechLevels,
+  hasPermission,
+  KISH_POSITION,
+  splitTax,
+  withdrawAllowance,
+  type SyndicateTech,
+  type SyndicateTechLevels,
+} from './syndicate.js';
 import { spentOnFleet } from './score.js';
 import { countUnread, deliver, type OutgoingMessage } from '../services/mailService.js';
 import {
@@ -97,7 +114,6 @@ import {
   type BuildingType,
 } from './rules.js';
 import {
-  buildSpeedup,
   colonySlots,
   emptyTechLevels,
   missingTechRequirements,
@@ -281,7 +297,16 @@ class GameLoop {
         researches: true,
         researchJob: true,
         researchHelpers: true,
-        syndicate: { select: { id: true, taxRate: true, pendingTaxRate: true, taxEffectiveAt: true } },
+        syndicate: {
+          select: {
+            id: true,
+            taxRate: true,
+            pendingTaxRate: true,
+            taxEffectiveAt: true,
+            technologies: { select: { tech: true, level: true } },
+            research: true,
+          },
+        },
         fleets: {
           orderBy: { arrivesAt: 'asc' },
           include: FLEET_INCLUDE,
@@ -318,6 +343,15 @@ class GameLoop {
               pendingTaxRate: row.syndicate.pendingTaxRate,
               taxEffectiveAt: row.syndicate.taxEffectiveAt?.getTime() ?? null,
             },
+            joinedAt: row.syndicateJoinedAt?.getTime() ?? null,
+            techs: syndicateTechLevelsFrom(row.syndicate.technologies),
+            research: row.syndicate.research
+              ? {
+                  tech: row.syndicate.research.tech,
+                  targetLevel: row.syndicate.research.targetLevel,
+                  finishesAt: row.syndicate.research.finishesAt.getTime(),
+                }
+              : null,
           }
         : null,
       bases: new Map(),
@@ -657,7 +691,7 @@ class GameLoop {
       type,
       targetLevel,
       systemModifiers(base.anomaly),
-      buildSpeedup(commander.techs),
+      commanderBuildSpeedup(commander),
     );
     subtractResources(base.resources, cost);
     base.buildJob = { building: type, targetLevel, startedAt: now, finishesAt: now + seconds * 1000 };
@@ -789,7 +823,7 @@ class GameLoop {
       type,
       base.levels.SHIPYARD,
       systemModifiers(base.anomaly),
-      buildSpeedup(commander.techs),
+      commanderBuildSpeedup(commander),
     );
     subtractResources(base.resources, cost);
     if (!this.mergeIntoQueue(base.shipJobs, type, quantity, unitSeconds)) {
@@ -1025,7 +1059,9 @@ class GameLoop {
         : mission === 'HUB_DELIVERY'
         ? { ...cargo, plasma: 0 }
         : cargo;
-    const cargoError = validateCargo(ships, outboundCargo);
+    // Трюмы участника синдиката шире на «Обозные трюмы» — и груз, и запрос на вывоз.
+    const senderBuffs = commanderSyndicateBuffs(commander);
+    const cargoError = validateCargo(ships, outboundCargo, senderBuffs.cargo);
     if (cargoError) return { ok: false, error: cargoError };
     if (outboundCargo.ore > base.resources.ore || outboundCargo.polymers > base.resources.polymers) {
       return { ok: false, error: 'Недостаточно ресурсов для загрузки' };
@@ -1044,8 +1080,8 @@ class GameLoop {
           error: mission === 'KISH_PICKUP' ? 'Укажи, сколько вывезти из казны' : 'Укажи, сколько товара вывезти с хаба',
         };
       }
-      if (requested > fleetCapacity(ships)) {
-        return { ok: false, error: `Трюмы вмещают ${fleetCapacity(ships)}, а запрошено ${requested}` };
+      if (requested > fleetCapacity(ships, senderBuffs.cargo)) {
+        return { ok: false, error: `Трюмы вмещают ${fleetCapacity(ships, senderBuffs.cargo)}, а запрошено ${requested}` };
       }
     }
 
@@ -1054,7 +1090,7 @@ class GameLoop {
       commander.techs,
       { position: base.position, system: base.galaxy },
       target_,
-      { oneWay },
+      { oneWay, cargoMultiplier: senderBuffs.cargo },
     );
 
     // Межзвездный прыжок возможен только с гипердвигателем и идет на антиматерии.
@@ -1219,7 +1255,16 @@ class GameLoop {
   /** Смена ставки налога: у всех загруженных участников синдиката сразу. */
   syncSyndicateTax(syndicateId: string, tax: NonNullable<CommanderRuntimeState['syndicate']>['tax']): void {
     for (const commander of this.commanders.values()) {
-      if (commander.syndicate?.id === syndicateId) commander.syndicate = { id: syndicateId, tax };
+      if (commander.syndicate?.id === syndicateId) commander.syndicate = { ...commander.syndicate, tax };
+    }
+  }
+
+  /** Изучение синдиката началось или завершилось: бонусы у загруженных участников. */
+  syncSyndicateTechs(syndicateId: string, state: SyndicateTechState): void {
+    for (const commander of this.commanders.values()) {
+      if (commander.syndicate?.id === syndicateId) {
+        commander.syndicate = { ...commander.syndicate, techs: state.levels, research: state.research };
+      }
     }
   }
 
@@ -1290,7 +1335,7 @@ class GameLoop {
       type,
       base.levels.SHIPYARD,
       systemModifiers(base.anomaly),
-      buildSpeedup(commander.techs),
+      commanderBuildSpeedup(commander),
     );
     subtractResources(base.resources, cost);
     if (!this.mergeIntoQueue(base.defenseJobs, type, quantity, unitSeconds)) {
@@ -1460,7 +1505,7 @@ class GameLoop {
   private accrueTo(base: BaseRuntimeState, commander: CommanderRuntimeState, time: number): void {
     const seconds = (time - base.lastTickAt) / 1000;
     if (seconds <= 0) return;
-    accrue(base, commander.techs, seconds, commander);
+    accrue(base, commander.techs, seconds, commander, commanderSyndicateBuffs(commander).mining);
     base.lastTickAt = time;
   }
 
@@ -1758,9 +1803,11 @@ class GameLoop {
           )?.level ?? 0
         : 0;
 
+      // Контрразведка синдиката прибавляет защитнику уровни «Шпионажа».
+      const counterIntel = defenderId ? (await syndicateBuffsFor(defenderId)).counterIntel : 0;
       const outcome = resolveEspionage(
         spy?.techs.ESPIONAGE ?? 0,
-        defenderLevel,
+        defenderLevel + counterIntel,
         espionageSeed(fleet.id, planetId),
       );
 
@@ -1898,7 +1945,7 @@ class GameLoop {
    * что осталось. Дюпнуть обломки нельзя: БД разрешит списать их ровно один раз.
    */
   private async harvestDebris(fleet: FleetRow, planetId: string): Promise<void> {
-    const capacity = fleetCapacity(fleetShips(fleet));
+    const capacity = fleetCapacity(fleetShips(fleet), (await syndicateBuffsFor(fleet.commanderId)).cargo);
     let takenOre = 0;
     let takenPolymers = 0;
 
@@ -2065,11 +2112,12 @@ class GameLoop {
 
     const commander = await this.getCommander(fleet.commanderId);
     const techs = commander ? commander.techs : emptyTechLevels();
-    const result = resolveExpedition(ships, fleetCapacity(ships), techs);
+    const cargoBuff = (await syndicateBuffsFor(fleet.commanderId)).cargo;
+    const result = resolveExpedition(ships, fleetCapacity(ships, cargoBuff), techs);
 
     const survivorCount = SHIP_TYPES.reduce((total, type) => total + result.survivors[type], 0);
     // Руда и полимеры занимают трюмы, антиматерия едет в баках.
-    const holdLimit = fleetCapacity(result.survivors);
+    const holdLimit = fleetCapacity(result.survivors, cargoBuff);
     const ore = Math.min(result.loot.ore, holdLimit);
     const polymers = Math.min(result.loot.polymers, Math.max(0, holdLimit - ore));
 
@@ -2187,6 +2235,11 @@ class GameLoop {
         select: { level: true },
       });
       const defenderVault = Math.max(0, defenderResearch[0]?.level ?? 0) * 0.02;
+      // Трюмы налетчика и «Тайники» защитника — бонусы синдикатов обеих сторон.
+      const [attackerBuffs, defenderBuffs] = await Promise.all([
+        syndicateBuffsFor(fleet.commanderId),
+        syndicateBuffsFor(defenderId),
+      ]);
 
       const defenderShips = emptyShipCounts();
       for (const ship of base.ships) defenderShips[ship.type] = ship.count;
@@ -2206,8 +2259,9 @@ class GameLoop {
           polymers: storageCapacityForLevel(base.polymerStorageLevel),
           plasma: storageCapacityForLevel(base.plasmaStorageLevel),
         },
-        outcome.winner === 'ATTACKER' ? fleetCapacity(outcome.attackerSurvivors) : 0,
+        outcome.winner === 'ATTACKER' ? fleetCapacity(outcome.attackerSurvivors, attackerBuffs.cargo) : 0,
         defenderVault,
+        defenderBuffs.vault,
       );
 
       // Потери защитника: корабли и оборона списываются безвозвратно.
@@ -2559,7 +2613,7 @@ class GameLoop {
 
   /** Погрузка товара со склада хаба в трюмы — обратно повезем домой. */
   private async loadFromHub(fleet: FleetRow, hubId: string): Promise<void> {
-    const capacity = fleetCapacity(fleetShips(fleet));
+    const capacity = fleetCapacity(fleetShips(fleet), (await syndicateBuffsFor(fleet.commanderId)).cargo);
 
     await prisma.$transaction(async (tx) => {
       const storage = await tx.hubStorage.findUnique({
@@ -2652,7 +2706,7 @@ class GameLoop {
    * запрос, запас казны, трюмы и остаток лимита; остальное не вывозится.
    */
   private async loadFromKish(fleet: FleetRow, syndicateId: string): Promise<void> {
-    const capacity = fleetCapacity(fleetShips(fleet));
+    const capacity = fleetCapacity(fleetShips(fleet), (await syndicateBuffsFor(fleet.commanderId)).cargo);
 
     await prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${syndicateId}))::text AS locked`;
@@ -3224,6 +3278,13 @@ function shipsLost(before: ShipCounts, after: ShipCounts): ShipCounts {
   const lost = emptyShipCounts();
   for (const type of SHIP_TYPES) lost[type] = Math.max(0, before[type] - after[type]);
   return lost;
+}
+
+/** Уровни технологий синдиката из строк базы. */
+function syndicateTechLevelsFrom(rows: Array<{ tech: SyndicateTech; level: number }>): SyndicateTechLevels {
+  const levels = emptySyndicateTechLevels();
+  for (const row of rows) levels[row.tech] = row.level;
+  return levels;
 }
 
 /** Сутки по UTC — ключ журнала налога. */

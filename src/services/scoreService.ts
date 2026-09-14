@@ -54,6 +54,8 @@ export interface SyndicateScoreRow {
   military: number;
   /** Экономический: взносы, вступительные и налог в казну. */
   economy: number;
+  /** Научный: сумма уровней технологий синдиката. */
+  science: number;
   /** Средний счет участника: по нему видно, силен синдикат или просто велик. */
   average: number;
 }
@@ -101,12 +103,28 @@ async function computeAll(): Promise<{ players: ScoreRow[]; syndicates: Syndicat
   /** Синдикат каждого командира — чтобы не искать его потом перебором строк. */
   const syndicateOf = new Map<
     string,
-    { id: string; name: string; tag: string; destroyedValue: number; contributedValue: number; investedValue: number }
+    {
+      id: string;
+      name: string;
+      tag: string;
+      destroyedValue: number;
+      contributedValue: number;
+      investedValue: number;
+      technologies: Array<{ level: number }>;
+    }
   >();
   const commanders = await prisma.commander.findMany({
     include: {
       syndicate: {
-        select: { id: true, name: true, tag: true, destroyedValue: true, contributedValue: true, investedValue: true },
+        select: {
+          id: true,
+          name: true,
+          tag: true,
+          destroyedValue: true,
+          contributedValue: true,
+          investedValue: true,
+          technologies: { select: { level: true } },
+        },
       },
       researches: true,
       hubStorages: true,
@@ -223,7 +241,16 @@ async function computeAll(): Promise<{ players: ScoreRow[]; syndicates: Syndicat
    */
   const bySyndicate = new Map<
     string,
-    { name: string; tag: string; membersScore: number; members: number; invested: number; military: number; economy: number }
+    {
+      name: string;
+      tag: string;
+      membersScore: number;
+      members: number;
+      invested: number;
+      military: number;
+      economy: number;
+      science: number;
+    }
   >();
   for (const row of rows) {
     const syndicate = syndicateOf.get(row.commanderId);
@@ -236,6 +263,7 @@ async function computeAll(): Promise<{ players: ScoreRow[]; syndicates: Syndicat
       invested: Math.round(syndicate.investedValue),
       military: Math.round(syndicate.destroyedValue),
       economy: Math.round(syndicate.contributedValue),
+      science: syndicate.technologies.reduce((sum, row) => sum + row.level, 0),
     };
     entry.membersScore += row.score.total;
     entry.members += 1;
@@ -254,6 +282,7 @@ async function computeAll(): Promise<{ players: ScoreRow[]; syndicates: Syndicat
       invested: entry.invested,
       military: entry.military,
       economy: entry.economy,
+      science: entry.science,
       average: entry.members > 0 ? Math.round(entry.membersScore / entry.members) : 0,
     }))
     .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name, 'ru'));

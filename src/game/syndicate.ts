@@ -16,6 +16,7 @@ export const SYNDICATE_PERMISSIONS = [
   'RULES',
   'DIPLOMACY',
   'KISH',
+  'ACADEMY',
 ] as const;
 
 export type SyndicatePermission = (typeof SYNDICATE_PERMISSIONS)[number];
@@ -31,6 +32,7 @@ export const PERMISSION_LABELS: Record<SyndicatePermission, string> = {
   RULES: 'правила набора',
   DIPLOMACY: 'дипломатия',
   KISH: 'развитие Коша',
+  ACADEMY: 'наука синдиката',
 };
 
 export function isSyndicatePermission(value: unknown): value is SyndicatePermission {
@@ -95,6 +97,141 @@ export function isWatched(level: number, distanceFromKish: number): boolean {
 export function watchUpgradeCost(targetLevel: number): number {
   if (targetLevel <= 0) return 0;
   return Math.round(WATCH_UPGRADE_BASE * Math.pow(2, targetLevel - 1));
+}
+
+/* ------------------------- Академія и технологии ------------------------- */
+
+export const SYNDICATE_TECHS = ['MINING', 'CONSTRUCTION', 'CARGO', 'TRADE', 'VAULT', 'COUNTERINTEL'] as const;
+export type SyndicateTech = (typeof SYNDICATE_TECHS)[number];
+export type SyndicateTechLevels = Record<SyndicateTech, number>;
+
+export const SYNDICATE_TECH_LABELS: Record<SyndicateTech, string> = {
+  MINING: 'Общая разработка недр',
+  CONSTRUCTION: 'Строительная артель',
+  CARGO: 'Обозные трюмы',
+  TRADE: 'Торговые связи',
+  VAULT: 'Тайники',
+  COUNTERINTEL: 'Контрразведка',
+};
+
+export const SYNDICATE_TECH_EFFECTS: Record<SyndicateTech, string> = {
+  MINING: '+3% добычи за уровень',
+  CONSTRUCTION: 'стройка и сборка на 3% быстрее за уровень',
+  CARGO: '+3% вместимости трюмов за уровень',
+  TRADE: 'комиссия биржи на 3% ниже за уровень',
+  VAULT: 'несгораемая доля склада +3% за уровень',
+  COUNTERINTEL: '+1 к «Шпионажу» в обороне за каждые 3 уровня',
+};
+
+export function isSyndicateTech(value: unknown): value is SyndicateTech {
+  return typeof value === 'string' && (SYNDICATE_TECHS as readonly string[]).includes(value);
+}
+
+export function emptySyndicateTechLevels(): SyndicateTechLevels {
+  return { MINING: 0, CONSTRUCTION: 0, CARGO: 0, TRADE: 0, VAULT: 0, COUNTERINTEL: 0 };
+}
+
+/*
+ * Потолка у технологий синдиката нет: его заменяет цена. Каждый уровень
+ * втрое дороже предыдущего, и +21% на седьмом уровне стоит уже 729 базовых
+ * цен — дело большого синдиката, а не вечера. Шаг +3% за уровень держит
+ * одиночку жизнеспособным: синдикат дает преимущество, но не замещает
+ * собственное развитие.
+ */
+export const SYNDICATE_TECH_STEP = 0.03;
+export const SYNDICATE_TECH_FACTOR = 3;
+export const SYNDICATE_TECH_BASE = { credits: 10_000, ore: 10_000, polymers: 10_000 } as const;
+
+export interface TreasuryCost {
+  credits: number;
+  ore: number;
+  polymers: number;
+}
+
+export function syndicateTechCost(targetLevel: number): TreasuryCost {
+  const scale = Math.pow(SYNDICATE_TECH_FACTOR, Math.max(0, targetLevel - 1));
+  return {
+    credits: Math.round(SYNDICATE_TECH_BASE.credits * scale),
+    ore: Math.round(SYNDICATE_TECH_BASE.ore * scale),
+    polymers: Math.round(SYNDICATE_TECH_BASE.polymers * scale),
+  };
+}
+
+/*
+ * Академія — модуль Коша, и ее уровень — потолок уровня любой технологии.
+ * Сверх потолка она ускоряет изучение: каждый лишний уровень Академії
+ * над изучаемым сокращает срок на четверть, так же как лаборатория
+ * ускоряет собственную науку командира.
+ */
+export function academyUpgradeCost(targetLevel: number): TreasuryCost {
+  const scale = Math.pow(2, Math.max(0, targetLevel - 1));
+  return {
+    credits: Math.round(30_000 * scale),
+    ore: Math.round(20_000 * scale),
+    polymers: Math.round(20_000 * scale),
+  };
+}
+
+export const SYNDICATE_RESEARCH_BASE_SECONDS = 3600;
+
+export function syndicateResearchSeconds(targetLevel: number, academyLevel: number): number {
+  const raw = SYNDICATE_RESEARCH_BASE_SECONDS * Math.pow(2, Math.max(0, targetLevel - 1));
+  const surplus = Math.max(0, academyLevel - targetLevel);
+  return Math.max(60, Math.round(raw / (1 + surplus * 0.25)));
+}
+
+/** Изучение, чей срок прошел, уже действует — даже если его еще никто не записал. */
+export function effectiveSyndicateTechs(
+  levels: SyndicateTechLevels,
+  research: { tech: SyndicateTech; targetLevel: number; finishesAt: number } | null,
+  now: number,
+): SyndicateTechLevels {
+  if (!research || research.finishesAt > now) return levels;
+  return { ...levels, [research.tech]: Math.max(levels[research.tech], research.targetLevel) };
+}
+
+/*
+ * Бонусы получает участник, пробывший в синдикате двое суток. Без паузы
+ * бонусы можно было бы «арендовать»: вступить ради большой стройки, выйти,
+ * вступить в соседний ради торговли.
+ */
+export const BUFF_TENURE_MS = 48 * 60 * 60 * 1000;
+
+export interface SyndicateBuffs {
+  /** Множитель добычи. */
+  mining: number;
+  /** Во сколько раз быстрее стройка и сборка. */
+  construction: number;
+  /** Множитель вместимости трюмов. */
+  cargo: number;
+  /** Множитель комиссии биржи: 1 — без скидки. */
+  tradeFee: number;
+  /** Множитель несгораемой доли склада. */
+  vault: number;
+  /** Сколько уровней «Шпионажа» прибавляется в обороне. */
+  counterIntel: number;
+}
+
+export const NEUTRAL_SYNDICATE_BUFFS: SyndicateBuffs = {
+  mining: 1,
+  construction: 1,
+  cargo: 1,
+  tradeFee: 1,
+  vault: 1,
+  counterIntel: 0,
+};
+
+export function syndicateBuffs(levels: SyndicateTechLevels, joinedAt: number | null, now: number): SyndicateBuffs {
+  if (joinedAt === null || now - joinedAt < BUFF_TENURE_MS) return NEUTRAL_SYNDICATE_BUFFS;
+  const step = (tech: SyndicateTech) => SYNDICATE_TECH_STEP * Math.max(0, levels[tech]);
+  return {
+    mining: 1 + step('MINING'),
+    construction: 1 + step('CONSTRUCTION'),
+    cargo: 1 + step('CARGO'),
+    tradeFee: Math.max(0, 1 - step('TRADE')),
+    vault: 1 + step('VAULT'),
+    counterIntel: Math.floor(Math.max(0, levels.COUNTERINTEL) / 3),
+  };
 }
 
 /* ------------------------- Налог ------------------------- */

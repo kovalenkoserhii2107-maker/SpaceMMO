@@ -26,6 +26,8 @@ import {
   updateRules,
   upgradeKish,
   upgradeWatch,
+  upgradeAcademy,
+  startSyndicateResearch,
   type RankInput,
   type SyndicateOverview,
   type SyndicateResult,
@@ -34,6 +36,7 @@ import {
   CODEX_MAX_LENGTH,
   MAX_TAX_RATE,
   isSyndicatePermission,
+  isSyndicateTech,
   normalizeCodex,
   normalizeRankName,
 } from '../game/syndicate.js';
@@ -220,6 +223,21 @@ syndicateRouter.post('/codex', async (req, res: Response<ActionResponse | ErrorR
 /** Повысить Кіш из казны. */
 syndicateRouter.post('/kish/upgrade', async (req, res: Response<ActionResponse | ErrorResponse>) => {
   send(res, await upgradeKish(currentCommander(req).id));
+});
+
+/** Построить или повысить Академію из казны. */
+syndicateRouter.post('/academy/upgrade', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  send(res, await upgradeAcademy(currentCommander(req).id));
+});
+
+/** Начать изучение технологии синдиката. */
+syndicateRouter.post('/research', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const tech = (req.body as { tech?: unknown } | undefined)?.tech;
+  if (!isSyndicateTech(tech)) {
+    res.status(400).json({ error: 'Неизвестная технология синдиката' });
+    return;
+  }
+  send(res, await startSyndicateResearch(currentCommander(req).id, tech));
 });
 
 /** Построить или повысить Дозор из казны. */

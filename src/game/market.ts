@@ -92,12 +92,17 @@ export function marketPrice(
 export const SELLER_FEE = 0.005;
 export const BUYER_FEE = 0.006;
 
-export function sellerFee(total: number): number {
-  return Math.round(total * SELLER_FEE * 100) / 100;
+/*
+ * Множитель комиссии — «Торговые связи» синдиката. Залог покупателя
+ * по-прежнему берется с полной комиссией: скидка применяется в момент сделки,
+ * и переплата возвращается тем же путем, что и разница цен.
+ */
+export function sellerFee(total: number, multiplier = 1): number {
+  return Math.round(total * SELLER_FEE * multiplier * 100) / 100;
 }
 
-export function buyerFee(total: number): number {
-  return Math.round(total * BUYER_FEE * 100) / 100;
+export function buyerFee(total: number, multiplier = 1): number {
+  return Math.round(total * BUYER_FEE * multiplier * 100) / 100;
 }
 
 /**

@@ -179,8 +179,10 @@ function flightSeconds(ships: ShipCounts, techs: TechLevels, distance: number): 
 }
 
 /** Суммарная грузоподъемность флота. */
-export function fleetCapacity(ships: ShipCounts): number {
-  return SHIP_TYPES.reduce((total, type) => total + ships[type] * FLIGHT_PROFILES[type].cargo, 0);
+/** Вместимость трюмов. Множитель — «Обозные трюмы» синдиката; без синдиката единица. */
+export function fleetCapacity(ships: ShipCounts, multiplier = 1): number {
+  const base = SHIP_TYPES.reduce((total, type) => total + ships[type] * FLIGHT_PROFILES[type].cargo, 0);
+  return Math.floor(base * multiplier);
 }
 
 /**
@@ -224,7 +226,7 @@ export function planFlight(
   techs: TechLevels,
   from: { position: number; system: GalaxyPoint },
   to: { position: number; system: GalaxyPoint },
-  options: { oneWay?: boolean } = {},
+  options: { oneWay?: boolean; cargoMultiplier?: number } = {},
 ): FlightPlan {
   // Дислокация не возвращается, поэтому и топливо за обратный путь не берем.
   const trips = options.oneWay ? 1 : 2;
@@ -239,7 +241,7 @@ export function planFlight(
       distance,
       speed: Math.round(fleetSpeed(ships, techs)),
       flightSeconds: seconds,
-      capacity: fleetCapacity(ships),
+      capacity: fleetCapacity(ships, options.cargoMultiplier),
       fuel: fuelCost(ships, seconds, trips),
       antimatter: 0,
     };
@@ -252,7 +254,7 @@ export function planFlight(
     distance,
     speed: Math.round(fleetSpeed(ships, techs)),
     flightSeconds: seconds,
-    capacity: fleetCapacity(ships),
+    capacity: fleetCapacity(ships, options.cargoMultiplier),
     fuel: 0,
     antimatter: jumpAntimatterCost(ships, techs, distance, trips),
   };
@@ -321,14 +323,14 @@ export function validateComposition(mission: FleetMission, ships: ShipCounts): s
  * Плазма возится наравне с рудой и полимерами — она и топливо, и товар,
  * поэтому колонии умеют перебрасывать ее между собой.
  */
-export function validateCargo(ships: ShipCounts, cargo: ResourceAmounts): string | null {
+export function validateCargo(ships: ShipCounts, cargo: ResourceAmounts, cargoMultiplier = 1): string | null {
   if (cargo.ore < 0 || cargo.polymers < 0 || cargo.plasma < 0) {
     return 'Некорректный объем груза';
   }
   const total = cargo.ore + cargo.polymers + cargo.plasma;
   if (total <= 0) return null;
 
-  const capacity = fleetCapacity(ships);
+  const capacity = fleetCapacity(ships, cargoMultiplier);
   if (total > capacity) {
     return `Трюмы вмещают ${capacity}, а загружено ${Math.round(total)}`;
   }
