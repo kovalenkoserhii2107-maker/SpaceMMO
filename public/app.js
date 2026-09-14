@@ -5716,6 +5716,7 @@
       kish.appendChild(synButton(`Повысить Кіш до ${mine.kish.level + 1} ур.`, 'primary',
         () => syndicateAction('/api/syndicates/kish/upgrade'), mine.bank < mine.kish.nextLevelCost));
     }
+    renderWatch(kish, mine, can('KISH'));
 
     const treasury = synCard('Казна');
     const donateForm = synEl('div', 'donate-form');
@@ -5930,6 +5931,41 @@
         () => syndicateAction('/api/syndicates/leave')));
     }
     el.syndicatePanel.appendChild(footer);
+  }
+
+  /**
+   * Дозор — модуль Коша, поэтому живет в его же карточке. Список атак
+   * показан всем участникам: предупреждение нужно тому, на кого летят,
+   * а не только тем, кто строил.
+   */
+  function renderWatch(card, mine, canBuild) {
+    const watch = mine.watch;
+    card.appendChild(synEl('h4', 'rank-new-title', 'Дозор'));
+    if (watch.level <= 0) {
+      card.appendChild(synEl('div', 'hub-storage',
+        'Не построен. Дозор показывает вражеские атаки на участников в пределах радиуса от Коша.'));
+    } else {
+      card.appendChild(synEl('div', 'hub-storage',
+        `Уровень ${watch.level} · ` + (watch.radius === 0 ? 'наблюдает систему Коша' : `радиус ${watch.radius} от Коша`)));
+      if (!watch.incoming.length) {
+        card.appendChild(synEl('div', 'hub-storage', 'Вражеских атак на участников не видно.'));
+      }
+      for (const fleet of watch.incoming) {
+        const row = synEl('div', 'queue-item watch-alert');
+        row.appendChild(synEl('b', null,
+          `${fleet.attackerTag ? `[${fleet.attackerTag}] ` : ''}${fleet.attacker} → ${fleet.target}`));
+        row.appendChild(synEl('span', null,
+          `${fleet.planetName} (${fleet.systemName}) · ${fmt(fleet.ships)} корпусов · через ${fmtTime(fleet.arrivesInSeconds)}`));
+        card.appendChild(row);
+      }
+    }
+    if (canBuild) {
+      card.appendChild(synButton(
+        watch.level <= 0
+          ? `Построить Дозор — ${fmt(watch.nextLevelCost)} ₴`
+          : `Повысить Дозор до ${watch.level + 1} ур. — ${fmt(watch.nextLevelCost)} ₴`,
+        'ghost', () => syndicateAction('/api/syndicates/watch/upgrade'), mine.bank < watch.nextLevelCost));
+    }
   }
 
   /**
@@ -7319,7 +7355,10 @@
     }
 
     if (rating.mode === 'syndicates') renderSyndicateRating(data.syndicates);
-    else renderPlayerRating(data.players, data.me);
+    else {
+      if (ratingBoards) ratingBoards.hidden = true;
+      renderPlayerRating(data.players, data.me);
+    }
   }
 
   /** Своя строка отдельно: игрок может не попасть в показанную сотню. */
@@ -7362,22 +7401,63 @@
     }
   }
 
-  function renderSyndicateRating(syndicates) {
-    el.ratingHead.innerHTML =
-      '<tr><th>#</th><th>Синдикат</th><th>Счет</th><th>Состав</th><th>В среднем</th></tr>';
+  /*
+   * У синдикатов три таблицы, и переключаются они здесь же, над таблицей:
+   * общий счет, военный и экономический. Порядок строк — порядок выбранного
+   * счета, поэтому и место считается по нему.
+   */
+  const SYNDICATE_BOARDS = [
+    { key: 'total', label: 'Общий' },
+    { key: 'military', label: 'Военный' },
+    { key: 'economy', label: 'Экономика' },
+  ];
+  let ratingBoards = null;
 
-    el.ratingRows.innerHTML = '';
-    for (const row of syndicates) {
-      const tr = document.createElement('tr');
-      tr.innerHTML =
-        `<td>${row.rank}</td>` +
-        `<td><span class="rating-tag">[${escapeHtml(row.tag)}]</span> ${escapeHtml(row.name)}</td>` +
-        `<td><b>${fmt(row.total)}</b></td><td>${row.members}</td><td>${fmt(row.average)}</td>`;
-      el.ratingRows.appendChild(tr);
+  function renderSyndicateRating(syndicates) {
+    if (!rating.syndicateBoard) rating.syndicateBoard = 'total';
+    if (!ratingBoards) {
+      ratingBoards = document.createElement('div');
+      ratingBoards.className = 'rating-boards';
+      for (const board of SYNDICATE_BOARDS) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'mode';
+        button.dataset.board = board.key;
+        button.textContent = board.label;
+        button.addEventListener('click', () => {
+          rating.syndicateBoard = board.key;
+          renderRating();
+        });
+        ratingBoards.appendChild(button);
+      }
+      el.ratingHead.closest('table').before(ratingBoards);
+    }
+    ratingBoards.hidden = false;
+    for (const button of ratingBoards.querySelectorAll('.mode')) {
+      button.classList.toggle('active', button.dataset.board === rating.syndicateBoard);
     }
 
+    const key = rating.syndicateBoard;
+    const sorted = [...syndicates].sort((a, b) => (b[key] || 0) - (a[key] || 0) || a.name.localeCompare(b.name, 'ru'));
+
+    el.ratingHead.innerHTML =
+      '<tr><th>#</th><th>Синдикат</th><th>Общий</th><th>Военный</th><th>Экономика</th>' +
+      '<th>Вложено в Кіш</th><th>Состав</th><th>В среднем</th></tr>';
+
+    el.ratingRows.innerHTML = '';
+    sorted.forEach((row, index) => {
+      const tr = document.createElement('tr');
+      const cell = (field) => (field === key ? `<b>${fmt(row[field])}</b>` : fmt(row[field]));
+      tr.innerHTML =
+        `<td>${index + 1}</td>` +
+        `<td><span class="rating-tag">[${escapeHtml(row.tag)}]</span> ${escapeHtml(row.name)}</td>` +
+        `<td>${cell('total')}</td><td>${cell('military')}</td><td>${cell('economy')}</td>` +
+        `<td>${fmt(row.invested)}</td><td>${row.members}</td><td>${fmt(row.average)}</td>`;
+      el.ratingRows.appendChild(tr);
+    });
+
     if (!syndicates.length) {
-      el.ratingRows.innerHTML = '<tr><td colspan="5">Синдикатов пока нет</td></tr>';
+      el.ratingRows.innerHTML = '<tr><td colspan="8">Синдикатов пока нет</td></tr>';
     }
   }
 

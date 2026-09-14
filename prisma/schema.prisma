@@ -183,6 +183,19 @@ model Syndicate {
   /// основанных до его появления: у них ее просто нет.
   kishSystemId String?
   kishLevel    Int     @default(1)
+  /// «Дозор» — модуль Коша: видно вооруженные флоты, летящие к участникам.
+  /// Ноль — не построен.
+  watchLevel   Int     @default(0)
+
+  /// Счетчики рейтингов синдиката. Копятся в момент события, а не выводятся
+  /// из текущего состава: бой и взнос засчитываются тому синдикату, в котором
+  /// участник состоял тогда, и новичок не приносит с собой чужую историю.
+  /// Стоимость флота противника, уничтоженного участниками.
+  destroyedValue   Float @default(0)
+  /// Взносы, вступительные и налог — все, что участники отдали в казну.
+  contributedValue Float @default(0)
+  /// Вложено из казны в Кіш и его модули.
+  investedValue    Float @default(0)
 
   leader       Commander               @relation("SyndicateLeader", fields: [leaderId], references: [id], onDelete: Cascade)
   members      Commander[]             @relation("SyndicateMembers")
@@ -335,6 +348,7 @@ enum SyndicateTxKind {
   TAX
   ENTRY_FEE
   KISH_UPGRADE
+  WATCH_UPGRADE
 }
 
 enum SyndicatePermission {

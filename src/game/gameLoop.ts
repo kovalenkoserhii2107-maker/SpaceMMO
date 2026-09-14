@@ -65,6 +65,7 @@ import { checkArchitect, checkPirateBane } from '../services/achievementService.
 import { canAttack, declareWar } from '../services/warService.js';
 import { sameSyndicate } from '../services/syndicateAccess.js';
 import { effectiveTaxRate, splitTax } from './syndicate.js';
+import { spentOnFleet } from './score.js';
 import { countUnread, deliver, type OutgoingMessage } from '../services/mailService.js';
 import {
   buildBattleMail,
@@ -2237,6 +2238,34 @@ class GameLoop {
             : { battlesLost: { increment: 1 } },
       });
 
+      /*
+       * Военный рейтинг синдикатов. Уничтоженный флот засчитывается синдикату
+       * той стороны, которая его уничтожила, — в момент боя, а не по нынешнему
+       * составу: иначе новичок приносил бы в синдикат чужие победы. Считается
+       * только флот: оборона восстанавливается на месте, и за «убитую» турель
+       * очки начислялись бы бесконечно.
+       */
+      const destroyedByAttacker = spentOnFleet(shipsLost(defenderShips, outcome.defenderSurvivorShips));
+      const destroyedByDefender = spentOnFleet(shipsLost(attackerShips, outcome.attackerSurvivors));
+      const sides = await tx.commander.findMany({
+        where: { id: { in: [fleet.commanderId, defenderId] } },
+        select: { id: true, syndicateId: true },
+      });
+      const attackerSyndicateId = sides.find((row) => row.id === fleet.commanderId)?.syndicateId ?? null;
+      const defenderSyndicateId = sides.find((row) => row.id === defenderId)?.syndicateId ?? null;
+      if (attackerSyndicateId && destroyedByAttacker > 0) {
+        await tx.syndicate.updateMany({
+          where: { id: attackerSyndicateId },
+          data: { destroyedValue: { increment: destroyedByAttacker } },
+        });
+      }
+      if (defenderSyndicateId && destroyedByDefender > 0) {
+        await tx.syndicate.updateMany({
+          where: { id: defenderSyndicateId },
+          data: { destroyedValue: { increment: destroyedByDefender } },
+        });
+      }
+
       await tx.battleReport.create({
         data: {
           attackerId: fleet.commanderId,
@@ -2788,6 +2817,10 @@ class GameLoop {
             where: { syndicateId: syndicate.id },
             data: { credits: { increment: tax } },
           }),
+          prisma.syndicate.updateMany({
+            where: { id: syndicate.id },
+            data: { contributedValue: { increment: tax } },
+          }),
           prisma.syndicateTaxLedger.upsert({
             where: {
               syndicateId_commanderId_day: { syndicateId: syndicate.id, commanderId: commander.commanderId, day },
@@ -2983,6 +3016,13 @@ class GameLoop {
       }
     }
   }
+}
+
+/** Сколько кораблей каждого класса не пережило боя. */
+function shipsLost(before: ShipCounts, after: ShipCounts): ShipCounts {
+  const lost = emptyShipCounts();
+  for (const type of SHIP_TYPES) lost[type] = Math.max(0, before[type] - after[type]);
+  return lost;
 }
 
 /** Сутки по UTC — ключ журнала налога. */

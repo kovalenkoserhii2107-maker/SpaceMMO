@@ -12,6 +12,7 @@ import {
   TAX_DELAY_MS,
   effectiveTaxRate,
   hasPermission,
+  isWatched,
   kishUpgradeCost,
   legacyRankPosition,
   memberCap,
@@ -19,6 +20,8 @@ import {
   normalizeRankName,
   outranks,
   splitTax,
+  watchRadius,
+  watchUpgradeCost,
   withdrawAllowance,
 } from '../src/game/syndicate.js';
 
@@ -36,6 +39,16 @@ console.log('\n=== 1. Кіш задает предел состава ===');
   check('первый уровень бесплатен', kishUpgradeCost(1) === 0);
   check('второй стоит 25 тысяч, дальше удваивается',
     kishUpgradeCost(2) === 25_000 && kishUpgradeCost(3) === 50_000 && kishUpgradeCost(10) === 6_400_000);
+}
+
+console.log('\n=== 1б. Дозор ===');
+{
+  check('не построенный Дозор не видит ничего', !isWatched(0, 0) && watchRadius(0) === -1);
+  check('первый уровень смотрит только за системой Коша', isWatched(1, 0) && !isWatched(1, 0.5));
+  check('каждый уровень расширяет круг на три единицы', watchRadius(2) === 3 && watchRadius(7) === 18);
+  check('граница круга включается', isWatched(3, 6) && !isWatched(3, 6.01));
+  check('первый уровень стоит 20 тысяч, дальше удваивается',
+    watchUpgradeCost(1) === 20_000 && watchUpgradeCost(2) === 40_000 && watchUpgradeCost(5) === 320_000);
 }
 
 console.log('\n=== 2. Налог с фермы ===');
@@ -91,7 +104,7 @@ console.log('\n=== 3. Ранги и права ===');
 console.log('\n=== 4. Тексты ===');
 {
   check('кодекс принимает обычный текст с переносами', normalizeCodex('Первое.\r\nВторое.') === 'Первое.\nВторое.');
-  check('управляющие символы вырезаются', normalizeCodex('ab') === 'ab');
+  check('управляющие символы вырезаются', normalizeCodex('a\u0007b') === 'ab');
   check('длиннее пяти тысяч — отказ', normalizeCodex('я'.repeat(5001)) === null);
   check('пустой кодекс допустим — это «кодекса нет»', normalizeCodex('   ') === '');
   check('имя ранга: пробелы схлопываются', normalizeRankName('  Старший   пилот ') === 'Старший пилот');

@@ -46,7 +46,14 @@ export interface SyndicateScoreRow {
   name: string;
   tag: string;
   members: number;
+  /** Общий: счет участников плюс вложенное из казны в Кіш и его модули. */
   total: number;
+  membersScore: number;
+  invested: number;
+  /** Военный: стоимость флота противника, уничтоженного участниками. */
+  military: number;
+  /** Экономический: взносы, вступительные и налог в казну. */
+  economy: number;
   /** Средний счет участника: по нему видно, силен синдикат или просто велик. */
   average: number;
 }
@@ -92,10 +99,15 @@ function levelsOf(base: Record<string, unknown>): BuildingLevels {
 
 async function computeAll(): Promise<{ players: ScoreRow[]; syndicates: SyndicateScoreRow[] }> {
   /** Синдикат каждого командира — чтобы не искать его потом перебором строк. */
-  const syndicateOf = new Map<string, { id: string; name: string; tag: string }>();
+  const syndicateOf = new Map<
+    string,
+    { id: string; name: string; tag: string; destroyedValue: number; contributedValue: number; investedValue: number }
+  >();
   const commanders = await prisma.commander.findMany({
     include: {
-      syndicate: { select: { id: true, name: true, tag: true } },
+      syndicate: {
+        select: { id: true, name: true, tag: true, destroyedValue: true, contributedValue: true, investedValue: true },
+      },
       researches: true,
       hubStorages: true,
       // Очереди входят в выборку затем, что оплаченное, но не готовое —
@@ -203,19 +215,29 @@ async function computeAll(): Promise<{ players: ScoreRow[]; syndicates: Syndicat
     row.rank = index + 1;
   });
 
-  // Синдикат стоит столько, сколько его состав: отдельного имущества у него нет,
-  // кроме банка, а банк — криптогривна, которая в счет не входит вовсе.
-  const bySyndicate = new Map<string, { name: string; tag: string; total: number; members: number }>();
+  /*
+   * Общий счет синдиката — его состав плюс вложенное из казны в Кіш и модули.
+   * Сама казна в счет не входит: иначе выгодно копить, а не строить.
+   * Военный и экономический счета копятся синдикатом в момент события
+   * и от нынешнего состава не зависят.
+   */
+  const bySyndicate = new Map<
+    string,
+    { name: string; tag: string; membersScore: number; members: number; invested: number; military: number; economy: number }
+  >();
   for (const row of rows) {
     const syndicate = syndicateOf.get(row.commanderId);
     if (!syndicate) continue;
     const entry = bySyndicate.get(syndicate.id) ?? {
       name: syndicate.name,
       tag: syndicate.tag,
-      total: 0,
+      membersScore: 0,
       members: 0,
+      invested: Math.round(syndicate.investedValue),
+      military: Math.round(syndicate.destroyedValue),
+      economy: Math.round(syndicate.contributedValue),
     };
-    entry.total += row.score.total;
+    entry.membersScore += row.score.total;
     entry.members += 1;
     bySyndicate.set(syndicate.id, entry);
   }
@@ -227,8 +249,12 @@ async function computeAll(): Promise<{ players: ScoreRow[]; syndicates: Syndicat
       name: entry.name,
       tag: entry.tag,
       members: entry.members,
-      total: entry.total,
-      average: entry.members > 0 ? Math.round(entry.total / entry.members) : 0,
+      total: entry.membersScore + entry.invested,
+      membersScore: entry.membersScore,
+      invested: entry.invested,
+      military: entry.military,
+      economy: entry.economy,
+      average: entry.members > 0 ? Math.round(entry.membersScore / entry.members) : 0,
     }))
     .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name, 'ru'));
   syndicates.forEach((row, index) => {

@@ -12,6 +12,7 @@ import type { SyndicateRecruitment } from '../generated/prisma/enums.js';
 import { deliver } from './mailService.js';
 import { gameLoop } from '../game/gameLoop.js';
 import { getLeaderboard } from './scoreService.js';
+import { galaxyDistance } from '../game/fleets.js';
 import {
   CODEX_MAX_LENGTH,
   DEFAULT_RANKS,
@@ -24,9 +25,12 @@ import {
   clampTaxRate,
   effectiveTaxRate,
   hasPermission,
+  isWatched,
   kishUpgradeCost,
   memberCap,
   outranks,
+  watchRadius,
+  watchUpgradeCost,
   withdrawAllowance,
   type SyndicatePermission,
 } from '../game/syndicate.js';
@@ -115,6 +119,13 @@ export interface SyndicateView {
     memberCap: number;
     nextLevelCost: number;
   };
+  watch: {
+    level: number;
+    /** Радиус наблюдения от Коша в единицах карты; −1 — Дозор не построен. */
+    radius: number;
+    nextLevelCost: number;
+    incoming: WatchedFleet[];
+  };
   rules: { recruitment: SyndicateRecruitment; minScore: number; entryFee: number };
   tax: { rate: number; pendingRate: number | null; effectiveAt: number | null; maxRate: number };
   codex: { id: string; text: string; updatedAt: number; author: string | null } | null;
@@ -132,6 +143,19 @@ export interface SyndicateView {
     createdAt: number;
   }>;
   wars: Array<{ syndicateId: string; name: string; tag: string; declaredByUs: boolean; declaredAt: number }>;
+}
+
+export interface WatchedFleet {
+  fleetId: string;
+  attacker: string;
+  attackerTag: string | null;
+  /** Кого атакуют: позывной участника. */
+  target: string;
+  planetName: string;
+  systemName: string;
+  arrivesInSeconds: number;
+  /** Сколько корпусов летит. Состав Дозор не различает — это дело разведки. */
+  ships: number;
 }
 
 export interface SyndicateOverview {
@@ -247,7 +271,7 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
       where: { id: syndicateId },
       include: {
         bank: true,
-        kishSystem: { select: { id: true, name: true } },
+        kishSystem: { select: { id: true, name: true, galaxyX: true, galaxyY: true } },
         ranks: { orderBy: [{ position: 'asc' }, { createdAt: 'asc' }], include: { _count: { select: { members: true } } } },
         members: { orderBy: { createdAt: 'asc' }, include: { syndicateRank: true } },
         applications: {
@@ -271,6 +295,7 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
   if (!syndicate) return null;
 
   const taxByMember = new Map(taxRows.map((row) => [row.commanderId, row.amount]));
+  const incoming = await watchIncoming(syndicateId, syndicate.watchLevel, syndicate.kishSystem);
   const schedule = commitSchedule(syndicate);
   const allowance = withdrawAllowance(access, access.dailyWithdrawLimit, spentToday);
 
@@ -294,6 +319,12 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
       systemName: syndicate.kishSystem?.name ?? null,
       memberCap: memberCap(syndicate.kishLevel),
       nextLevelCost: kishUpgradeCost(syndicate.kishLevel + 1),
+    },
+    watch: {
+      level: syndicate.watchLevel,
+      radius: watchRadius(syndicate.watchLevel),
+      nextLevelCost: watchUpgradeCost(syndicate.watchLevel + 1),
+      incoming,
     },
     rules: { recruitment: syndicate.recruitment, minScore: syndicate.minScore, entryFee: syndicate.entryFee },
     tax: {
@@ -647,6 +678,7 @@ async function joinSyndicate(tx: Prisma.TransactionClient, syndicateId: string, 
 
   if (fee > 0) {
     await tx.syndicateBank.update({ where: { syndicateId }, data: { credits: { increment: fee } } });
+    await tx.syndicate.update({ where: { id: syndicateId }, data: { contributedValue: { increment: fee } } });
     await tx.syndicateTransaction.create({
       data: { syndicateId, commanderId, kind: 'ENTRY_FEE', amount: fee, comment: 'Вступительный взнос' },
     });
@@ -978,7 +1010,7 @@ export async function upgradeKish(commanderId: string): Promise<SyndicateResult>
       if (paid.count === 0) throw new SyndicateError(`В казне нужно ${cost} ₴`, 409);
       const raised = await tx.syndicate.updateMany({
         where: { id: access.syndicateId, kishLevel: syndicate.kishLevel },
-        data: { kishLevel: target },
+        data: { kishLevel: target, investedValue: { increment: cost } },
       });
       if (raised.count === 0) throw new SyndicateError('Кіш уже повысили', 409);
       await tx.syndicateTransaction.create({
@@ -995,6 +1027,107 @@ export async function upgradeKish(commanderId: string): Promise<SyndicateResult>
     return toError(error, 'Не удалось повысить Кіш');
   }
   return { ok: true, message: `Кіш теперь ${target} уровня: мест ${memberCap(target)}` };
+}
+
+/** Постройка и повышение Дозора из казны — то же право, что развитие Коша. */
+export async function upgradeWatch(commanderId: string): Promise<SyndicateResult> {
+  const access = await requirePermission(commanderId, 'KISH');
+  if (!access.ok) return access;
+
+  const syndicate = await prisma.syndicate.findUnique({ where: { id: access.syndicateId } });
+  if (!syndicate) return { ok: false, error: 'Синдикат не найден', status: 404 };
+  const target = syndicate.watchLevel + 1;
+  const cost = watchUpgradeCost(target);
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      const paid = await tx.syndicateBank.updateMany({
+        where: { syndicateId: access.syndicateId, credits: { gte: cost } },
+        data: { credits: { decrement: cost } },
+      });
+      if (paid.count === 0) throw new SyndicateError(`В казне нужно ${cost} ₴`, 409);
+      const raised = await tx.syndicate.updateMany({
+        where: { id: access.syndicateId, watchLevel: syndicate.watchLevel },
+        data: { watchLevel: target, investedValue: { increment: cost } },
+      });
+      if (raised.count === 0) throw new SyndicateError('Дозор уже повысили', 409);
+      await tx.syndicateTransaction.create({
+        data: {
+          syndicateId: access.syndicateId,
+          actorId: commanderId,
+          kind: 'WATCH_UPGRADE',
+          amount: cost,
+          comment: `Дозор → ур. ${target}`,
+        },
+      });
+    });
+  } catch (error) {
+    return toError(error, 'Не удалось повысить Дозор');
+  }
+  const radius = watchRadius(target);
+  return {
+    ok: true,
+    message: radius === 0
+      ? 'Дозор построен: видно атаки на участников в системе Коша'
+      : `Дозор ${target} уровня: видно атаки на участников в радиусе ${radius} от Коша`,
+  };
+}
+
+/**
+ * Вооруженные флоты, летящие к участникам, в радиусе Дозора.
+ *
+ * Только атаки: разведку решает лестница шпионажа, и постройка за гривну
+ * не должна ее обходить. И только чужие флоты — свой синдикат своих
+ * атаковать не может. Состав не раскрывается, только число корпусов:
+ * «кто, куда, когда и сколько» — это предупреждение, а «чем именно» —
+ * уже работа разведки.
+ */
+const FLEET_SHIP_COLUMNS = [
+  'probes', 'smallCargo', 'largeCargo', 'lightFighters', 'heavyFighters', 'cruisers',
+  'frigates', 'bombers', 'battleships', 'carriers', 'recyclers', 'colonyShips',
+] as const;
+
+async function watchIncoming(
+  syndicateId: string,
+  watchLevel: number,
+  kish: { galaxyX: number; galaxyY: number } | null,
+): Promise<WatchedFleet[]> {
+  if (watchLevel <= 0 || !kish) return [];
+  const now = Date.now();
+  const fleets = await prisma.fleet.findMany({
+    where: {
+      mission: 'ATTACK',
+      status: 'OUTBOUND',
+      targetPlanet: { base: { commander: { syndicateId } } },
+      commander: { OR: [{ syndicateId: null }, { syndicateId: { not: syndicateId } }] },
+    },
+    include: {
+      commander: { select: { nickname: true, syndicate: { select: { tag: true } } } },
+      targetPlanet: {
+        select: {
+          name: true,
+          system: { select: { name: true, galaxyX: true, galaxyY: true } },
+          base: { select: { commander: { select: { nickname: true } } } },
+        },
+      },
+    },
+    orderBy: { arrivesAt: 'asc' },
+  });
+
+  return fleets.flatMap((fleet) => {
+    const planet = fleet.targetPlanet;
+    if (!planet || !isWatched(watchLevel, galaxyDistance(kish, planet.system))) return [];
+    return [{
+      fleetId: fleet.id,
+      attacker: fleet.commander.nickname,
+      attackerTag: fleet.commander.syndicate?.tag ?? null,
+      target: planet.base?.commander.nickname ?? '—',
+      planetName: planet.name,
+      systemName: planet.system.name,
+      arrivesInSeconds: Math.max(0, Math.ceil((fleet.arrivesAt.getTime() - now) / 1000)),
+      ships: FLEET_SHIP_COLUMNS.reduce((sum, column) => sum + fleet[column], 0),
+    }];
+  });
 }
 
 /* ------------------------- Казна ------------------------- */
@@ -1027,6 +1160,10 @@ export async function donate(commanderId: string, amount: number): Promise<Syndi
       await tx.syndicateBank.update({
         where: { syndicateId: access.syndicateId },
         data: { credits: { increment: amount } },
+      });
+      await tx.syndicate.update({
+        where: { id: access.syndicateId },
+        data: { contributedValue: { increment: amount } },
       });
       await tx.syndicateTransaction.create({
         data: { syndicateId: access.syndicateId, commanderId, kind: 'DONATION', amount },

@@ -25,6 +25,7 @@ import {
   updateRank,
   updateRules,
   upgradeKish,
+  upgradeWatch,
   type RankInput,
   type SyndicateOverview,
   type SyndicateResult,
@@ -219,6 +220,11 @@ syndicateRouter.post('/codex', async (req, res: Response<ActionResponse | ErrorR
 /** Повысить Кіш из казны. */
 syndicateRouter.post('/kish/upgrade', async (req, res: Response<ActionResponse | ErrorResponse>) => {
   send(res, await upgradeKish(currentCommander(req).id));
+});
+
+/** Построить или повысить Дозор из казны. */
+syndicateRouter.post('/watch/upgrade', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  send(res, await upgradeWatch(currentCommander(req).id));
 });
 
 /** Рассылка по синдикату: одно письмо всему составу. */

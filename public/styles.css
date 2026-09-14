@@ -3390,3 +3390,8 @@ button.tiny { padding: 4px 10px; font-size: 11px; flex: none; }
 /* Версия игры: служебная подпись, не должна спорить с меню. */
 .game-version { margin: 12px 0 0; font-size: 11px; color: var(--muted); text-align: center; letter-spacing: 0.02em; }
 .nav-version { margin: 16px 12px 8px; text-align: left; }
+
+/* Дозор: атака на участника — новость, которую нельзя пропустить. */
+.watch-alert { border-left: 3px solid var(--err); }
+/* Переключатель таблиц синдикатов над самой таблицей. */
+.rating-boards { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 10px; }
