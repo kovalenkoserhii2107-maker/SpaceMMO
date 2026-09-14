@@ -1,4 +1,5 @@
 import { Router, type Response } from 'express';
+import { isDefenseType } from '../game/defenses.js';
 import { gameLoop } from '../game/gameLoop.js';
 import { validateBody, validateSubject } from '../services/mailService.js';
 import {
@@ -26,6 +27,8 @@ import {
   updateRules,
   upgradeKish,
   upgradeWatch,
+  upgradeTreasury,
+  buyKishDefense,
   buildGate,
   moveKish,
   upgradeAcademy,
@@ -225,6 +228,26 @@ syndicateRouter.post('/codex', async (req, res: Response<ActionResponse | ErrorR
 /** Повысить Кіш из казны. */
 syndicateRouter.post('/kish/upgrade', async (req, res: Response<ActionResponse | ErrorResponse>) => {
   send(res, await upgradeKish(currentCommander(req).id));
+});
+
+/** Повысить Скарбницю. */
+syndicateRouter.post('/treasury/upgrade', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  send(res, await upgradeTreasury(currentCommander(req).id));
+});
+
+/** Поставить оборону у Коша из казны. */
+syndicateRouter.post('/kish/defenses', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const body = (req.body ?? {}) as { type?: unknown; quantity?: unknown };
+  if (!isDefenseType(body.type)) {
+    res.status(400).json({ error: 'Неизвестный тип обороны' });
+    return;
+  }
+  const quantity = integerIn(body.quantity, 1, 100);
+  if (quantity === null) {
+    res.status(400).json({ error: 'Количество: целое число от 1 до 100' });
+    return;
+  }
+  send(res, await buyKishDefense(currentCommander(req).id, body.type, quantity));
 });
 
 /** Построить или повысить Браму в системе. */

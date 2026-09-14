@@ -66,9 +66,9 @@ import {
   type DefenseType,
 } from './defenses.js';
 import { resolveEspionage, espionageSeed } from './espionage.js';
-import { plunderAmount, resolveBattle, type SideForces, type UnitLoss } from './combat.js';
+import { plunderAmount, resolveBattle, type PlunderResult, type SideForces, type UnitLoss } from './combat.js';
 import { checkArchitect, checkPirateBane } from '../services/achievementService.js';
-import { canAttack, declareWar } from '../services/warService.js';
+import { canAttack, declareSyndicateWar, declareWar } from '../services/warService.js';
 import { availableAt, depositLocal, lockHubStocks, withdrawStock } from '../services/hubStock.js';
 import {
   membershipOf,
@@ -80,6 +80,8 @@ import {
 import {
   bramaThroughput,
   effectiveTaxRate,
+  plunderTreasury,
+  treasuryProtectedShare,
   emptySyndicateTechLevels,
   hasPermission,
   KISH_POSITION,
@@ -934,6 +936,8 @@ class GameLoop {
     let targetSyndicateId: string | null = null;
     // Система цели — по ней решается, можно ли лететь через Браму.
     let targetSystemRef: string | null = null;
+    // Синдикат, которому налет на Кіш объявит войну, если вылет состоится.
+    let declareWarOn: string | null = null;
 
     if (mission === 'EXPEDITION') {
       const system = target.systemId
@@ -944,6 +948,43 @@ class GameLoop {
       targetSystemId = system.id;
       targetSystemRef = system.id;
       target_ = { position: DEEP_SPACE_POSITION, system };
+    } else if (target.syndicateId && (mission === 'KISH_RAID' || mission === 'HOLD' || mission === 'HARVEST')) {
+      const syndicate = await prisma.syndicate.findUnique({
+        where: { id: target.syndicateId },
+        include: { kishSystem: true },
+      });
+      if (!syndicate?.kishSystem) return { ok: false, error: 'Кіш не найден' };
+      const own = await prisma.commander.findUnique({ where: { id: commanderId }, select: { syndicateId: true } });
+
+      if (mission === 'KISH_RAID') {
+        if (!own?.syndicateId) return { ok: false, error: 'Налет на Кіш возможен только от лица синдиката' };
+        if (own.syndicateId === syndicate.id) return { ok: false, error: 'На Кіш своего синдиката не нападают' };
+        /*
+         * Грабить Кіш можно только в войне синдикатов, и налет сам ее объявляет —
+         * но только тому, у кого есть право дипломатии: иначе любой рядовой
+         * втягивал бы в войну весь синдикат.
+         */
+        const atWar = await prisma.syndicateWar.findFirst({
+          where: {
+            OR: [
+              { aggressorId: own.syndicateId, targetId: syndicate.id },
+              { aggressorId: syndicate.id, targetId: own.syndicateId },
+            ],
+          },
+        });
+        // Объявляется перед самым вылетом: отказ по топливу не должен оставлять войну.
+        if (!atWar) declareWarOn = syndicate.id;
+      }
+      if (mission === 'HOLD') {
+        if (own?.syndicateId !== syndicate.id) return { ok: false, error: 'Удерживать можно только Кіш своего синдиката' };
+        if (!isHoldHours(holdHours)) return { ok: false, error: `Срок удержания: ${HOLD_HOURS.join(', ')} ч` };
+      }
+      if (mission === 'HARVEST' && syndicate.debrisOre <= 0 && syndicate.debrisPolymers <= 0) {
+        return { ok: false, error: 'У этого Коша нет осколков' };
+      }
+      targetSyndicateId = syndicate.id;
+      targetSystemRef = syndicate.kishSystem.id;
+      target_ = { position: KISH_POSITION, system: syndicate.kishSystem };
     } else if (isKishMission(mission)) {
       /*
        * Рейс в Кіш — только в свой. Возить в чужую казну незачем, а вывоз
@@ -1084,7 +1125,7 @@ class GameLoop {
     // Хаб торгует лишь рудой и полимерами, поэтому плазму туда не грузим.
     const empty = { ore: 0, polymers: 0, plasma: 0 };
     const outboundCargo =
-      mission === 'HUB_PICKUP' || mission === 'KISH_PICKUP' || mission === 'HOLD'
+      mission === 'HUB_PICKUP' || mission === 'KISH_PICKUP' || mission === 'HOLD' || mission === 'KISH_RAID'
         ? empty
         : mission === 'HUB_DELIVERY'
         ? { ...cargo, plasma: 0 }
@@ -1166,6 +1207,13 @@ class GameLoop {
           `Не хватает плазмы: нужно ${plasmaNeeded}` +
           (outboundCargo.plasma > 0 ? ` (топливо ${plan.fuel} + груз ${outboundCargo.plasma})` : ''),
       };
+    }
+
+    if (declareWarOn) {
+      const declared = await declareSyndicateWar(commanderId, declareWarOn);
+      if (!declared.ok) {
+        return { ok: false, error: `Войны с этим синдикатом нет, а объявить ее не вышло: ${declared.error}` };
+      }
     }
 
     const now = Date.now();
@@ -1802,6 +1850,26 @@ class GameLoop {
    * и груз зачислился бы дважды.
    */
   private async handleArrival(fleet: FleetRow, now: number): Promise<void> {
+    if (fleet.targetSyndicateId && (fleet.mission === 'KISH_RAID' || fleet.mission === 'HOLD' || fleet.mission === 'HARVEST')) {
+      if (fleet.mission === 'KISH_RAID') {
+        await this.resolveKishRaid(fleet, fleet.targetSyndicateId, now);
+      } else if (fleet.mission === 'HARVEST') {
+        await this.harvestKishDebris(fleet, fleet.targetSyndicateId);
+      } else {
+        // Удержание своего Коша: вышедший в пути разворачивается.
+        const owner = await prisma.commander.findUnique({ where: { id: fleet.commanderId }, select: { syndicateId: true } });
+        if (owner?.syndicateId !== fleet.targetSyndicateId) {
+          await prisma.fleet.update({
+            where: { id: fleet.id },
+            data: { status: 'RETURNING', returnsAt: new Date(now + holdFlightMs(fleet)), holdUntil: null },
+          });
+        } else {
+          await prisma.fleet.update({ where: { id: fleet.id }, data: { status: 'HOLDING' } });
+        }
+      }
+      return;
+    }
+
     if (fleet.mission === 'HOLD' && fleet.targetPlanetId) {
       // Союзник мог выйти из синдиката или потерять колонию, пока флот летел.
       const host = await prisma.base.findUnique({
@@ -2671,6 +2739,221 @@ class GameLoop {
         plunder: result.plunder,
       }),
     );
+  }
+
+  /**
+   * Налет на Кіш чужого синдиката.
+   *
+   * Защитники — оборона Коша, купленная из казны, и флоты участников
+   * на удержании у Коша. Победитель уносит уязвимую часть ресурсной казны
+   * в пределах трюмов; несгораемую долю задает Скарбниця. Гривну не грабят —
+   * это счет, а не склад. Разбитые корабли оставляют осколки у Коша,
+   * а письмо о бое получают налетчик и все участники синдиката.
+   */
+  private async resolveKishRaid(fleet: FleetRow, syndicateId: string, now: number): Promise<void> {
+    const attackerShips = fleetShips(fleet);
+    const cargoBuff = (await syndicateBuffsFor(fleet.commanderId)).cargo;
+
+    const result = await prisma.$transaction(async (tx) => {
+      const syndicate = await tx.syndicate.findUnique({
+        where: { id: syndicateId },
+        include: { bank: true, defenses: true, kishSystem: true, members: { select: { id: true } } },
+      });
+      if (!syndicate?.kishSystem || !syndicate.bank) {
+        await tx.fleet.update({ where: { id: fleet.id }, data: { status: 'RETURNING' } });
+        return null;
+      }
+
+      const holders = await tx.fleet.findMany({
+        where: { targetSyndicateId: syndicateId, mission: 'HOLD', status: 'HOLDING' },
+      });
+      const holderShips = holders.map((holder) => shipsFromFleetColumns(holder));
+      const defenderShips = emptyShipCounts();
+      for (const ships of holderShips) {
+        for (const type of SHIP_TYPES) defenderShips[type] += ships[type];
+      }
+      const defenderDefenses = emptyDefenseCounts();
+      for (const row of syndicate.defenses) defenderDefenses[row.type] = row.count;
+
+      const outcome = resolveBattle(
+        { ships: attackerShips, defenses: emptyDefenseCounts() },
+        { ships: defenderShips, defenses: defenderDefenses },
+      );
+
+      for (const row of syndicate.defenses) {
+        await tx.syndicateDefense.update({ where: { id: row.id }, data: { count: outcome.defenderSurvivorDefenses[row.type] } });
+      }
+
+      const shares = splitSurvivors(outcome.defenderSurvivorShips, holderShips);
+      for (const [index, holder] of holders.entries()) {
+        const left = shares[index]!;
+        const lost = fleetSize(holderShips[index]!) - fleetSize(left);
+        if (fleetSize(left) === 0) await tx.fleet.delete({ where: { id: holder.id } });
+        else await tx.fleet.update({ where: { id: holder.id }, data: shipColumnsOf(left) });
+        await tx.message.create({
+          data: {
+            recipientId: holder.commanderId,
+            type: 'FLEET',
+            subject: `Удержание: налет на Кіш [${syndicate.tag}]`,
+            body:
+              `Флот на удержании у Коша принял бой. ` +
+              (fleetSize(left) === 0
+                ? `Флот погиб целиком: ${lost} кораблей.`
+                : `Потеряно кораблей: ${lost}, уцелело ${fleetSize(left)} — удержание продолжается.`),
+          },
+        });
+      }
+
+      if (outcome.debris.ore > 0 || outcome.debris.polymers > 0) {
+        await tx.syndicate.update({
+          where: { id: syndicateId },
+          data: { debrisOre: { increment: outcome.debris.ore }, debrisPolymers: { increment: outcome.debris.polymers } },
+        });
+      }
+
+      let loot = plunderTreasury({ ore: 0, polymers: 0, plasma: 0 }, 0, 0);
+      if (outcome.winner === 'ATTACKER') {
+        const offer = plunderTreasury(
+          syndicate.bank,
+          treasuryProtectedShare(syndicate.treasuryLevel),
+          fleetCapacity(outcome.attackerSurvivors, cargoBuff),
+        );
+        loot = { ...offer, ore: 0, polymers: 0, plasma: 0 };
+        if (offer.ore + offer.polymers + offer.plasma > 0) {
+          const taken = await tx.syndicateBank.updateMany({
+            where: { syndicateId, ore: { gte: offer.ore }, polymers: { gte: offer.polymers }, plasma: { gte: offer.plasma } },
+            data: { ore: { decrement: offer.ore }, polymers: { decrement: offer.polymers }, plasma: { decrement: offer.plasma } },
+          });
+          if (taken.count > 0) {
+            loot = offer;
+            await tx.syndicateTransaction.create({
+              data: {
+                syndicateId,
+                actorId: fleet.commanderId,
+                kind: 'KISH_RAIDED',
+                amount: 0,
+                ore: offer.ore,
+                polymers: offer.polymers,
+                plasma: offer.plasma,
+                comment: 'Налет на Кіш',
+              },
+            });
+          }
+        }
+      }
+
+      if (fleetSize(outcome.attackerSurvivors) > 0) {
+        await tx.fleet.update({
+          where: { id: fleet.id },
+          data: {
+            ...shipColumnsOf(outcome.attackerSurvivors),
+            status: 'RETURNING',
+            cargoOre: loot.ore,
+            cargoPolymers: loot.polymers,
+            cargoPlasma: loot.plasma,
+          },
+        });
+      } else {
+        await tx.fleet.delete({ where: { id: fleet.id } });
+      }
+
+      const attacker = await tx.commander.findUniqueOrThrow({
+        where: { id: fleet.commanderId },
+        select: { nickname: true, syndicateId: true },
+      });
+      await tx.commander.update({
+        where: { id: fleet.commanderId },
+        data: outcome.winner === 'ATTACKER' ? { battlesWon: { increment: 1 } } : { battlesLost: { increment: 1 } },
+      });
+      const destroyedByAttacker = spentOnFleet(shipsLost(defenderShips, outcome.defenderSurvivorShips));
+      const destroyedByDefender = spentOnFleet(shipsLost(attackerShips, outcome.attackerSurvivors));
+      if (attacker.syndicateId && destroyedByAttacker > 0) {
+        await tx.syndicate.updateMany({ where: { id: attacker.syndicateId }, data: { destroyedValue: { increment: destroyedByAttacker } } });
+      }
+      if (destroyedByDefender > 0) {
+        await tx.syndicate.update({ where: { id: syndicateId }, data: { destroyedValue: { increment: destroyedByDefender } } });
+      }
+
+      return {
+        outcome,
+        loot,
+        attackerName: attacker.nickname,
+        leaderId: syndicate.leaderId,
+        memberIds: syndicate.members.map((member) => member.id),
+        tag: syndicate.tag,
+        system: syndicate.kishSystem,
+      };
+    });
+    if (!result) return;
+
+    const kishName = `Кіш [${result.tag}]`;
+    const plunder: PlunderResult = {
+      ore: result.loot.ore,
+      polymers: result.loot.polymers,
+      plasma: result.loot.plasma,
+      protectedAmount: result.loot.protectedAmount,
+      surplus: result.loot.takeable,
+      takeable: result.loot.takeable,
+      cargoLimited: result.loot.cargoLimited,
+      stored: result.loot.protectedAmount + result.loot.takeable,
+      storageCapacity: result.loot.protectedAmount + result.loot.takeable,
+    };
+    const mails = buildBattleMail({
+      attackerId: fleet.commanderId,
+      defenderId: result.leaderId,
+      attackerName: result.attackerName,
+      defenderName: kishName,
+      location: {
+        planetName: kishName,
+        systemName: result.system.name,
+        position: KISH_POSITION,
+        galaxyX: result.system.galaxyX,
+        galaxyY: result.system.galaxyY,
+      },
+      outcome: result.outcome,
+      plunder,
+    });
+    // Кіш общий: письмо защитника получают все участники, а не только главарь.
+    const defenderMail = mails.find((mail) => mail.recipientId === result.leaderId);
+    const copies = defenderMail
+      ? result.memberIds.filter((id) => id !== result.leaderId).map((id) => ({ ...defenderMail, recipientId: id }))
+      : [];
+    await this.notify([...mails, ...copies]);
+    void now;
+  }
+
+  /** Сбор осколков у Коша — тем же условным списанием, что и поле у планеты. */
+  private async harvestKishDebris(fleet: FleetRow, syndicateId: string): Promise<void> {
+    const capacity = fleetCapacity(fleetShips(fleet), (await syndicateBuffsFor(fleet.commanderId)).cargo);
+    let takenOre = 0;
+    let takenPolymers = 0;
+    for (let attempt = 0; attempt < HARVEST_RETRIES; attempt += 1) {
+      const field = await prisma.syndicate.findUnique({
+        where: { id: syndicateId },
+        select: { debrisOre: true, debrisPolymers: true },
+      });
+      if (!field) break;
+      const ore = Math.floor(Math.min(field.debrisOre, capacity));
+      const polymers = Math.floor(Math.min(field.debrisPolymers, Math.max(0, capacity - ore)));
+      if (ore <= 0 && polymers <= 0) break;
+      const { count } = await prisma.syndicate.updateMany({
+        where: { id: syndicateId, debrisOre: { gte: ore }, debrisPolymers: { gte: polymers } },
+        data: { debrisOre: { decrement: ore }, debrisPolymers: { decrement: polymers } },
+      });
+      if (count > 0) {
+        takenOre = ore;
+        takenPolymers = polymers;
+        break;
+      }
+    }
+    await prisma.fleet.update({
+      where: { id: fleet.id },
+      data: {
+        status: 'RETURNING',
+        cargoOre: { increment: takenOre },
+        cargoPolymers: { increment: takenPolymers },
+      },
+    });
   }
 
   /**
@@ -3621,7 +3904,7 @@ function toFleetRuntime(row: FleetRow): FleetRuntimeState {
       ? 'DEEP_SPACE'
       : row.targetHubId
         ? 'HUB'
-        : row.mission === 'KISH_DELIVERY' || row.mission === 'KISH_PICKUP'
+        : row.targetSyndicateId !== null || row.mission === 'KISH_DELIVERY' || row.mission === 'KISH_PICKUP'
           ? 'KISH'
           : 'PLANET',
     targetPlanetId: row.targetPlanetId,

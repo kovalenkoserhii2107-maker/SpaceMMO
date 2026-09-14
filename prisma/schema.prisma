@@ -182,15 +182,20 @@ model Syndicate {
 
   /// Кіш — хаб синдиката. Система заполняется при первом обращении у синдикатов,
   /// основанных до его появления: у них ее просто нет.
-  kishSystemId String?
-  kishLevel    Int       @default(1)
+  kishSystemId   String?
+  kishLevel      Int       @default(1)
   /// Когда Кіш переносили в последний раз: переносить можно не чаще раза в сутки.
-  kishMovedAt  DateTime?
+  kishMovedAt    DateTime?
   /// «Дозор» — модуль Коша: видно вооруженные флоты, летящие к участникам.
   /// Ноль — не построен.
-  watchLevel   Int       @default(0)
+  watchLevel     Int       @default(0)
   /// «Академія» — модуль Коша; уровень — потолок уровня любой технологии синдиката.
-  academyLevel Int       @default(0)
+  academyLevel   Int       @default(0)
+  /// «Скарбниця» — модуль Коша: чем выше уровень, тем больше казны не унести налетом.
+  treasuryLevel  Int       @default(0)
+  /// Осколки у Коша: разбитый здесь флот оставляет поле, как у планеты.
+  debrisOre      Float     @default(0)
+  debrisPolymers Float     @default(0)
 
   /// Счетчики рейтингов синдиката. Копятся в момент события, а не выводятся
   /// из текущего состава: бой и взнос засчитываются тому синдикату, в котором
@@ -211,6 +216,7 @@ model Syndicate {
   technologies SyndicateTechnology[]
   research     SyndicateResearch?
   gates        SyndicateGate[]
+  defenses     SyndicateDefense[]
   bank         SyndicateBank?
   applications SyndicateApplication[]
   transactions SyndicateTransaction[]
@@ -377,6 +383,9 @@ enum SyndicateTxKind {
   SYNDICATE_RESEARCH
   GATE_BUILD
   KISH_MOVE
+  TREASURY_UPGRADE
+  KISH_DEFENSE
+  KISH_RAIDED
 }
 
 enum SyndicatePermission {
@@ -1078,6 +1087,7 @@ enum FleetMission {
   KISH_DELIVERY
   KISH_PICKUP
   HOLD
+  KISH_RAID
 }
 
 enum ExpeditionOutcome {
@@ -1245,4 +1255,18 @@ model SyndicateGate {
 
   @@unique([syndicateId, systemId])
   @@map("syndicate_gates")
+}
+
+/// Оборона Коша: установки, купленные из казны. В бою восстанавливаются
+/// так же, как оборона колонии.
+model SyndicateDefense {
+  id          String      @id @default(cuid())
+  syndicateId String
+  type        DefenseType
+  count       Int         @default(0)
+
+  syndicate Syndicate @relation(fields: [syndicateId], references: [id], onDelete: Cascade)
+
+  @@unique([syndicateId, type])
+  @@map("syndicate_defenses")
 }

@@ -2584,7 +2584,9 @@
       ['TRANSPORT', 'Отправить груз или помощь'],
     ],
     HUB: [['HUB_DELIVERY', 'Доставка на хаб'], ['HUB_PICKUP', 'Вывоз с хаба']],
-    KISH: [['KISH_DELIVERY', 'Доставка в Кіш'], ['KISH_PICKUP', 'Вывоз из казны']],
+    KISH: [['KISH_DELIVERY', 'Доставка в Кіш'], ['KISH_PICKUP', 'Вывоз из казны'], ['HOLD', 'Удержание Коша']],
+    /* Кіш чужого синдиката: налет объявляет войну синдикатов, если ее еще нет. */
+    FOREIGN_KISH: [['KISH_RAID', 'Налет на Кіш']],
     DEEP_SPACE: [['EXPEDITION', 'Экспедиция']],
   };
 
@@ -3620,6 +3622,11 @@
 
     // «Переработка» появляется только когда в составе есть переработчик и над
     // планетой действительно висит поле: пустой пункт меню сбивал бы с толку.
+    // Осколки у Коша собирают так же, как обломки у планеты — и у своего, и у чужого.
+    if (!map.coordTarget && map.selectedKind === 'KISH') {
+      const kish = selectedKish();
+      if (kish && kish.debris && kish.debris.ore + kish.debris.polymers > 0) options.push(['HARVEST', 'Сбор осколков']);
+    }
     if (!map.coordTarget && map.selectedKind === 'PLANET') {
       const planet = selectedPlanet();
       const hasDebris = planet && planet.debris && planet.debris.ore + planet.debris.polymers > 0;
@@ -3670,7 +3677,7 @@
     // Разведке трюмы тоже ни к чему — зонд везет данные, а не ресурсы.
     // Удержание тоже без груза: флот встает на орбиту защищать, а не везти.
     el.holdRow.hidden = map.mission !== 'HOLD';
-    const harvest = map.mission === 'HARVEST' || map.mission === 'SCAN' || map.mission === 'HOLD';
+    const harvest = map.mission === 'HARVEST' || map.mission === 'SCAN' || map.mission === 'HOLD' || map.mission === 'KISH_RAID';
     el.cargoInputs.hidden = harvest;
     if (harvest) {
       el.cargoOre.value = '0';
@@ -3707,8 +3714,13 @@
           `казна: ${icon('ore', 'sm')} <b>${fmt(kish.treasury.ore)}</b> · ` +
           `${icon('polymers', 'sm')} <b>${fmt(kish.treasury.polymers)}</b> · ` +
           `${icon('plasma', 'sm')} <b>${fmt(kish.treasury.plasma)}</b>`
-        : `<b>${escapeHtml(kish.name)}</b><br>хаб чужого синдиката · ур. ${kish.level}`;
-      el.dispatch.hidden = !base || !kish.own;
+        : `<b>${escapeHtml(kish.name)}</b><br>хаб чужого синдиката · ур. ${kish.level}<br>` +
+          'Налет возможен только в войне синдикатов — если ее нет, вылет объявит ее.';
+      if (kish.debris && kish.debris.ore + kish.debris.polymers > 0) {
+        el.planetInfo.innerHTML += `<br>осколки: ${icon('ore', 'sm')} <b>${fmt(kish.debris.ore)}</b> · ` +
+          `${icon('polymers', 'sm')} <b>${fmt(kish.debris.polymers)}</b>`;
+      }
+      el.dispatch.hidden = !base;
       if (!el.dispatch.hidden) {
         renderFleetInputs();
         syncMissionOptions();
@@ -3977,6 +3989,17 @@
       };
     }
     const kish = selectedKish();
+    if (kish && !kish.own) {
+      return {
+        kind: 'FOREIGN_KISH',
+        request: { targetSyndicateId: kish.syndicateId },
+        name: kish.name,
+        place: `хаб чужого синдиката · ур. ${kish.level}`,
+        owner: null,
+        isOwn: false,
+        colonized: false,
+      };
+    }
     if (kish && kish.own) {
       return {
         kind: 'KISH',
@@ -5665,6 +5688,9 @@
     SYNDICATE_RESEARCH: 'наука синдиката',
     GATE_BUILD: 'Брама',
     KISH_MOVE: 'перенос Коша',
+    TREASURY_UPGRADE: 'Скарбниця',
+    KISH_DEFENSE: 'оборона Коша',
+    KISH_RAIDED: 'налет на Кіш',
   };
   const RECRUITMENT_LABELS = { OPEN: 'открыт', APPLICATION: 'по заявке', CLOSED: 'закрыт' };
 
@@ -5985,6 +6011,7 @@
     el.syndicatePanel.appendChild(top);
     el.syndicatePanel.appendChild(renderAcademy(mine, can('ACADEMY')));
     el.syndicatePanel.appendChild(renderGates(mine, can('KISH')));
+    el.syndicatePanel.appendChild(renderKishDefense(mine, can('KISH')));
 
     /* Налог и правила набора */
     const middle = synEl('div', 'syndicate-grid');
@@ -6156,6 +6183,53 @@
   }
 
   /**
+   * Скарбниця и оборона Коша. Защитники и осколки видны всем участникам:
+   * налет касается каждого, а ставит оборону ранг с правом развития Коша.
+   */
+  function renderKishDefense(mine, canManage) {
+    const kish = mine.kish;
+    const card = synCard('Скарбниця и оборона Коша');
+    if (kish.underRaid) card.appendChild(synEl('div', 'hub-storage warn', 'К Кошу летит вражеский налет — переносить Кіш сейчас нельзя.'));
+    card.appendChild(synEl('div', 'hub-storage',
+      `Скарбниця ур. ${kish.treasuryLevel}: при налете несгораемо ${Math.round(kish.protectedShare * 100)}% ` +
+      'руды, полимеров и плазмы казны. Гривну не грабят.'));
+    if (canManage) {
+      card.appendChild(synButton(`Повысить Скарбницю — ${treasuryCostText(kish.nextTreasuryCost)}`, 'ghost',
+        () => syndicateAction('/api/syndicates/treasury/upgrade'), !treasuryCovers(mine, kish.nextTreasuryCost)));
+    }
+
+    const standing = kish.defenses.filter((item) => item.count > 0);
+    card.appendChild(synEl('div', 'hub-storage', standing.length
+      ? 'Оборона: ' + standing.map((item) => `${item.label} ×${fmt(item.count)}`).join(' · ')
+      : 'Обороны у Коша нет.'));
+    if (kish.guards.length) {
+      card.appendChild(synEl('div', 'hub-storage',
+        'На удержании: ' + kish.guards.map((guard) => `${guard.nickname} (${fmt(guard.ships)})`).join(' · ')));
+    }
+    if (kish.debris.ore + kish.debris.polymers > 0) {
+      card.appendChild(synEl('div', 'hub-storage',
+        `Осколки у Коша: ${fmt(kish.debris.ore)} руды, ${fmt(kish.debris.polymers)} полимеров — их собирает переработчик.`));
+    }
+    if (canManage) {
+      const form = synEl('div', 'syndicate-form');
+      const select = synEl('select');
+      for (const item of kish.defenses) {
+        const option = synEl('option', null,
+          `${item.label} — ${fmt(item.cost.ore)} руды, ${fmt(item.cost.polymers)} полимеров, ${fmt(item.cost.plasma)} плазмы`);
+        option.value = item.type;
+        select.appendChild(option);
+      }
+      const quantity = synNumber(1, 1, 100);
+      const line = synEl('div', 'row');
+      line.append(select, quantity, synButton('Поставить из казны', 'ghost',
+        () => syndicateAction('/api/syndicates/kish/defenses', { type: select.value, quantity: synInt(quantity) })));
+      form.append(synField('Оборона Коша', line));
+      card.appendChild(form);
+    }
+    return card;
+  }
+
+  /**
    * Брама и перенос Коша. Сеть врат видна всем участникам — по ней летают все,
    * а строит и переносит ранг с правом развития Коша.
    */
@@ -6288,14 +6362,16 @@
       if (!watch.incoming.length) {
         card.appendChild(synEl('div', 'hub-storage', 'Вражеских атак на участников не видно.'));
       }
-      for (const fleet of watch.incoming) {
-        const row = synEl('div', 'queue-item watch-alert');
-        row.appendChild(synEl('b', null,
-          `${fleet.attackerTag ? `[${fleet.attackerTag}] ` : ''}${fleet.attacker} → ${fleet.target}`));
-        row.appendChild(synEl('span', null,
-          `${fleet.planetName} (${fleet.systemName}) · ${fmt(fleet.ships)} корпусов · через ${fmtTime(fleet.arrivesInSeconds)}`));
-        card.appendChild(row);
-      }
+    }
+    // Налет на сам Кіш виден и без Дозора: Кіш — центр его круга.
+    for (const fleet of watch.incoming) {
+      const row = synEl('div', 'queue-item watch-alert');
+      row.appendChild(synEl('b', null,
+        `${fleet.attackerTag ? `[${fleet.attackerTag}] ` : ''}${fleet.attacker} → ${fleet.target}`));
+      const place = fleet.systemName ? `${fleet.planetName} (${fleet.systemName})` : 'налет на Кіш';
+      row.appendChild(synEl('span', null,
+        `${place} · ${fmt(fleet.ships)} корпусов · через ${fmtTime(fleet.arrivesInSeconds)}`));
+      card.appendChild(row);
     }
     if (canBuild) {
       card.appendChild(synButton(

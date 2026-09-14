@@ -307,6 +307,8 @@ export interface KishView {
   treasury: { ore: number; polymers: number; plasma: number } | null;
   /** Может ли зритель вывозить из казны — есть ли у его ранга право выдачи. */
   canPickup: boolean;
+  /** Осколки у Коша видны всем, как и поле у планеты. */
+  debris: { ore: number; polymers: number };
 }
 
 /** Карта системы с учетом тумана войны. */

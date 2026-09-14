@@ -285,6 +285,71 @@ export function kishMoveAvailableAt(movedAt: number | null): number {
   return movedAt === null ? 0 : movedAt + KISH_MOVE_COOLDOWN_MS;
 }
 
+/* ------------------------- Скарбниця и налет на Кіш ------------------------- */
+
+/*
+ * Скарбниця прячет часть казны от налета: пятая часть несгораема всегда,
+ * и каждый уровень добавляет еще по пять процентов, но не больше четырех
+ * пятых. Полная неуязвимость убила бы налеты, а с ними и смысл обороны Коша.
+ */
+export const TREASURY_BASE_SHARE = 0.2;
+export const TREASURY_SHARE_PER_LEVEL = 0.05;
+export const TREASURY_MAX_SHARE = 0.8;
+export const TREASURY_BASE = { credits: 200_000, ore: 200_000, polymers: 200_000 } as const;
+/** Налетчик уносит девять десятых уязвимой части — как и с колонии. */
+export const KISH_RAID_SHARE = 0.9;
+
+export function treasuryProtectedShare(level: number): number {
+  return Math.min(TREASURY_MAX_SHARE, TREASURY_BASE_SHARE + TREASURY_SHARE_PER_LEVEL * Math.max(0, Math.floor(level)));
+}
+
+export function treasuryUpgradeCost(targetLevel: number): TreasuryCost {
+  const scale = Math.pow(2, Math.max(0, targetLevel - 1));
+  return {
+    credits: Math.round(TREASURY_BASE.credits * scale),
+    ore: Math.round(TREASURY_BASE.ore * scale),
+    polymers: Math.round(TREASURY_BASE.polymers * scale),
+  };
+}
+
+export interface TreasuryPlunder {
+  ore: number;
+  polymers: number;
+  plasma: number;
+  /** Сколько казны спрятала Скарбниця. */
+  protectedAmount: number;
+  /** Сколько можно было бы унести при бездонных трюмах. */
+  takeable: number;
+  cargoLimited: boolean;
+}
+
+/**
+ * Добыча налета на Кіш. Гривна не грабится — ее нет на складе, это счет.
+ * Трюмы заполняются рудой, затем полимерами, затем плазмой.
+ */
+export function plunderTreasury(
+  stock: { ore: number; polymers: number; plasma: number },
+  protectedShare: number,
+  cargoCapacity: number,
+): TreasuryPlunder {
+  const share = Math.min(1, Math.max(0, protectedShare));
+  let room = Math.max(0, Math.floor(cargoCapacity));
+  const result = { ore: 0, polymers: 0, plasma: 0 };
+  let protectedAmount = 0;
+  let takeable = 0;
+  for (const resource of ['ore', 'polymers', 'plasma'] as const) {
+    const held = Math.max(0, stock[resource]);
+    protectedAmount += held * share;
+    const vulnerable = Math.floor(held * (1 - share) * KISH_RAID_SHARE);
+    takeable += vulnerable;
+    const taken = Math.min(vulnerable, room);
+    result[resource] = taken;
+    room -= taken;
+  }
+  const carried = result.ore + result.polymers + result.plasma;
+  return { ...result, protectedAmount: Math.round(protectedAmount), takeable, cargoLimited: carried < takeable };
+}
+
 /* ------------------------- Налог ------------------------- */
 
 export const MAX_TAX_RATE = 30;

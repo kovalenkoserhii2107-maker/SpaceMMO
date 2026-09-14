@@ -170,6 +170,7 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
           ? { ore: Math.floor(row.bank.ore), polymers: Math.floor(row.bank.polymers), plasma: Math.floor(row.bank.plasma) }
           : null,
       canPickup: Boolean(own && access?.ok && hasPermission(access, 'WITHDRAW')),
+      debris: { ore: Math.floor(row.debrisOre), polymers: Math.floor(row.debrisPolymers) },
     };
   });
 

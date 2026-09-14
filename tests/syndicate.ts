@@ -7,6 +7,9 @@
  */
 import {
   BUFF_TENURE_MS,
+  plunderTreasury,
+  treasuryProtectedShare,
+  treasuryUpgradeCost,
   KISH_MOVE_COOLDOWN_MS,
   bramaThroughput,
   bramaUpgradeCost,
@@ -157,6 +160,18 @@ console.log('\n=== 4. Тексты ===');
   check('имя ранга: пробелы схлопываются', normalizeRankName('  Старший   пилот ') === 'Старший пилот');
   check('имя ранга: разметка не проходит', normalizeRankName('<b>Босс</b>') === null);
   check('имя ранга: одна буква — мало', normalizeRankName('А') === null);
+}
+
+console.log('\n=== 1д. Скарбниця и налет на Кіш ===');
+{
+  check('без Скарбниці несгораема пятая часть казны', treasuryProtectedShare(0) === 0.2);
+  check('каждый уровень добавляет пять процентов', Math.abs(treasuryProtectedShare(4) - 0.4) < 1e-9);
+  check('несгораемая доля не выше четырех пятых', treasuryProtectedShare(40) === 0.8);
+  check('Скарбниця стоит 200 тысяч и дорожает вдвое', treasuryUpgradeCost(1).credits === 200_000 && treasuryUpgradeCost(3).ore === 800_000);
+  const loot = plunderTreasury({ ore: 10_000, polymers: 10_000, plasma: 1_000 }, 0.2, 100_000);
+  check('налетчик уносит девять десятых уязвимой части', loot.ore === 7200 && loot.polymers === 7200 && loot.plasma === 720);
+  const small = plunderTreasury({ ore: 10_000, polymers: 10_000, plasma: 1_000 }, 0.2, 8_000);
+  check('трюмы заполняются рудой, затем полимерами', small.ore === 7200 && small.polymers === 800 && small.plasma === 0 && small.cargoLimited);
 }
 
 console.log('\n=== 5. Удержание: дележ уцелевших ===');

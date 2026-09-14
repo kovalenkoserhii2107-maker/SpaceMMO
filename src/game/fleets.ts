@@ -21,6 +21,7 @@ const FLEET_MISSIONS = [
   'KISH_DELIVERY',
   'KISH_PICKUP',
   'HOLD',
+  'KISH_RAID',
 ] as const;
 export type FleetMission = (typeof FLEET_MISSIONS)[number];
 
@@ -66,6 +67,7 @@ export const MISSION_LABELS: Record<FleetMission, string> = {
   KISH_DELIVERY: 'Доставка в Кіш',
   KISH_PICKUP: 'Вывоз из казны Коша',
   HOLD: 'Удержание',
+  KISH_RAID: 'Налет на Кіш',
   ATTACK: 'Атака',
   DEPLOY: 'Дислокация',
   EXPEDITION: 'Экспедиция',
@@ -326,6 +328,9 @@ export function validateComposition(mission: FleetMission, ships: ShipCounts): s
     return 'Для атаки нужен хотя бы один вооруженный корабль';
   }
   // Удержание — это защита: грузовики на чужой орбите никого не прикроют.
+  if (mission === 'KISH_RAID' && !hasWeapons(ships)) {
+    return 'Для налета на Кіш нужен хотя бы один вооруженный корабль';
+  }
   if (mission === 'HOLD' && !hasWeapons(ships)) {
     return 'Для удержания нужен хотя бы один вооруженный корабль';
   }

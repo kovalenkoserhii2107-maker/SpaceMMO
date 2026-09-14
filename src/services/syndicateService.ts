@@ -13,6 +13,7 @@ import { deliver } from './mailService.js';
 import { gameLoop } from '../game/gameLoop.js';
 import { getLeaderboard } from './scoreService.js';
 import { galaxyDistance } from '../game/fleets.js';
+import { DEFENSE_TYPES, defenseCost, defenseLabel, type DefenseType } from '../game/defenses.js';
 import {
   CODEX_MAX_LENGTH,
   DEFAULT_RANKS,
@@ -32,6 +33,8 @@ import {
   academyUpgradeCost,
   bramaThroughput,
   bramaUpgradeCost,
+  treasuryProtectedShare,
+  treasuryUpgradeCost,
   kishMoveAvailableAt,
   kishMoveCost,
   SYNDICATE_TECHS,
@@ -150,6 +153,16 @@ export interface SyndicateView {
     nextLevelCost: number;
     /** Когда Кіш снова можно перенести; `null` — хоть сейчас. */
     nextMoveAt: number | null;
+    /** К Кошу летит налет: пока он в пути, переносить Кіш нельзя. */
+    underRaid: boolean;
+    treasuryLevel: number;
+    /** Несгораемая доля казны при налете. */
+    protectedShare: number;
+    nextTreasuryCost: TreasuryCost;
+    defenses: Array<{ type: DefenseType; label: string; count: number; cost: { ore: number; polymers: number; plasma: number } }>;
+    debris: { ore: number; polymers: number };
+    /** Флоты участников на удержании у Коша. */
+    guards: Array<{ nickname: string; ships: number; until: number | null }>;
     /** Системы со своими Брамами, куда Кіш можно перенести, и цена в антиматерии. */
     moveTargets: Array<{ systemId: string; systemName: string; distance: number; antimatter: number }>;
   };
@@ -350,7 +363,7 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
   const taxByMember = new Map(taxRows.map((row) => [row.commanderId, row.amount]));
   const now = Date.now();
   const incoming = await watchIncoming(syndicateId, syndicate.watchLevel, syndicate.kishSystem);
-  const [gateRows, colonySystems] = await Promise.all([
+  const [gateRows, colonySystems, kishDefenses, guards, raidsInbound] = await Promise.all([
     prisma.syndicateGate.findMany({
       where: { syndicateId },
       include: { system: { select: { id: true, name: true, galaxyX: true, galaxyY: true } } },
@@ -360,6 +373,12 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
       where: { commander: { syndicateId } },
       select: { planet: { select: { system: { select: { id: true, name: true } } } } },
     }),
+    prisma.syndicateDefense.findMany({ where: { syndicateId } }),
+    prisma.fleet.findMany({
+      where: { targetSyndicateId: syndicateId, mission: 'HOLD', status: 'HOLDING' },
+      include: { commander: { select: { nickname: true } } },
+    }),
+    prisma.fleet.count({ where: { targetSyndicateId: syndicateId, mission: 'KISH_RAID', status: 'OUTBOUND' } }),
   ]);
   const techState = await syndicateTechState(syndicateId);
   const schedule = commitSchedule(syndicate);
@@ -413,6 +432,22 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
       nextMoveAt: kishMoveAvailableAt(syndicate.kishMovedAt?.getTime() ?? null) > now
         ? kishMoveAvailableAt(syndicate.kishMovedAt?.getTime() ?? null)
         : null,
+      underRaid: raidsInbound > 0,
+      treasuryLevel: syndicate.treasuryLevel,
+      protectedShare: treasuryProtectedShare(syndicate.treasuryLevel),
+      nextTreasuryCost: treasuryUpgradeCost(syndicate.treasuryLevel + 1),
+      defenses: DEFENSE_TYPES.map((type) => ({
+        type,
+        label: defenseLabel(type),
+        count: kishDefenses.find((row) => row.type === type)?.count ?? 0,
+        cost: defenseCost(type),
+      })),
+      debris: { ore: Math.floor(syndicate.debrisOre), polymers: Math.floor(syndicate.debrisPolymers) },
+      guards: guards.map((fleet) => ({
+        nickname: fleet.commander.nickname,
+        ships: FLEET_SHIP_COLUMNS.reduce((sum, column) => sum + fleet[column], 0),
+        until: fleet.holdUntil?.getTime() ?? null,
+      })),
       moveTargets: syndicate.kishSystem
         ? gateRows
             .filter((gate) => gate.systemId !== syndicate.kishSystem!.id)
@@ -1234,6 +1269,12 @@ export async function moveKish(commanderId: string, systemId: string): Promise<S
   if (!syndicate?.kishSystem) return { ok: false, error: 'У синдиката еще не определен Кіш', status: 409 };
   if (syndicate.kishSystemId === systemId) return { ok: false, error: 'Кіш уже в этой системе', status: 409 };
 
+  // Пока к Кошу летит налет, уйти от него переносом нельзя.
+  const raids = await prisma.fleet.count({
+    where: { targetSyndicateId: access.syndicateId, mission: 'KISH_RAID', status: 'OUTBOUND' },
+  });
+  if (raids > 0) return { ok: false, error: 'К Кошу летит вражеский налет — переносить Кіш сейчас нельзя', status: 409 };
+
   const gate = await prisma.syndicateGate.findUnique({
     where: { syndicateId_systemId: { syndicateId: access.syndicateId, systemId } },
     include: { system: true },
@@ -1282,6 +1323,105 @@ export async function moveKish(commanderId: string, systemId: string): Promise<S
       `Рейсы в казну теперь идут туда.\n\nПеренес: ${await nicknameOf(commanderId)}.`,
   );
   return { ok: true, message: `Кіш перенесен в систему ${gate.system.name} за ${cost} антиматерии` };
+}
+
+/* ------------------------- Скарбниця и оборона Коша ------------------------- */
+
+/** Повышение Скарбниці: больше казны не унести налетом. */
+export async function upgradeTreasury(commanderId: string): Promise<SyndicateResult> {
+  const access = await requirePermission(commanderId, 'KISH');
+  if (!access.ok) return access;
+  const syndicate = await prisma.syndicate.findUnique({ where: { id: access.syndicateId } });
+  if (!syndicate) return { ok: false, error: 'Синдикат не найден', status: 404 };
+  const target = syndicate.treasuryLevel + 1;
+  const cost = treasuryUpgradeCost(target);
+  try {
+    await prisma.$transaction(async (tx) => {
+      await payFromTreasury(tx, access.syndicateId, cost);
+      const raised = await tx.syndicate.updateMany({
+        where: { id: access.syndicateId, treasuryLevel: syndicate.treasuryLevel },
+        data: { treasuryLevel: target, investedValue: { increment: costUnits(cost) } },
+      });
+      if (raised.count === 0) throw new SyndicateError('Скарбницю уже повысили', 409);
+      await tx.syndicateTransaction.create({
+        data: {
+          syndicateId: access.syndicateId,
+          actorId: commanderId,
+          kind: 'TREASURY_UPGRADE',
+          amount: cost.credits,
+          ore: cost.ore,
+          polymers: cost.polymers,
+          comment: `Скарбниця → ур. ${target}`,
+        },
+      });
+    });
+  } catch (error) {
+    return toError(error, 'Не удалось повысить Скарбницю');
+  }
+  return {
+    ok: true,
+    message: `Скарбниця ${target} уровня: несгораемо ${Math.round(treasuryProtectedShare(target) * 100)}% казны`,
+  };
+}
+
+export const MAX_KISH_DEFENSE_ORDER = 100;
+
+/**
+ * Оборона Коша из казны — по ценам обычной обороны. Ставится сразу:
+ * у Коша нет верфи, а долгая стройка сделала бы оборону бесполезной
+ * против налета, который уже летит.
+ */
+export async function buyKishDefense(commanderId: string, type: DefenseType, quantity: number): Promise<SyndicateResult> {
+  const access = await requirePermission(commanderId, 'KISH');
+  if (!access.ok) return access;
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > MAX_KISH_DEFENSE_ORDER) {
+    return { ok: false, error: `Количество: от 1 до ${MAX_KISH_DEFENSE_ORDER}`, status: 400 };
+  }
+  const unit = defenseCost(type);
+  const cost = { ore: unit.ore * quantity, polymers: unit.polymers * quantity, plasma: unit.plasma * quantity };
+  try {
+    await prisma.$transaction(async (tx) => {
+      const paid = await tx.syndicateBank.updateMany({
+        where: {
+          syndicateId: access.syndicateId,
+          ore: { gte: cost.ore },
+          polymers: { gte: cost.polymers },
+          plasma: { gte: cost.plasma },
+        },
+        data: { ore: { decrement: cost.ore }, polymers: { decrement: cost.polymers }, plasma: { decrement: cost.plasma } },
+      });
+      if (paid.count === 0) {
+        throw new SyndicateError(
+          `В казне нужно ${cost.ore} руды, ${cost.polymers} полимеров и ${cost.plasma} плазмы`,
+          409,
+        );
+      }
+      await tx.syndicateDefense.upsert({
+        where: { syndicateId_type: { syndicateId: access.syndicateId, type } },
+        create: { syndicateId: access.syndicateId, type, count: quantity },
+        update: { count: { increment: quantity } },
+      });
+      await tx.syndicate.update({
+        where: { id: access.syndicateId },
+        data: { investedValue: { increment: cost.ore + cost.polymers + cost.plasma } },
+      });
+      await tx.syndicateTransaction.create({
+        data: {
+          syndicateId: access.syndicateId,
+          actorId: commanderId,
+          kind: 'KISH_DEFENSE',
+          amount: 0,
+          ore: cost.ore,
+          polymers: cost.polymers,
+          plasma: cost.plasma,
+          comment: `${defenseLabel(type)} ×${quantity}`,
+        },
+      });
+    });
+  } catch (error) {
+    return toError(error, 'Не удалось поставить оборону');
+  }
+  return { ok: true, message: `У Коша поставлено: ${defenseLabel(type)} ×${quantity}` };
 }
 
 /* ------------------------- Академія ------------------------- */
@@ -1497,8 +1637,26 @@ async function watchIncoming(
   watchLevel: number,
   kish: { galaxyX: number; galaxyY: number } | null,
 ): Promise<WatchedFleet[]> {
-  if (watchLevel <= 0 || !kish) return [];
   const now = Date.now();
+  const raids = await prisma.fleet.findMany({
+    where: { targetSyndicateId: syndicateId, mission: 'KISH_RAID', status: 'OUTBOUND' },
+    include: { commander: { select: { nickname: true, syndicate: { select: { tag: true } } } } },
+    orderBy: { arrivesAt: 'asc' },
+  });
+  // Налет на сам Кіш Дозор видит всегда: Кіш — центр его круга.
+  const raidRows: WatchedFleet[] = raids.map((fleet) => ({
+    fleetId: fleet.id,
+    attacker: fleet.commander.nickname,
+    attackerTag: fleet.commander.syndicate?.tag ?? null,
+    target: 'Кіш',
+    planetName: 'Кіш',
+    systemName: '',
+    arrivesInSeconds: Math.max(0, Math.ceil((fleet.arrivesAt.getTime() - now) / 1000)),
+    ships: FLEET_SHIP_COLUMNS.reduce((sum, column) => sum + fleet[column], 0),
+  }));
+
+  // Круг наблюдения за колониями дает только построенный Дозор.
+  if (watchLevel <= 0 || !kish) return raidRows;
   const fleets = await prisma.fleet.findMany({
     where: {
       mission: 'ATTACK',
@@ -1519,7 +1677,7 @@ async function watchIncoming(
     orderBy: { arrivesAt: 'asc' },
   });
 
-  return fleets.flatMap((fleet) => {
+  return raidRows.concat(fleets.flatMap((fleet) => {
     const planet = fleet.targetPlanet;
     if (!planet || !isWatched(watchLevel, galaxyDistance(kish, planet.system))) return [];
     return [{
@@ -1532,7 +1690,7 @@ async function watchIncoming(
       arrivesInSeconds: Math.max(0, Math.ceil((fleet.arrivesAt.getTime() - now) / 1000)),
       ships: FLEET_SHIP_COLUMNS.reduce((sum, column) => sum + fleet[column], 0),
     }];
-  });
+  }));
 }
 
 /* ------------------------- Казна ------------------------- */
