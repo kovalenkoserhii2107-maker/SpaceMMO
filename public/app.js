@@ -165,6 +165,8 @@
     cargoAntimatterField: $('cargo-antimatter-field'),
     holdRow: $('hold-row'),
     holdHours: $('hold-hours'),
+    jointRow: $('joint-row'),
+    jointAttack: $('joint-attack'),
     cargoInputs: $('cargo-inputs'),
     adminSearch: $('admin-search'),
     ratingNote: $('rating-note'),
@@ -3677,6 +3679,8 @@
     // Разведке трюмы тоже ни к чему — зонд везет данные, а не ресурсы.
     // Удержание тоже без груза: флот встает на орбиту защищать, а не везти.
     el.holdRow.hidden = map.mission !== 'HOLD';
+    el.jointRow.hidden = map.mission !== 'ATTACK';
+    if (map.mission === 'ATTACK') loadJointAttacks();
     const harvest = map.mission === 'HARVEST' || map.mission === 'SCAN' || map.mission === 'HOLD' || map.mission === 'KISH_RAID';
     el.cargoInputs.hidden = harvest;
     if (harvest) {
@@ -4141,6 +4145,45 @@
     }
   }
 
+  /*
+   * Совместная атака: к атаке своего синдиката на ту же планету можно
+   * присоединиться. Список грузится по смене цели и не чаще раза в пятнадцать
+   * секунд — форма перерисовывается от любой правки состава, а список
+   * меняется редко. Состояние лежит в `map`, а не в отдельной переменной:
+   * форма может перерисоваться раньше, чем до нее дойдет объявление.
+   */
+  async function loadJointAttacks(force = false) {
+    const target = currentTarget();
+    const planetId = target && target.targetPlanetId ? target.targetPlanetId : null;
+    const joint = map.joint || (map.joint = { planetId: null, loadedAt: 0, ticket: 0 });
+    if (!force && planetId === joint.planetId && Date.now() - joint.loadedAt < 15000) return;
+    joint.planetId = planetId;
+    joint.loadedAt = Date.now();
+    const ticket = ++joint.ticket;
+    const selected = el.jointAttack.value;
+    const options = [['', 'Своя атака']];
+    if (planetId) {
+      const result = await api(`/api/planets/${encodeURIComponent(planetId)}/joint-attacks`);
+      if (ticket !== joint.ticket) return;
+      const attacks = result.ok && Array.isArray(result.data.attacks) ? result.data.attacks : [];
+      for (const attack of attacks) {
+        if (attack.full) continue;
+        options.push([
+          attack.leadFleetId,
+          `Присоединиться: ${attack.leader} · ${fmt(attack.ships)} корпусов · у цели через ${fmtTime(attack.arrivesInSeconds)}`,
+        ]);
+      }
+    }
+    el.jointAttack.innerHTML = '';
+    for (const [value, label] of options) {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      el.jointAttack.appendChild(option);
+    }
+    el.jointAttack.value = options.some(([value]) => value === selected) ? selected : '';
+  }
+
   async function sendFleet() {
     const base = activeBase();
     const target = currentTarget();
@@ -4159,6 +4202,7 @@
       mission: map.mission,
       oneWay: el.oneWay.checked,
       holdHours: map.mission === 'HOLD' ? Number(el.holdHours.value) : 0,
+      joinFleetId: map.mission === 'ATTACK' && el.jointAttack.value ? el.jointAttack.value : null,
       ships: readComposition(),
       cargo: pickup ? { ore: 0, polymers: 0, plasma: 0 } : { ...amounts, antimatter },
       pickup: pickup ? { ...amounts } : { ore: 0, polymers: 0, plasma: 0 },
@@ -4173,6 +4217,8 @@
       el.cargoAntimatter.value = '0';
       el.presetSelect.value = '';
       el.oneWay.checked = false;
+      el.jointAttack.value = '';
+      map.joint = null;
       map.plan = null;
       el.flightPlan.textContent = 'Выбери корабли, чтобы увидеть расчет.';
       showMissionWarning(null);

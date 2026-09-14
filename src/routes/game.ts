@@ -17,6 +17,7 @@ import { cargoOrNull, nonNegativeInt, positiveInt, shipCountsOrNull } from './va
 import type { BuildingProjection, TechnologyProjection } from '../types/socket.js';
 import type {
   ActionResponse,
+  JointAttacksResponse,
   ErrorResponse,
   FlightPreviewResponse,
   LeaderboardResponse,
@@ -238,6 +239,8 @@ interface FleetRequestBody {
   oneWay?: unknown;
   /** Срок удержания в часах. */
   holdHours?: unknown;
+  /** Ведущий флот совместной атаки. */
+  joinFleetId?: unknown;
 }
 
 function readTarget(
@@ -393,8 +396,14 @@ gameRouter.post('/bases/:baseId/fleets', async (req, res: Response<ActionRespons
     pickup,
     body.oneWay === true,
     typeof body.holdHours === 'number' ? body.holdHours : 0,
+    typeof body.joinFleetId === 'string' && body.joinFleetId ? body.joinFleetId : null,
   );
   res.status(result.ok ? 200 : 409).json(result);
+});
+
+/** Совместные атаки на планету, к которым можно присоединиться. */
+gameRouter.get('/planets/:planetId/joint-attacks', async (req, res: Response<JointAttacksResponse>) => {
+  res.json({ attacks: await gameLoop.jointAttacks(currentCommander(req).id, req.params.planetId) });
 });
 
 /** Отозвать флот с удержания. */

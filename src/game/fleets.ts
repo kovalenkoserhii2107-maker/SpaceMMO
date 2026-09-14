@@ -420,3 +420,55 @@ export function splitSurvivors(survivors: ShipCounts, parts: ShipCounts[]): Ship
   }
   return result;
 }
+
+/** Сколько флотов, считая ведущий, может идти в одной совместной атаке. */
+export const MAX_JOINT_FLEETS = 8;
+/**
+ * Присоединиться можно, пока ведущему лететь дольше этого срока: иначе
+ * присоединившийся рискует прилететь уже после боя и драться в одиночку.
+ */
+export const JOINT_MIN_LEAD_MS = 10_000;
+
+export interface Loot {
+  ore: number;
+  polymers: number;
+  plasma: number;
+}
+
+/**
+ * Дележ добычи совместной атаки по трюмам уцелевших.
+ *
+ * Добыча посчитана по общей вместимости группы, поэтому делится
+ * пропорционально трюмам каждого флота, округление вниз. Остаток уходит
+ * тем, у кого больше свободного места, и никто не везет сверх своих трюмов.
+ * Если места не хватило даже на остаток, он остается у защитника: списывать
+ * со склада надо ровно то, что увезли.
+ */
+export function splitLoot(loot: Loot, capacities: number[]): Loot[] {
+  const result = capacities.map(() => ({ ore: 0, polymers: 0, plasma: 0 }));
+  const caps = capacities.map((capacity) => Math.max(0, Math.floor(capacity)));
+  const total = caps.reduce((sum, capacity) => sum + capacity, 0);
+  if (total <= 0) return result;
+  const used = caps.map(() => 0);
+  for (const field of ['ore', 'polymers', 'plasma'] as const) {
+    const amount = Math.max(0, Math.floor(loot[field]));
+    let given = 0;
+    caps.forEach((capacity, index) => {
+      const share = Math.min(capacity - used[index]!, Math.floor((amount * capacity) / total));
+      result[index]![field] = share;
+      used[index]! += share;
+      given += share;
+    });
+    let rest = amount - given;
+    const order = caps.map((_, index) => index).sort((a, b) => caps[b]! - used[b]! - (caps[a]! - used[a]!));
+    for (const index of order) {
+      if (rest <= 0) break;
+      const take = Math.min(rest, caps[index]! - used[index]!);
+      if (take <= 0) continue;
+      result[index]![field] += take;
+      used[index]! += take;
+      rest -= take;
+    }
+  }
+  return result;
+}

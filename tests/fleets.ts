@@ -13,6 +13,7 @@ import {
   isFleetMission,
   isOneWayMission,
   resolveOneWay,
+  splitLoot,
   MISSION_LABELS,
   planFlight,
   validateComposition,
@@ -393,6 +394,27 @@ async function live(): Promise<void> {
 async function readConfig(path: string): Promise<string> {
   const { readFile } = await import('node:fs/promises');
   return readFile(path, 'utf8');
+}
+
+console.log('\n=== Совместная атака: дележ добычи ===');
+{
+  const caps = [1000, 500, 0];
+  const parts = splitLoot({ ore: 1000, polymers: 499, plasma: 1 }, caps);
+  const total = (field: 'ore' | 'polymers' | 'plasma') => parts.reduce((sum, part) => sum + part[field], 0);
+  check('добыча делится без потерь', total('ore') === 1000 && total('polymers') === 499 && total('plasma') === 1,
+    `${total('ore')}/${total('polymers')}/${total('plasma')}`);
+  check('никто не везет сверх своих трюмов', parts.every((part, index) => part.ore + part.polymers + part.plasma <= caps[index]!));
+  check('флот без трюмов не везет ничего', parts[2]!.ore + parts[2]!.polymers + parts[2]!.plasma === 0);
+  check('доля пропорциональна трюмам', Math.abs(parts[0]!.ore - 2 * parts[1]!.ore) <= 2, `${parts[0]!.ore} против ${parts[1]!.ore}`);
+
+  const tight = splitLoot({ ore: 10, polymers: 10, plasma: 0 }, [7, 7, 6]);
+  check('впритык заполненные трюмы делятся ровно',
+    tight.reduce((sum, part) => sum + part.ore, 0) === 10 && tight.reduce((sum, part) => sum + part.polymers, 0) === 10 &&
+    tight.every((part, index) => part.ore + part.polymers <= [7, 7, 6][index]!));
+
+  const over = splitLoot({ ore: 100, polymers: 0, plasma: 0 }, [30, 20]);
+  check('не влезшее в трюмы остается у защитника', over[0]!.ore + over[1]!.ore === 50, `${over[0]!.ore}+${over[1]!.ore}`);
+  check('без флотов делить нечего', splitLoot({ ore: 5, polymers: 5, plasma: 5 }, []).length === 0);
 }
 
 try {

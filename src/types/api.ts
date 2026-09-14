@@ -136,3 +136,20 @@ export interface AdminResetResponse {
   token: string;
   expiresAt: number;
 }
+
+/** Атака на планету, к которой можно присоединиться своим флотом. */
+export interface JointAttackView {
+  leadFleetId: string;
+  leader: string;
+  arrivesInSeconds: number;
+  /** Флотов в группе, считая ведущий. */
+  fleets: number;
+  /** Кораблей у ведущего флота. */
+  ships: number;
+  /** Группа заполнена — присоединиться уже нельзя. */
+  full: boolean;
+}
+
+export interface JointAttacksResponse {
+  attacks: JointAttackView[];
+}

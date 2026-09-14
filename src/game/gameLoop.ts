@@ -7,6 +7,7 @@
  * Все таймеры считаются от абсолютных меток времени (finishesAt/nextUnitAt),
  * поэтому очереди доигрываются и после выхода игрока из игры.
  */
+import type { JointAttackView } from '../types/api.js';
 import { randomUUID } from 'node:crypto';
 import type { Server } from 'socket.io';
 import { prisma } from '../db/prisma.js';
@@ -32,7 +33,7 @@ import {
   type ShipJobState,
   type CommanderRuntimeState,
 } from './baseState.js';
-import {
+import { JOINT_MIN_LEAD_MS, MAX_JOINT_FLEETS, splitLoot,
   canJump,
   fleetCapacity,
   fleetSize,
@@ -894,6 +895,8 @@ class GameLoop {
     requestedOneWay = false,
     /** Срок удержания в часах — только для миссии удержания. */
     holdHours = 0,
+    /** Ведущий флот совместной атаки, к которой присоединяется этот вылет. */
+    joinFleetId: string | null = null,
   ): Promise<ActionResult> {
     const commander = await this.getCommander(commanderId);
     const base = commander?.bases.get(baseId);
@@ -903,6 +906,7 @@ class GameLoop {
 
     const compositionError = validateComposition(mission, ships);
     if (compositionError) return { ok: false, error: compositionError };
+    if (joinFleetId && mission !== 'ATTACK') return { ok: false, error: 'Присоединиться можно только к атаке' };
 
     // Доступность самой миссии проверяем раньше наличия кораблей:
     // «экспедиции недоступны» — более фундаментальный отказ, чем «не хватает кораблей».
@@ -938,6 +942,8 @@ class GameLoop {
     let targetSystemRef: string | null = null;
     // Синдикат, которому налет на Кіш объявит войну, если вылет состоится.
     let declareWarOn: string | null = null;
+    // Ведущий флот совместной атаки: к нему подстраивается время прилета.
+    let jointLead: { id: string; arrivesAt: number } | null = null;
 
     if (mission === 'EXPEDITION') {
       const system = target.systemId
@@ -1097,6 +1103,26 @@ class GameLoop {
           return { ok: false, error: 'Нельзя атаковать собственную колонию' };
         }
         /*
+         * Совместная атака: флот встает в группу ведущего и дерется с ним
+         * одним боем. Присоединиться можно к своей атаке или к атаке участника
+         * своего синдиката — чужую группу собирать некому доверять.
+         */
+        if (joinFleetId) {
+          const lead = await prisma.fleet.findUnique({ where: { id: joinFleetId } });
+          if (!lead || lead.mission !== 'ATTACK' || lead.status !== 'OUTBOUND' || lead.targetPlanetId !== planet.id) {
+            return { ok: false, error: 'Эта атака уже не летит к выбранной цели' };
+          }
+          if (lead.jointLeadId) return { ok: false, error: 'Присоединяться нужно к ведущему флоту атаки' };
+          if (lead.commanderId !== commanderId && !(await sameSyndicate(commanderId, lead.commanderId))) {
+            return { ok: false, error: 'Присоединиться можно только к атаке своего синдиката' };
+          }
+          const joined = await prisma.fleet.count({ where: { jointLeadId: lead.id } });
+          if (joined + 1 >= MAX_JOINT_FLEETS) {
+            return { ok: false, error: `В одной атаке не больше ${MAX_JOINT_FLEETS} флотов` };
+          }
+          jointLead = { id: lead.id, arrivesAt: lead.arrivesAt.getTime() };
+        }
+        /*
          * Войну объявляет сама атака. Раньше вылет отклонялся, пока игрок
          * не сходит в раздел дипломатии и не объявит войну руками — лишний
          * шаг, который к тому же ничего не защищал: объявить ее мог кто угодно.
@@ -1217,7 +1243,17 @@ class GameLoop {
     }
 
     const now = Date.now();
-    const arrivesAt = now + plan.flightSeconds * 1000;
+    // Флот совместной атаки прилетает в одну секунду с ведущим: бой один,
+    // и тот, кто быстрее, ждет у цели. Опоздать к нему нельзя.
+    if (jointLead && now + plan.flightSeconds * 1000 > jointLead.arrivesAt - JOINT_MIN_LEAD_MS) {
+      return {
+        ok: false,
+        error:
+          `Флот не успевает к атаке: в пути ${plan.flightSeconds} с, ` +
+          `а ведущий будет у цели через ${Math.max(0, Math.floor((jointLead.arrivesAt - now) / 1000))} с`,
+      };
+    }
+    const arrivesAt = jointLead ? jointLead.arrivesAt : now + plan.flightSeconds * 1000;
     // Удержание стоит у союзника свой срок, и только потом летит домой.
     const holdMs = mission === 'HOLD' ? holdHours * 3_600_000 : 0;
     const returnsAt = arrivesAt + holdMs + plan.flightSeconds * 1000;
@@ -1271,6 +1307,7 @@ class GameLoop {
         antimatterSpent: plan.antimatter,
         interstellar: plan.kind === 'INTERSTELLAR',
         viaGate: plan.viaGate === true,
+        jointLeadId: jointLead?.id ?? null,
         holdSeconds: holdMs / 1000,
         holdUntil: holdMs > 0 ? new Date(arrivesAt + holdMs) : null,
         distance: plan.distance,
@@ -1288,7 +1325,10 @@ class GameLoop {
     return {
       ok: true,
       message:
-        mission === 'EXPEDITION'
+        jointLead
+          ? `Флот присоединился к атаке: ${fleetSize(ships)} кораблей, у цели вместе с ведущим через ` +
+            `${Math.ceil((arrivesAt - now) / 1000)} с`
+          : mission === 'EXPEDITION'
           ? `Экспедиция стартовала: ${fleetSize(ships)} кораблей, до точки ${plan.flightSeconds} с`
           : plan.kind === 'INTERSTELLAR'
           ? `${plan.viaGate ? 'Через Браму' : 'Гиперпрыжок'}: ${fleetSize(ships)} кораблей, в пути ${plan.flightSeconds} с, ` +
@@ -1434,6 +1474,35 @@ class GameLoop {
       this.emitUser(commanderId);
     }
     return { ok: true, message: `Флот отозван: дома через ${Math.ceil(backMs / 1000)} с` };
+  }
+
+  /**
+   * Атаки на планету, к которым командир может присоединиться: свои и участников
+   * его синдиката, пока ведущему лететь дольше порога присоединения.
+   */
+  async jointAttacks(commanderId: string, planetId: string): Promise<JointAttackView[]> {
+    const me = await prisma.commander.findUnique({ where: { id: commanderId }, select: { syndicateId: true } });
+    const now = Date.now();
+    const leads = await prisma.fleet.findMany({
+      where: {
+        mission: 'ATTACK',
+        status: 'OUTBOUND',
+        targetPlanetId: planetId,
+        jointLeadId: null,
+        arrivesAt: { gt: new Date(now + JOINT_MIN_LEAD_MS) },
+        commander: me?.syndicateId ? { OR: [{ id: commanderId }, { syndicateId: me.syndicateId }] } : { id: commanderId },
+      },
+      include: { commander: { select: { nickname: true } }, jointFleets: { select: { id: true } } },
+      orderBy: { arrivesAt: 'asc' },
+    });
+    return leads.map((lead) => ({
+      leadFleetId: lead.id,
+      leader: lead.commander.nickname,
+      arrivesInSeconds: Math.ceil((lead.arrivesAt.getTime() - now) / 1000),
+      fleets: 1 + lead.jointFleets.length,
+      ships: fleetSize(shipsFromFleetColumns(lead)),
+      full: 1 + lead.jointFleets.length >= MAX_JOINT_FLEETS,
+    }));
   }
 
   /** Орбита, координаты и система цели — нужны для предрасчета маршрута. */
@@ -2455,14 +2524,39 @@ class GameLoop {
    * или груз, списанный у защитника, но не доехавший до атакующего.
    */
   private async resolveAttack(fleet: FleetRow, planetId: string, now: number): Promise<void> {
+    /*
+     * Совместная атака — один бой. Флоты группы прилетают в одну секунду,
+     * и бой разыгрывается на первом из них в скане; остальные к своей
+     * очереди уже не OUTBOUND и пропускаются, поэтому группа ищется заново
+     * по базе, а не берется из списка скана.
+     */
+    const groupKey = fleet.jointLeadId ?? fleet.id;
+    const group = await prisma.fleet.findMany({
+      where: {
+        mission: 'ATTACK',
+        status: 'OUTBOUND',
+        targetPlanetId: planetId,
+        arrivesAt: { lte: new Date(now) },
+        OR: [{ id: groupKey }, { jointLeadId: groupKey }],
+      },
+      include: FLEET_INCLUDE,
+      orderBy: { departedAt: 'asc' },
+    });
+    if (!group.some((row) => row.id === fleet.id)) return;
+    // Атакующим в отчете стоит владелец ведущего флота.
+    group.sort((a, b) => (a.id === groupKey ? -1 : b.id === groupKey ? 1 : 0));
+    const lead = group[0]!;
+    const groupIds = group.map((row) => row.id);
+    const attackerIds = [...new Set(group.map((row) => row.commanderId))];
+
     const planet = await prisma.planet.findUnique({
       where: { id: planetId },
       include: { base: true, system: true },
     });
 
     if (!planet?.base) {
-      // Колонию успели покинуть — атаковать некого, флот разворачивается.
-      await prisma.fleet.update({ where: { id: fleet.id }, data: { status: 'RETURNING' } });
+      // Колонию успели покинуть — атаковать некого, группа разворачивается.
+      await prisma.fleet.updateMany({ where: { id: { in: groupIds } }, data: { status: 'RETURNING' } });
       return;
     }
 
@@ -2472,7 +2566,11 @@ class GameLoop {
     // Сначала сбрасываем состояние защитника в БД, чтобы бой считался по актуальным силам.
     await this.flushBaseOwner(defenderBaseId);
 
-    const attackerShips = fleetShips(fleet);
+    const groupShips = group.map((row) => fleetShips(row));
+    const attackerShips = emptyShipCounts();
+    for (const ships of groupShips) {
+      for (const type of SHIP_TYPES) attackerShips[type] += ships[type];
+    }
 
     const result = await prisma.$transaction(async (tx) => {
       const base = await tx.base.findUniqueOrThrow({
@@ -2488,9 +2586,9 @@ class GameLoop {
       });
       const defenderVault = Math.max(0, defenderResearch[0]?.level ?? 0) * 0.02;
       // Трюмы налетчика и «Тайники» защитника — бонусы синдикатов обеих сторон.
-      const [attackerBuffs, defenderBuffs] = await Promise.all([
-        syndicateBuffsFor(fleet.commanderId),
+      const [defenderBuffs, ...attackerBuffs] = await Promise.all([
         syndicateBuffsFor(defenderId),
+        ...group.map((row) => syndicateBuffsFor(row.commanderId)),
       ]);
 
       const defenderShips = emptyShipCounts();
@@ -2512,19 +2610,33 @@ class GameLoop {
       const defender: SideForces = { ships: defenderShips, defenses: defenderDefenses };
       const outcome = resolveBattle(attacker, defender);
 
+      // Уцелевшие атакующие делятся между флотами группы по вкладу, а трюмы
+      // каждого считаются со своим бонусом синдиката.
+      const attackerShares = splitSurvivors(outcome.attackerSurvivors, groupShips);
+      const capacities = attackerShares.map((ships, index) => fleetCapacity(ships, attackerBuffs[index]!.cargo));
+      const groupCapacity = capacities.reduce((sum, capacity) => sum + capacity, 0);
+
       // Грабеж: только победивший атакующий, только уязвимый излишек склада
       // и только в пределах трюмов уцелевших кораблей.
-      const plunder = plunderAmount(
+      const offered = plunderAmount(
         { ore: base.ore, polymers: base.polymers, plasma: base.plasma },
         {
           ore: storageCapacityForLevel(base.oreStorageLevel),
           polymers: storageCapacityForLevel(base.polymerStorageLevel),
           plasma: storageCapacityForLevel(base.plasmaStorageLevel),
         },
-        outcome.winner === 'ATTACKER' ? fleetCapacity(outcome.attackerSurvivors, attackerBuffs.cargo) : 0,
+        outcome.winner === 'ATTACKER' ? groupCapacity : 0,
         defenderVault,
         defenderBuffs.vault,
       );
+      const loot = splitLoot(offered, capacities);
+      // Со склада списывается ровно увезенное: остаток, не влезший в трюмы, остается.
+      const plunder = {
+        ...offered,
+        ore: loot.reduce((sum, part) => sum + part.ore, 0),
+        polymers: loot.reduce((sum, part) => sum + part.polymers, 0),
+        plasma: loot.reduce((sum, part) => sum + part.plasma, 0),
+      };
 
       // Потери защитника: корабли и оборона списываются безвозвратно.
       // Уцелевшие делятся между базой и флотами на удержании пропорционально вкладу.
@@ -2590,46 +2702,34 @@ class GameLoop {
         });
       }
 
-      const survivorCount =
-        outcome.attackerSurvivors.PROBE +
-        outcome.attackerSurvivors.SMALL_CARGO +
-        outcome.attackerSurvivors.LIGHT_FIGHTER;
-
-      if (survivorCount > 0) {
-        await tx.fleet.update({
-          where: { id: fleet.id },
-          data: {
-            status: 'RETURNING',
-            probes: outcome.attackerSurvivors.PROBE,
-            smallCargo: outcome.attackerSurvivors.SMALL_CARGO,
-            largeCargo: outcome.attackerSurvivors.LARGE_CARGO,
-            lightFighters: outcome.attackerSurvivors.LIGHT_FIGHTER,
-            heavyFighters: outcome.attackerSurvivors.HEAVY_FIGHTER,
-            cruisers: outcome.attackerSurvivors.CRUISER,
-            frigates: outcome.attackerSurvivors.FRIGATE,
-            bombers: outcome.attackerSurvivors.BOMBER,
-            battleships: outcome.attackerSurvivors.BATTLESHIP,
-            carriers: outcome.attackerSurvivors.CARRIER,
-            recyclers: outcome.attackerSurvivors.RECYCLER,
-            colonyShips: outcome.attackerSurvivors.COLONY_SHIP,
-            cargoOre: plunder.ore,
-            cargoPolymers: plunder.polymers,
-            cargoPlasma: plunder.plasma,
-          },
-        });
-      } else {
-        // Флот уничтожен полностью — возвращаться некому.
-        await tx.fleet.delete({ where: { id: fleet.id } });
+      for (const [index, row] of group.entries()) {
+        const left = attackerShares[index]!;
+        if (fleetSize(left) > 0) {
+          await tx.fleet.update({
+            where: { id: row.id },
+            data: {
+              status: 'RETURNING',
+              ...shipColumnsOf(left),
+              cargoOre: loot[index]!.ore,
+              cargoPolymers: loot[index]!.polymers,
+              cargoPlasma: loot[index]!.plasma,
+            },
+          });
+        } else {
+          // Флот уничтожен полностью — возвращаться некому.
+          await tx.fleet.delete({ where: { id: row.id } });
+        }
       }
 
-      const [attackerProfile, defenderProfile] = await Promise.all([
-        tx.commander.findUniqueOrThrow({ where: { id: fleet.commanderId }, select: { nickname: true } }),
-        tx.commander.findUniqueOrThrow({ where: { id: defenderId }, select: { nickname: true } }),
+      const [attackerProfiles, defenderProfile] = await Promise.all([
+        tx.commander.findMany({ where: { id: { in: attackerIds } }, select: { id: true, nickname: true, syndicateId: true } }),
+        tx.commander.findUniqueOrThrow({ where: { id: defenderId }, select: { nickname: true, syndicateId: true } }),
       ]);
+      const nicknameOf = (id: string) => attackerProfiles.find((row) => row.id === id)?.nickname ?? '—';
 
-      // Счетчики боев в профиле командира.
-      await tx.commander.update({
-        where: { id: fleet.commanderId },
+      // Счетчики боев в профиле командира — у каждого участника атаки.
+      await tx.commander.updateMany({
+        where: { id: { in: attackerIds } },
         data:
           outcome.winner === 'ATTACKER'
             ? { battlesWon: { increment: 1 } }
@@ -2652,17 +2752,19 @@ class GameLoop {
        */
       const destroyedByAttacker = spentOnFleet(shipsLost(defenderShips, outcome.defenderSurvivorShips));
       const destroyedByDefender = spentOnFleet(shipsLost(attackerShips, outcome.attackerSurvivors));
-      const sides = await tx.commander.findMany({
-        where: { id: { in: [fleet.commanderId, defenderId] } },
-        select: { id: true, syndicateId: true },
-      });
-      const attackerSyndicateId = sides.find((row) => row.id === fleet.commanderId)?.syndicateId ?? null;
-      const defenderSyndicateId = sides.find((row) => row.id === defenderId)?.syndicateId ?? null;
-      if (attackerSyndicateId && destroyedByAttacker > 0) {
-        await tx.syndicate.updateMany({
-          where: { id: attackerSyndicateId },
-          data: { destroyedValue: { increment: destroyedByAttacker } },
-        });
+      // В группе один синдикат — чужих в нее не пускают, — поэтому уничтоженное
+      // засчитывается ему один раз, а не по разу на каждый флот.
+      const attackerSyndicateIds = [
+        ...new Set(attackerProfiles.map((row) => row.syndicateId).filter((id): id is string => id !== null)),
+      ];
+      const defenderSyndicateId = defenderProfile.syndicateId;
+      if (destroyedByAttacker > 0) {
+        for (const syndicateId of attackerSyndicateIds) {
+          await tx.syndicate.updateMany({
+            where: { id: syndicateId },
+            data: { destroyedValue: { increment: destroyedByAttacker } },
+          });
+        }
       }
       if (defenderSyndicateId && destroyedByDefender > 0) {
         await tx.syndicate.updateMany({
@@ -2673,7 +2775,7 @@ class GameLoop {
 
       await tx.battleReport.create({
         data: {
-          attackerId: fleet.commanderId,
+          attackerId: lead.commanderId,
           defenderId,
           planetId,
           winner: outcome.winner,
@@ -2682,8 +2784,12 @@ class GameLoop {
           plunderPlasma: plunder.plasma,
           data: toJson({
             planetName: planet.name,
-            attackerName: attackerProfile.nickname,
+            attackerName: nicknameOf(lead.commanderId),
             defenderName: defenderProfile.nickname,
+            jointAttack:
+              group.length > 1
+                ? group.map((row, index) => ({ name: nicknameOf(row.commanderId), ships: groupShips[index] }))
+                : null,
             attackerForces: attackerShips,
             defenderForces: { ships: defenderShips, defenses: defenderDefenses },
             attackerPower: outcome.attackerPower,
@@ -2712,7 +2818,7 @@ class GameLoop {
         outcome,
         plunder,
         defenderBaseId,
-        attackerName: attackerProfile.nickname,
+        attackerName: attackerIds.map(nicknameOf).join(', '),
         defenderName: defenderProfile.nickname,
       };
     });
@@ -2722,9 +2828,8 @@ class GameLoop {
 
     // Обе стороны получают свой экземпляр отчета: один и тот же бой, но с их
     // точки зрения — иначе защитник читал бы письмо про «свои» трофеи.
-    await this.notify(
-      buildBattleMail({
-        attackerId: fleet.commanderId,
+    const mails = buildBattleMail({
+        attackerId: lead.commanderId,
         defenderId,
         attackerName: result.attackerName,
         defenderName: result.defenderName,
@@ -2737,8 +2842,13 @@ class GameLoop {
         },
         outcome: result.outcome,
         plunder: result.plunder,
-      }),
-    );
+      });
+    // Участники совместной атаки получают копию письма ведущего: бой у них общий.
+    const attackerMail = mails.find((mail) => mail.recipientId === lead.commanderId);
+    const copies = attackerMail
+      ? attackerIds.filter((id) => id !== lead.commanderId).map((id) => ({ ...attackerMail, recipientId: id }))
+      : [];
+    await this.notify([...mails, ...copies]);
   }
 
   /**

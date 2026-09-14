@@ -839,6 +839,8 @@ model Fleet {
   /// Удержание: сколько секунд стоять у союзника и до какого момента.
   holdSeconds     Int       @default(0)
   holdUntil       DateTime?
+  /// Совместная атака: ведущий флот группы. У самого ведущего пусто.
+  jointLeadId     String?
   /// Расстояние в орбитах и скорость флота — для отображения.
   distance        Int
   speed           Float
@@ -855,6 +857,10 @@ model Fleet {
   targetPlanet    Planet?      @relation("FleetTarget", fields: [targetPlanetId], references: [id], onDelete: Cascade)
   targetHub       TradeHub?    @relation(fields: [targetHubId], references: [id], onDelete: Cascade)
   targetSystem    SolarSystem? @relation(fields: [targetSystemId], references: [id], onDelete: Cascade)
+  jointLead       Fleet?       @relation("JointAttack", fields: [jointLeadId], references: [id], onDelete: SetNull)
+  jointFleets     Fleet[]      @relation("JointAttack")
+
+  @@index([jointLeadId])
 
   @@index([status, arrivesAt])
   @@index([status, returnsAt])
