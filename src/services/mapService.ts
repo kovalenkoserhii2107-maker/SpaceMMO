@@ -17,7 +17,9 @@ import {
 import { emptyDefenseCounts, type DefenseCounts, type DefenseType } from '../game/defenses.js';
 import { emptyShipCounts, type ShipCounts } from '../game/ships.js';
 import { storageCapacity, storageUsed } from '../game/market.js';
-import type { GalaxyMap, HubView, SystemMap } from '../types/socket.js';
+import type { GalaxyMap, HubView, KishView, SystemMap } from '../types/socket.js';
+import { membershipOf } from './syndicateAccess.js';
+import { hasPermission, KISH_POSITION } from '../game/syndicate.js';
 
 /**
  * Карта одной системы для игрока.
@@ -42,7 +44,7 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
     : home.system;
   if (!targetSystem) return null;
 
-  const [planets, scans, hub] = await Promise.all([
+  const [planets, scans, hub, kishes, viewer] = await Promise.all([
     prisma.planet.findMany({
       where: { systemId: targetSystem.id },
       orderBy: { position: 'asc' },
@@ -53,6 +55,8 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
       where: { systemId: targetSystem.id },
       include: { storages: { where: { commanderId } } },
     }),
+    prisma.syndicate.findMany({ where: { kishSystemId: targetSystem.id }, include: { bank: true } }),
+    prisma.commander.findUnique({ where: { id: commanderId }, select: { syndicateId: true } }),
   ]);
 
   const scanByPlanet = new Map(scans.map((scan) => [scan.planetId, scan]));
@@ -145,6 +149,25 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
       }
     : null;
 
+  const ownKish = kishes.some((row) => row.id === viewer?.syndicateId);
+  const access = ownKish ? await membershipOf(commanderId) : null;
+  const kishViews: KishView[] = kishes.map((row) => {
+    const own = row.id === viewer?.syndicateId;
+    return {
+      syndicateId: row.id,
+      name: `Кіш [${row.tag}]`,
+      tag: row.tag,
+      level: row.kishLevel,
+      position: KISH_POSITION,
+      own,
+      treasury:
+        own && row.bank
+          ? { ore: Math.floor(row.bank.ore), polymers: Math.floor(row.bank.polymers), plasma: Math.floor(row.bank.plasma) }
+          : null,
+      canPickup: Boolean(own && access?.ok && hasPermission(access, 'WITHDRAW')),
+    };
+  });
+
   return {
     systemId: targetSystem.id,
     systemName: targetSystem.name,
@@ -155,6 +178,7 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
     isHome: targetSystem.id === home.systemId,
     planets: views,
     hub: hubView,
+    kishes: kishViews,
   };
 }
 

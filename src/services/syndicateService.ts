@@ -39,6 +39,7 @@ import {
   membershipOf,
   requireLeader,
   requirePermission,
+  withdrawnToday,
   type Membership,
 } from './syndicateAccess.js';
 
@@ -112,6 +113,8 @@ export interface SyndicateView {
     withdrawLeft: number | null;
   };
   bank: number;
+  /** Ресурсная казна Коша: привозят и вывозят ее флотом. */
+  treasury: { ore: number; polymers: number; plasma: number };
   kish: {
     level: number;
     systemId: string | null;
@@ -139,6 +142,9 @@ export interface SyndicateView {
     actor: string | null;
     kind: string;
     amount: number;
+    ore: number;
+    polymers: number;
+    plasma: number;
     comment: string | null;
     createdAt: number;
   }>;
@@ -313,6 +319,11 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
       withdrawLeft: Number.isFinite(allowance) ? allowance : null,
     },
     bank: Math.round((syndicate.bank?.credits ?? 0) * 100) / 100,
+    treasury: {
+      ore: Math.floor(syndicate.bank?.ore ?? 0),
+      polymers: Math.floor(syndicate.bank?.polymers ?? 0),
+      plasma: Math.floor(syndicate.bank?.plasma ?? 0),
+    },
     kish: {
       level: syndicate.kishLevel,
       systemId: syndicate.kishSystem?.id ?? null,
@@ -387,6 +398,9 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
       actor: tx.actor?.nickname ?? null,
       kind: tx.kind,
       amount: tx.amount,
+      ore: Math.floor(tx.ore),
+      polymers: Math.floor(tx.polymers),
+      plasma: Math.floor(tx.plasma),
       comment: tx.comment,
       createdAt: tx.createdAt.getTime(),
     })),
@@ -1324,18 +1338,6 @@ async function latestCodex(syndicateId: string, withAuthor = false) {
   });
 }
 
-async function withdrawnToday(
-  syndicateId: string,
-  actorId: string,
-  client: Prisma.TransactionClient | typeof prisma = prisma,
-): Promise<number> {
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const sum = await client.syndicateTransaction.aggregate({
-    where: { syndicateId, actorId, kind: 'PAYOUT', createdAt: { gte: since } },
-    _sum: { amount: true },
-  });
-  return sum._sum.amount ?? 0;
-}
 
 /** Сериализует операции над одним синдикатом до конца транзакции. */
 async function lockSyndicate(tx: Prisma.TransactionClient, syndicateId: string): Promise<void> {

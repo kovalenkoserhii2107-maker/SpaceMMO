@@ -2572,6 +2572,7 @@
       ['TRANSPORT', 'Отправить груз или помощь'],
     ],
     HUB: [['HUB_DELIVERY', 'Доставка на хаб'], ['HUB_PICKUP', 'Вывоз с хаба']],
+    KISH: [['KISH_DELIVERY', 'Доставка в Кіш'], ['KISH_PICKUP', 'Вывоз из казны']],
     DEEP_SPACE: [['EXPEDITION', 'Экспедиция']],
   };
 
@@ -2580,7 +2581,7 @@
    * Не первым пунктом списка: у чужой колонии первая — атака, а она объявляет
    * войну, и подставлять ее молча нельзя. Разведка ничего не разрушает.
    */
-  const SAFE_DEFAULT_MISSIONS = ['SCAN', 'TRANSPORT', 'HUB_DELIVERY', 'EXPEDITION'];
+  const SAFE_DEFAULT_MISSIONS = ['SCAN', 'TRANSPORT', 'HUB_DELIVERY', 'KISH_DELIVERY', 'EXPEDITION'];
 
   /** Самая дальняя занятая орбита — по ней раскладываются остальные. */
   function maxPosition() {
@@ -2590,7 +2591,8 @@
 
   /** Первая орбита: в системе с хабом она отодвинута за его кольцо. */
   function firstOrbit() {
-    return MAP.firstOrbit + (map.data && map.data.hub ? MAP.hubClearance : 0);
+    const stations = map.data && (map.data.hub || (map.data.kishes || []).length);
+    return MAP.firstOrbit + (stations ? MAP.hubClearance : 0);
   }
 
   /**
@@ -2676,6 +2678,19 @@
 
   function hubPoint() {
     return polar(MAP.hubOrbit, HUB_ANGLE);
+  }
+
+  /*
+   * Коши стоят на кольце хаба с другой его стороны: станций в системе может
+   * быть несколько, и каждой следующей отводится свой угол, чтобы они
+   * не легли друг на друга и на торговый хаб.
+   */
+  const KISH_ANGLE = (-35 * Math.PI) / 180;
+  const KISH_ANGLE_STEP = (30 * Math.PI) / 180;
+
+  function kishPointFor(syndicateId) {
+    const index = (map.data && map.data.kishes ? map.data.kishes : []).findIndex((kish) => kish.syndicateId === syndicateId);
+    return index < 0 ? null : polar(MAP.hubOrbit, KISH_ANGLE + index * KISH_ANGLE_STEP);
   }
 
   function deepSpacePoint() {
@@ -2915,6 +2930,7 @@
     }
 
     if (map.data.hub) renderHub(map.data.hub);
+    (map.data.kishes || []).forEach((kish, index) => renderKish(kish, index));
     renderDeepSpace();
     renderFleetMarkers();
   }
@@ -3092,6 +3108,45 @@
     svg.appendChild(group);
   }
 
+  function renderKish(kish, index) {
+    const svg = el.systemMap;
+    const point = polar(MAP.hubOrbit, KISH_ANGLE + index * KISH_ANGLE_STEP);
+    const { x, y } = point;
+    const group = svgEl('g', {
+      class: `hub-node kish-node${kish.own ? ' own' : ''}` +
+        `${map.selectedKind === 'KISH' && map.selectedId === kish.syndicateId ? ' selected' : ''}`,
+    });
+    celestialBody(group, x, y, HUB_RADIUS, {
+      kind: 'glow',
+      fill: kish.own ? 'rgba(77, 210, 255, 0.18)' : 'rgba(248, 180, 90, 0.14)',
+      src: '/assets/planets/kish.webp',
+      spread: 1.6,
+    });
+    const label = svgEl('text', { x, y: y + HUB_RADIUS + 16, class: 'planet-label name hub-label' });
+    label.textContent = kish.name;
+    group.appendChild(label);
+    group.addEventListener('mouseenter', () => showKishTooltip(kish, x, y));
+    group.addEventListener('mouseleave', hideTooltip);
+    group.addEventListener('click', () => selectKish(kish));
+    svg.appendChild(group);
+  }
+
+  function showKishTooltip(kish, x, y) {
+    const head =
+      `<div class="pd-head"><b>${escapeHtml(kish.name)}</b>` +
+      `<span>${kish.own ? 'хаб твоего синдиката' : 'хаб чужого синдиката'} · ур. ${kish.level}</span></div>`;
+    tipContent(
+      kish.own && kish.treasury
+        ? head + pdSection('казна', [
+          pdCell(icon('ore', 'sm'), fmt(kish.treasury.ore)),
+          pdCell(icon('polymers', 'sm'), fmt(kish.treasury.polymers)),
+          pdCell(icon('plasma', 'sm'), fmt(kish.treasury.plasma)),
+        ])
+        : head + '<div class="pd-note">казна чужого синдиката скрыта</div>',
+    );
+    anchorTooltip(el.systemMap, x, y, HUB_RADIUS);
+  }
+
   function showHubTooltip(hub, x, y) {
     const head =
       `<div class="pd-head"><b>${escapeHtml(hub.name)}</b>` +
@@ -3108,6 +3163,14 @@
         : head + '<div class="pd-note">склада на станции пока нет</div>',
     );
     anchorTooltip(el.systemMap, x, y, HUB_RADIUS);
+  }
+
+  function selectKish(kish) {
+    map.selectedKind = 'KISH';
+    map.selectedId = kish.syndicateId;
+    clearCoordTarget();
+    renderMap();
+    renderPlanetInfo();
   }
 
   function selectHub(hub) {
@@ -3132,6 +3195,8 @@
       const origin = byId.get(fleet.originPlanetId);
       const target = fleet.targetKind === 'HUB'
         ? { position: null, hub: true }
+        : fleet.targetKind === 'KISH'
+          ? { position: null, kish: fleet.targetSyndicateId }
         : fleet.targetKind === 'DEEP_SPACE'
           ? { position: null, deep: true }
           : byId.get(fleet.targetPlanetId);
@@ -3146,8 +3211,12 @@
 
       // Точки на круговой карте, поэтому маршрут — отрезок между ними,
       // а маркер едет по этому отрезку пропорционально пройденному времени.
-      const a = from.hub ? hubPoint() : from.deep ? deepSpacePoint() : planetPoint(from.position);
-      const b = to.hub ? hubPoint() : to.deep ? deepSpacePoint() : planetPoint(to.position);
+      const pointOf = (end) => (end.hub ? hubPoint() : end.kish ? kishPointFor(end.kish)
+        : end.deep ? deepSpacePoint() : planetPoint(end.position));
+      const a = pointOf(from);
+      const b = pointOf(to);
+      // Кіш в другой системе на этой карте не нарисован — и рейс к нему тоже.
+      if (!a || !b) continue;
 
       layer.appendChild(svgEl('line', {
         class: 'fleet-line', x1: a.x, y1: a.y, x2: b.x, y2: b.y,
@@ -3421,6 +3490,11 @@
     return map.data.planets.find((p) => p.planetId === map.selectedId) || null;
   }
 
+  function selectedKish() {
+    if (!map.data || map.selectedKind !== 'KISH') return null;
+    return (map.data.kishes || []).find((kish) => kish.syndicateId === map.selectedId) || null;
+  }
+
   function selectedHub() {
     if (!map.data || map.selectedKind !== 'HUB') return null;
     return map.data.hub && map.data.hub.hubId === map.selectedId ? map.data.hub : null;
@@ -3444,6 +3518,15 @@
    */
   function cargoAvailable() {
     const base = activeBase();
+    if (map.mission === 'KISH_PICKUP') {
+      const kish = selectedKish();
+      const treasury = kish && kish.treasury;
+      return {
+        ore: treasury ? treasury.ore : 0,
+        polymers: treasury ? treasury.polymers : 0,
+        plasma: treasury ? treasury.plasma : 0,
+      };
+    }
     if (map.mission === 'HUB_PICKUP') {
       const storage = market.data && market.data.storage;
       return {
@@ -3461,11 +3544,11 @@
 
   function syncCargoLimits() {
     const available = cargoAvailable();
-    const pickup = map.mission === 'HUB_PICKUP';
+    const pickup = map.mission === 'HUB_PICKUP' || map.mission === 'KISH_PICKUP';
     const fields = [
       ['ore', 'Руда', pickup ? 'Забрать руды' : 'Руда', el.cargoOre, el.cargoOreMax, el.cargoOreLabel],
       ['polymers', 'Полимеры', pickup ? 'Забрать полимеров' : 'Полимеры', el.cargoPolymers, el.cargoPolymersMax, el.cargoPolymersLabel],
-      ['plasma', 'Плазма', 'Плазма', el.cargoPlasma, el.cargoPlasmaMax, el.cargoPlasmaLabel],
+      ['plasma', 'Плазма', pickup ? 'Забрать плазмы' : 'Плазма', el.cargoPlasma, el.cargoPlasmaMax, el.cargoPlasmaLabel],
     ];
 
     for (const [resource, , label, input, max, caption] of fields) {
@@ -3498,6 +3581,12 @@
             ? MISSION_OPTIONS.ENEMY_PLANET
             : MISSION_OPTIONS[kind] || MISSION_OPTIONS.UNKNOWN_PLANET;
     const options = [...base];
+    // Вывоз из казны предлагается только рангу с правом выдачи: остальным
+    // пункт ответил бы отказом, а доставка открыта любому участнику.
+    if (kind === 'KISH' && !(target && target.canPickup)) {
+      const index = options.findIndex(([value]) => value === 'KISH_PICKUP');
+      if (index >= 0) options.splice(index, 1);
+    }
 
     /*
      * Колонизация — на планету, про которую не известно, что она занята.
@@ -3541,11 +3630,11 @@
 
     syncFleetFields();
 
-    const pickup = map.mission === 'HUB_PICKUP';
     syncCargoLimits();
 
     // Хаб торгует только рудой и полимерами, плазму туда не возят.
-    const hubRun = pickup || map.mission === 'HUB_DELIVERY';
+    // В казну Коша плазма идет наравне с остальным.
+    const hubRun = map.mission === 'HUB_PICKUP' || map.mission === 'HUB_DELIVERY';
     el.cargoPlasmaField.hidden = hubRun;
     if (hubRun) el.cargoPlasma.value = '0';
 
@@ -3578,6 +3667,25 @@
         (slots ? `слотов экспедиций: <b>${slots.used}</b> из <b>${slots.total}</b>` : '');
       el.dispatch.hidden = !base;
       if (base) {
+        renderFleetInputs();
+        syncMissionOptions();
+        renderDispatchTarget();
+      }
+      return;
+    }
+
+    const kish = selectedKish();
+    if (kish) {
+      // Чужой Кіш виден как станция, но рейсов к нему нет: возить в чужую
+      // казну незачем, а вывоз из нее — грабеж, он придет с войнами синдикатов.
+      el.planetInfo.innerHTML = kish.own && kish.treasury
+        ? `<b>${escapeHtml(kish.name)}</b><br>хаб твоего синдиката · ур. ${kish.level}<br>` +
+          `казна: ${icon('ore', 'sm')} <b>${fmt(kish.treasury.ore)}</b> · ` +
+          `${icon('polymers', 'sm')} <b>${fmt(kish.treasury.polymers)}</b> · ` +
+          `${icon('plasma', 'sm')} <b>${fmt(kish.treasury.plasma)}</b>`
+        : `<b>${escapeHtml(kish.name)}</b><br>хаб чужого синдиката · ур. ${kish.level}`;
+      el.dispatch.hidden = !base || !kish.own;
+      if (!el.dispatch.hidden) {
         renderFleetInputs();
         syncMissionOptions();
         renderDispatchTarget();
@@ -3844,6 +3952,19 @@
         colonized: false,
       };
     }
+    const kish = selectedKish();
+    if (kish && kish.own) {
+      return {
+        kind: 'KISH',
+        request: { targetSyndicateId: kish.syndicateId },
+        name: kish.name,
+        place: `хаб синдиката · ур. ${kish.level}`,
+        owner: null,
+        isOwn: true,
+        colonized: false,
+        canPickup: kish.canPickup,
+      };
+    }
     const hub = selectedHub();
     if (hub) {
       return {
@@ -3980,7 +4101,7 @@
       polymers: Number(el.cargoPolymers.value) || 0,
       plasma: Number(el.cargoPlasma.value) || 0,
     };
-    const pickup = map.mission === 'HUB_PICKUP';
+    const pickup = map.mission === 'HUB_PICKUP' || map.mission === 'KISH_PICKUP';
 
     const ok = await send(`/api/bases/${base.baseId}/fleets`, {
       ...target,
@@ -3988,7 +4109,7 @@
       oneWay: el.oneWay.checked,
       ships: readComposition(),
       cargo: pickup ? { ore: 0, polymers: 0, plasma: 0 } : amounts,
-      pickup: pickup ? { ore: amounts.ore, polymers: amounts.polymers } : { ore: 0, polymers: 0 },
+      pickup: pickup ? { ...amounts } : { ore: 0, polymers: 0, plasma: 0 },
     });
 
     // Сбрасываем форму, чтобы повторный клик не отправил тот же флот дважды.
@@ -5468,6 +5589,9 @@
     TAX: 'налог',
     ENTRY_FEE: 'вступительный взнос',
     KISH_UPGRADE: 'развитие Коша',
+    WATCH_UPGRADE: 'развитие Дозора',
+    RESOURCE_DELIVERY: 'доставка в казну',
+    RESOURCE_PICKUP: 'вывоз из казны',
   };
   const RECRUITMENT_LABELS = { OPEN: 'открыт', APPLICATION: 'по заявке', CLOSED: 'закрыт' };
 
@@ -5719,6 +5843,15 @@
     renderWatch(kish, mine, can('KISH'));
 
     const treasury = synCard('Казна');
+    const stock = synEl('div', 'hub-storage');
+    stock.innerHTML =
+      `ресурсы Коша: ${icon('ore', 'sm')} <b>${fmt(mine.treasury.ore)}</b> · ` +
+      `${icon('polymers', 'sm')} <b>${fmt(mine.treasury.polymers)}</b> · ` +
+      `${icon('plasma', 'sm')} <b>${fmt(mine.treasury.plasma)}</b>`;
+    treasury.appendChild(stock);
+    treasury.appendChild(synEl('div', 'hub-storage',
+      `Ресурсы привозят и вывозят флотом: выбери Кіш на карте системы ${mine.kish.systemName || 'Коша'}. ` +
+      'Вывоз и выдача гривны идут в один дневной лимит ранга.'));
     const donateForm = synEl('div', 'donate-form');
     const amount = synNumber(100, 1);
     donateForm.append(amount, synButton('Внести', 'primary',
@@ -5749,8 +5882,15 @@
     for (const tx of mine.transactions) {
       const row = synEl('div', 'queue-item');
       const head = synEl('b');
-      head.append(document.createTextNode(`${tx.nickname || tx.actor || 'система'} — ${fmt(tx.amount)} `));
-      head.insertAdjacentHTML('beforeend', icon('credits', 'sm'));
+      head.append(document.createTextNode(`${tx.nickname || tx.actor || 'система'} — `));
+      if (tx.kind === 'RESOURCE_DELIVERY' || tx.kind === 'RESOURCE_PICKUP') {
+        head.insertAdjacentHTML('beforeend',
+          ['ore', 'polymers', 'plasma'].filter((key) => tx[key] > 0)
+            .map((key) => `${icon(key, 'sm')} ${fmt(tx[key])}`).join(' · '));
+      } else {
+        head.append(document.createTextNode(`${fmt(tx.amount)} `));
+        head.insertAdjacentHTML('beforeend', icon('credits', 'sm'));
+      }
       const meta = [TX_LABELS[tx.kind] || tx.kind];
       if (tx.kind === 'PAYOUT' && tx.actor) meta.push(`выдал ${tx.actor}`);
       if (tx.comment) meta.push(tx.comment);

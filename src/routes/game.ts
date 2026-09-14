@@ -12,7 +12,7 @@ import { getLeaderboard } from '../services/scoreService.js';
 import { getBuildingProjection } from '../services/buildingService.js';
 import { getTechnologyProjection } from '../services/technologyService.js';
 import { currentCommander, requireAuth, requireCommander } from './middleware.js';
-import { amountsOrNull, cargoOrNull, positiveInt, shipCountsOrNull } from './validation.js';
+import { cargoOrNull, positiveInt, shipCountsOrNull } from './validation.js';
 import type { BuildingProjection, TechnologyProjection } from '../types/socket.js';
 import type {
   ActionResponse,
@@ -228,19 +228,23 @@ interface FleetRequestBody {
   targetPlanetId?: unknown;
   targetHubId?: unknown;
   targetSystemId?: unknown;
+  targetSyndicateId?: unknown;
   mission?: unknown;
   ships?: Record<string, unknown>;
   cargo?: { ore?: unknown; polymers?: unknown; plasma?: unknown };
-  pickup?: { ore?: unknown; polymers?: unknown };
+  pickup?: { ore?: unknown; polymers?: unknown; plasma?: unknown };
   /** Оставить флот у цели. Действует только там, где выбор вообще есть. */
   oneWay?: unknown;
 }
 
-function readTarget(body: FleetRequestBody): { planetId?: string; hubId?: string; systemId?: string } {
-  const target: { planetId?: string; hubId?: string; systemId?: string } = {};
+function readTarget(
+  body: FleetRequestBody,
+): { planetId?: string; hubId?: string; systemId?: string; syndicateId?: string } {
+  const target: { planetId?: string; hubId?: string; systemId?: string; syndicateId?: string } = {};
   if (typeof body.targetPlanetId === 'string') target.planetId = body.targetPlanetId;
   if (typeof body.targetHubId === 'string') target.hubId = body.targetHubId;
   if (typeof body.targetSystemId === 'string') target.systemId = body.targetSystemId;
+  if (typeof body.targetSyndicateId === 'string') target.syndicateId = body.targetSyndicateId;
   return target;
 }
 
@@ -349,7 +353,7 @@ gameRouter.post('/bases/:baseId/fleets', async (req, res: Response<ActionRespons
 
   // Экспедиция без явной цели уходит в глубокий космос родной системы.
   const target = readTarget(body);
-  const targetless = !target.planetId && !target.hubId && !target.systemId;
+  const targetless = !target.planetId && !target.hubId && !target.systemId && !target.syndicateId;
   if (targetless && body.mission !== 'EXPEDITION') {
     res.status(400).json({ error: 'Не указана цель полета' });
     return;
@@ -362,7 +366,9 @@ gameRouter.post('/bases/:baseId/fleets', async (req, res: Response<ActionRespons
   }
 
   const cargo = cargoOrNull(body.cargo);
-  const pickup = amountsOrNull(body.pickup);
+  // Вывоз из Коша берет и плазму, поэтому запрос читается тем же разбором,
+  // что и груз: у хаба плазма в запросе просто будет нулем.
+  const pickup = cargoOrNull(body.pickup);
   if (!cargo || !pickup) {
     res.status(400).json({ error: 'Объем груза должен быть целым неотрицательным числом' });
     return;

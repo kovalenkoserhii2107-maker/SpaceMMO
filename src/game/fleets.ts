@@ -17,6 +17,8 @@ const FLEET_MISSIONS = [
   'EXPEDITION',
   'HARVEST',
   'COLONIZE',
+  'KISH_DELIVERY',
+  'KISH_PICKUP',
 ] as const;
 export type FleetMission = (typeof FLEET_MISSIONS)[number];
 
@@ -59,6 +61,8 @@ export const MISSION_LABELS: Record<FleetMission, string> = {
   SCAN: 'Разведка',
   HUB_DELIVERY: 'Доставка на хаб',
   HUB_PICKUP: 'Вывоз с хаба',
+  KISH_DELIVERY: 'Доставка в Кіш',
+  KISH_PICKUP: 'Вывоз из казны Коша',
   ATTACK: 'Атака',
   DEPLOY: 'Дислокация',
   EXPEDITION: 'Экспедиция',
@@ -69,6 +73,11 @@ export const MISSION_LABELS: Record<FleetMission, string> = {
 /** Миссии, летящие к торговому хабу, а не к планете. */
 export function isHubMission(mission: FleetMission): boolean {
   return mission === 'HUB_DELIVERY' || mission === 'HUB_PICKUP';
+}
+
+/** Рейс в Кіш своего синдиката: доставка в казну или вывоз из нее. */
+export function isKishMission(mission: FleetMission): boolean {
+  return mission === 'KISH_DELIVERY' || mission === 'KISH_PICKUP';
 }
 
 interface FlightProfile {
@@ -291,6 +300,9 @@ export function validateComposition(mission: FleetMission, ships: ShipCounts): s
   }
   if (isHubMission(mission) && fleetCapacity(ships) <= 0) {
     return 'Для рейса на хаб нужен корабль с трюмом';
+  }
+  if (isKishMission(mission) && fleetCapacity(ships) <= 0) {
+    return 'Для рейса в Кіш нужен корабль с трюмом';
   }
   // Обломки собирает только специализированный корабль: обычные трюмы
   // для этого не приспособлены, иначе переработчик был бы не нужен.

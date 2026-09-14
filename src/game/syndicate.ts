@@ -65,6 +65,9 @@ export function kishUpgradeCost(targetLevel: number): number {
   return Math.round(KISH_UPGRADE_BASE * Math.pow(KISH_UPGRADE_FACTOR, targetLevel - 2));
 }
 
+/** Орбита Коша в системе: станция стоит у звезды, как торговый хаб. */
+export const KISH_POSITION = 0;
+
 /* ------------------------- Дозор ------------------------- */
 
 /*

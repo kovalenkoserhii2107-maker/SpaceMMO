@@ -264,7 +264,8 @@ export interface FleetSnapshot {
   /** Системы концов рейса: по ним макро-карта рисует межзвездный перелет. */
   fromSystemId: string;
   toSystemId: string | null;
-  targetKind: 'PLANET' | 'HUB' | 'DEEP_SPACE';
+  targetKind: 'PLANET' | 'HUB' | 'DEEP_SPACE' | 'KISH';
+  targetSyndicateId: string | null;
   targetPlanetId: string | null;
   targetHubId: string | null;
   targetName: string;
@@ -291,6 +292,22 @@ export interface HubView {
   storage: { ore: number; polymers: number; level: number; capacity: number; free: number } | null;
 }
 
+/**
+ * Кіш синдиката на карте системы. Чужой Кіш виден как станция, но казна
+ * у него скрыта: сколько лежит у соседей, знают только сами соседи.
+ */
+export interface KishView {
+  syndicateId: string;
+  name: string;
+  tag: string;
+  level: number;
+  position: number;
+  own: boolean;
+  treasury: { ore: number; polymers: number; plasma: number } | null;
+  /** Может ли зритель вывозить из казны — есть ли у его ранга право выдачи. */
+  canPickup: boolean;
+}
+
 /** Карта системы с учетом тумана войны. */
 export interface SystemMap {
   systemId: string;
@@ -304,6 +321,7 @@ export interface SystemMap {
   isHome: boolean;
   planets: PlanetView[];
   hub: HubView | null;
+  kishes: KishView[];
 }
 
 /** Система на макро-карте галактики. */

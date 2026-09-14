@@ -202,6 +202,7 @@ model Syndicate {
   kishSystem   SolarSystem?            @relation("SyndicateKish", fields: [kishSystemId], references: [id], onDelete: SetNull)
   ranks        SyndicateRank[]
   codex        SyndicateCodexVersion[]
+  kishFleets   Fleet[]                 @relation("KishFleets")
   bank         SyndicateBank?
   applications SyndicateApplication[]
   transactions SyndicateTransaction[]
@@ -216,6 +217,11 @@ model SyndicateBank {
   id          String @id @default(cuid())
   syndicateId String @unique
   credits     Float  @default(0)
+  /// Ресурсная казна Коша. Привозят и вывозят ее флотом — логистика
+  /// остается частью игры, а не кнопкой «перевести».
+  ore         Float  @default(0)
+  polymers    Float  @default(0)
+  plasma      Float  @default(0)
 
   syndicate Syndicate @relation(fields: [syndicateId], references: [id], onDelete: Cascade)
 
@@ -233,6 +239,11 @@ model SyndicateTransaction {
   /// Кто совершил операцию, если это не сам участник строки: при выдаче
   /// из казны получатель — `commanderId`, выдавший — `actorId`.
   actorId     String?
+  /// Ресурсы операции. `amount` у ресурсных операций — сумма единиц:
+  /// по нему считается общий с гривной дневной лимит выдачи.
+  ore         Float           @default(0)
+  polymers    Float           @default(0)
+  plasma      Float           @default(0)
   createdAt   DateTime        @default(now())
 
   syndicate Syndicate  @relation(fields: [syndicateId], references: [id], onDelete: Cascade)
@@ -349,6 +360,8 @@ enum SyndicateTxKind {
   ENTRY_FEE
   KISH_UPGRADE
   WATCH_UPGRADE
+  RESOURCE_DELIVERY
+  RESOURCE_PICKUP
 }
 
 enum SyndicatePermission {
@@ -742,16 +755,19 @@ model ShipJob {
 
 /// Полет флота между планетами. Время в пути и возврат считает Game Loop.
 model Fleet {
-  id             String  @id @default(cuid())
-  commanderId    String
+  id                String  @id @default(cuid())
+  commanderId       String
   /// База отправления — туда вернется флот и оттуда списано топливо.
-  originBaseId   String
-  originPlanetId String
+  originBaseId      String
+  originPlanetId    String
   /// Цель полета: планета или торговый хаб (заполнено ровно одно поле).
-  targetPlanetId String?
-  targetHubId    String?
+  targetPlanetId    String?
+  targetHubId       String?
   /// Цель экспедиции: глубокий космос указанной системы.
-  targetSystemId String?
+  targetSystemId    String?
+  /// Рейс в Кіш синдиката. Кіш не планета: место определяет синдикат,
+  /// а при роспуске в пути ссылка обнуляется и груз летит домой.
+  targetSyndicateId String?
 
   mission FleetMission
   status  FleetStatus  @default(OUTBOUND)
@@ -780,6 +796,7 @@ model Fleet {
   /// Сколько запрошено к вывозу с хаба (для миссии HUB_PICKUP).
   pickupOre      Float @default(0)
   pickupPolymers Float @default(0)
+  pickupPlasma   Float @default(0)
 
   /// Сожженная плазма за весь маршрут (списана при отправке).
   fuelSpent       Float
@@ -800,12 +817,13 @@ model Fleet {
   returnsAt  DateTime
   createdAt  DateTime @default(now())
 
-  commander    Commander    @relation(fields: [commanderId], references: [id], onDelete: Cascade)
-  originBase   Base         @relation(fields: [originBaseId], references: [id], onDelete: Cascade)
-  originPlanet Planet       @relation("FleetOrigin", fields: [originPlanetId], references: [id], onDelete: Cascade)
-  targetPlanet Planet?      @relation("FleetTarget", fields: [targetPlanetId], references: [id], onDelete: Cascade)
-  targetHub    TradeHub?    @relation(fields: [targetHubId], references: [id], onDelete: Cascade)
-  targetSystem SolarSystem? @relation(fields: [targetSystemId], references: [id], onDelete: Cascade)
+  commander       Commander    @relation(fields: [commanderId], references: [id], onDelete: Cascade)
+  originBase      Base         @relation(fields: [originBaseId], references: [id], onDelete: Cascade)
+  targetSyndicate Syndicate?   @relation("KishFleets", fields: [targetSyndicateId], references: [id], onDelete: SetNull)
+  originPlanet    Planet       @relation("FleetOrigin", fields: [originPlanetId], references: [id], onDelete: Cascade)
+  targetPlanet    Planet?      @relation("FleetTarget", fields: [targetPlanetId], references: [id], onDelete: Cascade)
+  targetHub       TradeHub?    @relation(fields: [targetHubId], references: [id], onDelete: Cascade)
+  targetSystem    SolarSystem? @relation(fields: [targetSystemId], references: [id], onDelete: Cascade)
 
   @@index([status, arrivesAt])
   @@index([status, returnsAt])
@@ -1026,6 +1044,8 @@ enum FleetMission {
   EXPEDITION
   HARVEST
   COLONIZE
+  KISH_DELIVERY
+  KISH_PICKUP
 }
 
 enum ExpeditionOutcome {

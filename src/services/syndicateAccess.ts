@@ -161,3 +161,23 @@ export async function sameSyndicate(firstId: string, secondId: string): Promise<
   });
   return rows.length === 2 && rows[0]!.syndicateId !== null && rows[0]!.syndicateId === rows[1]!.syndicateId;
 }
+
+/**
+ * Сколько выдал из казны сам выдающий за скользящие сутки.
+ *
+ * Гривна и ресурсы идут в один лимит единица за единицу: деление на два
+ * лимита позволило бы вывести и то и другое, а защищает лимит от одного —
+ * от офицера, который выносит казну и уходит.
+ */
+export async function withdrawnToday(
+  syndicateId: string,
+  actorId: string,
+  client: Tx | typeof prisma = prisma,
+): Promise<number> {
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const sum = await client.syndicateTransaction.aggregate({
+    where: { syndicateId, actorId, kind: { in: ['PAYOUT', 'RESOURCE_PICKUP'] }, createdAt: { gte: since } },
+    _sum: { amount: true },
+  });
+  return sum._sum.amount ?? 0;
+}

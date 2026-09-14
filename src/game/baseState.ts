@@ -111,7 +111,8 @@ export interface FleetRuntimeState {
   toSystemId: string | null;
   originPlanetName: string;
   /// Цель — планета или торговый хаб.
-  targetKind: 'PLANET' | 'HUB' | 'DEEP_SPACE';
+  targetKind: 'PLANET' | 'HUB' | 'DEEP_SPACE' | 'KISH';
+  targetSyndicateId: string | null;
   targetPlanetId: string | null;
   targetHubId: string | null;
   targetName: string;
@@ -726,6 +727,7 @@ export function fleetSnapshots(commander: CommanderRuntimeState, now: number): F
       fromSystemId: fleet.fromSystemId,
       toSystemId: fleet.toSystemId,
       targetKind: fleet.targetKind,
+      targetSyndicateId: fleet.targetSyndicateId,
       targetPlanetId: fleet.targetPlanetId,
       targetHubId: fleet.targetHubId,
       targetName: fleet.targetName,
