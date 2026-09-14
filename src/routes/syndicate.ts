@@ -26,6 +26,8 @@ import {
   updateRules,
   upgradeKish,
   upgradeWatch,
+  buildGate,
+  moveKish,
   upgradeAcademy,
   startSyndicateResearch,
   type RankInput,
@@ -223,6 +225,26 @@ syndicateRouter.post('/codex', async (req, res: Response<ActionResponse | ErrorR
 /** Повысить Кіш из казны. */
 syndicateRouter.post('/kish/upgrade', async (req, res: Response<ActionResponse | ErrorResponse>) => {
   send(res, await upgradeKish(currentCommander(req).id));
+});
+
+/** Построить или повысить Браму в системе. */
+syndicateRouter.post('/gates', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const systemId = (req.body as { systemId?: unknown } | undefined)?.systemId;
+  if (typeof systemId !== 'string') {
+    res.status(400).json({ error: 'Не указана система' });
+    return;
+  }
+  send(res, await buildGate(currentCommander(req).id, systemId));
+});
+
+/** Перенести Кіш в систему со своей Брамой. */
+syndicateRouter.post('/kish/move', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const systemId = (req.body as { systemId?: unknown } | undefined)?.systemId;
+  if (typeof systemId !== 'string') {
+    res.status(400).json({ error: 'Не указана система' });
+    return;
+  }
+  send(res, await moveKish(currentCommander(req).id, systemId));
 });
 
 /** Построить или повысить Академію из казны. */

@@ -53,13 +53,12 @@ export function memberCap(kishLevel: number): number {
 }
 
 /*
- * Цена уровня Коша удваивается. Второй уровень — 25 тысяч: столько синдикат
- * из трех активных игроков собирает за вечер, и первое расширение не должно
- * быть стеной. Десятый уровень (двенадцать участников) — уже 6.4 миллиона,
- * заметная доля денежной массы сервера: большой синдикат оплачивает свой
+ * Цена уровня Коша удваивается. Постройки синдиката — дорогая общая цель,
+ * на которую копят вместе: второй уровень стоит 250 тысяч, десятый
+ * (двенадцать участников) — 64 миллиона. Большой синдикат оплачивает свой
  * размер, и это же работает стоком криптогривны.
  */
-export const KISH_UPGRADE_BASE = 25_000;
+export const KISH_UPGRADE_BASE = 250_000;
 export const KISH_UPGRADE_FACTOR = 2;
 
 export function kishUpgradeCost(targetLevel: number): number {
@@ -82,7 +81,7 @@ export const KISH_POSITION = 0;
  * и купленная за гривну постройка не должна ее обходить.
  */
 export const WATCH_RADIUS_STEP = 3;
-export const WATCH_UPGRADE_BASE = 20_000;
+export const WATCH_UPGRADE_BASE = 200_000;
 
 export function watchRadius(level: number): number {
   if (level <= 0) return -1;
@@ -93,7 +92,7 @@ export function isWatched(level: number, distanceFromKish: number): boolean {
   return level > 0 && distanceFromKish <= watchRadius(level);
 }
 
-/** Первый уровень — 20 тысяч, дальше удваивается, как у Коша. */
+/** Первый уровень — 200 тысяч, дальше удваивается, как у Коша. */
 export function watchUpgradeCost(targetLevel: number): number {
   if (targetLevel <= 0) return 0;
   return Math.round(WATCH_UPGRADE_BASE * Math.pow(2, targetLevel - 1));
@@ -166,9 +165,9 @@ export function syndicateTechCost(targetLevel: number): TreasuryCost {
 export function academyUpgradeCost(targetLevel: number): TreasuryCost {
   const scale = Math.pow(2, Math.max(0, targetLevel - 1));
   return {
-    credits: Math.round(30_000 * scale),
-    ore: Math.round(20_000 * scale),
-    polymers: Math.round(20_000 * scale),
+    credits: Math.round(300_000 * scale),
+    ore: Math.round(200_000 * scale),
+    polymers: Math.round(200_000 * scale),
   };
 }
 
@@ -232,6 +231,58 @@ export function syndicateBuffs(levels: SyndicateTechLevels, joinedAt: number | n
     vault: 1 + step('VAULT'),
     counterIntel: Math.floor(Math.max(0, levels.COUNTERINTEL) / 3),
   };
+}
+
+/* ------------------------- Брама и перенос Коша ------------------------- */
+
+/*
+ * Брама — врата синдиката в отдельной системе. Флоты участников прыгают
+ * между любыми двумя системами, где стоят Брамы их синдиката, без
+ * «Гипердвигателя», за треть антиматерии обычного прыжка и за две минуты
+ * самого прыжка — к нему прибавляется только полет по орбитам до врат
+ * и от них. Пропускная способность ограничена: иначе врата заменили бы
+ * гипердвигатель целиком, и расстояния в галактике перестали бы значить.
+ */
+/*
+ * Брама — самая дорогая постройка синдиката: услуга, на которую копят.
+ * Дешевые врата заменили бы гипердвигатель каждому, а дорогие остаются
+ * решением синдиката, где их ставить.
+ */
+export const BRAMA_BASE = { credits: 500_000, ore: 500_000, polymers: 500_000 } as const;
+export const BRAMA_THROUGHPUT_PER_LEVEL = 200;
+export const GATE_ANTIMATTER_SHARE = 0.3;
+export const GATE_JUMP_SECONDS = 120;
+/** Врата стоят у звезды, как хаб и Кіш. */
+export const GATE_POSITION = 0;
+
+export function bramaUpgradeCost(targetLevel: number): TreasuryCost {
+  const scale = Math.pow(2, Math.max(0, targetLevel - 1));
+  return {
+    credits: Math.round(BRAMA_BASE.credits * scale),
+    ore: Math.round(BRAMA_BASE.ore * scale),
+    polymers: Math.round(BRAMA_BASE.polymers * scale),
+  };
+}
+
+/** Сколько кораблей Брама пропускает за час. */
+export function bramaThroughput(level: number): number {
+  return BRAMA_THROUGHPUT_PER_LEVEL * Math.max(0, Math.floor(level));
+}
+
+/*
+ * Перенос Коша — только в систему со своей Брамой и только за антиматерию
+ * из казны, пропорционально расстоянию. Не чаще раза в сутки: иначе от любого
+ * набега уходили бы одной кнопкой.
+ */
+export const KISH_MOVE_ANTIMATTER_PER_DISTANCE = 500;
+export const KISH_MOVE_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+
+export function kishMoveCost(distance: number): number {
+  return Math.max(1, Math.ceil(Math.max(0, distance) * KISH_MOVE_ANTIMATTER_PER_DISTANCE));
+}
+
+export function kishMoveAvailableAt(movedAt: number | null): number {
+  return movedAt === null ? 0 : movedAt + KISH_MOVE_COOLDOWN_MS;
 }
 
 /* ------------------------- Налог ------------------------- */

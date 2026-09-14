@@ -3395,3 +3395,6 @@ button.tiny { padding: 4px 10px; font-size: 11px; flex: none; }
 .watch-alert { border-left: 3px solid var(--err); }
 /* Переключатель таблиц синдикатов над самой таблицей. */
 .rating-boards { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 10px; }
+
+/* Своя Брама и Кіш над системой на карте галактики. */
+.system-label.gate-badge { fill: var(--accent); font-weight: 600; }

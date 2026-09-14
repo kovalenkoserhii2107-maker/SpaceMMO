@@ -339,6 +339,10 @@ export interface GalaxySystemView {
   colonized: boolean;
   /** Сколько планет системы игрок успел разведать. */
   scannedPlanets: number;
+  /** Уровень Брамы своего синдиката в системе; `null` — Брамы нет. */
+  syndicateGate: number | null;
+  /** Здесь стоит Кіш своего синдиката. */
+  ownKish: boolean;
 }
 
 export interface GalaxyMap {

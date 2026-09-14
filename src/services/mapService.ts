@@ -200,7 +200,7 @@ export async function buildGalaxyMap(commanderId: string): Promise<GalaxyMap | n
   });
   if (!home) return null;
 
-  const [systems, scans] = await Promise.all([
+  const [systems, scans, member] = await Promise.all([
     prisma.solarSystem.findMany({
       orderBy: [{ galaxyX: 'asc' }, { galaxyY: 'asc' }],
       include: {
@@ -208,7 +208,13 @@ export async function buildGalaxyMap(commanderId: string): Promise<GalaxyMap | n
       },
     }),
     prisma.planetScan.findMany({ where: { commanderId }, select: { planetId: true } }),
+    prisma.commander.findUnique({
+      where: { id: commanderId },
+      select: { syndicate: { select: { kishSystemId: true, gates: { select: { systemId: true, level: true } } } } },
+    }),
   ]);
+  // Сеть своих Брам и Кіш на карте галактики: по ним видно, куда можно прыгнуть без гипердвигателя.
+  const gateLevel = new Map((member?.syndicate?.gates ?? []).map((gate) => [gate.systemId, gate.level]));
 
   const scanned = new Set(scans.map((scan) => scan.planetId));
 
@@ -226,6 +232,8 @@ export async function buildGalaxyMap(commanderId: string): Promise<GalaxyMap | n
       hasOwnColony: system.planets.some((planet) => planet.base?.commanderId === commanderId),
       colonized: system.planets.some((planet) => planet.base !== null),
       scannedPlanets: system.planets.filter((planet) => scanned.has(planet.id)).length,
+      syndicateGate: gateLevel.get(system.id) ?? null,
+      ownKish: member?.syndicate?.kishSystemId === system.id,
     })),
   };
 }

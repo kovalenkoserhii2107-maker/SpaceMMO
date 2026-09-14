@@ -75,6 +75,7 @@ import {
   type SyndicateTechState,
 } from '../services/syndicateAccess.js';
 import {
+  bramaThroughput,
   effectiveTaxRate,
   emptySyndicateTechLevels,
   hasPermission,
@@ -882,7 +883,7 @@ class GameLoop {
     target: { planetId?: string; hubId?: string; systemId?: string; syndicateId?: string },
     mission: FleetMission,
     ships: ShipCounts,
-    cargo: { ore: number; polymers: number; plasma: number },
+    cargo: { ore: number; polymers: number; plasma: number; antimatter?: number },
     pickup: { ore: number; polymers: number; plasma?: number } = { ore: 0, polymers: 0 },
     /** Оставить флот в точке назначения. Учитывается только там, где есть выбор. */
     requestedOneWay = false,
@@ -926,6 +927,8 @@ class GameLoop {
     let targetHubId: string | null = null;
     let targetSystemId: string | null = null;
     let targetSyndicateId: string | null = null;
+    // Система цели — по ней решается, можно ли лететь через Браму.
+    let targetSystemRef: string | null = null;
 
     if (mission === 'EXPEDITION') {
       const system = target.systemId
@@ -934,6 +937,7 @@ class GameLoop {
       if (!system) return { ok: false, error: 'Система не найдена' };
 
       targetSystemId = system.id;
+      targetSystemRef = system.id;
       target_ = { position: DEEP_SPACE_POSITION, system };
     } else if (isKishMission(mission)) {
       /*
@@ -967,6 +971,7 @@ class GameLoop {
         }
       }
       targetSyndicateId = syndicate.id;
+      targetSystemRef = syndicate.kishSystem.id;
       target_ = { position: KISH_POSITION, system: syndicate.kishSystem };
     } else if (isHubMission(mission)) {
       const hub = target.hubId
@@ -977,6 +982,7 @@ class GameLoop {
           });
       if (!hub) return { ok: false, error: 'Торговый хаб не найден' };
       targetHubId = hub.id;
+      targetSystemRef = hub.systemId;
       target_ = { position: hub.position, system: hub.system };
     } else {
       if (!target.planetId) return { ok: false, error: 'Не указана планета назначения' };
@@ -1048,6 +1054,7 @@ class GameLoop {
       }
 
       targetPlanetId = planet.id;
+      targetSystemRef = planet.systemId;
       target_ = { position: planet.position, system: planet.system };
     }
 
@@ -1062,7 +1069,13 @@ class GameLoop {
         : cargo;
     // Трюмы участника синдиката шире на «Обозные трюмы» — и груз, и запрос на вывоз.
     const senderBuffs = commanderSyndicateBuffs(commander);
-    const cargoError = validateCargo(ships, outboundCargo, senderBuffs.cargo);
+    // Антиматерию везут только в казну Коша — на перенос Коша через Браму.
+    const antimatterCargo = mission === 'KISH_DELIVERY' ? Math.max(0, Math.floor(cargo.antimatter ?? 0)) : 0;
+    const cargoError = validateCargo(
+      ships,
+      { ...outboundCargo, plasma: outboundCargo.plasma + antimatterCargo },
+      senderBuffs.cargo,
+    );
     if (cargoError) return { ok: false, error: cargoError };
     if (outboundCargo.ore > base.resources.ore || outboundCargo.polymers > base.resources.polymers) {
       return { ok: false, error: 'Недостаточно ресурсов для загрузки' };
@@ -1086,30 +1099,44 @@ class GameLoop {
       }
     }
 
+    /*
+     * Через Браму — если в системе вылета и в системе цели стоят Брамы своего
+     * синдиката и у врат вылета осталась пропускная способность. Иначе обычный
+     * гиперпрыжок, если есть «Гипердвигатель».
+     */
+    const gateSize = fleetSize(ships);
+    let viaGate = false;
+    let gateNote = '';
+    if (targetSystemRef && targetSystemRef !== base.systemId) {
+      const gate = await this.gateRoute(commanderId, base.systemId, targetSystemRef, gateSize);
+      viaGate = gate.usable;
+      gateNote = gate.reason ? ` (${gate.reason})` : '';
+    }
+
     const plan = planFlight(
       ships,
       commander.techs,
       { position: base.position, system: base.galaxy },
       target_,
-      { oneWay, cargoMultiplier: senderBuffs.cargo },
+      { oneWay, cargoMultiplier: senderBuffs.cargo, viaGate },
     );
 
-    // Межзвездный прыжок возможен только с гипердвигателем и идет на антиматерии.
-    if (plan.kind === 'INTERSTELLAR') {
-      if (!canJump(commander.techs)) {
-        return { ok: false, error: 'Для межзвездного прыжка нужен «Гипердвигатель»' };
-      }
-      if (base.resources.antimatter < plan.antimatter) {
-        return {
-          ok: false,
-          error: `Не хватает антиматерии: нужно ${plan.antimatter}, на базе ${Math.floor(base.resources.antimatter)}`,
-        };
-      }
+    // Межзвездный прыжок без Брамы возможен только с гипердвигателем; антиматерия нужна обоим.
+    if (plan.kind === 'INTERSTELLAR' && !plan.viaGate && !canJump(commander.techs)) {
+      return { ok: false, error: `Для межзвездного прыжка нужен «Гипердвигатель» или Брама синдиката${gateNote}` };
+    }
+    if (base.resources.antimatter < plan.antimatter + antimatterCargo) {
+      return {
+        ok: false,
+        error:
+          `Не хватает антиматерии: нужно ${plan.antimatter + antimatterCargo}, ` +
+          `на базе ${Math.floor(base.resources.antimatter)}`,
+      };
     }
 
     // Плазма уходит и в баки, и в трюмы — проверяем сумму, иначе флот
     // улетал бы на топливе, которое сам же и увез грузом.
-    const plasmaNeeded = (plan.kind === 'INTERSTELLAR' ? 0 : plan.fuel) + outboundCargo.plasma;
+    const plasmaNeeded = plan.fuel + outboundCargo.plasma;
     if (base.resources.plasma < plasmaNeeded) {
       return {
         ok: false,
@@ -1126,7 +1153,13 @@ class GameLoop {
     base.resources.ore -= outboundCargo.ore;
     base.resources.polymers -= outboundCargo.polymers;
     base.resources.plasma -= plan.fuel + outboundCargo.plasma;
-    base.resources.antimatter -= plan.antimatter;
+    // Пропускная способность резервируется последней, перед самим вылетом:
+    // отказ после резерва занимал бы место в окне Брамы зря.
+    if (plan.viaGate && !(await this.reserveGate(commanderId, base.systemId, gateSize))) {
+      return { ok: false, error: 'Брама вылета только что заполнилась — попробуй через минуту или гиперпрыжком' };
+    }
+
+    base.resources.antimatter -= plan.antimatter + antimatterCargo;
     for (const type of SHIP_TYPES) base.ships[type] -= ships[type];
     base.dirty = true;
     base.jobsDirty = true;
@@ -1158,12 +1191,14 @@ class GameLoop {
         cargoOre: outboundCargo.ore,
         cargoPolymers: outboundCargo.polymers,
         cargoPlasma: outboundCargo.plasma,
+        cargoAntimatter: antimatterCargo,
         pickupOre: request.ore,
         pickupPolymers: request.polymers,
         pickupPlasma: request.plasma,
         fuelSpent: plan.fuel,
         antimatterSpent: plan.antimatter,
         interstellar: plan.kind === 'INTERSTELLAR',
+        viaGate: plan.viaGate === true,
         distance: plan.distance,
         speed: plan.speed,
         departedAt: new Date(now),
@@ -1182,7 +1217,7 @@ class GameLoop {
         mission === 'EXPEDITION'
           ? `Экспедиция стартовала: ${fleetSize(ships)} кораблей, до точки ${plan.flightSeconds} с`
           : plan.kind === 'INTERSTELLAR'
-          ? `Гиперпрыжок: ${fleetSize(ships)} кораблей, в пути ${plan.flightSeconds} с, ` +
+          ? `${plan.viaGate ? 'Через Браму' : 'Гиперпрыжок'}: ${fleetSize(ships)} кораблей, в пути ${plan.flightSeconds} с, ` +
             `сожжено ${plan.antimatter} антиматерии`
           : `Флот вылетел: ${fleetSize(ships)} кораблей, в пути ${plan.flightSeconds} с, ` +
             `сожжено ${plan.fuel} плазмы`,
@@ -1292,34 +1327,83 @@ class GameLoop {
     this.emitUser(commanderId);
   }
 
-  /** Орбита и координаты системы цели — нужны для предрасчета маршрута. */
+  /** Орбита, координаты и система цели — нужны для предрасчета маршрута. */
   async getTargetLocation(
     target: { planetId?: string; hubId?: string; systemId?: string; syndicateId?: string },
-  ): Promise<{ position: number; system: { galaxyX: number; galaxyY: number } } | null> {
+  ): Promise<{ position: number; system: { galaxyX: number; galaxyY: number }; systemId: string } | null> {
     if (target.syndicateId) {
       const syndicate = await prisma.syndicate.findUnique({
         where: { id: target.syndicateId },
         include: { kishSystem: true },
       });
-      return syndicate?.kishSystem ? { position: KISH_POSITION, system: syndicate.kishSystem } : null;
+      return syndicate?.kishSystem
+        ? { position: KISH_POSITION, system: syndicate.kishSystem, systemId: syndicate.kishSystem.id }
+        : null;
     }
     if (target.systemId) {
       const system = await prisma.solarSystem.findUnique({ where: { id: target.systemId } });
-      return system ? { position: DEEP_SPACE_POSITION, system } : null;
+      return system ? { position: DEEP_SPACE_POSITION, system, systemId: system.id } : null;
     }
     if (target.hubId) {
       const hub = await prisma.tradeHub.findUnique({
         where: { id: target.hubId },
         include: { system: true },
       });
-      return hub ? { position: hub.position, system: hub.system } : null;
+      return hub ? { position: hub.position, system: hub.system, systemId: hub.systemId } : null;
     }
     if (!target.planetId) return null;
     const planet = await prisma.planet.findUnique({
       where: { id: target.planetId },
       include: { system: true },
     });
-    return planet ? { position: planet.position, system: planet.system } : null;
+    return planet ? { position: planet.position, system: planet.system, systemId: planet.systemId } : null;
+  }
+
+  /**
+   * Можно ли лететь через Браму: Брамы своего синдиката в обеих системах
+   * и свободное место в часовом окне врат вылета. `reason` объясняет,
+   * почему нельзя, когда врата есть, но не пропустят.
+   */
+  async gateRoute(
+    commanderId: string,
+    fromSystemId: string,
+    toSystemId: string,
+    shipCount: number,
+  ): Promise<{ usable: boolean; reason: string | null }> {
+    const member = await prisma.commander.findUnique({ where: { id: commanderId }, select: { syndicateId: true } });
+    if (!member?.syndicateId || fromSystemId === toSystemId) return { usable: false, reason: null };
+    const gates = await prisma.syndicateGate.findMany({
+      where: { syndicateId: member.syndicateId, systemId: { in: [fromSystemId, toSystemId] } },
+    });
+    const fromGate = gates.find((gate) => gate.systemId === fromSystemId);
+    const toGate = gates.find((gate) => gate.systemId === toSystemId);
+    if (!fromGate || !toGate) return { usable: false, reason: null };
+    const windowOpen = Date.now() - fromGate.windowStartedAt.getTime() < GATE_WINDOW_MS;
+    const used = windowOpen ? fromGate.windowShips : 0;
+    const limit = bramaThroughput(fromGate.level);
+    if (used + shipCount > limit) {
+      return { usable: false, reason: `Брама пропустила за час ${used} из ${limit} кораблей` };
+    }
+    return { usable: true, reason: null };
+  }
+
+  /** Резерв места в часовом окне Брамы вылета — одним условным UPDATE, без гонок. */
+  private async reserveGate(commanderId: string, fromSystemId: string, shipCount: number): Promise<boolean> {
+    const member = await prisma.commander.findUnique({ where: { id: commanderId }, select: { syndicateId: true } });
+    if (!member?.syndicateId) return false;
+    const gate = await prisma.syndicateGate.findUnique({
+      where: { syndicateId_systemId: { syndicateId: member.syndicateId, systemId: fromSystemId } },
+    });
+    if (!gate) return false;
+    const limit = bramaThroughput(gate.level);
+    const expired = new Date(Date.now() - GATE_WINDOW_MS);
+    const updated = await prisma.$executeRaw`
+      UPDATE syndicate_gates SET
+        "windowShips" = CASE WHEN "windowStartedAt" < ${expired} THEN ${shipCount} ELSE "windowShips" + ${shipCount} END,
+        "windowStartedAt" = CASE WHEN "windowStartedAt" < ${expired} THEN NOW() ELSE "windowStartedAt" END
+      WHERE id = ${gate.id}
+        AND (CASE WHEN "windowStartedAt" < ${expired} THEN ${shipCount} ELSE "windowShips" + ${shipCount} END) <= ${limit}`;
+    return updated > 0;
   }
 
   /** Заказ стационарной обороны. Очередь своя, но правила те же, что у кораблей. */
@@ -2656,8 +2740,13 @@ class GameLoop {
         where: { id: fleet.commanderId },
         select: { syndicateId: true },
       });
-      const cargo = { ore: fleet.cargoOre, polymers: fleet.cargoPolymers, plasma: fleet.cargoPlasma };
-      const units = Math.floor(cargo.ore + cargo.polymers + cargo.plasma);
+      const cargo = {
+        ore: fleet.cargoOre,
+        polymers: fleet.cargoPolymers,
+        plasma: fleet.cargoPlasma,
+        antimatter: fleet.cargoAntimatter,
+      };
+      const units = Math.floor(cargo.ore + cargo.polymers + cargo.plasma + cargo.antimatter);
       const back = () => tx.fleet.update({ where: { id: fleet.id }, data: { status: 'RETURNING' } });
       if (owner?.syndicateId !== syndicateId || units <= 0) {
         await back();
@@ -2670,6 +2759,7 @@ class GameLoop {
           ore: { increment: cargo.ore },
           polymers: { increment: cargo.polymers },
           plasma: { increment: cargo.plasma },
+          antimatter: { increment: cargo.antimatter },
         },
       });
       if (stored.count === 0) {
@@ -2687,11 +2777,12 @@ class GameLoop {
           ore: cargo.ore,
           polymers: cargo.polymers,
           plasma: cargo.plasma,
+          antimatter: cargo.antimatter,
         },
       });
       await tx.fleet.update({
         where: { id: fleet.id },
-        data: { status: 'RETURNING', cargoOre: 0, cargoPolymers: 0, cargoPlasma: 0 },
+        data: { status: 'RETURNING', cargoOre: 0, cargoPolymers: 0, cargoPlasma: 0, cargoAntimatter: 0 },
       });
     });
   }
@@ -3278,6 +3369,9 @@ function shipsLost(before: ShipCounts, after: ShipCounts): ShipCounts {
   for (const type of SHIP_TYPES) lost[type] = Math.max(0, before[type] - after[type]);
   return lost;
 }
+
+/** Часовое окно пропускной способности Брамы. */
+const GATE_WINDOW_MS = 60 * 60 * 1000;
 
 /** Уровни технологий синдиката из строк базы. */
 function syndicateTechLevelsFrom(rows: Array<{ tech: SyndicateTech; level: number }>): SyndicateTechLevels {

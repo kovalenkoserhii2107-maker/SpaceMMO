@@ -7,6 +7,11 @@
  */
 import {
   BUFF_TENURE_MS,
+  KISH_MOVE_COOLDOWN_MS,
+  bramaThroughput,
+  bramaUpgradeCost,
+  kishMoveAvailableAt,
+  kishMoveCost,
   DEFAULT_RANKS,
   academyUpgradeCost,
   effectiveSyndicateTechs,
@@ -44,8 +49,8 @@ console.log('\n=== 1. Кіш задает предел состава ===');
   check('каждый уровень добавляет одного', memberCap(2) === 4 && memberCap(10) === 12);
   check('нулевой и дробный уровень не ломают предел', memberCap(0) === 3 && memberCap(2.9) === 4);
   check('первый уровень бесплатен', kishUpgradeCost(1) === 0);
-  check('второй стоит 25 тысяч, дальше удваивается',
-    kishUpgradeCost(2) === 25_000 && kishUpgradeCost(3) === 50_000 && kishUpgradeCost(10) === 6_400_000);
+  check('второй стоит 250 тысяч, дальше удваивается',
+    kishUpgradeCost(2) === 250_000 && kishUpgradeCost(3) === 500_000 && kishUpgradeCost(10) === 64_000_000);
 }
 
 console.log('\n=== 1б. Дозор ===');
@@ -54,8 +59,8 @@ console.log('\n=== 1б. Дозор ===');
   check('первый уровень смотрит только за системой Коша', isWatched(1, 0) && !isWatched(1, 0.5));
   check('каждый уровень расширяет круг на три единицы', watchRadius(2) === 3 && watchRadius(7) === 18);
   check('граница круга включается', isWatched(3, 6) && !isWatched(3, 6.01));
-  check('первый уровень стоит 20 тысяч, дальше удваивается',
-    watchUpgradeCost(1) === 20_000 && watchUpgradeCost(2) === 40_000 && watchUpgradeCost(5) === 320_000);
+  check('первый уровень стоит 200 тысяч, дальше удваивается',
+    watchUpgradeCost(1) === 200_000 && watchUpgradeCost(2) === 400_000 && watchUpgradeCost(5) === 3_200_000);
 }
 
 console.log('\n=== 1в. Академія и технологии ===');
@@ -65,7 +70,7 @@ console.log('\n=== 1в. Академія и технологии ===');
   check('первый уровень технологии — базовая цена', first.credits === 10_000 && first.ore === 10_000);
   check('каждый уровень втрое дороже предыдущего',
     syndicateTechCost(2).credits === 30_000 && seventh.credits === 7_290_000, `седьмой ${seventh.credits}`);
-  check('Академія дорожает вдвое', academyUpgradeCost(1).credits === 30_000 && academyUpgradeCost(3).credits === 120_000);
+  check('Академія дорожает вдвое', academyUpgradeCost(1).credits === 300_000 && academyUpgradeCost(3).credits === 1_200_000);
   check('лишние уровни Академії ускоряют изучение',
     syndicateResearchSeconds(3, 5) < syndicateResearchSeconds(3, 3), `${syndicateResearchSeconds(3, 3)} с → ${syndicateResearchSeconds(3, 5)} с`);
 
@@ -81,6 +86,14 @@ console.log('\n=== 1в. Академія и технологии ===');
   const done = effectiveSyndicateTechs(emptySyndicateTechLevels(), { tech: 'CARGO', targetLevel: 2, finishesAt: 100 }, 100);
   const pending = effectiveSyndicateTechs(emptySyndicateTechLevels(), { tech: 'CARGO', targetLevel: 2, finishesAt: 101 }, 100);
   check('завершенное по сроку изучение действует до записи', done.CARGO === 2 && pending.CARGO === 0);
+}
+
+console.log('\n=== 1г. Брама и перенос Коша ===');
+{
+  check('первый уровень Брамы — по 500 тысяч, дальше вдвое', bramaUpgradeCost(1).ore === 500_000 && bramaUpgradeCost(3).credits === 2_000_000);
+  check('пропускная способность — 200 кораблей в час за уровень', bramaThroughput(1) === 200 && bramaThroughput(4) === 800);
+  check('перенос Коша — 500 антиматерии за единицу расстояния', kishMoveCost(4.5) === 2250 && kishMoveCost(0) === 1);
+  check('перенос не чаще раза в сутки', kishMoveAvailableAt(1000) === 1000 + KISH_MOVE_COOLDOWN_MS && kishMoveAvailableAt(null) === 0);
 }
 
 console.log('\n=== 2. Налог с фермы ===');

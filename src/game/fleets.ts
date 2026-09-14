@@ -2,6 +2,7 @@
  * Логистика: дальность, время в пути, грузоподъемность и расход топлива.
  * Модуль чистый: только формулы, без обращения к БД.
  */
+import { GATE_ANTIMATTER_SHARE, GATE_JUMP_SECONDS, GATE_POSITION } from './syndicate.js';
 import type { ResourceAmounts } from './rules.js';
 import type { TechLevels } from './techTree.js';
 import { SHIP_TYPES, shipLabel, type ShipCounts, type ShipType } from './ships.js';
@@ -211,6 +212,8 @@ export interface FlightPlan {
   fuel: number;
   /** Расход антиматерии (межзвездный прыжок). */
   antimatter: number;
+  /** Прыжок через Браму синдиката, а не гипердвигателем. */
+  viaGate?: boolean;
 }
 
 /**
@@ -226,7 +229,7 @@ export function planFlight(
   techs: TechLevels,
   from: { position: number; system: GalaxyPoint },
   to: { position: number; system: GalaxyPoint },
-  options: { oneWay?: boolean; cargoMultiplier?: number } = {},
+  options: { oneWay?: boolean; cargoMultiplier?: number; viaGate?: boolean } = {},
 ): FlightPlan {
   // Дислокация не возвращается, поэтому и топливо за обратный путь не берем.
   const trips = options.oneWay ? 1 : 2;
@@ -248,6 +251,29 @@ export function planFlight(
   }
 
   const distance = galaxyDistance(from.system, to.system);
+
+  /*
+   * Через Браму: до врат своей системы по орбитам на плазме, короткий прыжок
+   * и от врат по орбитам к цели. Антиматерии — треть обычного прыжка,
+   * гипердвигатель не нужен и не ускоряет: прыжок делают врата, а не корабль.
+   */
+  if (options.viaGate) {
+    const toGate = flightSeconds(ships, techs, orbitDistance(from.position, GATE_POSITION));
+    const fromGate = flightSeconds(ships, techs, orbitDistance(GATE_POSITION, to.position));
+    const seconds = toGate + GATE_JUMP_SECONDS + fromGate;
+    const neutral = { ...techs, HYPERDRIVE: 0 };
+    return {
+      kind: 'INTERSTELLAR',
+      distance,
+      speed: Math.round(fleetSpeed(ships, techs)),
+      flightSeconds: seconds,
+      capacity: fleetCapacity(ships, options.cargoMultiplier),
+      fuel: fuelCost(ships, toGate + fromGate, trips),
+      antimatter: Math.max(1, Math.ceil(jumpAntimatterCost(ships, neutral, distance, trips) * GATE_ANTIMATTER_SHARE)),
+      viaGate: true,
+    };
+  }
+
   const seconds = jumpSeconds(ships, techs, distance);
   return {
     kind: 'INTERSTELLAR',

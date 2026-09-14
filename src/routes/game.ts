@@ -5,7 +5,7 @@ import { isBuildingType } from '../game/rules.js';
 import { isTechnologyType } from '../game/techTree.js';
 import { isShipType } from '../game/ships.js';
 import { isDefenseType } from '../game/defenses.js';
-import { isFleetMission, planFlight, resolveOneWay } from '../game/fleets.js';
+import { fleetSize, isFleetMission, planFlight, resolveOneWay } from '../game/fleets.js';
 import { buildGalaxyMap, buildSystemMap } from '../services/mapService.js';
 import { prisma } from '../db/prisma.js';
 import { attackWarning } from '../services/warService.js';
@@ -13,7 +13,7 @@ import { getLeaderboard } from '../services/scoreService.js';
 import { getBuildingProjection } from '../services/buildingService.js';
 import { getTechnologyProjection } from '../services/technologyService.js';
 import { currentCommander, requireAuth, requireCommander } from './middleware.js';
-import { cargoOrNull, positiveInt, shipCountsOrNull } from './validation.js';
+import { cargoOrNull, nonNegativeInt, positiveInt, shipCountsOrNull } from './validation.js';
 import type { BuildingProjection, TechnologyProjection } from '../types/socket.js';
 import type {
   ActionResponse,
@@ -232,7 +232,7 @@ interface FleetRequestBody {
   targetSyndicateId?: unknown;
   mission?: unknown;
   ships?: Record<string, unknown>;
-  cargo?: { ore?: unknown; polymers?: unknown; plasma?: unknown };
+  cargo?: { ore?: unknown; polymers?: unknown; plasma?: unknown; antimatter?: unknown };
   pickup?: { ore?: unknown; polymers?: unknown; plasma?: unknown };
   /** Оставить флот у цели. Действует только там, где выбор вообще есть. */
   oneWay?: unknown;
@@ -331,7 +331,12 @@ gameRouter.post('/bases/:baseId/fleets/preview', async (req, res: Response<Fligh
     commander.techs,
     { position: base.position, system: base.galaxy },
     target,
-    { oneWay, cargoMultiplier: commanderSyndicateBuffs(commander).cargo },
+    {
+      oneWay,
+      cargoMultiplier: commanderSyndicateBuffs(commander).cargo,
+      // Предпросмотр показывает тот же маршрут, по которому пойдет вылет: через Браму, если можно.
+      viaGate: (await gameLoop.gateRoute(commander.commanderId, base.systemId, target.systemId, fleetSize(ships))).usable,
+    },
   );
 
   // Предупреждение считается только для атаки и только по живой цели:
@@ -367,10 +372,11 @@ gameRouter.post('/bases/:baseId/fleets', async (req, res: Response<ActionRespons
   }
 
   const cargo = cargoOrNull(body.cargo);
+  const antimatter = nonNegativeInt(body.cargo?.antimatter);
   // Вывоз из Коша берет и плазму, поэтому запрос читается тем же разбором,
   // что и груз: у хаба плазма в запросе просто будет нулем.
   const pickup = cargoOrNull(body.pickup);
-  if (!cargo || !pickup) {
+  if (!cargo || !pickup || antimatter === null) {
     res.status(400).json({ error: 'Объем груза должен быть целым неотрицательным числом' });
     return;
   }
@@ -381,7 +387,7 @@ gameRouter.post('/bases/:baseId/fleets', async (req, res: Response<ActionRespons
     target,
     body.mission,
     ships,
-    cargo,
+    { ...cargo, antimatter },
     pickup,
     body.oneWay === true,
   );

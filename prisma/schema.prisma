@@ -183,12 +183,14 @@ model Syndicate {
   /// Кіш — хаб синдиката. Система заполняется при первом обращении у синдикатов,
   /// основанных до его появления: у них ее просто нет.
   kishSystemId String?
-  kishLevel    Int     @default(1)
+  kishLevel    Int       @default(1)
+  /// Когда Кіш переносили в последний раз: переносить можно не чаще раза в сутки.
+  kishMovedAt  DateTime?
   /// «Дозор» — модуль Коша: видно вооруженные флоты, летящие к участникам.
   /// Ноль — не построен.
-  watchLevel   Int     @default(0)
+  watchLevel   Int       @default(0)
   /// «Академія» — модуль Коша; уровень — потолок уровня любой технологии синдиката.
-  academyLevel Int     @default(0)
+  academyLevel Int       @default(0)
 
   /// Счетчики рейтингов синдиката. Копятся в момент события, а не выводятся
   /// из текущего состава: бой и взнос засчитываются тому синдикату, в котором
@@ -208,6 +210,7 @@ model Syndicate {
   kishFleets   Fleet[]                 @relation("KishFleets")
   technologies SyndicateTechnology[]
   research     SyndicateResearch?
+  gates        SyndicateGate[]
   bank         SyndicateBank?
   applications SyndicateApplication[]
   transactions SyndicateTransaction[]
@@ -227,6 +230,8 @@ model SyndicateBank {
   ore         Float  @default(0)
   polymers    Float  @default(0)
   plasma      Float  @default(0)
+  /// Антиматерия казны — на перенос Коша через Браму.
+  antimatter  Float  @default(0)
 
   syndicate Syndicate @relation(fields: [syndicateId], references: [id], onDelete: Cascade)
 
@@ -249,6 +254,7 @@ model SyndicateTransaction {
   ore         Float           @default(0)
   polymers    Float           @default(0)
   plasma      Float           @default(0)
+  antimatter  Float           @default(0)
   createdAt   DateTime        @default(now())
 
   syndicate Syndicate  @relation(fields: [syndicateId], references: [id], onDelete: Cascade)
@@ -369,6 +375,8 @@ enum SyndicateTxKind {
   RESOURCE_PICKUP
   ACADEMY_UPGRADE
   SYNDICATE_RESEARCH
+  GATE_BUILD
+  KISH_MOVE
 }
 
 enum SyndicatePermission {
@@ -447,11 +455,12 @@ model SolarSystem {
   anomaly   SystemAnomaly @default(NONE)
   createdAt DateTime      @default(now())
 
-  planets     Planet[]
-  kishes      Syndicate[]        @relation("SyndicateKish")
-  hub         TradeHub?
-  fleets      Fleet[]
-  expeditions ExpeditionReport[]
+  planets        Planet[]
+  kishes         Syndicate[]        @relation("SyndicateKish")
+  syndicateGates SyndicateGate[]
+  hub            TradeHub?
+  fleets         Fleet[]
+  expeditions    ExpeditionReport[]
 
   @@unique([galaxyX, galaxyY])
   @@map("solar_systems")
@@ -816,6 +825,8 @@ model Fleet {
   /// У колонизации и дислокации это свойство самой миссии, а транспорт
   /// летит и туда-обратно, и в один конец — поэтому признак хранится.
   oneWay          Boolean @default(false)
+  /// Прыжок через Браму: по нему считается пропускная способность врат.
+  viaGate         Boolean @default(false)
   /// Расстояние в орбитах и скорость флота — для отображения.
   distance        Int
   speed           Float
@@ -1207,4 +1218,25 @@ model HubAccount {
   commander Commander @relation(fields: [commanderId], references: [id], onDelete: Cascade)
 
   @@map("hub_accounts")
+}
+
+/// Брама — врата синдиката в системе. Между системами со своими Брамами флот
+/// прыгает без «Гипердвигателя» и за треть антиматерии. Ставится только там,
+/// где есть колония хотя бы одного участника.
+model SyndicateGate {
+  id              String   @id @default(cuid())
+  syndicateId     String
+  systemId        String
+  level           Int      @default(1)
+  /// Часовое окно пропускной способности: открывается первым прыжком
+  /// и держится час. Резервируется при вылете одним условным UPDATE.
+  windowStartedAt DateTime @default(now())
+  windowShips     Int      @default(0)
+  createdAt       DateTime @default(now())
+
+  syndicate Syndicate   @relation(fields: [syndicateId], references: [id], onDelete: Cascade)
+  system    SolarSystem @relation(fields: [systemId], references: [id], onDelete: Cascade)
+
+  @@unique([syndicateId, systemId])
+  @@map("syndicate_gates")
 }

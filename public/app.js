@@ -159,6 +159,10 @@
     cargoPolymersLabel: $('cargo-polymers-label'),
     cargoPlasma: $('cargo-plasma'),
     cargoPlasmaField: $('cargo-plasma-field'),
+    cargoAntimatter: $('cargo-antimatter'),
+    cargoAntimatterMax: $('cargo-antimatter-max'),
+    cargoAntimatterLabel: $('cargo-antimatter-label'),
+    cargoAntimatterField: $('cargo-antimatter-field'),
     cargoInputs: $('cargo-inputs'),
     adminSearch: $('admin-search'),
     ratingNote: $('rating-note'),
@@ -3525,6 +3529,7 @@
         ore: treasury ? treasury.ore : 0,
         polymers: treasury ? treasury.polymers : 0,
         plasma: treasury ? treasury.plasma : 0,
+        antimatter: 0,
       };
     }
     if (map.mission === 'HUB_PICKUP') {
@@ -3533,12 +3538,14 @@
         ore: storage ? storage.ore : 0,
         polymers: storage ? storage.polymers : 0,
         plasma: 0,
+        antimatter: 0,
       };
     }
     return {
       ore: base ? Math.floor(base.resources.ore) : 0,
       polymers: base ? Math.floor(base.resources.polymers) : 0,
       plasma: base ? Math.floor(base.resources.plasma) : 0,
+      antimatter: base ? Math.floor(base.resources.antimatter) : 0,
     };
   }
 
@@ -3549,6 +3556,7 @@
       ['ore', 'Руда', pickup ? 'Забрать руды' : 'Руда', el.cargoOre, el.cargoOreMax, el.cargoOreLabel],
       ['polymers', 'Полимеры', pickup ? 'Забрать полимеров' : 'Полимеры', el.cargoPolymers, el.cargoPolymersMax, el.cargoPolymersLabel],
       ['plasma', 'Плазма', pickup ? 'Забрать плазмы' : 'Плазма', el.cargoPlasma, el.cargoPlasmaMax, el.cargoPlasmaLabel],
+      ['antimatter', 'Антиматерия', 'Антиматерия', el.cargoAntimatter, el.cargoAntimatterMax, el.cargoAntimatterLabel],
     ];
 
     for (const [resource, , label, input, max, caption] of fields) {
@@ -3635,6 +3643,9 @@
     // Хаб торгует только рудой и полимерами, плазму туда не возят.
     // В казну Коша плазма идет наравне с остальным.
     const hubRun = map.mission === 'HUB_PICKUP' || map.mission === 'HUB_DELIVERY';
+    // Антиматерию возят только в казну Коша: она нужна на перенос Коша через Браму.
+    el.cargoAntimatterField.hidden = map.mission !== 'KISH_DELIVERY';
+    if (el.cargoAntimatterField.hidden) el.cargoAntimatter.value = '0';
     el.cargoPlasmaField.hidden = hubRun;
     if (hubRun) el.cargoPlasma.value = '0';
 
@@ -4060,7 +4071,8 @@
       const cargo =
         Number(el.cargoOre.value || 0) +
         Number(el.cargoPolymers.value || 0) +
-        Number(el.cargoPlasma.value || 0);
+        Number(el.cargoPlasma.value || 0) +
+        Number(el.cargoAntimatter.value || 0);
       const overload = cargo > map.plan.capacity;
       const jump = map.plan.kind === 'INTERSTELLAR';
 
@@ -4078,7 +4090,8 @@
 
       el.flightPlan.innerHTML =
         (jump
-          ? `<b>Гиперпрыжок</b> · дистанция <b>${map.plan.distance}</b> ед. по галактике<br>`
+          ? `<b>${map.plan.viaGate ? 'Через Браму' : 'Гиперпрыжок'}</b> · дистанция <b>${map.plan.distance}</b> ед. по галактике` +
+            (map.plan.viaGate ? ` · плазмы до врат и от них <b>${fmtAmount(map.plan.fuel)}</b>` : '') + '<br>'
           : `дистанция: <b>${map.plan.distance}</b> орбит · скорость <b>${map.plan.speed}</b><br>`) +
         `время в пути: <b>${fmtTime(map.plan.flightSeconds)}</b>` +
         (oneWay ? ' — флот остается на месте<br>' : ' в одну сторону<br>') +
@@ -4101,6 +4114,7 @@
       polymers: Number(el.cargoPolymers.value) || 0,
       plasma: Number(el.cargoPlasma.value) || 0,
     };
+    const antimatter = Number(el.cargoAntimatter.value) || 0;
     const pickup = map.mission === 'HUB_PICKUP' || map.mission === 'KISH_PICKUP';
 
     const ok = await send(`/api/bases/${base.baseId}/fleets`, {
@@ -4108,7 +4122,7 @@
       mission: map.mission,
       oneWay: el.oneWay.checked,
       ships: readComposition(),
-      cargo: pickup ? { ore: 0, polymers: 0, plasma: 0 } : amounts,
+      cargo: pickup ? { ore: 0, polymers: 0, plasma: 0 } : { ...amounts, antimatter },
       pickup: pickup ? { ...amounts } : { ore: 0, polymers: 0, plasma: 0 },
     });
 
@@ -4118,6 +4132,7 @@
       el.cargoOre.value = '0';
       el.cargoPolymers.value = '0';
       el.cargoPlasma.value = '0';
+      el.cargoAntimatter.value = '0';
       el.presetSelect.value = '';
       el.oneWay.checked = false;
       map.plan = null;
@@ -5393,6 +5408,15 @@
         mask: 'glowCrop',
       });
 
+      // Своя Брама и Кіш — надписью над системой: по ним видна сеть,
+      // по которой флот прыгает без гипердвигателя.
+      if (system.syndicateGate || system.ownKish) {
+        const badge = svgEl('text', { x: point.x, y: point.y - SYSTEM_ICON / 2 - 8, class: 'system-label gate-badge' });
+        badge.textContent = [system.ownKish ? 'Кіш' : null, system.syndicateGate ? `Брама ${system.syndicateGate}` : null]
+          .filter(Boolean).join(' · ');
+        group.appendChild(badge);
+      }
+
       const label = svgEl('text', { x: point.x, y: point.y + SYSTEM_ICON / 2 + 14, class: `system-label name${system.isHome ? ' home' : ''}` });
       label.textContent = system.name;
       group.appendChild(label);
@@ -5608,6 +5632,8 @@
     RESOURCE_PICKUP: 'вывоз из казны',
     ACADEMY_UPGRADE: 'развитие Академії',
     SYNDICATE_RESEARCH: 'наука синдиката',
+    GATE_BUILD: 'Брама',
+    KISH_MOVE: 'перенос Коша',
   };
   const RECRUITMENT_LABELS = { OPEN: 'открыт', APPLICATION: 'по заявке', CLOSED: 'закрыт' };
 
@@ -5863,7 +5889,8 @@
     stock.innerHTML =
       `ресурсы Коша: ${icon('ore', 'sm')} <b>${fmt(mine.treasury.ore)}</b> · ` +
       `${icon('polymers', 'sm')} <b>${fmt(mine.treasury.polymers)}</b> · ` +
-      `${icon('plasma', 'sm')} <b>${fmt(mine.treasury.plasma)}</b>`;
+      `${icon('plasma', 'sm')} <b>${fmt(mine.treasury.plasma)}</b> · ` +
+      `${icon('antimatter', 'sm')} <b>${fmt(mine.treasury.antimatter)}</b>`;
     treasury.appendChild(stock);
     treasury.appendChild(synEl('div', 'hub-storage',
       `Ресурсы привозят и вывозят флотом: выбери Кіш на карте системы ${mine.kish.systemName || 'Коша'}. ` +
@@ -5901,13 +5928,13 @@
       head.append(document.createTextNode(`${tx.nickname || tx.actor || 'система'} — `));
       if (tx.kind === 'RESOURCE_DELIVERY' || tx.kind === 'RESOURCE_PICKUP') {
         head.insertAdjacentHTML('beforeend',
-          ['ore', 'polymers', 'plasma'].filter((key) => tx[key] > 0)
+          ['ore', 'polymers', 'plasma', 'antimatter'].filter((key) => tx[key] > 0)
             .map((key) => `${icon(key, 'sm')} ${fmt(tx[key])}`).join(' · '));
       } else {
         head.append(document.createTextNode(`${fmt(tx.amount)} `));
         head.insertAdjacentHTML('beforeend', icon('credits', 'sm'));
         // Академія и наука платятся и гривной, и ресурсами — показываем все.
-        const extra = ['ore', 'polymers', 'plasma'].filter((key) => tx[key] > 0);
+        const extra = ['ore', 'polymers', 'plasma', 'antimatter'].filter((key) => tx[key] > 0);
         if (extra.length) {
           head.insertAdjacentHTML('beforeend',
             ' · ' + extra.map((key) => `${icon(key, 'sm')} ${fmt(tx[key])}`).join(' · '));
@@ -5926,6 +5953,7 @@
     top.append(kish, treasury);
     el.syndicatePanel.appendChild(top);
     el.syndicatePanel.appendChild(renderAcademy(mine, can('ACADEMY')));
+    el.syndicatePanel.appendChild(renderGates(mine, can('KISH')));
 
     /* Налог и правила набора */
     const middle = synEl('div', 'syndicate-grid');
@@ -6094,6 +6122,71 @@
         () => syndicateAction('/api/syndicates/leave')));
     }
     el.syndicatePanel.appendChild(footer);
+  }
+
+  /**
+   * Брама и перенос Коша. Сеть врат видна всем участникам — по ней летают все,
+   * а строит и переносит ранг с правом развития Коша.
+   */
+  function renderGates(mine, canManage) {
+    const card = synCard('Брама');
+    card.appendChild(synEl('div', 'hub-storage',
+      'Между системами со своими Брамами флот прыгает без «Гипердвигателя» и за треть антиматерии. ' +
+      'Брама пропускает ограниченное число кораблей в час.'));
+    if (!mine.gates.list.length) card.appendChild(synEl('div', 'hub-storage', 'Брам пока нет.'));
+    for (const gate of mine.gates.list) {
+      const row = synEl('div', 'queue-item member-row');
+      const info = synEl('div');
+      info.appendChild(synEl('b', null, `${gate.systemName} · ур. ${gate.level}`));
+      info.appendChild(synEl('div', 'role',
+        `прошло за час ${fmt(gate.windowShips)} из ${fmt(gate.throughput)} кораблей · ` +
+        `следующий уровень: ${treasuryCostText(gate.nextLevelCost)}`));
+      row.appendChild(info);
+      if (canManage) {
+        row.appendChild(synButton('Повысить', 'ghost',
+          () => syndicateAction('/api/syndicates/gates', { systemId: gate.systemId }),
+          !treasuryCovers(mine, gate.nextLevelCost)));
+      }
+      card.appendChild(row);
+    }
+    if (canManage && mine.gates.candidates.length) {
+      const form = synEl('div', 'syndicate-form');
+      const select = synEl('select');
+      for (const system of mine.gates.candidates) {
+        const option = synEl('option', null, system.systemName);
+        option.value = system.systemId;
+        select.appendChild(option);
+      }
+      form.append(synField('Новая Брама в системе с колонией участника', select),
+        synButton(`Построить — ${treasuryCostText(mine.gates.firstLevelCost)}`, 'ghost',
+          () => syndicateAction('/api/syndicates/gates', { systemId: select.value }),
+          !treasuryCovers(mine, mine.gates.firstLevelCost)));
+      card.appendChild(form);
+    }
+
+    card.appendChild(synEl('h4', 'rank-new-title', 'Перенос Коша'));
+    if (mine.kish.nextMoveAt) {
+      card.appendChild(synEl('div', 'hub-storage warn', `Кіш переносили недавно: снова можно с ${synDateTime(mine.kish.nextMoveAt)}`));
+    }
+    if (!mine.kish.moveTargets.length) {
+      card.appendChild(synEl('div', 'hub-storage', 'Кіш переносится только в систему со своей Брамой — сейчас таких нет.'));
+    } else if (canManage) {
+      const form = synEl('div', 'syndicate-form');
+      const select = synEl('select');
+      for (const target of mine.kish.moveTargets) {
+        const option = synEl('option', null, `${target.systemName} · ${fmt(target.antimatter)} антиматерии`);
+        option.value = target.systemId;
+        option.disabled = mine.treasury.antimatter < target.antimatter;
+        select.appendChild(option);
+      }
+      form.append(synField('Куда перенести', select),
+        synConfirm('Перенести Кіш', 'Точно перенести?', 'ghost',
+          () => syndicateAction('/api/syndicates/kish/move', { systemId: select.value })));
+      if (mine.kish.nextMoveAt) form.lastChild.disabled = true;
+      card.appendChild(form);
+      card.appendChild(synEl('div', 'hub-storage', 'Антиматерию в казну привозят рейсом «Доставка в Кіш».'));
+    }
+    return card;
   }
 
   /** Цена из казны строкой: гривна и ресурсы. */

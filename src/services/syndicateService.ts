@@ -30,6 +30,10 @@ import {
   memberCap,
   outranks,
   academyUpgradeCost,
+  bramaThroughput,
+  bramaUpgradeCost,
+  kishMoveAvailableAt,
+  kishMoveCost,
   SYNDICATE_TECHS,
   SYNDICATE_TECH_EFFECTS,
   SYNDICATE_TECH_LABELS,
@@ -123,13 +127,31 @@ export interface SyndicateView {
   };
   bank: number;
   /** Ресурсная казна Коша: привозят и вывозят ее флотом. */
-  treasury: { ore: number; polymers: number; plasma: number };
+  treasury: { ore: number; polymers: number; plasma: number; antimatter: number };
+  gates: {
+    list: Array<{
+      systemId: string;
+      systemName: string;
+      level: number;
+      throughput: number;
+      /** Сколько кораблей прошло в текущем часовом окне. */
+      windowShips: number;
+      nextLevelCost: TreasuryCost;
+    }>;
+    /** Системы с колониями участников, где Брамы еще нет. */
+    candidates: Array<{ systemId: string; systemName: string }>;
+    firstLevelCost: TreasuryCost;
+  };
   kish: {
     level: number;
     systemId: string | null;
     systemName: string | null;
     memberCap: number;
     nextLevelCost: number;
+    /** Когда Кіш снова можно перенести; `null` — хоть сейчас. */
+    nextMoveAt: number | null;
+    /** Системы со своими Брамами, куда Кіш можно перенести, и цена в антиматерии. */
+    moveTargets: Array<{ systemId: string; systemName: string; distance: number; antimatter: number }>;
   };
   academy: {
     level: number;
@@ -326,9 +348,20 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
   if (!syndicate) return null;
 
   const taxByMember = new Map(taxRows.map((row) => [row.commanderId, row.amount]));
-  const incoming = await watchIncoming(syndicateId, syndicate.watchLevel, syndicate.kishSystem);
-  const techState = await syndicateTechState(syndicateId);
   const now = Date.now();
+  const incoming = await watchIncoming(syndicateId, syndicate.watchLevel, syndicate.kishSystem);
+  const [gateRows, colonySystems] = await Promise.all([
+    prisma.syndicateGate.findMany({
+      where: { syndicateId },
+      include: { system: { select: { id: true, name: true, galaxyX: true, galaxyY: true } } },
+      orderBy: { createdAt: 'asc' },
+    }),
+    prisma.base.findMany({
+      where: { commander: { syndicateId } },
+      select: { planet: { select: { system: { select: { id: true, name: true } } } } },
+    }),
+  ]);
+  const techState = await syndicateTechState(syndicateId);
   const schedule = commitSchedule(syndicate);
   const allowance = withdrawAllowance(access, access.dailyWithdrawLimit, spentToday);
 
@@ -350,6 +383,26 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
       ore: Math.floor(syndicate.bank?.ore ?? 0),
       polymers: Math.floor(syndicate.bank?.polymers ?? 0),
       plasma: Math.floor(syndicate.bank?.plasma ?? 0),
+      antimatter: Math.floor(syndicate.bank?.antimatter ?? 0),
+    },
+    gates: {
+      list: gateRows.map((gate) => ({
+        systemId: gate.systemId,
+        systemName: gate.system.name,
+        level: gate.level,
+        throughput: bramaThroughput(gate.level),
+        windowShips: now - gate.windowStartedAt.getTime() < 3_600_000 ? gate.windowShips : 0,
+        nextLevelCost: bramaUpgradeCost(gate.level + 1),
+      })),
+      candidates: [
+        ...new Map(
+          colonySystems
+            .map((row) => row.planet.system)
+            .filter((system) => !gateRows.some((gate) => gate.systemId === system.id))
+            .map((system) => [system.id, { systemId: system.id, systemName: system.name }]),
+        ).values(),
+      ],
+      firstLevelCost: bramaUpgradeCost(1),
     },
     kish: {
       level: syndicate.kishLevel,
@@ -357,6 +410,17 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
       systemName: syndicate.kishSystem?.name ?? null,
       memberCap: memberCap(syndicate.kishLevel),
       nextLevelCost: kishUpgradeCost(syndicate.kishLevel + 1),
+      nextMoveAt: kishMoveAvailableAt(syndicate.kishMovedAt?.getTime() ?? null) > now
+        ? kishMoveAvailableAt(syndicate.kishMovedAt?.getTime() ?? null)
+        : null,
+      moveTargets: syndicate.kishSystem
+        ? gateRows
+            .filter((gate) => gate.systemId !== syndicate.kishSystem!.id)
+            .map((gate) => {
+              const distance = galaxyDistance(syndicate.kishSystem!, gate.system);
+              return { systemId: gate.systemId, systemName: gate.system.name, distance, antimatter: kishMoveCost(distance) };
+            })
+        : [],
     },
     academy: {
       level: syndicate.academyLevel,
@@ -1093,6 +1157,131 @@ export async function upgradeKish(commanderId: string): Promise<SyndicateResult>
     return toError(error, 'Не удалось повысить Кіш');
   }
   return { ok: true, message: `Кіш теперь ${target} уровня: мест ${memberCap(target)}` };
+}
+
+/* ------------------------- Брама и перенос Коша ------------------------- */
+
+/**
+ * Постройка или повышение Брамы в системе. Ставится только там, где есть
+ * колония хотя бы одного участника: иначе врата росли бы в пустых секторах
+ * ради одного лишь переноса Коша.
+ */
+export async function buildGate(commanderId: string, systemId: string): Promise<SyndicateResult> {
+  const access = await requirePermission(commanderId, 'KISH');
+  if (!access.ok) return access;
+
+  const [system, colony, existing] = await Promise.all([
+    prisma.solarSystem.findUnique({ where: { id: systemId }, select: { name: true } }),
+    prisma.base.findFirst({ where: { planet: { systemId }, commander: { syndicateId: access.syndicateId } }, select: { id: true } }),
+    prisma.syndicateGate.findUnique({ where: { syndicateId_systemId: { syndicateId: access.syndicateId, systemId } } }),
+  ]);
+  if (!system) return { ok: false, error: 'Система не найдена', status: 404 };
+  if (!colony) return { ok: false, error: 'Брама ставится только в системе, где есть колония участника', status: 409 };
+
+  const target = (existing?.level ?? 0) + 1;
+  const cost = bramaUpgradeCost(target);
+  try {
+    await prisma.$transaction(async (tx) => {
+      await payFromTreasury(tx, access.syndicateId, cost);
+      if (existing) {
+        const raised = await tx.syndicateGate.updateMany({
+          where: { id: existing.id, level: existing.level },
+          data: { level: target },
+        });
+        if (raised.count === 0) throw new SyndicateError('Браму уже повысили', 409);
+      } else {
+        await tx.syndicateGate.create({ data: { syndicateId: access.syndicateId, systemId } });
+      }
+      await tx.syndicate.update({
+        where: { id: access.syndicateId },
+        data: { investedValue: { increment: costUnits(cost) } },
+      });
+      await tx.syndicateTransaction.create({
+        data: {
+          syndicateId: access.syndicateId,
+          actorId: commanderId,
+          kind: 'GATE_BUILD',
+          amount: cost.credits,
+          ore: cost.ore,
+          polymers: cost.polymers,
+          comment: `Брама ${system.name} → ур. ${target}`,
+        },
+      });
+    });
+  } catch (error) {
+    if (isUniqueViolation(error)) return { ok: false, error: 'Браму в этой системе уже построили', status: 409 };
+    return toError(error, 'Не удалось построить Браму');
+  }
+  return {
+    ok: true,
+    message: target === 1 ? `Брама построена в системе ${system.name}` : `Брама ${system.name}: ур. ${target}`,
+  };
+}
+
+/**
+ * Перенос Коша в систему со своей Брамой — за антиматерию казны, не чаще раза
+ * в сутки. Обе проверки делаются условным UPDATE по прежнему месту и времени
+ * переноса: два одновременных переноса не пройдут оба.
+ */
+export async function moveKish(commanderId: string, systemId: string): Promise<SyndicateResult> {
+  const access = await requirePermission(commanderId, 'KISH');
+  if (!access.ok) return access;
+
+  const syndicate = await prisma.syndicate.findUnique({
+    where: { id: access.syndicateId },
+    include: { kishSystem: true },
+  });
+  if (!syndicate?.kishSystem) return { ok: false, error: 'У синдиката еще не определен Кіш', status: 409 };
+  if (syndicate.kishSystemId === systemId) return { ok: false, error: 'Кіш уже в этой системе', status: 409 };
+
+  const gate = await prisma.syndicateGate.findUnique({
+    where: { syndicateId_systemId: { syndicateId: access.syndicateId, systemId } },
+    include: { system: true },
+  });
+  if (!gate) return { ok: false, error: 'Кіш переносится только в систему со своей Брамой', status: 409 };
+
+  const availableAt = kishMoveAvailableAt(syndicate.kishMovedAt?.getTime() ?? null);
+  if (availableAt > Date.now()) {
+    const hours = Math.ceil((availableAt - Date.now()) / 3_600_000);
+    return { ok: false, error: `Кіш переносили недавно: снова можно через ${hours} ч`, status: 409 };
+  }
+
+  const distance = galaxyDistance(syndicate.kishSystem, gate.system);
+  const cost = kishMoveCost(distance);
+  try {
+    await prisma.$transaction(async (tx) => {
+      const paid = await tx.syndicateBank.updateMany({
+        where: { syndicateId: access.syndicateId, antimatter: { gte: cost } },
+        data: { antimatter: { decrement: cost } },
+      });
+      if (paid.count === 0) throw new SyndicateError(`В казне нужно ${cost} антиматерии`, 409);
+      const moved = await tx.syndicate.updateMany({
+        where: { id: access.syndicateId, kishSystemId: syndicate.kishSystemId, kishMovedAt: syndicate.kishMovedAt },
+        data: { kishSystemId: systemId, kishMovedAt: new Date() },
+      });
+      if (moved.count === 0) throw new SyndicateError('Кіш уже переносят', 409);
+      await tx.syndicateTransaction.create({
+        data: {
+          syndicateId: access.syndicateId,
+          actorId: commanderId,
+          kind: 'KISH_MOVE',
+          amount: 0,
+          antimatter: cost,
+          comment: `${syndicate.kishSystem!.name} → ${gate.system.name}`,
+        },
+      });
+    });
+  } catch (error) {
+    return toError(error, 'Не удалось перенести Кіш');
+  }
+
+  await notifyMembers(
+    access.syndicateId,
+    `Кіш перенесен: ${gate.system.name}`,
+    `Кіш синдиката перенесен из системы ${syndicate.kishSystem.name} в систему ${gate.system.name}. ` +
+      `Рейсы в казну теперь идут туда.\n\nПеренес: ${await nicknameOf(commanderId)}.`,
+  );
+  return { ok: true, message: `Кіш перенесен в систему ${gate.system.name} за ${cost} антиматерии` };
 }
 
 /* ------------------------- Академія ------------------------- */
