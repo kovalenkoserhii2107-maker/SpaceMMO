@@ -51,7 +51,7 @@ import {
   expeditionSlots,
   resolveExpedition,
 } from './expeditions.js';
-import { hubRent, marketPrice, rushPrice, storageCapacity, storageUsed } from './market.js';
+import { hubRent, marketPrice, rushPrice } from './market.js';
 import type { ScanPayload } from './fogOfWar.js';
 import {
   DEFENSE_TYPES,
@@ -66,6 +66,7 @@ import { resolveEspionage, espionageSeed } from './espionage.js';
 import { plunderAmount, resolveBattle, type SideForces, type UnitLoss } from './combat.js';
 import { checkArchitect, checkPirateBane } from '../services/achievementService.js';
 import { canAttack, declareWar } from '../services/warService.js';
+import { availableAt, depositLocal, lockHubStocks, withdrawStock } from '../services/hubStock.js';
 import {
   membershipOf,
   sameSyndicate,
@@ -1214,7 +1215,23 @@ class GameLoop {
     if (this.collectingRent) return;
     this.collectingRent = true;
     try {
-      const storages = await prisma.hubStorage.findMany({
+      /*
+       * Размер склада теперь один на командира. У тех, кто расширял склады
+       * до этого и с тех пор не открывал биржу, счета еще нет — заводим его
+       * здесь, иначе они жили бы без платы за уже купленное место.
+       */
+      const orphans = await prisma.hubStorage.groupBy({
+        by: ['commanderId'],
+        where: { level: { gt: 1 }, commander: { hubAccount: null } },
+        _max: { level: true },
+      });
+      if (orphans.length > 0) {
+        await prisma.hubAccount.createMany({
+          data: orphans.map((row) => ({ commanderId: row.commanderId, level: row._max.level ?? 1 })),
+          skipDuplicates: true,
+        });
+      }
+      const storages = await prisma.hubAccount.findMany({
         where: { level: { gt: 1 } },
         select: { commanderId: true, level: true },
       });
@@ -2582,64 +2599,46 @@ class GameLoop {
    */
   private async unloadToHub(fleet: FleetRow, hubId: string): Promise<void> {
     await prisma.$transaction(async (tx) => {
-      const storage = await tx.hubStorage.upsert({
-        where: { commanderId_hubId: { commanderId: fleet.commanderId, hubId } },
-        create: { commanderId: fleet.commanderId, hubId },
-        update: {},
+      // Привезенное ложится на склад этого хаба: забрать его можно только здесь.
+      const stored = await depositLocal(tx, fleet.commanderId, hubId, {
+        ore: fleet.cargoOre,
+        polymers: fleet.cargoPolymers,
       });
-
-      const capacity = storageCapacity(storage.level);
-      const free = Math.max(0, capacity - storageUsed(storage));
-      const ore = Math.min(fleet.cargoOre, free);
-      const polymers = Math.min(fleet.cargoPolymers, Math.max(0, free - ore));
-
-      if (ore > 0 || polymers > 0) {
-        await tx.hubStorage.update({
-          where: { id: storage.id },
-          data: { ore: { increment: ore }, polymers: { increment: polymers } },
-        });
-      }
-
       await tx.fleet.update({
         where: { id: fleet.id },
         data: {
           status: 'RETURNING',
-          cargoOre: fleet.cargoOre - ore,
-          cargoPolymers: fleet.cargoPolymers - polymers,
+          cargoOre: fleet.cargoOre - stored.ore,
+          cargoPolymers: fleet.cargoPolymers - stored.polymers,
         },
       });
     });
   }
 
-  /** Погрузка товара со склада хаба в трюмы — обратно повезем домой. */
+  /**
+   * Погрузка с хаба: сначала со склада этого хаба, потом с общего склада
+   * купленного — его можно забирать с любого хаба.
+   */
   private async loadFromHub(fleet: FleetRow, hubId: string): Promise<void> {
     const capacity = fleetCapacity(fleetShips(fleet), (await syndicateBuffsFor(fleet.commanderId)).cargo);
 
     await prisma.$transaction(async (tx) => {
-      const storage = await tx.hubStorage.findUnique({
-        where: { commanderId_hubId: { commanderId: fleet.commanderId, hubId } },
-      });
-
-      const ore = storage ? Math.min(fleet.pickupOre, storage.ore, capacity) : 0;
-      const polymers = storage
-        ? Math.min(fleet.pickupPolymers, storage.polymers, Math.max(0, capacity - ore))
-        : 0;
-
-      if (storage && (ore > 0 || polymers > 0)) {
-        // Условное списание: параллельная сделка на бирже могла увести товар.
-        const taken = await tx.hubStorage.updateMany({
-          where: { id: storage.id, ore: { gte: ore }, polymers: { gte: polymers } },
-          data: { ore: { decrement: ore }, polymers: { decrement: polymers } },
-        });
-        if (taken.count === 0) {
-          await tx.fleet.update({ where: { id: fleet.id }, data: { status: 'RETURNING' } });
-          return;
+      await lockHubStocks(tx, [fleet.commanderId]);
+      const request = { ore: fleet.pickupOre, polymers: fleet.pickupPolymers };
+      const taken = { ore: 0, polymers: 0 };
+      let room = capacity;
+      for (const field of ['ore', 'polymers'] as const) {
+        const available = await availableAt(tx, fleet.commanderId, hubId);
+        const want = Math.floor(Math.min(request[field], available[field], room));
+        if (want <= 0) continue;
+        if (await withdrawStock(tx, fleet.commanderId, hubId, field, want)) {
+          taken[field] = want;
+          room -= want;
         }
       }
-
       await tx.fleet.update({
         where: { id: fleet.id },
-        data: { status: 'RETURNING', cargoOre: ore, cargoPolymers: polymers },
+        data: { status: 'RETURNING', cargoOre: taken.ore, cargoPolymers: taken.polymers },
       });
     });
   }

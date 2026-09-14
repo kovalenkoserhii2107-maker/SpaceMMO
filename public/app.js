@@ -4345,7 +4345,8 @@
       return;
     }
 
-    const used = storage.ore + storage.polymers;
+    // Занятое считает сервер по всем складам сразу: размер один на все хабы и общий склад.
+    const used = typeof storage.used === 'number' ? storage.used : storage.ore + storage.polymers;
     const row = (label, resource, amount) => {
       const share = storage.capacity > 0 ? Math.min(1, amount / storage.capacity) : 0;
       return (
@@ -4361,7 +4362,20 @@
       row('Руда', 'ore', storage.ore) +
       row('Полимеры', 'polymers', storage.polymers) +
       `<div class="mk-store-foot"><span>Свободно <b>${fmt(storage.free)}</b></span>` +
-      `<span>Аренда <b>${fmt(storage.rentPerHour)} ₴</b> в час</span></div>`;
+      `<span>Аренда <b>${fmt(storage.rentPerHour)} ₴</b> в час</span></div>` +
+      (storage.local && storage.global
+        ? `<div class="mk-store-foot"><span>Склад хаба: ${icon('ore', 'sm')} <b>${fmt(storage.local.ore)}</b> ` +
+          `${icon('polymers', 'sm')} <b>${fmt(storage.local.polymers)}</b></span>` +
+          `<span>Общий склад: ${icon('ore', 'sm')} <b>${fmt(storage.global.ore)}</b> ` +
+          `${icon('polymers', 'sm')} <b>${fmt(storage.global.polymers)}</b></span></div>`
+        : '') +
+      (storage.elsewhere && storage.elsewhere.ore + storage.elsewhere.polymers > 0
+        ? `<p class="storage-note">На складах других хабов: ${icon('ore', 'sm')} ${fmt(storage.elsewhere.ore)} · ` +
+          `${icon('polymers', 'sm')} ${fmt(storage.elsewhere.polymers)} — забрать можно только там.</p>`
+        : '') +
+      '<p class="storage-note">Привезенное флотом лежит на складе хаба и забирается только там. ' +
+      'Купленное и полученное обменом ложится на общий склад — его можно забрать с любого хаба. ' +
+      'Размер склада один на все: склады всех хабов и общий вместе.</p>';
 
     // Расширение платится криптогривной, а не товаром со склада: товаром
     // платить приходилось ровно тогда, когда места нет, и нужного ресурса

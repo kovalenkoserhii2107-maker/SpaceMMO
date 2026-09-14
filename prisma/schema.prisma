@@ -101,6 +101,7 @@ model Commander {
   sentMessages     Message[]               @relation("MessageSender")
   scans            PlanetScan[]
   hubStorages      HubStorage[]
+  hubAccount       HubAccount?
   orders           MarketOrder[]
   barterOffers     BarterOffer[]
   purchases        Trade[]                 @relation("TradeBuyer")
@@ -949,7 +950,8 @@ model HubStorage {
 
   ore      Float @default(0)
   polymers Float @default(0)
-  /// Уровень склада определяет вместимость.
+  /// Устарел: размер склада теперь один на командира (`HubAccount`). Читается
+  /// только затем, чтобы перенести уровень при первом обращении.
   level    Int   @default(1)
 
   commander Commander @relation(fields: [commanderId], references: [id], onDelete: Cascade)
@@ -963,6 +965,10 @@ model HubStorage {
 model MarketOrder {
   id          String @id @default(cuid())
   hubId       String
+  /// Сколько товара взято в залог со склада хаба; остальное — с общего склада.
+  /// По ней отмена возвращает товар туда, откуда он ушел. Пусто у заявок,
+  /// выставленных до общего склада: те целиком со склада хаба.
+  localPart   Float?
   commanderId String
 
   side         OrderSide
@@ -993,6 +999,10 @@ model BarterOffer {
   id          String @id @default(cuid())
   commanderId String
   hubId       String
+  /// Сколько товара взято в залог со склада хаба; остальное — с общего склада.
+  /// По ней отмена возвращает товар туда, откуда он ушел. Пусто у заявок,
+  /// выставленных до общего склада: те целиком со склада хаба.
+  localPart   Float?
 
   /// Что отдаю: товар лежит в залоге на складе хаба, как и у обычной продажи.
   giveResource TradeResource
@@ -1181,4 +1191,20 @@ model SyndicateResearch {
   syndicate Syndicate @relation(fields: [syndicateId], references: [id], onDelete: Cascade)
 
   @@map("syndicate_research")
+}
+
+/// Торговый счет командира на бирже. Размер склада один на все: частные
+/// склады всех хабов и общий склад вместе. Общий склад держит купленное
+/// и полученное обменом — его можно забрать с любого хаба; привезенное
+/// флотом лежит на складе конкретного хаба и забирается только там.
+model HubAccount {
+  id          String @id @default(cuid())
+  commanderId String @unique
+  level       Int    @default(1)
+  ore         Float  @default(0)
+  polymers    Float  @default(0)
+
+  commander Commander @relation(fields: [commanderId], references: [id], onDelete: Cascade)
+
+  @@map("hub_accounts")
 }

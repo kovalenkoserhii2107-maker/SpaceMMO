@@ -4,6 +4,15 @@
  * блокируются в момент выставления ордера, поэтому продать одно и то же дважды нельзя.
  */
 import { syndicateBuffsFor } from './syndicateAccess.js';
+import {
+  availableAt,
+  depositGlobal,
+  hubAccount,
+  hubStockUsage,
+  lockHubStocks,
+  refundStock,
+  withdrawStock,
+} from './hubStock.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { prisma } from '../db/prisma.js';
 import { gameLoop } from '../game/gameLoop.js';
@@ -12,7 +21,6 @@ import {
   storageCapacity,
   hubRent,
   storageUpgradeCost,
-  storageUsed,
   tradeTotal,
   validateOrder,
   type OrderSide,
@@ -36,6 +44,13 @@ export interface MarketView {
     level: number;
     capacity: number;
     free: number;
+    /** Сколько доступно на хабе своей системы: его склад и общий. */
+    local: { ore: number; polymers: number };
+    /** Общий склад: купленное и полученное обменом, забирается с любого хаба. */
+    global: { ore: number; polymers: number };
+    /** Лежит на складах других хабов — забирать только там. */
+    elsewhere: { ore: number; polymers: number };
+    used: number;
     /** Расширение склада платится криптогривной. */
     upgradeCost: number;
     nextLevel: number;
@@ -169,6 +184,15 @@ async function findHubForUser(commanderId: string) {
   });
 }
 
+/** Хаб системы игрока внутри транзакции. */
+async function homeHubOf(tx: Prisma.TransactionClient, commanderId: string) {
+  return tx.tradeHub.findFirst({
+    where: { system: { planets: { some: { base: { commanderId } } } } },
+    select: { id: true },
+  });
+}
+
+
 async function ensureStorage(commanderId: string, hubId: string) {
   return prisma.hubStorage.upsert({
     where: { commanderId_hubId: { commanderId, hubId } },
@@ -205,12 +229,11 @@ export async function getMarketView(commanderId: string): Promise<MarketView> {
   const [storage, orders, trades, barters, recent, barterOpen] = await Promise.all([
     prisma.hubStorage.findUnique({ where: { commanderId_hubId: { commanderId, hubId: hub.id } } }),
     prisma.marketOrder.findMany({
-      where: { hubId: hub.id, remaining: { gt: 0 } },
+      where: { remaining: { gt: 0 } },
       include: { commander: { select: { nickname: true } } },
       orderBy: { createdAt: 'asc' },
     }),
     prisma.trade.findMany({
-      where: { hubId: hub.id },
       include: { buyer: { select: { nickname: true } }, seller: { select: { nickname: true } } },
       orderBy: { createdAt: 'desc' },
       // Первая страница истории. Дальше игрок подкачивает сам: за месяц сделок
@@ -218,7 +241,6 @@ export async function getMarketView(commanderId: string): Promise<MarketView> {
       take: HISTORY_PAGE,
     }),
     prisma.barterOffer.findMany({
-      where: { hubId: hub.id },
       include: { commander: { select: { nickname: true } } },
       orderBy: { createdAt: 'asc' },
       take: 20,
@@ -229,12 +251,12 @@ export async function getMarketView(commanderId: string): Promise<MarketView> {
      * а не одни: чтобы найти вчерашнюю цену, нужны сделки старше суток.
      */
     prisma.trade.findMany({
-      where: { hubId: hub.id, createdAt: { gte: new Date(Date.now() - 2 * DAY_MS) } },
+      where: { createdAt: { gte: new Date(Date.now() - 2 * DAY_MS) } },
       select: { resource: true, quantity: true, pricePerUnit: true, createdAt: true },
       orderBy: { createdAt: 'desc' },
       take: 2000,
     }),
-    prisma.barterOffer.count({ where: { hubId: hub.id } }),
+    prisma.barterOffer.count(),
   ]);
 
   const toPublic = (order: (typeof orders)[number]): PublicOrder => ({
@@ -265,17 +287,26 @@ export async function getMarketView(commanderId: string): Promise<MarketView> {
     resource.sell.sort((a, b) => a.pricePerUnit - b.pricePerUnit);
   }
 
-  const level = storage?.level ?? 1;
+  const usage = await hubStockUsage(prisma, commanderId);
+  const level = usage.level;
+  const here = { ore: storage?.ore ?? 0, polymers: storage?.polymers ?? 0 };
 
   return {
     hub: { hubId: hub.id, name: hub.name },
     credits: round2(commander.credits),
     storage: {
-      ore: Math.round(storage?.ore ?? 0),
-      polymers: Math.round(storage?.polymers ?? 0),
+      ore: Math.round(here.ore + usage.global.ore),
+      polymers: Math.round(here.polymers + usage.global.polymers),
+      local: { ore: Math.round(here.ore), polymers: Math.round(here.polymers) },
+      global: { ore: Math.round(usage.global.ore), polymers: Math.round(usage.global.polymers) },
+      elsewhere: {
+        ore: Math.round(Math.max(0, usage.local.ore - here.ore)),
+        polymers: Math.round(Math.max(0, usage.local.polymers - here.polymers)),
+      },
+      used: Math.round(usage.used),
       level,
-      capacity: storageCapacity(level),
-      free: Math.max(0, storageCapacity(level) - storageUsed(storage ?? { ore: 0, polymers: 0 })),
+      capacity: usage.capacity,
+      free: Math.round(usage.free),
       upgradeCost: storageUpgradeCost(level + 1),
       nextLevel: level + 1,
       nextCapacity: storageCapacity(level + 1),
@@ -366,16 +397,13 @@ export async function offerBarter(
   const field = input.giveResource === 'ORE' ? 'ore' : 'polymers';
   try {
     await prisma.$transaction(async (tx) => {
-      // Условное списание: товар уходит в залог, только если он реально есть.
-      const locked = await tx.hubStorage.updateMany({
-        where: { commanderId, hubId: hub.id, [field]: { gte: give } },
-        data: { [field]: { decrement: give } },
-      });
-      if (locked.count === 0) throw new MarketError('На складе хаба не хватает товара');
+      // В залог — сначала со склада хаба, потом с общего; долю хаба запоминаем для отмены.
+      const locked = await withdrawStock(tx, commanderId, hub.id, field, give);
+      if (!locked) throw new MarketError('На складе хаба и на общем складе не хватает товара');
 
       await tx.barterOffer.create({
         data: {
-          commanderId, hubId: hub.id,
+          commanderId, hubId: hub.id, localPart: locked.local,
           giveResource: input.giveResource, giveQuantity: give,
           wantResource: input.wantResource, wantQuantity: want,
         },
@@ -400,35 +428,23 @@ export async function acceptBarter(commanderId: string, offerId: string): Promis
       const taken = await tx.barterOffer.deleteMany({ where: { id: offerId } });
       if (taken.count === 0) throw new MarketError('Обмен уже принят');
 
-      const mine = await tx.hubStorage.upsert({
-        where: { commanderId_hubId: { commanderId, hubId: offer.hubId } },
-        create: { commanderId, hubId: offer.hubId },
-        update: {},
-      });
+      // Свою часть отдаем со склада хаба своей системы, а не хватит — с общего.
+      const homeHub = await homeHubOf(tx, commanderId);
+      if (!homeHub) throw new MarketError('Торговый хаб не найден');
+      await lockHubStocks(tx, [commanderId, offer.commanderId]);
       const wantField = offer.wantResource === 'ORE' ? 'ore' : 'polymers';
       const giveField = offer.giveResource === 'ORE' ? 'ore' : 'polymers';
 
-      // Отдаем то, что просили.
-      const paid = await tx.hubStorage.updateMany({
-        where: { id: mine.id, [wantField]: { gte: offer.wantQuantity } },
-        data: { [wantField]: { decrement: offer.wantQuantity } },
-      });
-      if (paid.count === 0) {
-        throw new MarketError(`На складе хаба только ${Math.floor(mine[wantField])} — обмен не по карману`);
+      const paid = await withdrawStock(tx, commanderId, homeHub.id, wantField, offer.wantQuantity);
+      if (!paid) throw new MarketError('На складе хаба и на общем складе не хватает товара — обмен не по карману');
+
+      // Полученное обменом — как купленное: обеим сторонам на общий склад.
+      if (!(await depositGlobal(tx, commanderId, giveField, offer.giveQuantity))) {
+        throw new MarketError('На складе не хватает места под обмен');
       }
-
-      // Получаем то, что лежало в залоге.
-      await incrementStorage(tx, mine.id, giveField, offer.giveQuantity, storageCapacity(mine.level),
-        'На складе хаба не хватает места под обмен');
-
-      // Автору отдаем то, что он просил.
-      const author = await tx.hubStorage.upsert({
-        where: { commanderId_hubId: { commanderId: offer.commanderId, hubId: offer.hubId } },
-        create: { commanderId: offer.commanderId, hubId: offer.hubId },
-        update: {},
-      });
-      await incrementStorage(tx, author.id, wantField, offer.wantQuantity, storageCapacity(author.level),
-        'У автора обмена не хватает места на складе');
+      if (!(await depositGlobal(tx, offer.commanderId, wantField, offer.wantQuantity))) {
+        throw new MarketError('У автора обмена не хватает места на складе');
+      }
     });
   } catch (error) {
     return toError(error, 'Не удалось принять обмен');
@@ -447,15 +463,10 @@ export async function cancelBarter(commanderId: string, offerId: string): Promis
       if (removed.count === 0) throw new MarketError('Обмен уже снят');
 
       const field = offer.giveResource === 'ORE' ? 'ore' : 'polymers';
-      const storage = await tx.hubStorage.findUniqueOrThrow({
-        where: { commanderId_hubId: { commanderId, hubId: offer.hubId } },
-      });
-      // Свой же товар возвращается поверх лимита: иначе полный склад запирал бы
-      // игрока в собственном предложении, как это было с ордерами.
-      await tx.hubStorage.update({
-        where: { id: storage.id },
-        data: { [field]: { increment: offer.giveQuantity } },
-      });
+      // Свой же товар возвращается поверх лимита и туда, откуда ушел: иначе снятие
+      // обмена стало бы способом перенести привезенное на общий склад.
+      const local = Math.min(offer.giveQuantity, offer.localPart ?? offer.giveQuantity);
+      await refundStock(tx, commanderId, offer.hubId, field, local, offer.giveQuantity - local);
     });
   } catch (error) {
     return toError(error, 'Не удалось снять обмен');
@@ -485,13 +496,10 @@ function quoteFor(
 
 /** Расширение личного склада на хабе — платится товаром, который уже лежит на складе. */
 export async function upgradeStorage(commanderId: string): Promise<MarketResult> {
-  const hub = await findHubForUser(commanderId);
-  if (!hub) return { ok: false, error: 'Торговый хаб не найден' };
+  const account = await hubAccount(prisma, commanderId);
+  const cost = storageUpgradeCost(account.level + 1);
 
-  const storage = await ensureStorage(commanderId, hub.id);
-  const cost = storageUpgradeCost(storage.level + 1);
-
-  let level = storage.level;
+  let level = account.level;
   try {
     await prisma.$transaction(async (tx) => {
       // Списание и расширение одной транзакцией: проверка баланса отдельно
@@ -502,11 +510,12 @@ export async function upgradeStorage(commanderId: string): Promise<MarketResult>
       });
       if (paid.count === 0) throw new MarketError(`Нужно ${cost} ₴ — столько стоит расширение`);
 
-      const updated = await tx.hubStorage.update({
-        where: { id: storage.id },
+      const raised = await tx.hubAccount.updateMany({
+        where: { id: account.id, level: account.level },
         data: { level: { increment: 1 } },
       });
-      level = updated.level;
+      if (raised.count === 0) throw new MarketError('Склад уже расширили');
+      level = account.level + 1;
     });
   } catch (error) {
     return toError(error, 'Расширить склад не удалось');
@@ -515,7 +524,7 @@ export async function upgradeStorage(commanderId: string): Promise<MarketResult>
   await syncCredits(commanderId);
   return {
     ok: true,
-    message: `Склад расширен до уровня ${level}: вместимость ${storageCapacity(level)}`,
+    message: `Склад расширен до уровня ${level}: вместимость ${storageCapacity(level)} на все хабы`,
   };
 }
 
@@ -543,24 +552,21 @@ export async function placeOrder(
   const field = input.resource === 'ORE' ? 'ore' : 'polymers';
   const total = tradeTotal(input.quantity, input.pricePerUnit);
   let matched: { quantity: number; total: number } = { quantity: 0, total: 0 };
+  let localPart: number | null = null;
 
   try {
     await prisma.$transaction(async (tx) => {
       if (input.side === 'SELL') {
-        // Условное списание: товар уходит в залог только если он реально есть.
-        // Обычный read-modify-write здесь давал гонку и уводил склад в минус.
-        const locked = await tx.hubStorage.updateMany({
-          where: { commanderId, hubId: hub.id, [field]: { gte: input.quantity } },
-          data: { [field]: { decrement: input.quantity } },
-        });
-        if (locked.count === 0) {
-          const storage = await tx.hubStorage.findUnique({
-            where: { commanderId_hubId: { commanderId, hubId: hub.id } },
-          });
+        // В залог — сначала со склада хаба, потом с общего, под блокировкой складов
+        // командира; долю хаба запоминаем, чтобы отмена вернула товар туда же.
+        const locked = await withdrawStock(tx, commanderId, hub.id, field, input.quantity);
+        if (!locked) {
+          const available = await availableAt(tx, commanderId, hub.id);
           throw new MarketError(
-            `На складе хаба только ${Math.floor(storage?.[field] ?? 0)} — ${RESOURCE_LABELS[input.resource]}`,
+            `На складе хаба и на общем складе только ${Math.floor(available[field])} — ${RESOURCE_LABELS[input.resource]}`,
           );
         }
+        localPart = locked.local;
       } else {
         // Залог включает комиссию: иначе при сведении по своей же цене
         // на сбор бы не хватило.
@@ -577,6 +583,7 @@ export async function placeOrder(
       const created = await tx.marketOrder.create({
         data: {
           hubId: hub.id,
+          localPart,
           commanderId,
           side: input.side,
           resource: input.resource,
@@ -637,7 +644,6 @@ async function matchOrder(
   const field = order.resource === 'ORE' ? 'ore' : 'polymers';
   const counter = await tx.marketOrder.findMany({
     where: {
-      hubId: order.hubId,
       resource: order.resource,
       side: order.side === 'SELL' ? 'BUY' : 'SELL',
       remaining: { gt: 0 },
@@ -665,16 +671,17 @@ async function matchOrder(
     const buyerId = order.side === 'SELL' ? other.commanderId : order.commanderId;
     const buyerBid = order.side === 'SELL' ? other.pricePerUnit : order.pricePerUnit;
     // «Торговые связи» синдиката снижают комиссию каждой стороне по-своему.
+    // В журнал сделка пишется на хаб, где выставлена продажа.
+    const tradeHubId = order.side === 'SELL' ? order.hubId : other.hubId;
     const [sellerBuffs, buyerBuffs] = await Promise.all([syndicateBuffsFor(sellerId), syndicateBuffsFor(buyerId)]);
 
     // Товар уже в залоге у продавца, деньги — у покупателя. Осталось развести.
-    const buyerStorage = await tx.hubStorage.upsert({
-      where: { commanderId_hubId: { commanderId: buyerId, hubId: order.hubId } },
-      create: { commanderId: buyerId, hubId: order.hubId },
-      update: {},
-    });
-    await incrementStorage(tx, buyerStorage.id, field, volume, storageCapacity(buyerStorage.level),
-      'У покупателя не хватает места на складе хаба');
+    /*
+     * Купленное ложится на общий склад покупателя — его можно забрать с любого хаба.
+     * Места нет — встречная заявка пропускается, а не роняет всю: в общем стакане
+     * покупатель не может заранее подготовить место под каждую сделку.
+     */
+    if (!(await depositGlobal(tx, buyerId, field, volume))) continue;
 
     await tx.commander.update({
       where: { id: sellerId },
@@ -698,7 +705,7 @@ async function matchOrder(
     await tx.marketOrder.deleteMany({ where: { id: other.id, remaining: { lte: 0 } } });
 
     await tx.trade.create({
-      data: { hubId: order.hubId, buyerId, sellerId, resource: order.resource, quantity: volume, pricePerUnit: price, total },
+      data: { hubId: tradeHubId, buyerId, sellerId, resource: order.resource, quantity: volume, pricePerUnit: price, total },
     });
 
     left -= volume;
@@ -734,9 +741,6 @@ export async function cancelOrder(commanderId: string, orderId: string): Promise
 
       if (order.side === 'SELL') {
         const field = order.resource === 'ORE' ? 'ore' : 'polymers';
-        const storage = await tx.hubStorage.findUniqueOrThrow({
-          where: { commanderId_hubId: { commanderId, hubId: order.hubId } },
-        });
         /*
          * Возврат залога кладется на склад без оглядки на лимит.
          *
@@ -749,10 +753,10 @@ export async function cancelOrder(commanderId: string, orderId: string): Promise
          * который вернулся, — ровно тот случай, для которого переполнение
          * склада и предусмотрено, как у возвратного рейса на колонии.
          */
-        await tx.hubStorage.update({
-          where: { id: storage.id },
-          data: { [field]: { increment: order.remaining } },
-        });
+        // Продажи съедают сначала долю с общего склада, поэтому остаток заявки —
+        // прежде всего то, что взято со склада хаба. Туда он и возвращается.
+        const local = Math.min(order.remaining, order.localPart ?? order.remaining);
+        await refundStock(tx, commanderId, order.hubId, field, local, order.remaining - local);
       } else {
         // Возвращаем залог целиком, вместе с заложенной комиссией:
         // сделки не было, значит и сбора нет.
@@ -811,6 +815,11 @@ export async function fillOrder(
       total = tradeTotal(executed, order.pricePerUnit);
       const field = order.resource === 'ORE' ? 'ore' : 'polymers';
 
+      // Продаем со склада хаба своей системы, а не хватит — с общего; купленное — на общий склад.
+      const homeHub = await homeHubOf(tx, commanderId);
+      if (!homeHub) throw new MarketError('Торговый хаб не найден');
+      await lockHubStocks(tx, [commanderId, order.commanderId]);
+
       // Захватываем объем в самом ордере условным списанием: если параллельный
       // запрос успел раньше, count будет 0 и фантомной сделки не случится.
       const taken = await tx.marketOrder.updateMany({
@@ -819,33 +828,18 @@ export async function fillOrder(
       });
       if (taken.count === 0) throw new MarketError('Ордер разобрали, попробуй меньший объем');
 
-      const myStorage = await tx.hubStorage.upsert({
-        where: { commanderId_hubId: { commanderId, hubId: order.hubId } },
-        create: { commanderId, hubId: order.hubId },
-        update: {},
-      });
-
       if (order.side === 'SELL') {
-        // Мы покупаем: платим криптогривну, товар ложится на наш склад хаба.
+        // Мы покупаем: платим криптогривну, товар ложится на наш общий склад.
         const paid = await tx.commander.updateMany({
           where: { id: commanderId, credits: { gte: total } },
           data: { credits: { decrement: total } },
         });
         if (paid.count === 0) throw new MarketError(`Не хватает криптогривны: нужно ${total} ₴`);
 
-        /*
-         * Свободное место в отказе не уходит в минус.
-         *
-         * Склад бывает переполнен сверх вместимости: снятая заявка возвращает
-         * товар без оглядки на лимит (см. `cancelOrder`), а место, которое он
-         * освобождал, к тому времени могло быть занято покупкой. Разность
-         * тогда отрицательна, и отказ читался как «свободно только −29262» —
-         * место, которого не просто нет, а меньше чем нет. Свободного места
-         * в этом случае ноль, о чем и надо сказать.
-         */
-        const freeSpace = Math.max(0, storageCapacity(myStorage.level) - storageUsed(myStorage));
-        await incrementStorage(tx, myStorage.id, field, executed, storageCapacity(myStorage.level),
-          `На складе хаба свободно только ${Math.floor(freeSpace)}`);
+        if (!(await depositGlobal(tx, commanderId, field, executed))) {
+          const usage = await hubStockUsage(tx, commanderId);
+          throw new MarketError(`На складе свободно только ${Math.floor(usage.free)}`);
+        }
         // Комиссия биржи исчезает из оборота: это второй сток денег
         // и единственный, работающий на больших оборотах.
         await tx.commander.update({
@@ -854,21 +848,14 @@ export async function fillOrder(
         });
       } else {
         // Мы продаем: товар уходит со склада, криптогривна покупателя уже в залоге.
-        const shipped = await tx.hubStorage.updateMany({
-          where: { id: myStorage.id, [field]: { gte: executed } },
-          data: { [field]: { decrement: executed } },
-        });
-        if (shipped.count === 0) {
-          throw new MarketError(`На складе хаба только ${Math.floor(myStorage[field])}`);
+        const shipped = await withdrawStock(tx, commanderId, homeHub.id, field, executed);
+        if (!shipped) {
+          const available = await availableAt(tx, commanderId, homeHub.id);
+          throw new MarketError(`На складе хаба и на общем складе только ${Math.floor(available[field])}`);
         }
-
-        const buyerStorage = await tx.hubStorage.upsert({
-          where: { commanderId_hubId: { commanderId: order.commanderId, hubId: order.hubId } },
-          create: { commanderId: order.commanderId, hubId: order.hubId },
-          update: {},
-        });
-        await incrementStorage(tx, buyerStorage.id, field, executed, storageCapacity(buyerStorage.level),
-          'У покупателя не хватает места на складе хаба');
+        if (!(await depositGlobal(tx, order.commanderId, field, executed))) {
+          throw new MarketError('У покупателя не хватает места на складе');
+        }
         await tx.commander.update({
           where: { id: commanderId },
           data: { credits: { increment: total - sellerFee(total, (await syndicateBuffsFor(commanderId)).tradeFee) } },
@@ -879,7 +866,7 @@ export async function fillOrder(
 
       await tx.trade.create({
         data: {
-          hubId: order.hubId,
+          hubId: order.side === 'SELL' ? order.hubId : homeHub.id,
           buyerId: order.side === 'SELL' ? commanderId : order.commanderId,
           sellerId: order.side === 'SELL' ? order.commanderId : commanderId,
           resource: order.resource,
@@ -899,30 +886,6 @@ export async function fillOrder(
   return { ok: true, message: `Сделка исполнена: ${executed} единиц на ${total} ₴` };
 }
 
-/**
- * Пополнение склада хаба с проверкой вместимости прямо в UPDATE:
- * арифметику «занято + приход <= вместимость» нельзя выразить фильтром Prisma,
- * поэтому используем условный SQL — иначе параллельные зачисления переполняют склад.
- */
-async function incrementStorage(
-  tx: Pick<typeof prisma, '$executeRaw'>,
-  storageId: string,
-  field: 'ore' | 'polymers',
-  amount: number,
-  capacity: number,
-  errorMessage: string,
-): Promise<void> {
-  if (amount <= 0) return;
-
-  const updated =
-    field === 'ore'
-      ? await tx.$executeRaw`UPDATE hub_storages SET ore = ore + ${amount}
-          WHERE id = ${storageId} AND ore + polymers + ${amount} <= ${capacity}`
-      : await tx.$executeRaw`UPDATE hub_storages SET polymers = polymers + ${amount}
-          WHERE id = ${storageId} AND ore + polymers + ${amount} <= ${capacity}`;
-
-  if (updated === 0) throw new MarketError(errorMessage);
-}
 
 class MarketError extends Error {}
 
@@ -957,16 +920,15 @@ function round2(value: number): number {
  * мелочь двигала бы дневную отметку наравне с настоящим оборотом.
  */
 export async function priceHistory(
-  commanderId: string,
+  // Биржа общая на сервер, и график у всех один; командир остается в сигнатуре
+  // ради роута, который зовет все торговые чтения одинаково.
+  _commanderId: string,
   resource: TradeResource,
   days = 30,
 ): Promise<Array<{ day: string; price: number; volume: number }>> {
-  const hub = await findHubForUser(commanderId);
-  if (!hub) return [];
-
   const since = new Date(Date.now() - days * DAY_MS);
   const rows = await prisma.trade.findMany({
-    where: { hubId: hub.id, resource, createdAt: { gte: since } },
+    where: { resource, createdAt: { gte: since } },
     select: { quantity: true, pricePerUnit: true, createdAt: true },
     orderBy: { createdAt: 'asc' },
   });
@@ -1000,12 +962,8 @@ export async function tradeHistory(
   commanderId: string,
   options: { before?: number | undefined; resource?: TradeResource | undefined; mineOnly?: boolean } = {},
 ): Promise<MarketView['trades']> {
-  const hub = await findHubForUser(commanderId);
-  if (!hub) return [];
-
   const rows = await prisma.trade.findMany({
     where: {
-      hubId: hub.id,
       ...(options.resource ? { resource: options.resource } : {}),
       ...(options.before ? { createdAt: { lt: new Date(options.before) } } : {}),
       ...(options.mineOnly ? { OR: [{ buyerId: commanderId }, { sellerId: commanderId }] } : {}),

@@ -16,9 +16,9 @@ import {
 } from '../game/fogOfWar.js';
 import { emptyDefenseCounts, type DefenseCounts, type DefenseType } from '../game/defenses.js';
 import { emptyShipCounts, type ShipCounts } from '../game/ships.js';
-import { storageCapacity, storageUsed } from '../game/market.js';
 import type { GalaxyMap, HubView, KishView, SystemMap } from '../types/socket.js';
 import { membershipOf } from './syndicateAccess.js';
+import { hubStockUsage } from './hubStock.js';
 import { hasPermission, KISH_POSITION } from '../game/syndicate.js';
 
 /**
@@ -132,20 +132,20 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
   });
 
   const storage = hub?.storages[0] ?? null;
-  const hubView: HubView | null = hub
+  // На хабе доступны его склад и общий склад купленного; размер один на все хабы.
+  const stock = hub ? await hubStockUsage(prisma, commanderId) : null;
+  const hubView: HubView | null = hub && stock
     ? {
         hubId: hub.id,
         name: hub.name,
         position: hub.position,
-        storage: storage
-          ? {
-              ore: Math.round(storage.ore),
-              polymers: Math.round(storage.polymers),
-              level: storage.level,
-              capacity: storageCapacity(storage.level),
-              free: Math.max(0, storageCapacity(storage.level) - storageUsed(storage)),
-            }
-          : null,
+        storage: {
+          ore: Math.round((storage?.ore ?? 0) + stock.global.ore),
+          polymers: Math.round((storage?.polymers ?? 0) + stock.global.polymers),
+          level: stock.level,
+          capacity: stock.capacity,
+          free: Math.round(stock.free),
+        },
       }
     : null;
 

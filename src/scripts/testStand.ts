@@ -69,6 +69,12 @@ for (const commander of [admiral, pilot]) {
     create: { commanderId: commander.id, hubId: hub.id, ore: 20000, polymers: 20000, level: 8 },
     update: { ore: 20000, polymers: 20000, level: 8 },
   });
+  // Размер склада теперь один на командира — стенду он нужен большим.
+  await prisma.hubAccount.upsert({
+    where: { commanderId: commander.id },
+    create: { commanderId: commander.id, level: 8 },
+    update: { level: 8, ore: 0, polymers: 0 },
+  });
 }
 
 console.log(

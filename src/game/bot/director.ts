@@ -13,6 +13,7 @@
  * штатный таймер простоя. Десять ботов стоят примерно как один онлайновый
  * игрок, и офлайн им начисляется по тем же правилам, что и живым.
  */
+import { hubStockUsage } from '../../services/hubStock.js';
 import { prisma } from '../../db/prisma.js';
 import { gameLoop, type ActionResult } from '../gameLoop.js';
 import { cancelOrder, fillOrder, placeOrder, upgradeStorage } from '../../services/marketService.js';
@@ -34,7 +35,7 @@ import { COMBAT_TYPES, SHIP_TYPES, SQUADRON_TYPES, emptyShipCounts, type ShipCou
 import { fleetSize, fleetCapacity } from '../fleets.js';
 import { productionPerSecond, systemModifiers, storageCapacities } from '../rules.js';
 import { economyBonuses, timeCompressionDrain } from '../techTree.js';
-import { storageCapacity as hubCapacity, storageUpgradeCost } from '../market.js';
+import { storageUpgradeCost } from '../market.js';
 import { normalizeDefenses, normalizeShips } from '../fogOfWar.js';
 import { spentOnDefense, spentOnFleet } from '../score.js';
 import type { CommanderRuntimeState } from '../baseState.js';
@@ -125,10 +126,12 @@ async function buildSnapshot(
     }),
     // Открытые заявки: без них бот выставлял бы одну и ту же каждые
     // сорок пять секунд — условие, которое ее породило, держится часами.
-    // Весь стакан своего хаба: свои заявки и чужие. Чужие нужны затем, что
-    // торговля — это не только выставить цену, но и взять чужую.
+    // Весь стакан — биржа общая на сервер: свои заявки и чужие. Чужие нужны
+    // затем, что торговля — это не только выставить цену, но и взять чужую.
+    // Купленное ложится на общий склад и забирается с любого хаба, поэтому
+    // заявки чужих систем боту так же доступны, как свои.
     prisma.marketOrder.findMany({
-      where: { remaining: { gt: 0 }, hub: { system: { planets: { some: { base: { commanderId: commander.commanderId } } } } } },
+      where: { remaining: { gt: 0 } },
       select: { id: true, commanderId: true, side: true, resource: true, remaining: true, pricePerUnit: true },
       take: 40,
     }),
@@ -183,6 +186,7 @@ async function buildSnapshot(
       select: { ore: true, polymers: true, level: true },
     }),
   ]);
+  const stockUsage = await hubStockUsage(prisma, commander.commanderId);
 
   /*
    * Разведка дает три разных числа, и путать их нельзя.
@@ -328,13 +332,15 @@ async function buildSnapshot(
       amount: order.remaining,
       mine: order.commanderId === commander.commanderId,
     })),
+    // На хабе своей системы боту доступны его склад и общий склад купленного;
+    // размер и аренда — одни на все хабы.
     hubStorage: {
-      ore: hubStock?.ore ?? 0,
-      polymers: hubStock?.polymers ?? 0,
-      free: Math.max(0, hubCapacity(hubStock?.level ?? 1) - ((hubStock?.ore ?? 0) + (hubStock?.polymers ?? 0))),
-      level: hubStock?.level ?? 1,
-      upgradeCost: storageUpgradeCost((hubStock?.level ?? 1) + 1),
-      nextRentPerHour: hubRent((hubStock?.level ?? 1) + 1) * 3600,
+      ore: (hubStock?.ore ?? 0) + stockUsage.global.ore,
+      polymers: (hubStock?.polymers ?? 0) + stockUsage.global.polymers,
+      free: stockUsage.free,
+      level: stockUsage.level,
+      upgradeCost: storageUpgradeCost(stockUsage.level + 1),
+      nextRentPerHour: hubRent(stockUsage.level + 1) * 3600,
     },
     colonizing: commander.fleets.some((fleet) => fleet.mission === 'COLONIZE'),
   };
@@ -733,19 +739,15 @@ async function marketBrief(
     /*
      * Идентификатор идет вместе с заявкой: по нему модель ее и исполняет.
      *
-     * Стакан берется только свой — тот же, что видит код в снимке. Без
-     * привязки к хабу модели показывали заявки со всей галактики, а склада
-     * у бота там нет, и обе стороны выходили плохо: продажа отваливалась
-     * с «На складе хаба только 0», а покупка проходила — товар ложился
-     * на чужой хаб, куда бот не летает, и оплаченный груз пропадал совсем.
-     * Стакан на стенде и правда лежал на двух хабах, а сюда шли восемь самых
-     * дешевых заявок без разбора.
+     * Стакан общий на сервер — тот же, что видит код в снимке. Раньше
+     * он был только своим: купленное ложилось на чужой хаб, куда бот
+     * не летает, и оплаченный груз пропадал. Теперь купленное идет на
+     * общий склад и забирается с любого хаба, и чужие системы боту доступны.
      */
     prisma.marketOrder.findMany({
       where: {
         commanderId: { not: commanderId },
         remaining: { gt: 0 },
-        hub: { system: { planets: { some: { base: { commanderId } } } } },
       },
       select: { id: true, side: true, resource: true, remaining: true, pricePerUnit: true },
       orderBy: { pricePerUnit: 'asc' },
