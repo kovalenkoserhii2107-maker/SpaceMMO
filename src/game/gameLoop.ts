@@ -71,7 +71,7 @@ import { plunderAmount, resolveBattle, type PlunderResult, type SideForces, type
 import { checkArchitect, checkPirateBane } from '../services/achievementService.js';
 import { canAttack, declareSyndicateWar, declareWar } from '../services/warService.js';
 import { availableAt, depositLocal, lockHubStocks, withdrawStock } from '../services/hubStock.js';
-import {
+import { alliedSyndicateIds, commanderPacts, pactsInForce,
   membershipOf,
   sameSyndicate,
   syndicateBuffsFor,
@@ -79,6 +79,7 @@ import {
   type SyndicateTechState,
 } from '../services/syndicateAccess.js';
 import {
+  pactsForbidAttack,
   bramaThroughput,
   effectiveTaxRate,
   plunderTreasury,
@@ -965,6 +966,9 @@ class GameLoop {
       if (mission === 'KISH_RAID') {
         if (!own?.syndicateId) return { ok: false, error: 'Налет на Кіш возможен только от лица синдиката' };
         if (own.syndicateId === syndicate.id) return { ok: false, error: 'На Кіш своего синдиката не нападают' };
+        if (pactsForbidAttack(await pactsInForce(own.syndicateId, syndicate.id))) {
+          return { ok: false, error: 'С этим синдикатом действует пакт о ненападении' };
+        }
         /*
          * Грабить Кіш можно только в войне синдикатов, и налет сам ее объявляет —
          * но только тому, у кого есть право дипломатии: иначе любой рядовой
@@ -1113,9 +1117,11 @@ class GameLoop {
             return { ok: false, error: 'Эта атака уже не летит к выбранной цели' };
           }
           if (lead.jointLeadId) return { ok: false, error: 'Присоединяться нужно к ведущему флоту атаки' };
-          if (lead.commanderId !== commanderId && !(await sameSyndicate(commanderId, lead.commanderId))) {
-            return { ok: false, error: 'Присоединиться можно только к атаке своего синдиката' };
-          }
+          const ally =
+            lead.commanderId === commanderId ||
+            (await sameSyndicate(commanderId, lead.commanderId)) ||
+            (await commanderPacts(commanderId, lead.commanderId)).includes('ALLIANCE');
+          if (!ally) return { ok: false, error: 'Присоединиться можно только к атаке своего синдиката или союзника' };
           const joined = await prisma.fleet.count({ where: { jointLeadId: lead.id } });
           if (joined + 1 >= MAX_JOINT_FLEETS) {
             return { ok: false, error: `В одной атаке не больше ${MAX_JOINT_FLEETS} флотов` };
@@ -1133,6 +1139,9 @@ class GameLoop {
          */
         if (await sameSyndicate(commanderId, planet.base.commanderId)) {
           return { ok: false, error: 'Нельзя атаковать участника своего синдиката' };
+        }
+        if (pactsForbidAttack(await commanderPacts(commanderId, planet.base.commanderId))) {
+          return { ok: false, error: 'Между вашими синдикатами действует пакт о ненападении' };
         }
         if (!(await canAttack(commanderId, planet.base.commanderId))) {
           const declared = await declareWar(commanderId, planet.base.commanderId);
@@ -1482,6 +1491,8 @@ class GameLoop {
    */
   async jointAttacks(commanderId: string, planetId: string): Promise<JointAttackView[]> {
     const me = await prisma.commander.findUnique({ where: { id: commanderId }, select: { syndicateId: true } });
+    // Союзники по пакту собирают атаки вместе, как участники одного синдиката.
+    const allies = me?.syndicateId ? await alliedSyndicateIds(me.syndicateId) : [];
     const now = Date.now();
     const leads = await prisma.fleet.findMany({
       where: {
@@ -1490,7 +1501,9 @@ class GameLoop {
         targetPlanetId: planetId,
         jointLeadId: null,
         arrivesAt: { gt: new Date(now + JOINT_MIN_LEAD_MS) },
-        commander: me?.syndicateId ? { OR: [{ id: commanderId }, { syndicateId: me.syndicateId }] } : { id: commanderId },
+        commander: me?.syndicateId
+          ? { OR: [{ id: commanderId }, { syndicateId: { in: [me.syndicateId, ...allies] } }] }
+          : { id: commanderId },
       },
       include: { commander: { select: { nickname: true } }, jointFleets: { select: { id: true } } },
       orderBy: { arrivesAt: 'asc' },
@@ -1550,11 +1563,8 @@ class GameLoop {
   ): Promise<{ usable: boolean; reason: string | null }> {
     const member = await prisma.commander.findUnique({ where: { id: commanderId }, select: { syndicateId: true } });
     if (!member?.syndicateId || fromSystemId === toSystemId) return { usable: false, reason: null };
-    const gates = await prisma.syndicateGate.findMany({
-      where: { syndicateId: member.syndicateId, systemId: { in: [fromSystemId, toSystemId] } },
-    });
-    const fromGate = gates.find((gate) => gate.systemId === fromSystemId);
-    const toGate = gates.find((gate) => gate.systemId === toSystemId);
+    const fromGate = await this.usableGate(member.syndicateId, fromSystemId);
+    const toGate = await this.usableGate(member.syndicateId, toSystemId);
     if (!fromGate || !toGate) return { usable: false, reason: null };
     const windowOpen = Date.now() - fromGate.windowStartedAt.getTime() < GATE_WINDOW_MS;
     const used = windowOpen ? fromGate.windowShips : 0;
@@ -1565,13 +1575,21 @@ class GameLoop {
     return { usable: true, reason: null };
   }
 
+  /**
+   * Брама в системе, через которую синдикат может прыгать: своя или союзника
+   * по пакту. Своя берется первой — ее окно синдикат считает своим.
+   */
+  private async usableGate(syndicateId: string, systemId: string) {
+    const owners = [syndicateId, ...(await alliedSyndicateIds(syndicateId))];
+    const gates = await prisma.syndicateGate.findMany({ where: { systemId, syndicateId: { in: owners } } });
+    return gates.find((gate) => gate.syndicateId === syndicateId) ?? gates[0] ?? null;
+  }
+
   /** Резерв места в часовом окне Брамы вылета — одним условным UPDATE, без гонок. */
   private async reserveGate(commanderId: string, fromSystemId: string, shipCount: number): Promise<boolean> {
     const member = await prisma.commander.findUnique({ where: { id: commanderId }, select: { syndicateId: true } });
     if (!member?.syndicateId) return false;
-    const gate = await prisma.syndicateGate.findUnique({
-      where: { syndicateId_systemId: { syndicateId: member.syndicateId, systemId: fromSystemId } },
-    });
+    const gate = await this.usableGate(member.syndicateId, fromSystemId);
     if (!gate) return false;
     const limit = bramaThroughput(gate.level);
     const expired = new Date(Date.now() - GATE_WINDOW_MS);

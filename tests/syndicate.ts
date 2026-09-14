@@ -7,6 +7,11 @@
  */
 import {
   BUFF_TENURE_MS,
+  PACT_NOTICE_MS,
+  isPactKind,
+  pactInForce,
+  pactPair,
+  pactsForbidAttack,
   plunderTreasury,
   treasuryProtectedShare,
   treasuryUpgradeCost,
@@ -187,6 +192,18 @@ console.log('\n=== 5. Удержание: дележ уцелевших ===');
   check('разгром обнуляет всех', wiped.every((part) => part.LIGHT_FIGHTER === 0 && part.CRUISER === 0));
   const [solo] = splitSurvivors({ ...emptyShipCounts(), LIGHT_FIGHTER: 99 }, [base]) as [typeof base];
   check('никто не получает больше, чем привел', solo.LIGHT_FIGHTER === 30);
+}
+
+console.log('\n=== 6. Пакты ===');
+{
+  check('пара синдикатов упорядочена независимо от стороны', pactPair('b', 'a').join() === pactPair('a', 'b').join() && pactPair('b', 'a')[0] === 'a');
+  check('принятый пакт без срока действует', pactInForce({ status: 'ACTIVE', endsAt: null }, 1000));
+  check('предложенный пакт еще не действует', !pactInForce({ status: 'PROPOSED', endsAt: null }, 1000));
+  check('расторгнутый пакт действует до конца срока', pactInForce({ status: 'ACTIVE', endsAt: 5000 }, 4999) && !pactInForce({ status: 'ACTIVE', endsAt: 5000 }, 5000));
+  check('срок расторжения — сутки', PACT_NOTICE_MS === 24 * 60 * 60 * 1000);
+  check('ненападение и союз запрещают атаку, торговое соглашение — нет',
+    pactsForbidAttack(['NON_AGGRESSION']) && pactsForbidAttack(['ALLIANCE']) && !pactsForbidAttack(['TRADE']) && !pactsForbidAttack([]));
+  check('вид пакта проверяется по списку', isPactKind('ALLIANCE') && !isPactKind('WAR') && !isPactKind(1));
 }
 
 const passed = results.filter((r) => r.passed).length;

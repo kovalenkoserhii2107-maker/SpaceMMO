@@ -3,7 +3,8 @@
  * Все проверки и переводы — на сервере и в транзакции: товар и криптогривна
  * блокируются в момент выставления ордера, поэтому продать одно и то же дважды нельзя.
  */
-import { syndicateBuffsFor } from './syndicateAccess.js';
+import { commanderPacts, syndicateBuffsFor } from './syndicateAccess.js';
+import { TRADE_PACT_FEE_MULTIPLIER } from '../game/syndicate.js';
 import {
   availableAt,
   depositGlobal,
@@ -673,7 +674,13 @@ async function matchOrder(
     // «Торговые связи» синдиката снижают комиссию каждой стороне по-своему.
     // В журнал сделка пишется на хаб, где выставлена продажа.
     const tradeHubId = order.side === 'SELL' ? order.hubId : other.hubId;
-    const [sellerBuffs, buyerBuffs] = await Promise.all([syndicateBuffsFor(sellerId), syndicateBuffsFor(buyerId)]);
+    const [sellerBuffs, buyerBuffs, pacts] = await Promise.all([
+      syndicateBuffsFor(sellerId),
+      syndicateBuffsFor(buyerId),
+      commanderPacts(sellerId, buyerId),
+    ]);
+    // Торговое соглашение синдикатов снижает комиссию обеим сторонам сделки.
+    const pactFee = pacts.includes('TRADE') ? TRADE_PACT_FEE_MULTIPLIER : 1;
 
     // Товар уже в залоге у продавца, деньги — у покупателя. Осталось развести.
     /*
@@ -685,7 +692,7 @@ async function matchOrder(
 
     await tx.commander.update({
       where: { id: sellerId },
-      data: { credits: { increment: total - sellerFee(total, sellerBuffs.tradeFee) } },
+      data: { credits: { increment: total - sellerFee(total, sellerBuffs.tradeFee * pactFee) } },
     });
 
     /*
@@ -693,7 +700,7 @@ async function matchOrder(
      * значит он переплатил в залог, и разницу надо вернуть. Без этого
      * выставившийся дороже терял бы всю выгоду от встречи посередине.
      */
-    const refund = buyerEscrow(volume, buyerBid) - (total + buyerFee(total, buyerBuffs.tradeFee));
+    const refund = buyerEscrow(volume, buyerBid) - (total + buyerFee(total, buyerBuffs.tradeFee * pactFee));
     if (refund > 0) {
       await tx.commander.update({ where: { id: buyerId }, data: { credits: { increment: refund } } });
     }
@@ -827,6 +834,8 @@ export async function fillOrder(
         data: { remaining: { decrement: executed } },
       });
       if (taken.count === 0) throw new MarketError('Ордер разобрали, попробуй меньший объем');
+      // Торговое соглашение синдикатов снижает комиссию и в сделке по клику.
+      const pactFee = (await commanderPacts(commanderId, order.commanderId)).includes('TRADE') ? TRADE_PACT_FEE_MULTIPLIER : 1;
 
       if (order.side === 'SELL') {
         // Мы покупаем: платим криптогривну, товар ложится на наш общий склад.
@@ -844,7 +853,7 @@ export async function fillOrder(
         // и единственный, работающий на больших оборотах.
         await tx.commander.update({
           where: { id: order.commanderId },
-          data: { credits: { increment: total - sellerFee(total, (await syndicateBuffsFor(order.commanderId)).tradeFee) } },
+          data: { credits: { increment: total - sellerFee(total, (await syndicateBuffsFor(order.commanderId)).tradeFee * pactFee) } },
         });
       } else {
         // Мы продаем: товар уходит со склада, криптогривна покупателя уже в залоге.
@@ -858,7 +867,7 @@ export async function fillOrder(
         }
         await tx.commander.update({
           where: { id: commanderId },
-          data: { credits: { increment: total - sellerFee(total, (await syndicateBuffsFor(commanderId)).tradeFee) } },
+          data: { credits: { increment: total - sellerFee(total, (await syndicateBuffsFor(commanderId)).tradeFee * pactFee) } },
         });
       }
 

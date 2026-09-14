@@ -473,3 +473,42 @@ export function normalizeRankName(raw: unknown): string | null {
   if (!/^[\p{L}\p{N}_\- ]+$/u.test(name)) return null;
   return name;
 }
+
+/* ------------------------- Пакты ------------------------- */
+
+export const PACT_TYPES = ['NON_AGGRESSION', 'ALLIANCE', 'TRADE'] as const;
+export type PactKind = (typeof PACT_TYPES)[number];
+
+export const PACT_LABELS: Record<PactKind, string> = {
+  NON_AGGRESSION: 'Ненападение',
+  ALLIANCE: 'Союз',
+  TRADE: 'Торговое соглашение',
+};
+
+/**
+ * Расторгнутый пакт действует еще сутки. Без срока пакт о ненападении
+ * ничего не стоил бы: расторгнуть и напасть можно было бы одной минутой.
+ */
+export const PACT_NOTICE_MS = 24 * 60 * 60 * 1000;
+
+/** Торговое соглашение вдвое снижает комиссию биржи в сделках между сторонами. */
+export const TRADE_PACT_FEE_MULTIPLIER = 0.5;
+
+export function isPactKind(value: unknown): value is PactKind {
+  return typeof value === 'string' && (PACT_TYPES as readonly string[]).includes(value);
+}
+
+/** Пара синдикатов упорядочена по id: один пакт одного вида на пару. */
+export function pactPair(first: string, second: string): [string, string] {
+  return first < second ? [first, second] : [second, first];
+}
+
+/** Действует ли пакт сейчас: принят и срок расторжения не вышел. */
+export function pactInForce(pact: { status: string; endsAt: number | null }, now: number): boolean {
+  return pact.status === 'ACTIVE' && (pact.endsAt === null || pact.endsAt > now);
+}
+
+/** Союз включает ненападение: союзники друг друга не атакуют. */
+export function pactsForbidAttack(kinds: readonly PactKind[]): boolean {
+  return kinds.includes('NON_AGGRESSION') || kinds.includes('ALLIANCE');
+}

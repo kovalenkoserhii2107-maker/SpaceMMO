@@ -11,6 +11,8 @@ import type { Prisma } from '../generated/prisma/client.js';
 import {
   DEFAULT_RANKS,
   NEUTRAL_SYNDICATE_BUFFS,
+  pactPair,
+  type PactKind,
   effectiveSyndicateTechs,
   emptySyndicateTechLevels,
   hasPermission,
@@ -231,4 +233,55 @@ export async function syndicateBuffsFor(commanderId: string, now = Date.now()): 
     row.syndicateJoinedAt?.getTime() ?? null,
     now,
   );
+}
+
+/**
+ * Пакты, действующие между двумя синдикатами прямо сейчас.
+ *
+ * Лежат здесь, а не в сервисе пактов: их спрашивают вылет флота, война
+ * и биржа, а сервис пактов рассылает письма и тянет за собой игровой цикл.
+ */
+export async function pactsInForce(
+  firstSyndicateId: string | null,
+  secondSyndicateId: string | null,
+  client: Tx | typeof prisma = prisma,
+  now = Date.now(),
+): Promise<PactKind[]> {
+  if (!firstSyndicateId || !secondSyndicateId || firstSyndicateId === secondSyndicateId) return [];
+  const [first, second] = pactPair(firstSyndicateId, secondSyndicateId);
+  const rows = await client.syndicatePact.findMany({
+    where: {
+      firstSyndicateId: first,
+      secondSyndicateId: second,
+      status: 'ACTIVE',
+      OR: [{ endsAt: null }, { endsAt: { gt: new Date(now) } }],
+    },
+    select: { type: true },
+  });
+  return rows.map((row) => row.type);
+}
+
+/** Пакты между синдикатами двух командиров; у одиночки пактов нет. */
+export async function commanderPacts(firstCommanderId: string, secondCommanderId: string): Promise<PactKind[]> {
+  const rows = await prisma.commander.findMany({
+    where: { id: { in: [firstCommanderId, secondCommanderId] } },
+    select: { id: true, syndicateId: true },
+  });
+  const first = rows.find((row) => row.id === firstCommanderId)?.syndicateId ?? null;
+  const second = rows.find((row) => row.id === secondCommanderId)?.syndicateId ?? null;
+  return pactsInForce(first, second);
+}
+
+/** Синдикаты, с которыми у этого действует союз. */
+export async function alliedSyndicateIds(syndicateId: string, now = Date.now()): Promise<string[]> {
+  const rows = await prisma.syndicatePact.findMany({
+    where: {
+      type: 'ALLIANCE',
+      status: 'ACTIVE',
+      OR: [{ firstSyndicateId: syndicateId }, { secondSyndicateId: syndicateId }],
+      AND: [{ OR: [{ endsAt: null }, { endsAt: { gt: new Date(now) } }] }],
+    },
+    select: { firstSyndicateId: true, secondSyndicateId: true },
+  });
+  return rows.map((row) => (row.firstSyndicateId === syndicateId ? row.secondSyndicateId : row.firstSyndicateId));
 }

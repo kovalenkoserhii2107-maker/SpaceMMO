@@ -5161,9 +5161,14 @@
       return;
     }
 
+    const pacts = war.data.pacts || [];
+    const PACT_KINDS = [['NON_AGGRESSION', 'Ненападение'], ['ALLIANCE', 'Союз'], ['TRADE', 'Торговое соглашение']];
     for (const other of others) {
       const row = document.createElement('div');
       row.className = 'queue-item war-item';
+      const withThem = pacts.filter((pact) => pact.syndicateId === other.id);
+      // Ненападение и союз не дают объявить войну, пока пакт в силе.
+      const peaceBound = withThem.some((pact) => pact.status === 'ACTIVE' && pact.type !== 'TRADE');
 
       const info = document.createElement('div');
       const title = document.createElement('b');
@@ -5172,20 +5177,64 @@
       status.className = other.atWar ? 'status-war' : 'status-peace';
       status.textContent = other.atWar ? 'война синдикатов' : 'мир';
       info.append(title, status);
+      for (const pact of withThem) {
+        const line = document.createElement('div');
+        line.className = 'muted';
+        line.textContent = pact.status === 'PROPOSED'
+          ? `${pact.label}: ${pact.proposedByUs ? 'предложен нами, ждет ответа' : 'предложен нам'}`
+          : `${pact.label}: действует${pact.endsAt ? ` до ${synDateTime(pact.endsAt)} (расторгнут)` : ''}`;
+        info.appendChild(line);
+      }
 
+      const actions = document.createElement('div');
+      actions.className = 'row';
       const button = document.createElement('button');
       button.type = 'button';
       button.className = other.atWar ? 'ghost' : 'primary';
       button.textContent = other.atWar ? 'Заключить мир' : 'Объявить войну';
-      button.disabled = !canDeclare;
+      button.disabled = !canDeclare || (!other.atWar && peaceBound);
+      if (!other.atWar && peaceBound) button.title = 'Действует пакт о ненападении';
       button.addEventListener('click', async () => {
         await send(`/api/war/syndicate/${other.atWar ? 'peace' : 'declare'}`, {
           targetSyndicateId: other.syndicateId || other.id,
         });
         await loadWar();
       });
+      actions.appendChild(button);
 
-      row.append(info, button);
+      if (canDeclare) {
+        const pactAction = (path, body) => async () => {
+          await send(`/api/war/syndicate/pact/${path}`, body);
+          await loadWar();
+        };
+        for (const pact of withThem) {
+          if (pact.status === 'PROPOSED' && !pact.proposedByUs) {
+            actions.appendChild(synButton(`Принять: ${pact.label}`, 'primary', pactAction('respond', { pactId: pact.id, accept: true })));
+            actions.appendChild(synButton('Отклонить', 'ghost', pactAction('respond', { pactId: pact.id, accept: false })));
+          } else if (pact.status === 'PROPOSED') {
+            actions.appendChild(synButton(`Отозвать: ${pact.label}`, 'ghost', pactAction('cancel', { pactId: pact.id })));
+          } else if (!pact.endsAt) {
+            actions.appendChild(synConfirm(`Расторгнуть: ${pact.label}`, 'Точно расторгнуть?', 'ghost', pactAction('cancel', { pactId: pact.id })));
+          }
+        }
+        const available = PACT_KINDS.filter(([kind]) => !withThem.some((pact) => pact.type === kind));
+        if (available.length) {
+          const select = document.createElement('select');
+          for (const [kind, label] of available) {
+            const option = document.createElement('option');
+            option.value = kind;
+            option.textContent = label;
+            select.appendChild(option);
+          }
+          actions.appendChild(select);
+          actions.appendChild(synButton('Предложить пакт', 'ghost', async () => {
+            await send('/api/war/syndicate/pact/propose', { targetSyndicateId: other.id, type: select.value });
+            await loadWar();
+          }));
+        }
+      }
+
+      row.append(info, actions);
       el.diplomacy.appendChild(row);
     }
   }

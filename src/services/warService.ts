@@ -3,8 +3,8 @@
  * Война нужна, чтобы вылет с миссией «Атака» вообще разрешался.
  */
 import { prisma } from '../db/prisma.js';
-import { membershipOf, requirePermission, sameSyndicate } from './syndicateAccess.js';
-import { hasPermission } from '../game/syndicate.js';
+import { commanderPacts, membershipOf, pactsInForce, requirePermission, sameSyndicate } from './syndicateAccess.js';
+import { PACT_LABELS, hasPermission, pactsForbidAttack, type PactKind } from '../game/syndicate.js';
 import { expeditionSlots } from '../game/expeditions.js';
 import { emptyTechLevels } from '../game/techTree.js';
 
@@ -29,6 +29,18 @@ export interface SyndicateWarView {
   declaredAt: number;
 }
 
+export interface PactView {
+  id: string;
+  /** Другая сторона пакта. */
+  syndicateId: string;
+  type: PactKind;
+  label: string;
+  status: 'PROPOSED' | 'ACTIVE';
+  proposedByUs: boolean;
+  /** Расторгнутый пакт действует до этого момента. */
+  endsAt: number | null;
+}
+
 export interface DiplomacyView {
   /** Игроки, чьи колонии есть в системе игрока. */
   players: Array<{
@@ -44,6 +56,7 @@ export interface DiplomacyView {
   syndicate: { id: string; name: string; tag: string; rankName: string; canDeclare: boolean } | null;
   /** Синдикаты, с которыми идет война. */
   syndicateWars: SyndicateWarView[];
+  pacts: PactView[];
   /** Другие синдикаты — цели для объявления войны. */
   otherSyndicates: Array<{ id: string; name: string; tag: string; atWar: boolean }>;
   /** Сколько экспедиций игрок может держать в полете и сколько уже летит. */
@@ -171,6 +184,25 @@ export async function getDiplomacy(commanderId: string): Promise<DiplomacyView> 
       })
     : [];
 
+  // Истекшие расторгнутые пакты больше ничего не значат — убираем при чтении.
+  let pacts: PactView[] = [];
+  if (mySyndicate) {
+    await prisma.syndicatePact.deleteMany({ where: { status: 'ACTIVE', endsAt: { lte: new Date() } } });
+    const rows = await prisma.syndicatePact.findMany({
+      where: { OR: [{ firstSyndicateId: mySyndicate.id }, { secondSyndicateId: mySyndicate.id }] },
+      orderBy: { createdAt: 'asc' },
+    });
+    pacts = rows.map((row) => ({
+      id: row.id,
+      syndicateId: row.firstSyndicateId === mySyndicate.id ? row.secondSyndicateId : row.firstSyndicateId,
+      type: row.type,
+      label: PACT_LABELS[row.type],
+      status: row.status,
+      proposedByUs: row.proposerSyndicateId === mySyndicate.id,
+      endsAt: row.endsAt?.getTime() ?? null,
+    }));
+  }
+
   const techLevels = emptyTechLevels();
   for (const research of techs) techLevels[research.tech] = research.level;
   const diplomacyAccess = mySyndicate ? await membershipOf(commanderId) : null;
@@ -186,6 +218,7 @@ export async function getDiplomacy(commanderId: string): Promise<DiplomacyView> 
         }
       : null,
     syndicateWars,
+    pacts,
     otherSyndicates: syndicates
       .filter((syndicate) => syndicate.id !== mySyndicate?.id)
       .map((syndicate) => ({
@@ -269,6 +302,9 @@ export async function getDiplomacy(commanderId: string): Promise<DiplomacyView> 
  * Командир в синдикате воюет составом альянса, а не от своего имени.
  */
 export async function declareWar(commanderId: string, targetId: string): Promise<WarResult> {
+  if (pactsForbidAttack(await commanderPacts(commanderId, targetId))) {
+    return { ok: false, error: 'Между вашими синдикатами действует пакт о ненападении — сначала его нужно расторгнуть' };
+  }
   if (!targetId) return { ok: false, error: 'Не указан противник' };
   if (targetId === commanderId) return { ok: false, error: 'Нельзя объявить войну самому себе' };
 
@@ -362,6 +398,10 @@ export async function declareSyndicateWar(
   if (rights.syndicateId === targetSyndicateId) {
     return { ok: false, error: 'Нельзя объявить войну своему же синдикату' };
   }
+  // Пакт о ненападении расторгается с отсрочкой в сутки — войну до ее конца не объявить.
+  if (pactsForbidAttack(await pactsInForce(rights.syndicateId, targetSyndicateId))) {
+    return { ok: false, error: 'С этим синдикатом действует пакт о ненападении — войну не объявить, пока он в силе' };
+  }
 
   const target = await prisma.syndicate.findUnique({ where: { id: targetSyndicateId } });
   if (!target) return { ok: false, error: 'Синдикат не найден' };
@@ -412,6 +452,8 @@ export async function canAttack(attackerId: string, defenderId: string): Promise
   // Своих не атакуют ни при какой войне: личная война, объявленная до вступления,
   // тоже перестает действовать, пока оба в одном синдикате.
   if (await sameSyndicate(attackerId, defenderId)) return false;
+  // Ненападение и союз перекрывают любую войну, в том числе личную.
+  if (pactsForbidAttack(await commanderPacts(attackerId, defenderId))) return false;
 
   const [attacker, defender] = await Promise.all([
     prisma.commander.findUnique({ where: { id: attackerId }, select: { syndicateId: true } }),

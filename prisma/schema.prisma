@@ -222,6 +222,8 @@ model Syndicate {
   transactions SyndicateTransaction[]
   warsStarted  SyndicateWar[]          @relation("SyndicateWarAggressor")
   warsAgainst  SyndicateWar[]          @relation("SyndicateWarTarget")
+  pactsFirst   SyndicatePact[]         @relation("PactFirst")
+  pactsSecond  SyndicatePact[]         @relation("PactSecond")
 
   @@map("syndicates")
 }
@@ -1275,4 +1277,40 @@ model SyndicateDefense {
 
   @@unique([syndicateId, type])
   @@map("syndicate_defenses")
+}
+
+/// Вид пакта между синдикатами. Союз включает ненападение.
+enum PactType {
+  NON_AGGRESSION
+  ALLIANCE
+  TRADE
+}
+
+enum PactStatus {
+  PROPOSED
+  ACTIVE
+}
+
+/// Пакт между двумя синдикатами. Пара хранится упорядоченной по id,
+/// поэтому один пакт одного вида на пару — уникальный индекс.
+model SyndicatePact {
+  id                  String     @id @default(cuid())
+  firstSyndicateId    String
+  secondSyndicateId   String
+  type                PactType
+  status              PactStatus @default(PROPOSED)
+  /// Кто предложил: принять или отклонить может только другая сторона.
+  proposerSyndicateId String
+  proposedById        String?
+  createdAt           DateTime   @default(now())
+  activatedAt         DateTime?
+  /// Расторгнутый пакт действует до этого момента — сутки на подготовку.
+  endsAt              DateTime?
+
+  first  Syndicate @relation("PactFirst", fields: [firstSyndicateId], references: [id], onDelete: Cascade)
+  second Syndicate @relation("PactSecond", fields: [secondSyndicateId], references: [id], onDelete: Cascade)
+
+  @@unique([firstSyndicateId, secondSyndicateId, type])
+  @@index([secondSyndicateId])
+  @@map("syndicate_pacts")
 }

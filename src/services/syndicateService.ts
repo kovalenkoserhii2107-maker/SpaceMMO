@@ -49,7 +49,7 @@ import {
   withdrawAllowance,
   type SyndicatePermission,
 } from '../game/syndicate.js';
-import {
+import { alliedSyndicateIds,
   ensureSyndicateSetup,
   membershipOf,
   requireLeader,
@@ -1657,12 +1657,14 @@ async function watchIncoming(
 
   // Круг наблюдения за колониями дает только построенный Дозор.
   if (watchLevel <= 0 || !kish) return raidRows;
+  // Союз по пакту делит Дозор: колонии союзников в круге видны так же, как свои.
+  const watched = [syndicateId, ...(await alliedSyndicateIds(syndicateId))];
   const fleets = await prisma.fleet.findMany({
     where: {
       mission: 'ATTACK',
       status: 'OUTBOUND',
-      targetPlanet: { base: { commander: { syndicateId } } },
-      commander: { OR: [{ syndicateId: null }, { syndicateId: { not: syndicateId } }] },
+      targetPlanet: { base: { commander: { syndicateId: { in: watched } } } },
+      commander: { OR: [{ syndicateId: null }, { syndicateId: { notIn: watched } }] },
     },
     include: {
       commander: { select: { nickname: true, syndicate: { select: { tag: true } } } },
