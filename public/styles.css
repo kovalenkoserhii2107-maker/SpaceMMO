@@ -1920,6 +1920,33 @@ button.tiny { padding: 4px 10px; font-size: 11px; flex: none; }
 .syndicate-header .bank b { display: block; font-size: 20px; color: #7ee787; }
 
 .member-row { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+/* Синдикат: строка списка раскрывается кодексом под собой, а не в модальном окне. */
+.syndicate-row { flex-wrap: wrap; }
+.syndicate-codex { flex-basis: 100%; display: grid; gap: 8px; }
+.codex-text {
+  margin: 0;
+  padding: 10px 12px;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+.codex-accept { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+.syndicate-form { display: grid; gap: 8px; margin-top: 10px; }
+.syndicate-form .row, .rank-editor .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; }
+.syndicate-textarea { width: 100%; min-height: 160px; resize: vertical; font: inherit; box-sizing: border-box; }
+.rank-editor { display: grid; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.rank-editor .field { flex: 1 1 120px; }
+.rank-new-title { margin: 12px 0 0; font-size: 13px; }
+.perm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px 12px; font-size: 12px; }
+.perm-grid label { display: flex; gap: 6px; align-items: center; }
+.hub-storage.warn { color: var(--accent-2); }
+
 .member-row .role { font-size: 11px; color: var(--muted); }
 .member-row .role.LEADER { color: var(--accent); }
 .member-row .role.OFFICER { color: var(--accent-2); }
@@ -3264,6 +3291,22 @@ button.tiny { padding: 4px 10px; font-size: 11px; flex: none; }
 .job-cancel:hover { color: var(--err); border-color: rgba(248, 113, 113, 0.5); }
 .job-rush + .job-cancel { margin-left: 8px; }
 
+/* Состав исследования: строки переносятся явно, а не сливаются в одну. */
+.job-banner .job-note { font-size: 11px; color: var(--muted); white-space: pre-line; }
+.job-join {
+  justify-self: start;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--accent);
+  cursor: pointer;
+  border: 1px solid rgba(77, 210, 255, 0.45);
+  border-radius: 8px;
+  background: transparent;
+}
+.job-join:hover:not(:disabled) { background: rgba(77, 210, 255, 0.1); }
+.job-join:disabled { color: var(--muted); border-color: var(--line); cursor: not-allowed; }
+
 /*
  * Паспорт единицы: две колонки «характеристика — значение». Таблица проекции
  * у построек широкая и с шапкой, здесь шапка не нужна — строк мало и каждая
@@ -3342,4 +3385,295 @@ button.tiny { padding: 4px 10px; font-size: 11px; flex: none; }
   font-size: 11px;
   color: var(--accent);
   font-variant-numeric: tabular-nums;
+}
+
+/* Версия игры: служебная подпись, не должна спорить с меню. */
+.game-version { margin: 12px 0 0; font-size: 11px; color: var(--muted); text-align: center; letter-spacing: 0.02em; }
+.nav-version { margin: 16px 12px 8px; text-align: left; }
+
+/* Дозор: атака на участника — новость, которую нельзя пропустить. */
+.watch-alert { border-left: 3px solid var(--err); }
+/* Переключатель таблиц синдикатов над самой таблицей. */
+.rating-boards { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 10px; }
+
+/* Своя Брама и Кіш над системой на карте галактики. */
+.system-label.gate-badge { fill: var(--accent); font-weight: 600; }
+
+/*
+ * Кіш как колония. В шапке вместо ресурсов базы стоит казна, а служебные
+ * энергия и КПД шахт к Кошу не относятся — их прячем, а не показываем нулями.
+ */
+.kish-mode .res-aux { display: none; }
+.base-list-kish button { border-left: 3px solid var(--accent); }
+.kish-head { display: flex; gap: 16px; align-items: center; margin-bottom: 16px; }
+.kish-head h2 { margin: 0 0 4px; font-size: 20px; }
+.kish-head .art { width: 96px; height: 96px; flex: none; }
+.kish-head .art img { width: 100%; height: 100%; object-fit: contain; }
+.kish-treasury { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; margin: 8px 0; }
+.kish-res { display: flex; align-items: center; gap: 6px; }
+.kish-summary { margin-bottom: 16px; }
+.cards > .hub-card { grid-column: 1 / -1; }
+.cost-credits.lack { color: var(--err); }
+
+/*
+ * Раздел синдиката: один ритм отступов на все блоки. Карточки идут сеткой
+ * с общим зазором, поэтому соседние блоки больше не слипаются и не расходятся
+ * на разные расстояния в зависимости от того, в сетке они или сами по себе.
+ */
+.syndicate-stack { display: grid; gap: 16px; }
+.syndicate-stack > *, .syndicate-stack .syndicate-grid { margin: 0; }
+.syndicate-stack .syndicate-grid { align-items: start; }
+
+.syn-hero { display: flex; gap: 20px; align-items: center; }
+.syn-hero > .art { width: 128px; height: 128px; flex: none; }
+.syn-hero > .art img { width: 100%; height: 100%; object-fit: contain; }
+.syn-hero-body { display: grid; gap: 10px; min-width: 0; flex: 1; }
+.syn-hero-body > button { justify-self: start; }
+.syn-name { margin: 0; font-size: 26px; line-height: 1.15; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.syn-tag { font-size: 13px; padding: 3px 8px; border-radius: 8px; border: 1px solid var(--accent); color: var(--accent); letter-spacing: 1px; }
+.syn-desc { margin: 0; font-size: 15px; line-height: 1.5; color: var(--text); }
+.syn-desc.muted { color: var(--muted); font-size: 13px; }
+.syn-desc-small { font-size: 13px; color: var(--text); margin: 4px 0; }
+.syn-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line); font-size: 12px; color: var(--text); }
+.chip.leader { border-color: var(--accent); color: var(--accent); }
+.chip.muted { color: var(--muted); }
+.syn-subtitle { margin: 14px 0 6px; font-size: 13px; color: var(--muted); }
+.syn-subtitle:first-of-type { margin-top: 0; }
+.syn-big { font-size: 28px; font-weight: 700; margin-bottom: 6px; }
+.syndicate-textarea.short { min-height: 72px; }
+.syn-form-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; margin-top: 10px; }
+.syn-form-row .field { flex: 1 1 140px; }
+
+.syn-flow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0 4px; }
+.syn-flow > div { padding: 10px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--line); display: grid; gap: 2px; font-size: 12px; color: var(--muted); }
+.syn-flow b { font-size: 17px; color: var(--text); }
+.syn-flow .in b { color: var(--ok); }
+.syn-flow .out b { color: var(--err); }
+
+.syn-table { display: grid; gap: 6px; }
+.syn-row { display: grid; grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(0, 1fr)); gap: 8px; align-items: center; padding: 8px 10px; border-radius: 10px; background: var(--panel-2); font-size: 13px; }
+.syn-row.head { background: none; padding: 0 10px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; }
+.syn-row > span:not(:first-child) { text-align: right; font-variant-numeric: tabular-nums; }
+.syn-who { display: grid; min-width: 0; }
+.syn-who b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.syn-bar { display: block; height: 4px; border-radius: 2px; background: var(--line); margin-top: 5px; overflow: hidden; }
+.syn-bar > i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+
+.syn-seg { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+.syn-seg button { padding: 5px 12px; font-size: 12px; }
+.syn-seg button.active { border-color: var(--accent); color: var(--accent); }
+.syn-log .syn-row { grid-template-columns: 104px minmax(0, 1fr) auto; }
+.syn-log .syn-row > span:not(:first-child) { text-align: left; }
+.syn-log .syn-row > .syn-amount { text-align: right; }
+.syn-when { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.syn-what { display: grid; gap: 2px; min-width: 0; }
+.syn-what .muted { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.syn-amount { font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.syn-row.in .syn-amount { color: var(--ok); }
+.syn-row.out .syn-amount { color: var(--err); }
+
+.syn-member { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.syn-member:last-child { border-bottom: 0; }
+.syn-member-info { display: grid; gap: 4px; min-width: 0; }
+.syn-member-name { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 15px; font-weight: 600; }
+.syn-member-meta { font-size: 12px; color: var(--muted); }
+.member-actions { flex-wrap: wrap; }
+.rank-block { display: grid; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.rank-block:last-child { border-bottom: 0; }
+.rank-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.rank-head b { font-size: 15px; }
+.rank-head span { font-size: 12px; color: var(--muted); }
+
+@media (max-width: 600px) {
+  .syn-hero { flex-direction: column; align-items: stretch; }
+  .syn-hero > .art { width: 104px; height: 104px; }
+  .syn-name { font-size: 22px; }
+  .syn-hero-body > button { justify-self: stretch; }
+  .syn-row { grid-template-columns: minmax(0, 1fr) repeat(3, auto); font-size: 12px; }
+  .syn-log .syn-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .syn-log .syn-when { grid-column: 1 / -1; }
+  .syn-member { flex-direction: column; align-items: stretch; }
+}
+
+/* Пункты, которые к Кошу не относятся (карты, биржа), в его режиме не показываются вовсе. */
+.kish-mode [data-kish-hidden] { display: none !important; }
+
+/* Поля устава в палитре игры: без фона браузер рисовал их белыми. */
+.syndicate-textarea {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  line-height: 1.5;
+}
+.syndicate-textarea:focus { outline: none; border-color: var(--accent); }
+.rank-block .rank-editor { padding-top: 0; border-bottom: 0; }
+
+/* Списки в разделе синдиката — в палитре игры: смена ранга участнику рисовалась белой. */
+#syndicate-panel select {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 13px;
+}
+#syndicate-panel select:focus { outline: none; border-color: var(--accent); }
+#syndicate-panel select option { background: #0b1121; color: var(--text); }
+
+/*
+ * Склады биржи: полоса одна на весь размер, куски на ней — по складам,
+ * и те же цвета у колонок ниже. Цвет закреплен за складом, а не за
+ * заполненностью: иначе различие «где лежит» потерялось бы снова.
+ */
+.mk-head-top { display: grid; grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr); align-items: start; gap: 16px; }
+.mk-hub { gap: 12px; }
+.mk-store-top { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.mk-store-title { font-size: 16px; font-weight: 700; }
+.mk-store-sub { font-size: 12px; color: var(--muted); }
+.mk-store-total { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.mk-store-total b { font-size: 18px; color: var(--text); }
+.mk-store-bar { display: flex; height: 10px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--line); overflow: hidden; }
+.mk-store-bar i { display: block; height: 100%; }
+.mk-store-bar .here, .mk-store-col.here .mk-dot { background: var(--accent); }
+.mk-store-bar .shared, .mk-store-col.shared .mk-dot { background: var(--accent-2); }
+.mk-store-bar .elsewhere, .mk-store-col.elsewhere .mk-dot { background: var(--warm); }
+.mk-store-cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.mk-store-col { display: grid; gap: 4px; padding: 10px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--line); }
+.mk-store-col-title { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
+.mk-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.mk-store-col-hint { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+.mk-store-col-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.mk-store-col-row b { color: var(--text); font-size: 13px; font-variant-numeric: tabular-nums; }
+.mk-store-avail { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--muted); padding-top: 8px; border-top: 1px solid var(--line); }
+.mk-store-avail b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* Действия склада — настоящие кнопки с заголовком и строкой условий, а не мелкий текст. */
+.mk-hub-actions { flex-direction: column; margin-top: 0; }
+.mk-action {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--accent);
+  background: rgba(77, 210, 255, 0.1);
+  color: var(--text);
+  text-align: left;
+  line-height: 1.35;
+}
+.mk-action b { font-size: 14px; }
+.mk-action span { font-size: 12px; color: var(--muted); }
+.mk-action:hover:not(:disabled) { background: rgba(77, 210, 255, 0.18); }
+.mk-action.transport { border-color: var(--accent-2); background: rgba(157, 123, 255, 0.1); }
+.mk-action.transport:hover:not(:disabled) { background: rgba(157, 123, 255, 0.2); }
+.mk-action .mk-action-warn { color: var(--err); }
+
+@media (max-width: 760px) {
+  .mk-head-top { grid-template-columns: 1fr; }
+  .mk-store-cols { grid-template-columns: 1fr; }
+}
+
+/*
+ * Шапка биржи — сетка без явных колонок, и ее единственный трек растягивался
+ * по самому широкому содержимому: на телефоне склады и кнопки уезжали
+ * за правый край. Трек ограничен шириной экрана, вложенные блоки могут сжиматься.
+ */
+.mk-head { grid-template-columns: minmax(0, 1fr); }
+.mk-head > *, .mk-head-top > *, .mk-store-cols > *, .mk-hub-actions > * { min-width: 0; }
+.mk-store-col-title, .mk-store-col-hint { overflow-wrap: anywhere; }
+
+/*
+ * Колонка основного содержимого ограничена шириной экрана. Без `minmax(0, 1fr)`
+ * трек сетки растягивался до самой широкой таблицы биржи (720px), хотя таблица
+ * лежит в прокручиваемом контейнере: на телефоне весь раздел становился шире
+ * экрана, и склады с кнопками уезжали за правый край.
+ */
+.content { grid-template-columns: minmax(0, 1fr); }
+.content > section { min-width: 0; }
+
+/*
+ * Таблица вклада: каждая строка — своя сетка, поэтому колонки обязаны быть
+ * фиксированной ширины. С `auto` ширина считалась по числам строки, и на
+ * телефоне «1 500 000» у одного и «100» у другого стояли под разными заголовками.
+ */
+.syn-table .syn-row { grid-template-columns: minmax(0, 1fr) 84px 70px 84px; }
+.syn-log .syn-row { grid-template-columns: 104px minmax(0, 1fr) auto; }
+@media (max-width: 600px) {
+  .syn-table .syn-row { grid-template-columns: minmax(0, 1fr) 64px 52px 64px; gap: 6px; }
+  .syn-log .syn-row { grid-template-columns: minmax(0, 1fr) auto; }
+}
+
+/*
+ * Форма заявки на телефоне: переключатель стороны занимает всю строку.
+ * В половине строки две кнопки «Покупаю / Продаю» не помещались, и выбор
+ * ресурса наезжал на «Продаю» — пока колонка содержимого не была ограничена
+ * экраном, форма просто растягивалась шире него и этого не было видно.
+ */
+.mk-side button { flex: 1 1 0; min-width: 0; justify-content: center; }
+@media (max-width: 600px) {
+  .mk-form > .mk-field:first-child { grid-column: 1 / -1; }
+}
+
+/*
+ * Экспедиции и войны. Сводка сверху счетчиками, части вкладками, бои
+ * короткими строками с раскрытием отчета. Цвет строки закреплен за исходом:
+ * зеленый — победа или находка, красный — поражение или потеря.
+ */
+[data-panel="war"] { display: grid; gap: 16px; }
+[data-panel="war"][hidden] { display: none; }
+[data-panel="war"] > .section-title { margin: 0; }
+.war-hero { display: grid; gap: 14px; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+.war-hero-head { display: flex; gap: 14px; align-items: center; }
+.war-avatar { width: 56px; height: 56px; border-radius: 16px; display: grid; place-items: center; font-size: 28px; background: var(--panel-2); border: 1px solid var(--line); flex: none; }
+.war-who { display: grid; gap: 4px; min-width: 0; }
+.war-name { font-size: 22px; font-weight: 700; }
+.war-kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
+.war-kpi { display: grid; gap: 2px; padding: 10px 12px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--line); }
+.war-kpi-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; }
+.war-kpi b { font-size: 20px; font-variant-numeric: tabular-nums; }
+.war-kpi-hint { font-size: 11px; color: var(--muted); }
+.war-kpi.win b { color: var(--ok); }
+.war-kpi.loss b { color: var(--err); }
+.war-tabs { margin: 0; }
+.war-pane { display: grid; gap: 12px; }
+.war-pane[hidden] { display: none; }
+.war-pane > .syn-seg { margin: 0; }
+.war-list, .war-stack { display: grid; gap: 10px; }
+.war-empty { color: var(--muted); font-size: 13px; }
+.war-row { border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: 12px; background: var(--panel); overflow: hidden; }
+.war-row.win { border-left-color: var(--ok); }
+.war-row.loss { border-left-color: var(--err); }
+.war-row .battle-report { margin: 0 12px 12px; }
+.war-row-head {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center;
+  width: 100%; padding: 12px; background: none; border: 0; color: var(--text); text-align: left; font: inherit;
+}
+button.war-row-head:hover { background: rgba(120, 160, 255, 0.06); }
+.war-row-head.static { cursor: default; }
+.war-row-main { display: grid; gap: 2px; min-width: 0; }
+.war-row-main b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.war-row-main .muted { font-size: 12px; }
+.war-row-result { display: grid; gap: 2px; justify-items: end; font-size: 12px; font-variant-numeric: tabular-nums; }
+.war-row-result .gain { color: var(--ok); font-weight: 600; }
+.war-row-result .lost { color: var(--err); font-weight: 600; }
+.war-row-text { margin: 0 12px 10px; font-size: 13px; color: var(--muted); line-height: 1.5; }
+.war-row-text.lost { color: var(--err); }
+.war-chip { padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; border: 1px solid var(--line); white-space: nowrap; }
+.war-chip.win { color: var(--ok); border-color: rgba(74, 222, 128, 0.4); }
+.war-chip.loss { color: var(--err); border-color: rgba(248, 113, 113, 0.4); }
+.war-chip.neutral { color: var(--muted); }
+.chip.war { border-color: rgba(248, 113, 113, 0.5); color: var(--err); }
+.war-slots-label { font-size: 13px; margin-bottom: 6px; }
+.war-slots { display: flex; gap: 6px; margin-bottom: 10px; }
+.war-slots i { flex: 1; height: 10px; border-radius: 5px; background: var(--panel-2); border: 1px solid var(--line); }
+.war-slots i.used { background: var(--accent); border-color: var(--accent); }
+.war-flight { font-size: 13px; padding: 8px 10px; border-radius: 10px; background: var(--panel-2); margin-top: 6px; }
+@media (max-width: 600px) {
+  .war-row-head { grid-template-columns: auto minmax(0, 1fr); }
+  .war-row-result { grid-column: 1 / -1; justify-items: start; grid-auto-flow: column; justify-content: space-between; }
+  .war-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

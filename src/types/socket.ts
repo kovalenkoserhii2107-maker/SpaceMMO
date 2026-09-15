@@ -198,6 +198,21 @@ export interface BaseSnapshot {
   } | null;
   buildings: BuildingCard[];
   technologies: TechnologyCard[];
+  /**
+   * Присоединение лаборатории этой базы к идущему исследованию.
+   * `null` — предлагать нечего: исследования нет или база уже в нем участвует.
+   */
+  researchJoin: {
+    available: boolean;
+    /** Почему нельзя — только при `available: false`. */
+    reason: string | null;
+    /** Доля всего срока и всей цены, которую возьмет на себя эта лаборатория. */
+    share: number;
+    labLevel: number;
+    savedSeconds: number;
+    price: { ore: number; polymers: number; plasma: number };
+    canAfford: boolean;
+  } | null;
   ships: ShipCard[];
   defenseCards: DefenseCard[];
   fleet: ShipCounts;
@@ -231,6 +246,11 @@ export interface ResearchSnapshot {
     baseId: string;
     totalSeconds: number;
     remainingSeconds: number;
+    /**
+     * Кто работает над исследованием: ведущая первой. `share` — доля всего
+     * исследования, взятая помощницей (у ведущей ноль).
+     */
+    participants: Array<{ baseId: string; baseName: string; labLevel: number; share: number; lead: boolean }>;
   } | null;
 }
 
@@ -238,13 +258,15 @@ export interface FleetSnapshot {
   id: string;
   mission: FleetMission;
   missionLabel: string;
-  status: 'OUTBOUND' | 'RETURNING';
+  status: 'OUTBOUND' | 'RETURNING' | 'HOLDING';
+  holdUntil: number | null;
   originPlanetId: string;
   originPlanetName: string;
   /** Системы концов рейса: по ним макро-карта рисует межзвездный перелет. */
   fromSystemId: string;
   toSystemId: string | null;
-  targetKind: 'PLANET' | 'HUB' | 'DEEP_SPACE';
+  targetKind: 'PLANET' | 'HUB' | 'DEEP_SPACE' | 'KISH';
+  targetSyndicateId: string | null;
   targetPlanetId: string | null;
   targetHubId: string | null;
   targetName: string;
@@ -271,6 +293,24 @@ export interface HubView {
   storage: { ore: number; polymers: number; level: number; capacity: number; free: number } | null;
 }
 
+/**
+ * Кіш синдиката на карте системы. Чужой Кіш виден как станция, но казна
+ * у него скрыта: сколько лежит у соседей, знают только сами соседи.
+ */
+export interface KishView {
+  syndicateId: string;
+  name: string;
+  tag: string;
+  level: number;
+  position: number;
+  own: boolean;
+  treasury: { ore: number; polymers: number; plasma: number } | null;
+  /** Может ли зритель вывозить из казны — есть ли у его ранга право выдачи. */
+  canPickup: boolean;
+  /** Осколки у Коша видны всем, как и поле у планеты. */
+  debris: { ore: number; polymers: number };
+}
+
 /** Карта системы с учетом тумана войны. */
 export interface SystemMap {
   systemId: string;
@@ -284,6 +324,7 @@ export interface SystemMap {
   isHome: boolean;
   planets: PlanetView[];
   hub: HubView | null;
+  kishes: KishView[];
 }
 
 /** Система на макро-карте галактики. */
@@ -301,6 +342,10 @@ export interface GalaxySystemView {
   colonized: boolean;
   /** Сколько планет системы игрок успел разведать. */
   scannedPlanets: number;
+  /** Уровень Брамы своего синдиката в системе; `null` — Брамы нет. */
+  syndicateGate: number | null;
+  /** Здесь стоит Кіш своего синдиката. */
+  ownKish: boolean;
 }
 
 export interface GalaxyMap {

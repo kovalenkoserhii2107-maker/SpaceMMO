@@ -79,11 +79,12 @@ import {
   emptyTechLevels,
   researchCost,
   researchSeconds,
+  TECHNOLOGY_TYPES,
   timeCompressionDrain,
   type TechLevels,
   type TechnologyType,
 } from '../game/techTree.js';
-import { emptyShipCounts, shipCost, shipUnitSeconds, type ShipCounts, type ShipType } from '../game/ships.js';
+import { emptyShipCounts, missingShipRequirements, shipCost, shipLabel, shipUnitSeconds, SHIP_TYPES, type ShipCounts, type ShipType } from '../game/ships.js';
 import {
   defenseCost,
   defenseEnergyUsage,
@@ -622,6 +623,25 @@ const { bots, log } = run(days);
 const money = (value: number): string => Math.round(value).toLocaleString('ru-RU');
 
 console.log(`=== Прогон ${days} сут, ${bots.length} ботов ===\n`);
+/** Короткие ярлыки технологий: полные названия в строку прогона не помещаются. */
+const TECH_SHORT: Record<TechnologyType, string> = {
+  ENERGY_TECH: 'энерг',
+  COMPUTING_TECH: 'выч',
+  WEAPONS_TECH: 'оруж',
+  SHIELDS_TECH: 'щит',
+  ARMOR_TECH: 'брон',
+  MINING_TECH: 'горн',
+  COMBUSTION_DRIVE: 'тяга',
+  HYPERSPACE_PHYSICS: 'гипф',
+  HYPERDRIVE: 'гипд',
+  ASTROPHYSICS: 'астр',
+  ROBOTICS: 'робо',
+  CRYPTO_TECH: 'крип',
+  VAULT_TECH: 'бунк',
+  ESPIONAGE: 'шпио',
+  TIME_COMPRESSION: 'врем',
+};
+
 for (const bot of bots) {
   const fleet = Object.entries(bot.ships)
     .filter(([, count]) => count > 0)
@@ -632,7 +652,15 @@ for (const bot of bots) {
       ` завод ${String(bot.levels.POLYMER_PLANT).padStart(2)} реактор ${String(bot.levels.PLASMA_REACTOR).padStart(2)}` +
       ` энерг ${String(bot.levels.POWER_PLANT).padStart(2)} верфь ${String(bot.levels.SHIPYARD).padStart(2)}` +
       ` наука ${String(bot.levels.SCIENCE_CENTER).padStart(2)} | ₴${money(bot.credits).padStart(12)}\n` +
-      `              флот ${fleet || '—'}`,
+      `              флот ${fleet || '—'}\n` +
+      /*
+       * Наука объявлена главными воротами месяца, а в прогоне ее не было видно
+       * вовсе: по составу флота не понять, чего именно не хватает классу —
+       * уровня верфи или технологии.
+       */
+      `              наука ${TECHNOLOGY_TYPES.filter((tech) => bot.techs[tech] > 0)
+        .map((tech) => `${TECH_SHORT[tech]}${bot.techs[tech]}`)
+        .join(' ') || '—'}`,
   );
 }
 
@@ -643,6 +671,27 @@ console.log(
     ` | масса ₴${money(last?.money ?? 0)} | добыто ${money(last?.goods ?? 0)} ед` +
     ` | ₴ на единицу ${((last?.money ?? 0) / Math.max(1, last?.goods ?? 1)).toFixed(2)}`,
 );
+/*
+ * Ворота контента — главное, чего прогон долго не показывал.
+ *
+ * Состав флота для этого не годится: переработчик, колонизатор и зонд
+ * заказываются под задачу, а не долей эскадры, и их отсутствие в списке
+ * не значит, что класс недоступен. Мерить надо открытость самого класса.
+ */
+const unlocked = new Map<string, number>();
+for (const bot of bots) {
+  for (const type of SHIP_TYPES) {
+    if (missingShipRequirements(type, bot.levels, bot.techs).length === 0) {
+      unlocked.set(type, (unlocked.get(type) ?? 0) + 1);
+    }
+  }
+}
+console.log(
+  '  ВОРОТА: ' +
+    SHIP_TYPES.map((type) => `${shipLabel(type)} ${unlocked.get(type) ?? 0}/${bots.length}`)
+      .join(' · '),
+);
+
 console.log(
   `  ДЕНЬГИ: намыто ₴${money(bots.reduce((sum, bot) => sum + bot.earned, 0))}` +
     ` | уплачено за хаб ₴${money(bots.reduce((sum, bot) => sum + bot.rentPaid, 0))}` +

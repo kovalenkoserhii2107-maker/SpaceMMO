@@ -608,12 +608,22 @@ export interface PlunderResult {
  * Надбавка приходит числом, а не уровнем технологии: бой о дереве наук
  * не знает, ровно как правила добычи.
  */
+/*
+ * Несгораемая доля не доходит до всего склада ни при каких бонусах: полная
+ * неуязвимость убивает грабеж, а с ним и повод держать флот. «Тайники»
+ * синдиката множат долю «Бункерования», и без предела они довели бы ее
+ * до ста процентов.
+ */
+const MAX_PROTECTED_SHARE = 0.9;
+
 export function plunderAmount(
   stock: { ore: number; polymers: number; plasma: number },
   capacities: StorageCapacities,
   cargoCapacity: number,
   /** Надбавка «Бункерования» защитника к несгораемой доле. */
   vaultBonus = 0,
+  /** Множитель несгораемой доли от «Тайников» синдиката защитника. */
+  vaultMultiplier = 1,
 ): PlunderResult {
   /*
    * Несгораемый объем считается по каждому складу отдельно.
@@ -633,7 +643,8 @@ export function plunderAmount(
   let protectedAmount = 0;
   const available = { ore: 0, polymers: 0, plasma: 0 };
   for (const resource of STORED_RESOURCES) {
-    const safe = Math.min(held[resource], Math.max(0, capacities[resource]) * protectedShare(vaultBonus));
+    const share = Math.min(MAX_PROTECTED_SHARE, protectedShare(vaultBonus) * vaultMultiplier);
+    const safe = Math.min(held[resource], Math.max(0, capacities[resource]) * share);
     protectedAmount += safe;
     available[resource] = Math.floor(Math.max(0, held[resource] - safe) * RAID_SHARE);
   }

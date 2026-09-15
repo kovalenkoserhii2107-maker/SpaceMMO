@@ -4,6 +4,7 @@
  */
 import {
   NEUTRAL_MODIFIERS,
+  taperedScale,
   type BuildingLevels,
   type EconomyBonuses,
   type ResourceAmounts,
@@ -291,7 +292,7 @@ const VAULT_OVERRUN_FACTOR = 3;
 
 export function researchCost(tech: TechnologyType, targetLevel: number): ResourceAmounts {
   const { cost } = TECHNOLOGIES[tech];
-  let scale = Math.pow(cost.factor, targetLevel - 1);
+  let scale = taperedScale(cost.factor, targetLevel);
   if (tech === 'VAULT_TECH' && targetLevel > VAULT_SOFT_CAP) {
     scale *= Math.pow(VAULT_OVERRUN_FACTOR, targetLevel - VAULT_SOFT_CAP);
   }
@@ -299,6 +300,77 @@ export function researchCost(tech: TechnologyType, targetLevel: number): Resourc
     ore: Math.floor(cost.ore * scale),
     polymers: Math.floor(cost.polymers * scale),
     plasma: Math.floor(cost.plasma * scale),
+  };
+}
+
+/** Ускорение науки лабораторией. */
+export function labSpeedup(labLevel: number): number {
+  return 1 + Math.max(0, labLevel) * 0.25;
+}
+
+/*
+ * Помощь другой лаборатории — доля от всего исследования, а не прибавка к уровню.
+ *
+ * Лаборатория того же уровня, что ведущая, или выше берет на себя половину:
+ * срезает половину всего срока и доплачивает половину всей цены. Слабее —
+ * берет долю от половины по отношению уровней: шестой при ведущей
+ * двенадцатого — четверть срока за четверть цены. Больше половины одна
+ * помощница не берет никогда: ведущая остается ведущей.
+ *
+ * Срок и цена меряются от всего исследования, а не от остатка, — так доля
+ * читается одним числом, и игрок сразу видит, что покупает. Но срезать больше,
+ * чем осталось, нельзя: опоздавшая помощница берет ровно остаток и платит
+ * только за него, иначе под конец исследования платили бы за время, которого
+ * уже нет.
+ */
+export const HELPER_MAX_SHARE = 0.5;
+
+/** Доля всего исследования, которую берет на себя помогающая лаборатория. */
+export function helperShare(leadLevel: number, helperLevel: number): number {
+  if (helperLevel <= 0) return 0;
+  if (leadLevel <= 0) return HELPER_MAX_SHARE;
+  return HELPER_MAX_SHARE * Math.min(1, helperLevel / leadLevel);
+}
+
+export interface ResearchJoinQuote {
+  /** Доля всего исследования, которую реально возьмет помощница (с учетом остатка). */
+  share: number;
+  /** Сколько секунд останется после присоединения. */
+  remainingSeconds: number;
+  savedSeconds: number;
+  /** Сколько ресурсов доплачивает присоединившаяся лаборатория. */
+  price: ResourceAmounts;
+}
+
+/**
+ * Во что обойдется присоединить лабораторию к идущему исследованию.
+ *
+ * `totalSeconds` — полный срок исследования на момент запуска, до всякой
+ * помощи: от него считается доля времени, как от полной цены — доля ресурсов.
+ */
+export function researchJoinQuote(input: {
+  tech: TechnologyType;
+  targetLevel: number;
+  leadLevel: number;
+  joiningLevel: number;
+  remainingSeconds: number;
+  totalSeconds: number;
+}): ResearchJoinQuote {
+  const total = Math.max(0, input.totalSeconds);
+  const remaining = Math.max(0, input.remainingSeconds);
+  const wanted = helperShare(input.leadLevel, input.joiningLevel) * total;
+  const saved = Math.floor(Math.min(wanted, remaining));
+  const share = total > 0 ? saved / total : 0;
+  const cost = researchCost(input.tech, input.targetLevel);
+  return {
+    share,
+    remainingSeconds: remaining - saved,
+    savedSeconds: saved,
+    price: {
+      ore: Math.ceil(cost.ore * share),
+      polymers: Math.ceil(cost.polymers * share),
+      plasma: Math.ceil(cost.plasma * share),
+    },
   };
 }
 
@@ -321,14 +393,13 @@ export function researchSeconds(
    * дорогая технология десятого уровня изучалась меньше трех часов — наука
    * переставала быть воротами вовсе.
    */
-  const labSpeedup = 1 + Math.max(0, labLevel) * 0.25;
   const computingSpeedup = Math.max(0.5, 1 - techs.COMPUTING_TECH * 0.03);
   // Науку ускоряет лаборатория, а не робототехника: автоматы собирают корпуса,
   // а не ставят опыты. «Сжатие времени» действует и здесь — оно гнет само время.
   return Math.max(
     5,
     Math.round(
-      ((raw / labSpeedup) * computingSpeedup * modifiers.researchTimeMultiplier) /
+      ((raw / labSpeedup(labLevel)) * computingSpeedup * modifiers.researchTimeMultiplier) /
         timeCompressionSpeedup(techs),
     ),
   );

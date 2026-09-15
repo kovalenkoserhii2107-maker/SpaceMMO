@@ -45,6 +45,7 @@ export const MESSAGE_TYPES: readonly MessageType[] = [
   'SPY_REPORT',
   'EXPEDITION',
   'FLEET',
+  'ADMIN',
 ];
 
 export function isMessageType(value: unknown): value is MessageType {
@@ -150,7 +151,12 @@ export async function getMailbox(
       createdAt: row.createdAt.getTime(),
       payload: row.payload ?? null,
     })),
-    unread: MESSAGE_TYPES.reduce((sum, type) => sum + unreadByType[type], 0),
+    /*
+     * Итог — по всем группам из базы, а не по списку типов. Список отставал
+     * от схемы: без `ADMIN` письмо об обновлении давало бейдж при подключении
+     * (там счет идет по всем письмам) и тут же гасло после загрузки ящика.
+     */
+    unread: unreadGroups.reduce((sum, group) => sum + group._count._all, 0),
     unreadByType,
     total,
   };

@@ -2,9 +2,10 @@
  * Логистика: дальность, время в пути, грузоподъемность и расход топлива.
  * Модуль чистый: только формулы, без обращения к БД.
  */
+import { GATE_ANTIMATTER_SHARE, GATE_JUMP_SECONDS, GATE_POSITION } from './syndicate.js';
 import type { ResourceAmounts } from './rules.js';
 import type { TechLevels } from './techTree.js';
-import { SHIP_TYPES, shipLabel, type ShipCounts, type ShipType } from './ships.js';
+import { emptyShipCounts, SHIP_TYPES, shipLabel, type ShipCounts, type ShipType } from './ships.js';
 import { hasWeapons } from './combat.js';
 
 const FLEET_MISSIONS = [
@@ -17,6 +18,10 @@ const FLEET_MISSIONS = [
   'EXPEDITION',
   'HARVEST',
   'COLONIZE',
+  'KISH_DELIVERY',
+  'KISH_PICKUP',
+  'HOLD',
+  'KISH_RAID',
 ] as const;
 export type FleetMission = (typeof FLEET_MISSIONS)[number];
 
@@ -59,6 +64,10 @@ export const MISSION_LABELS: Record<FleetMission, string> = {
   SCAN: 'Разведка',
   HUB_DELIVERY: 'Доставка на хаб',
   HUB_PICKUP: 'Вывоз с хаба',
+  KISH_DELIVERY: 'Доставка в Кіш',
+  KISH_PICKUP: 'Вывоз из казны Коша',
+  HOLD: 'Удержание',
+  KISH_RAID: 'Налет на Кіш',
   ATTACK: 'Атака',
   DEPLOY: 'Дислокация',
   EXPEDITION: 'Экспедиция',
@@ -69,6 +78,11 @@ export const MISSION_LABELS: Record<FleetMission, string> = {
 /** Миссии, летящие к торговому хабу, а не к планете. */
 export function isHubMission(mission: FleetMission): boolean {
   return mission === 'HUB_DELIVERY' || mission === 'HUB_PICKUP';
+}
+
+/** Рейс в Кіш своего синдиката: доставка в казну или вывоз из нее. */
+export function isKishMission(mission: FleetMission): boolean {
+  return mission === 'KISH_DELIVERY' || mission === 'KISH_PICKUP';
 }
 
 interface FlightProfile {
@@ -170,8 +184,10 @@ function flightSeconds(ships: ShipCounts, techs: TechLevels, distance: number): 
 }
 
 /** Суммарная грузоподъемность флота. */
-export function fleetCapacity(ships: ShipCounts): number {
-  return SHIP_TYPES.reduce((total, type) => total + ships[type] * FLIGHT_PROFILES[type].cargo, 0);
+/** Вместимость трюмов. Множитель — «Обозные трюмы» синдиката; без синдиката единица. */
+export function fleetCapacity(ships: ShipCounts, multiplier = 1): number {
+  const base = SHIP_TYPES.reduce((total, type) => total + ships[type] * FLIGHT_PROFILES[type].cargo, 0);
+  return Math.floor(base * multiplier);
 }
 
 /**
@@ -200,6 +216,8 @@ export interface FlightPlan {
   fuel: number;
   /** Расход антиматерии (межзвездный прыжок). */
   antimatter: number;
+  /** Прыжок через Браму синдиката, а не гипердвигателем. */
+  viaGate?: boolean;
 }
 
 /**
@@ -215,7 +233,7 @@ export function planFlight(
   techs: TechLevels,
   from: { position: number; system: GalaxyPoint },
   to: { position: number; system: GalaxyPoint },
-  options: { oneWay?: boolean } = {},
+  options: { oneWay?: boolean; cargoMultiplier?: number; viaGate?: boolean } = {},
 ): FlightPlan {
   // Дислокация не возвращается, поэтому и топливо за обратный путь не берем.
   const trips = options.oneWay ? 1 : 2;
@@ -230,20 +248,43 @@ export function planFlight(
       distance,
       speed: Math.round(fleetSpeed(ships, techs)),
       flightSeconds: seconds,
-      capacity: fleetCapacity(ships),
+      capacity: fleetCapacity(ships, options.cargoMultiplier),
       fuel: fuelCost(ships, seconds, trips),
       antimatter: 0,
     };
   }
 
   const distance = galaxyDistance(from.system, to.system);
+
+  /*
+   * Через Браму: до врат своей системы по орбитам на плазме, короткий прыжок
+   * и от врат по орбитам к цели. Антиматерии — треть обычного прыжка,
+   * гипердвигатель не нужен и не ускоряет: прыжок делают врата, а не корабль.
+   */
+  if (options.viaGate) {
+    const toGate = flightSeconds(ships, techs, orbitDistance(from.position, GATE_POSITION));
+    const fromGate = flightSeconds(ships, techs, orbitDistance(GATE_POSITION, to.position));
+    const seconds = toGate + GATE_JUMP_SECONDS + fromGate;
+    const neutral = { ...techs, HYPERDRIVE: 0 };
+    return {
+      kind: 'INTERSTELLAR',
+      distance,
+      speed: Math.round(fleetSpeed(ships, techs)),
+      flightSeconds: seconds,
+      capacity: fleetCapacity(ships, options.cargoMultiplier),
+      fuel: fuelCost(ships, toGate + fromGate, trips),
+      antimatter: Math.max(1, Math.ceil(jumpAntimatterCost(ships, neutral, distance, trips) * GATE_ANTIMATTER_SHARE)),
+      viaGate: true,
+    };
+  }
+
   const seconds = jumpSeconds(ships, techs, distance);
   return {
     kind: 'INTERSTELLAR',
     distance,
     speed: Math.round(fleetSpeed(ships, techs)),
     flightSeconds: seconds,
-    capacity: fleetCapacity(ships),
+    capacity: fleetCapacity(ships, options.cargoMultiplier),
     fuel: 0,
     antimatter: jumpAntimatterCost(ships, techs, distance, trips),
   };
@@ -286,11 +327,21 @@ export function validateComposition(mission: FleetMission, ships: ShipCounts): s
   if (mission === 'ATTACK' && !hasWeapons(ships)) {
     return 'Для атаки нужен хотя бы один вооруженный корабль';
   }
+  // Удержание — это защита: грузовики на чужой орбите никого не прикроют.
+  if (mission === 'KISH_RAID' && !hasWeapons(ships)) {
+    return 'Для налета на Кіш нужен хотя бы один вооруженный корабль';
+  }
+  if (mission === 'HOLD' && !hasWeapons(ships)) {
+    return 'Для удержания нужен хотя бы один вооруженный корабль';
+  }
   if (mission === 'EXPEDITION' && ships.PROBE === fleetSize(ships)) {
     return 'Одни зонды не выдержат экспедицию — нужен хотя бы один корабль с трюмом';
   }
   if (isHubMission(mission) && fleetCapacity(ships) <= 0) {
     return 'Для рейса на хаб нужен корабль с трюмом';
+  }
+  if (isKishMission(mission) && fleetCapacity(ships) <= 0) {
+    return 'Для рейса в Кіш нужен корабль с трюмом';
   }
   // Обломки собирает только специализированный корабль: обычные трюмы
   // для этого не приспособлены, иначе переработчик был бы не нужен.
@@ -309,14 +360,14 @@ export function validateComposition(mission: FleetMission, ships: ShipCounts): s
  * Плазма возится наравне с рудой и полимерами — она и топливо, и товар,
  * поэтому колонии умеют перебрасывать ее между собой.
  */
-export function validateCargo(ships: ShipCounts, cargo: ResourceAmounts): string | null {
+export function validateCargo(ships: ShipCounts, cargo: ResourceAmounts, cargoMultiplier = 1): string | null {
   if (cargo.ore < 0 || cargo.polymers < 0 || cargo.plasma < 0) {
     return 'Некорректный объем груза';
   }
   const total = cargo.ore + cargo.polymers + cargo.plasma;
   if (total <= 0) return null;
 
-  const capacity = fleetCapacity(ships);
+  const capacity = fleetCapacity(ships, cargoMultiplier);
   if (total > capacity) {
     return `Трюмы вмещают ${capacity}, а загружено ${Math.round(total)}`;
   }
@@ -327,4 +378,97 @@ export function describeComposition(ships: ShipCounts): string {
   return SHIP_TYPES.filter((type) => ships[type] > 0)
     .map((type) => `${shipLabel(type)} ×${ships[type]}`)
     .join(', ');
+}
+
+/** Сроки удержания на выбор, в часах. */
+export const HOLD_HOURS = [1, 4, 8, 24] as const;
+
+export function isHoldHours(value: unknown): value is (typeof HOLD_HOURS)[number] {
+  return typeof value === 'number' && (HOLD_HOURS as readonly number[]).includes(value);
+}
+
+/**
+ * Дележ уцелевших защитников между базой и флотами на удержании.
+ *
+ * Бой считает защитника одной стороной, а корабли у нее разных владельцев.
+ * Уцелевшие каждого класса делятся пропорционально вкладу, округление
+ * вниз, а остаток отдается тем, у кого этого класса было больше всего:
+ * так сумма совпадает с итогом боя до корабля, и никто не получает
+ * больше, чем привел.
+ */
+export function splitSurvivors(survivors: ShipCounts, parts: ShipCounts[]): ShipCounts[] {
+  const result = parts.map(() => emptyShipCounts());
+  for (const type of SHIP_TYPES) {
+    const total = parts.reduce((sum, part) => sum + part[type], 0);
+    if (total <= 0) continue;
+    const alive = Math.min(total, Math.max(0, Math.floor(survivors[type])));
+    let given = 0;
+    parts.forEach((part, index) => {
+      const share = Math.floor((part[type] * alive) / total);
+      result[index]![type] = share;
+      given += share;
+    });
+    let rest = alive - given;
+    const order = parts.map((_, index) => index).sort((a, b) => parts[b]![type] - parts[a]![type]);
+    for (const index of order) {
+      if (rest <= 0) break;
+      if (result[index]![type] < parts[index]![type]) {
+        result[index]![type] += 1;
+        rest -= 1;
+      }
+    }
+  }
+  return result;
+}
+
+/** Сколько флотов, считая ведущий, может идти в одной совместной атаке. */
+export const MAX_JOINT_FLEETS = 8;
+/**
+ * Присоединиться можно, пока ведущему лететь дольше этого срока: иначе
+ * присоединившийся рискует прилететь уже после боя и драться в одиночку.
+ */
+export const JOINT_MIN_LEAD_MS = 10_000;
+
+export interface Loot {
+  ore: number;
+  polymers: number;
+  plasma: number;
+}
+
+/**
+ * Дележ добычи совместной атаки по трюмам уцелевших.
+ *
+ * Добыча посчитана по общей вместимости группы, поэтому делится
+ * пропорционально трюмам каждого флота, округление вниз. Остаток уходит
+ * тем, у кого больше свободного места, и никто не везет сверх своих трюмов.
+ * Если места не хватило даже на остаток, он остается у защитника: списывать
+ * со склада надо ровно то, что увезли.
+ */
+export function splitLoot(loot: Loot, capacities: number[]): Loot[] {
+  const result = capacities.map(() => ({ ore: 0, polymers: 0, plasma: 0 }));
+  const caps = capacities.map((capacity) => Math.max(0, Math.floor(capacity)));
+  const total = caps.reduce((sum, capacity) => sum + capacity, 0);
+  if (total <= 0) return result;
+  const used = caps.map(() => 0);
+  for (const field of ['ore', 'polymers', 'plasma'] as const) {
+    const amount = Math.max(0, Math.floor(loot[field]));
+    let given = 0;
+    caps.forEach((capacity, index) => {
+      const share = Math.min(capacity - used[index]!, Math.floor((amount * capacity) / total));
+      result[index]![field] = share;
+      used[index]! += share;
+      given += share;
+    });
+    let rest = amount - given;
+    const order = caps.map((_, index) => index).sort((a, b) => caps[b]! - used[b]! - (caps[a]! - used[a]!));
+    for (const index of order) {
+      if (rest <= 0) break;
+      const take = Math.min(rest, caps[index]! - used[index]!);
+      if (take <= 0) continue;
+      result[index]![field] += take;
+      used[index]! += take;
+      rest -= take;
+    }
+  }
+  return result;
 }

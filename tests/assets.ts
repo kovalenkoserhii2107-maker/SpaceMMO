@@ -17,6 +17,7 @@ import { DEFENSE_TYPES } from '../src/game/defenses.js';
 import { BUILDING_TYPES } from '../src/game/rules.js';
 import { SHIP_TYPES } from '../src/game/ships.js';
 import { TECHNOLOGY_TYPES } from '../src/game/techTree.js';
+import { SYNDICATE_MODULES, SYNDICATE_TECHS } from '../src/game/syndicate.js';
 
 const results: Array<{ name: string; passed: boolean }> = [];
 
@@ -46,7 +47,7 @@ const PLANET_SLOTS = [
   'lava',
   'toxic',
   /* Орбитальная станция: рисуется тем же телом карты, что звезда и туманность. */
-  'hub',
+  'hub', 'kish',
 ];
 
 /*
@@ -66,6 +67,15 @@ const KNOWN_DRAFTS = new Set([
   'system_bh_2.webp',
 ]);
 
+/*
+ * Арт Коша лежит в тех же папках, что колония: модули «Отсеков» — рядом
+ * с постройками, технологии синдиката — рядом с технологиями под префиксом
+ * `syndicate_`. Сам Кіш рисуется телом карты и числится в `PLANET_SLOTS`.
+ * Без этих слотов тест принимал настоящие картинки за забытые черновики.
+ */
+const KISH_MODULE_SLOTS = SYNDICATE_MODULES.filter((module) => module !== 'KISH');
+const SYNDICATE_TECH_SLOTS = SYNDICATE_TECHS.map((tech) => `SYNDICATE_${tech}`);
+
 /** Миниатюры на макро-карте: галактики и туманности, вариант берется по координатам. */
 const SYSTEM_SLOTS = ['galaxy_1', 'galaxy_2', 'galaxy_3', 'galaxy_4'];
 
@@ -73,10 +83,10 @@ const SYSTEM_SLOTS = ['galaxy_1', 'galaxy_2', 'galaxy_3', 'galaxy_4'];
 const BACKGROUND_SLOTS = ['space_bg'];
 
 const GROUPS: Array<{ folder: string; kind: string; types: readonly string[] }> = [
-  { folder: 'buildings', kind: 'постройки', types: BUILDING_TYPES },
+  { folder: 'buildings', kind: 'постройки и модули Коша', types: [...BUILDING_TYPES, ...KISH_MODULE_SLOTS] },
   { folder: 'ships', kind: 'корабли', types: SHIP_TYPES },
   { folder: 'defense', kind: 'оборона', types: DEFENSE_TYPES },
-  { folder: 'tech', kind: 'технологии', types: TECHNOLOGY_TYPES },
+  { folder: 'tech', kind: 'технологии колонии и синдиката', types: [...TECHNOLOGY_TYPES, ...SYNDICATE_TECH_SLOTS] },
   { folder: 'planets', kind: 'тела карты', types: PLANET_SLOTS },
   { folder: 'systems', kind: 'миниатюры систем', types: SYSTEM_SLOTS },
   { folder: 'bg', kind: 'фон карты', types: BACKGROUND_SLOTS },

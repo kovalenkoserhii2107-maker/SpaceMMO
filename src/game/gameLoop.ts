@@ -7,6 +7,7 @@
  * Все таймеры считаются от абсолютных меток времени (finishesAt/nextUnitAt),
  * поэтому очереди доигрываются и после выхода игрока из игры.
  */
+import type { JointAttackView } from '../types/api.js';
 import { randomUUID } from 'node:crypto';
 import type { Server } from 'socket.io';
 import { prisma } from '../db/prisma.js';
@@ -22,6 +23,9 @@ import {
   accrue,
   type DefenseJobState,
   fleetSnapshots,
+  commanderBuildSpeedup,
+  commanderSyndicateBuffs,
+  researchJoinCheck,
   researchSnapshot,
   toSnapshot,
   type BaseRuntimeState,
@@ -29,11 +33,15 @@ import {
   type ShipJobState,
   type CommanderRuntimeState,
 } from './baseState.js';
-import {
+import { JOINT_MIN_LEAD_MS, MAX_JOINT_FLEETS, splitLoot,
   canJump,
   fleetCapacity,
   fleetSize,
   isHubMission,
+  isKishMission,
+  HOLD_HOURS,
+  isHoldHours,
+  splitSurvivors,
   MISSION_LABELS,
   planFlight,
   validateCargo,
@@ -47,7 +55,7 @@ import {
   expeditionSlots,
   resolveExpedition,
 } from './expeditions.js';
-import { hubRent, marketPrice, rushPrice, storageCapacity, storageUsed } from './market.js';
+import { hubRent, marketPrice, rushPrice } from './market.js';
 import type { ScanPayload } from './fogOfWar.js';
 import {
   DEFENSE_TYPES,
@@ -59,9 +67,32 @@ import {
   type DefenseType,
 } from './defenses.js';
 import { resolveEspionage, espionageSeed } from './espionage.js';
-import { plunderAmount, resolveBattle, type SideForces, type UnitLoss } from './combat.js';
+import { plunderAmount, resolveBattle, type PlunderResult, type SideForces, type UnitLoss } from './combat.js';
 import { checkArchitect, checkPirateBane } from '../services/achievementService.js';
-import { canAttack, declareWar } from '../services/warService.js';
+import { canAttack, declareSyndicateWar, declareWar } from '../services/warService.js';
+import { availableAt, depositLocal, lockHubStocks, withdrawStock } from '../services/hubStock.js';
+import { alliedSyndicateIds, commanderPacts, pactsInForce,
+  membershipOf,
+  sameSyndicate,
+  syndicateBuffsFor,
+  withdrawnToday,
+  type SyndicateTechState,
+} from '../services/syndicateAccess.js';
+import {
+  pactsForbidAttack,
+  bramaThroughput,
+  effectiveTaxRate,
+  plunderTreasury,
+  treasuryProtectedShare,
+  emptySyndicateTechLevels,
+  hasPermission,
+  KISH_POSITION,
+  splitTax,
+  withdrawAllowance,
+  type SyndicateTech,
+  type SyndicateTechLevels,
+} from './syndicate.js';
+import { spentOnFleet } from './score.js';
 import { countUnread, deliver, type OutgoingMessage } from '../services/mailService.js';
 import {
   buildBattleMail,
@@ -92,7 +123,6 @@ import {
   type BuildingType,
 } from './rules.js';
 import {
-  buildSpeedup,
   colonySlots,
   emptyTechLevels,
   missingTechRequirements,
@@ -275,9 +305,20 @@ class GameLoop {
       include: {
         researches: true,
         researchJob: true,
+        researchHelpers: true,
+        syndicate: {
+          select: {
+            id: true,
+            taxRate: true,
+            pendingTaxRate: true,
+            taxEffectiveAt: true,
+            technologies: { select: { tech: true, level: true } },
+            research: true,
+          },
+        },
         fleets: {
           orderBy: { arrivesAt: 'asc' },
-          include: { originPlanet: true, targetPlanet: true, targetHub: true, targetSystem: true },
+          include: FLEET_INCLUDE,
         },
         bases: {
           orderBy: { createdAt: 'asc' },
@@ -303,6 +344,25 @@ class GameLoop {
       research: null,
       researchDirty: false,
       minedCredits: 0,
+      syndicate: row.syndicate
+        ? {
+            id: row.syndicate.id,
+            tax: {
+              taxRate: row.syndicate.taxRate,
+              pendingTaxRate: row.syndicate.pendingTaxRate,
+              taxEffectiveAt: row.syndicate.taxEffectiveAt?.getTime() ?? null,
+            },
+            joinedAt: row.syndicateJoinedAt?.getTime() ?? null,
+            techs: syndicateTechLevelsFrom(row.syndicate.technologies),
+            research: row.syndicate.research
+              ? {
+                  tech: row.syndicate.research.tech,
+                  targetLevel: row.syndicate.research.targetLevel,
+                  finishesAt: row.syndicate.research.finishesAt.getTime(),
+                }
+              : null,
+          }
+        : null,
       bases: new Map(),
       fleets: row.fleets.map(toFleetRuntime),
     };
@@ -317,6 +377,15 @@ class GameLoop {
         baseId: row.researchJob.baseId,
         startedAt: row.researchJob.startedAt.getTime(),
         finishesAt: row.researchJob.finishesAt.getTime(),
+        // У заданий, запущенных до появления помощников, уровня нет:
+        // подставляется нынешний уровень ведущей, когда базы загружены.
+        labLevel: row.researchJob.labLevel ?? -1,
+        helpers: row.researchHelpers.map((helper) => ({
+          baseId: helper.baseId,
+          labLevel: helper.labLevel,
+          paid: { ore: helper.ore, polymers: helper.polymers, plasma: helper.plasma },
+          savedSeconds: helper.savedSeconds,
+        })),
       };
     }
 
@@ -400,6 +469,10 @@ class GameLoop {
         dirty: false,
         jobsDirty: false,
       });
+    }
+
+    if (commander.research && commander.research.labLevel < 0) {
+      commander.research.labLevel = commander.bases.get(commander.research.baseId)?.levels.SCIENCE_CENTER ?? 0;
     }
 
     this.commanders.set(commander.commanderId, commander);
@@ -538,6 +611,17 @@ class GameLoop {
 
     const refund = researchCost(job.tech, job.targetLevel);
     const lost = refundToStore(base.resources, storageCapacities(base.levels), refund);
+    // Помощникам — уплаченное за присоединение, каждому на свою базу
+    // и по тому же правилу: переложить ресурсы между колониями отменой нельзя.
+    for (const helper of job.helpers) {
+      const helperBase = commander.bases.get(helper.baseId);
+      if (!helperBase) continue;
+      const helperLost = refundToStore(helperBase.resources, storageCapacities(helperBase.levels), helper.paid);
+      lost.ore += helperLost.ore;
+      lost.polymers += helperLost.polymers;
+      lost.plasma += helperLost.plasma;
+      helperBase.dirty = true;
+    }
     commander.research = null;
     commander.researchDirty = true;
     base.dirty = true;
@@ -616,7 +700,7 @@ class GameLoop {
       type,
       targetLevel,
       systemModifiers(base.anomaly),
-      buildSpeedup(commander.techs),
+      commanderBuildSpeedup(commander),
     );
     subtractResources(base.resources, cost);
     base.buildJob = { building: type, targetLevel, startedAt: now, finishesAt: now + seconds * 1000 };
@@ -654,12 +738,68 @@ class GameLoop {
       systemModifiers(base.anomaly),
     );
     subtractResources(base.resources, cost);
-    commander.research = { tech, targetLevel, baseId, startedAt: now, finishesAt: now + seconds * 1000 };
+    commander.research = {
+      tech,
+      targetLevel,
+      baseId,
+      startedAt: now,
+      finishesAt: now + seconds * 1000,
+      labLevel: base.levels.SCIENCE_CENTER,
+      helpers: [],
+    };
     commander.researchDirty = true;
     base.dirty = true;
 
     await this.persistAndEmit(commanderId);
     return { ok: true, message: `Исследование начато, ${seconds} с до завершения` };
+  }
+
+  /**
+   * Присоединить лабораторию другой колонии к идущему исследованию.
+   *
+   * Второго исследования запустить нельзя — технологии общие на командира, —
+   * но простаивать лаборатории незачем: она берет на себя долю того, что уже
+   * идет, срезает эту долю всего срока и доплачивает ту же долю всей цены
+   * со своего склада.
+   * Цену и новый срок считает `researchJoinCheck` — тот же, что рисует
+   * предложение в интерфейсе.
+   */
+  async joinResearch(commanderId: string, baseId: string): Promise<ActionResult> {
+    const commander = await this.getCommander(commanderId);
+    const base = commander?.bases.get(baseId);
+    if (!commander || !base) return { ok: false, error: 'База не найдена' };
+
+    const job = commander.research;
+    if (!job) return { ok: false, error: 'Ничего не изучается — присоединяться не к чему' };
+
+    const now = Date.now();
+    const check = researchJoinCheck(commander, base, now);
+    if (check.kind === 'none') return { ok: false, error: 'Лаборатория этой базы уже работает над исследованием' };
+    if (check.kind === 'blocked') return { ok: false, error: check.reason };
+
+    const { quote } = check;
+    if (!hasEnoughResources(base.resources, quote.price)) {
+      return { ok: false, error: 'Недостаточно ресурсов для присоединения' };
+    }
+
+    subtractResources(base.resources, quote.price);
+    job.helpers.push({
+      baseId,
+      labLevel: base.levels.SCIENCE_CENTER,
+      paid: { ...quote.price },
+      savedSeconds: quote.savedSeconds,
+    });
+    job.finishesAt = now + quote.remainingSeconds * 1000;
+    commander.researchDirty = true;
+    base.dirty = true;
+
+    await this.persistAndEmit(commanderId);
+    return {
+      ok: true,
+      message:
+        `Лаборатория взяла на себя ${Math.round(quote.share * 100)}% исследования: ` +
+        `срок короче на ${quote.savedSeconds} с`,
+    };
   }
 
   /** Заказ кораблей на верфи. Заказы выполняются очередью, корабли выходят поштучно. */
@@ -692,7 +832,7 @@ class GameLoop {
       type,
       base.levels.SHIPYARD,
       systemModifiers(base.anomaly),
-      buildSpeedup(commander.techs),
+      commanderBuildSpeedup(commander),
     );
     subtractResources(base.resources, cost);
     if (!this.mergeIntoQueue(base.shipJobs, type, quantity, unitSeconds)) {
@@ -747,13 +887,17 @@ class GameLoop {
   async sendFleet(
     commanderId: string,
     baseId: string,
-    target: { planetId?: string; hubId?: string; systemId?: string },
+    target: { planetId?: string; hubId?: string; systemId?: string; syndicateId?: string },
     mission: FleetMission,
     ships: ShipCounts,
-    cargo: { ore: number; polymers: number; plasma: number },
-    pickup: { ore: number; polymers: number } = { ore: 0, polymers: 0 },
+    cargo: { ore: number; polymers: number; plasma: number; antimatter?: number },
+    pickup: { ore: number; polymers: number; plasma?: number } = { ore: 0, polymers: 0 },
     /** Оставить флот в точке назначения. Учитывается только там, где есть выбор. */
     requestedOneWay = false,
+    /** Срок удержания в часах — только для миссии удержания. */
+    holdHours = 0,
+    /** Ведущий флот совместной атаки, к которой присоединяется этот вылет. */
+    joinFleetId: string | null = null,
   ): Promise<ActionResult> {
     const commander = await this.getCommander(commanderId);
     const base = commander?.bases.get(baseId);
@@ -763,6 +907,7 @@ class GameLoop {
 
     const compositionError = validateComposition(mission, ships);
     if (compositionError) return { ok: false, error: compositionError };
+    if (joinFleetId && mission !== 'ATTACK') return { ok: false, error: 'Присоединиться можно только к атаке' };
 
     // Доступность самой миссии проверяем раньше наличия кораблей:
     // «экспедиции недоступны» — более фундаментальный отказ, чем «не хватает кораблей».
@@ -793,6 +938,13 @@ class GameLoop {
     let targetPlanetId: string | null = null;
     let targetHubId: string | null = null;
     let targetSystemId: string | null = null;
+    let targetSyndicateId: string | null = null;
+    // Система цели — по ней решается, можно ли лететь через Браму.
+    let targetSystemRef: string | null = null;
+    // Синдикат, которому налет на Кіш объявит войну, если вылет состоится.
+    let declareWarOn: string | null = null;
+    // Ведущий флот совместной атаки: к нему подстраивается время прилета.
+    let jointLead: { id: string; arrivesAt: number } | null = null;
 
     if (mission === 'EXPEDITION') {
       const system = target.systemId
@@ -801,7 +953,82 @@ class GameLoop {
       if (!system) return { ok: false, error: 'Система не найдена' };
 
       targetSystemId = system.id;
+      targetSystemRef = system.id;
       target_ = { position: DEEP_SPACE_POSITION, system };
+    } else if (target.syndicateId && (mission === 'KISH_RAID' || mission === 'HOLD' || mission === 'HARVEST')) {
+      const syndicate = await prisma.syndicate.findUnique({
+        where: { id: target.syndicateId },
+        include: { kishSystem: true },
+      });
+      if (!syndicate?.kishSystem) return { ok: false, error: 'Кіш не найден' };
+      const own = await prisma.commander.findUnique({ where: { id: commanderId }, select: { syndicateId: true } });
+
+      if (mission === 'KISH_RAID') {
+        if (!own?.syndicateId) return { ok: false, error: 'Налет на Кіш возможен только от лица синдиката' };
+        if (own.syndicateId === syndicate.id) return { ok: false, error: 'На Кіш своего синдиката не нападают' };
+        if (pactsForbidAttack(await pactsInForce(own.syndicateId, syndicate.id))) {
+          return { ok: false, error: 'С этим синдикатом действует пакт о ненападении' };
+        }
+        /*
+         * Грабить Кіш можно только в войне синдикатов, и налет сам ее объявляет —
+         * но только тому, у кого есть право дипломатии: иначе любой рядовой
+         * втягивал бы в войну весь синдикат.
+         */
+        const atWar = await prisma.syndicateWar.findFirst({
+          where: {
+            OR: [
+              { aggressorId: own.syndicateId, targetId: syndicate.id },
+              { aggressorId: syndicate.id, targetId: own.syndicateId },
+            ],
+          },
+        });
+        // Объявляется перед самым вылетом: отказ по топливу не должен оставлять войну.
+        if (!atWar) declareWarOn = syndicate.id;
+      }
+      if (mission === 'HOLD') {
+        if (own?.syndicateId !== syndicate.id) return { ok: false, error: 'Удерживать можно только Кіш своего синдиката' };
+        if (!isHoldHours(holdHours)) return { ok: false, error: `Срок удержания: ${HOLD_HOURS.join(', ')} ч` };
+      }
+      if (mission === 'HARVEST' && syndicate.debrisOre <= 0 && syndicate.debrisPolymers <= 0) {
+        return { ok: false, error: 'У этого Коша нет осколков' };
+      }
+      targetSyndicateId = syndicate.id;
+      targetSystemRef = syndicate.kishSystem.id;
+      target_ = { position: KISH_POSITION, system: syndicate.kishSystem };
+    } else if (isKishMission(mission)) {
+      /*
+       * Рейс в Кіш — только в свой. Возить в чужую казну незачем, а вывоз
+       * из нее — это грабеж, и он придет вместе с войнами синдикатов.
+       * Членство и право вывоза проверяются и здесь, и на прилете: за время
+       * полета участника могли исключить, а лимит — выбрать другим рейсом.
+       */
+      const membership = await membershipOf(commanderId);
+      if (!membership.ok) return { ok: false, error: 'Рейс в Кіш возможен только участнику синдиката' };
+      if (target.syndicateId && target.syndicateId !== membership.syndicateId) {
+        return { ok: false, error: 'Рейс возможен только в Кіш своего синдиката' };
+      }
+      const syndicate = await prisma.syndicate.findUnique({
+        where: { id: membership.syndicateId },
+        include: { kishSystem: true },
+      });
+      if (!syndicate?.kishSystem) return { ok: false, error: 'У синдиката еще не определен Кіш' };
+      if (mission === 'KISH_PICKUP') {
+        if (!hasPermission(membership, 'WITHDRAW')) {
+          return { ok: false, error: 'Вывозить из казны может только ранг с правом выдачи' };
+        }
+        const requested = pickup.ore + pickup.polymers + (pickup.plasma ?? 0);
+        const allowance = withdrawAllowance(
+          membership,
+          membership.dailyWithdrawLimit,
+          await withdrawnToday(membership.syndicateId, commanderId),
+        );
+        if (requested > allowance) {
+          return { ok: false, error: `Лимит выдачи на сутки: осталось ${Math.floor(allowance)}` };
+        }
+      }
+      targetSyndicateId = syndicate.id;
+      targetSystemRef = syndicate.kishSystem.id;
+      target_ = { position: KISH_POSITION, system: syndicate.kishSystem };
     } else if (isHubMission(mission)) {
       const hub = target.hubId
         ? await prisma.tradeHub.findUnique({ where: { id: target.hubId }, include: { system: true } })
@@ -811,6 +1038,7 @@ class GameLoop {
           });
       if (!hub) return { ok: false, error: 'Торговый хаб не найден' };
       targetHubId = hub.id;
+      targetSystemRef = hub.systemId;
       target_ = { position: hub.position, system: hub.system };
     } else {
       if (!target.planetId) return { ok: false, error: 'Не указана планета назначения' };
@@ -838,6 +1066,23 @@ class GameLoop {
         }
       }
 
+      /*
+       * Удержание — флот встает на орбиту союзника и защищает его до конца
+       * срока, оставаясь своим. Отдать корабли насовсем можно и раньше —
+       * транспортом в один конец; удержание нужно, чтобы помочь и забрать.
+       */
+      if (mission === 'HOLD') {
+        if (!planet.base || planet.base.commanderId === commanderId) {
+          return { ok: false, error: 'Удерживать можно только колонию союзника — свою охраняет дислокация' };
+        }
+        if (!(await sameSyndicate(commanderId, planet.base.commanderId))) {
+          return { ok: false, error: 'Удерживать можно только колонию участника своего синдиката' };
+        }
+        if (!isHoldHours(holdHours)) {
+          return { ok: false, error: `Срок удержания: ${HOLD_HOURS.join(', ')} ч` };
+        }
+      }
+
       if (mission === 'COLONIZE') {
         if (planet.base) {
           return { ok: false, error: 'Планета уже заселена — колонию основать негде' };
@@ -862,6 +1107,28 @@ class GameLoop {
           return { ok: false, error: 'Нельзя атаковать собственную колонию' };
         }
         /*
+         * Совместная атака: флот встает в группу ведущего и дерется с ним
+         * одним боем. Присоединиться можно к своей атаке или к атаке участника
+         * своего синдиката — чужую группу собирать некому доверять.
+         */
+        if (joinFleetId) {
+          const lead = await prisma.fleet.findUnique({ where: { id: joinFleetId } });
+          if (!lead || lead.mission !== 'ATTACK' || lead.status !== 'OUTBOUND' || lead.targetPlanetId !== planet.id) {
+            return { ok: false, error: 'Эта атака уже не летит к выбранной цели' };
+          }
+          if (lead.jointLeadId) return { ok: false, error: 'Присоединяться нужно к ведущему флоту атаки' };
+          const ally =
+            lead.commanderId === commanderId ||
+            (await sameSyndicate(commanderId, lead.commanderId)) ||
+            (await commanderPacts(commanderId, lead.commanderId)).includes('ALLIANCE');
+          if (!ally) return { ok: false, error: 'Присоединиться можно только к атаке своего синдиката или союзника' };
+          const joined = await prisma.fleet.count({ where: { jointLeadId: lead.id } });
+          if (joined + 1 >= MAX_JOINT_FLEETS) {
+            return { ok: false, error: `В одной атаке не больше ${MAX_JOINT_FLEETS} флотов` };
+          }
+          jointLead = { id: lead.id, arrivesAt: lead.arrivesAt.getTime() };
+        }
+        /*
          * Войну объявляет сама атака. Раньше вылет отклонялся, пока игрок
          * не сходит в раздел дипломатии и не объявит войну руками — лишний
          * шаг, который к тому же ничего не защищал: объявить ее мог кто угодно.
@@ -870,6 +1137,12 @@ class GameLoop {
          *
          * Если война уже идет — личная или синдикатная, — объявление не нужно.
          */
+        if (await sameSyndicate(commanderId, planet.base.commanderId)) {
+          return { ok: false, error: 'Нельзя атаковать участника своего синдиката' };
+        }
+        if (pactsForbidAttack(await commanderPacts(commanderId, planet.base.commanderId))) {
+          return { ok: false, error: 'Между вашими синдикатами действует пакт о ненападении' };
+        }
         if (!(await canAttack(commanderId, planet.base.commanderId))) {
           const declared = await declareWar(commanderId, planet.base.commanderId);
           // Отказ здесь означает, что воевать с этой целью нельзя в принципе
@@ -879,6 +1152,7 @@ class GameLoop {
       }
 
       targetPlanetId = planet.id;
+      targetSystemRef = planet.systemId;
       target_ = { position: planet.position, system: planet.system };
     }
 
@@ -886,24 +1160,55 @@ class GameLoop {
     // Хаб торгует лишь рудой и полимерами, поэтому плазму туда не грузим.
     const empty = { ore: 0, polymers: 0, plasma: 0 };
     const outboundCargo =
-      mission === 'HUB_PICKUP'
+      mission === 'HUB_PICKUP' || mission === 'KISH_PICKUP' || mission === 'HOLD' || mission === 'KISH_RAID'
         ? empty
         : mission === 'HUB_DELIVERY'
         ? { ...cargo, plasma: 0 }
         : cargo;
-    const cargoError = validateCargo(ships, outboundCargo);
+    // Трюмы участника синдиката шире на «Обозные трюмы» — и груз, и запрос на вывоз.
+    const senderBuffs = commanderSyndicateBuffs(commander);
+    // Антиматерию везут только в казну Коша — на перенос Коша через Браму.
+    const antimatterCargo = mission === 'KISH_DELIVERY' ? Math.max(0, Math.floor(cargo.antimatter ?? 0)) : 0;
+    const cargoError = validateCargo(
+      ships,
+      { ...outboundCargo, plasma: outboundCargo.plasma + antimatterCargo },
+      senderBuffs.cargo,
+    );
     if (cargoError) return { ok: false, error: cargoError };
     if (outboundCargo.ore > base.resources.ore || outboundCargo.polymers > base.resources.polymers) {
       return { ok: false, error: 'Недостаточно ресурсов для загрузки' };
     }
 
-    const request = mission === 'HUB_PICKUP' ? pickup : { ore: 0, polymers: 0 };
-    if (mission === 'HUB_PICKUP') {
-      const requested = request.ore + request.polymers;
-      if (requested <= 0) return { ok: false, error: 'Укажи, сколько товара вывезти с хаба' };
-      if (requested > fleetCapacity(ships)) {
-        return { ok: false, error: `Трюмы вмещают ${fleetCapacity(ships)}, а запрошено ${requested}` };
+    const picking = mission === 'HUB_PICKUP' || mission === 'KISH_PICKUP';
+    // С хаба плазму не вывозят — хаб ею не торгует; из казны Коша вывозится и она.
+    const request = picking
+      ? { ore: pickup.ore, polymers: pickup.polymers, plasma: mission === 'KISH_PICKUP' ? (pickup.plasma ?? 0) : 0 }
+      : { ore: 0, polymers: 0, plasma: 0 };
+    if (picking) {
+      const requested = request.ore + request.polymers + request.plasma;
+      if (requested <= 0) {
+        return {
+          ok: false,
+          error: mission === 'KISH_PICKUP' ? 'Укажи, сколько вывезти из казны' : 'Укажи, сколько товара вывезти с хаба',
+        };
       }
+      if (requested > fleetCapacity(ships, senderBuffs.cargo)) {
+        return { ok: false, error: `Трюмы вмещают ${fleetCapacity(ships, senderBuffs.cargo)}, а запрошено ${requested}` };
+      }
+    }
+
+    /*
+     * Через Браму — если в системе вылета и в системе цели стоят Брамы своего
+     * синдиката и у врат вылета осталась пропускная способность. Иначе обычный
+     * гиперпрыжок, если есть «Гипердвигатель».
+     */
+    const gateSize = fleetSize(ships);
+    let viaGate = false;
+    let gateNote = '';
+    if (targetSystemRef && targetSystemRef !== base.systemId) {
+      const gate = await this.gateRoute(commanderId, base.systemId, targetSystemRef, gateSize);
+      viaGate = gate.usable;
+      gateNote = gate.reason ? ` (${gate.reason})` : '';
     }
 
     const plan = planFlight(
@@ -911,25 +1216,25 @@ class GameLoop {
       commander.techs,
       { position: base.position, system: base.galaxy },
       target_,
-      { oneWay },
+      { oneWay, cargoMultiplier: senderBuffs.cargo, viaGate },
     );
 
-    // Межзвездный прыжок возможен только с гипердвигателем и идет на антиматерии.
-    if (plan.kind === 'INTERSTELLAR') {
-      if (!canJump(commander.techs)) {
-        return { ok: false, error: 'Для межзвездного прыжка нужен «Гипердвигатель»' };
-      }
-      if (base.resources.antimatter < plan.antimatter) {
-        return {
-          ok: false,
-          error: `Не хватает антиматерии: нужно ${plan.antimatter}, на базе ${Math.floor(base.resources.antimatter)}`,
-        };
-      }
+    // Межзвездный прыжок без Брамы возможен только с гипердвигателем; антиматерия нужна обоим.
+    if (plan.kind === 'INTERSTELLAR' && !plan.viaGate && !canJump(commander.techs)) {
+      return { ok: false, error: `Для межзвездного прыжка нужен «Гипердвигатель» или Брама синдиката${gateNote}` };
+    }
+    if (base.resources.antimatter < plan.antimatter + antimatterCargo) {
+      return {
+        ok: false,
+        error:
+          `Не хватает антиматерии: нужно ${plan.antimatter + antimatterCargo}, ` +
+          `на базе ${Math.floor(base.resources.antimatter)}`,
+      };
     }
 
     // Плазма уходит и в баки, и в трюмы — проверяем сумму, иначе флот
     // улетал бы на топливе, которое сам же и увез грузом.
-    const plasmaNeeded = (plan.kind === 'INTERSTELLAR' ? 0 : plan.fuel) + outboundCargo.plasma;
+    const plasmaNeeded = plan.fuel + outboundCargo.plasma;
     if (base.resources.plasma < plasmaNeeded) {
       return {
         ok: false,
@@ -939,14 +1244,39 @@ class GameLoop {
       };
     }
 
+    if (declareWarOn) {
+      const declared = await declareSyndicateWar(commanderId, declareWarOn);
+      if (!declared.ok) {
+        return { ok: false, error: `Войны с этим синдикатом нет, а объявить ее не вышло: ${declared.error}` };
+      }
+    }
+
     const now = Date.now();
-    const arrivesAt = now + plan.flightSeconds * 1000;
-    const returnsAt = arrivesAt + plan.flightSeconds * 1000;
+    // Флот совместной атаки прилетает в одну секунду с ведущим: бой один,
+    // и тот, кто быстрее, ждет у цели. Опоздать к нему нельзя.
+    if (jointLead && now + plan.flightSeconds * 1000 > jointLead.arrivesAt - JOINT_MIN_LEAD_MS) {
+      return {
+        ok: false,
+        error:
+          `Флот не успевает к атаке: в пути ${plan.flightSeconds} с, ` +
+          `а ведущий будет у цели через ${Math.max(0, Math.floor((jointLead.arrivesAt - now) / 1000))} с`,
+      };
+    }
+    const arrivesAt = jointLead ? jointLead.arrivesAt : now + plan.flightSeconds * 1000;
+    // Удержание стоит у союзника свой срок, и только потом летит домой.
+    const holdMs = mission === 'HOLD' ? holdHours * 3_600_000 : 0;
+    const returnsAt = arrivesAt + holdMs + plan.flightSeconds * 1000;
 
     base.resources.ore -= outboundCargo.ore;
     base.resources.polymers -= outboundCargo.polymers;
     base.resources.plasma -= plan.fuel + outboundCargo.plasma;
-    base.resources.antimatter -= plan.antimatter;
+    // Пропускная способность резервируется последней, перед самим вылетом:
+    // отказ после резерва занимал бы место в окне Брамы зря.
+    if (plan.viaGate && !(await this.reserveGate(commanderId, base.systemId, gateSize))) {
+      return { ok: false, error: 'Брама вылета только что заполнилась — попробуй через минуту или гиперпрыжком' };
+    }
+
+    base.resources.antimatter -= plan.antimatter + antimatterCargo;
     for (const type of SHIP_TYPES) base.ships[type] -= ships[type];
     base.dirty = true;
     base.jobsDirty = true;
@@ -959,6 +1289,7 @@ class GameLoop {
         targetPlanetId,
         targetHubId,
         targetSystemId,
+        targetSyndicateId,
         mission,
         status: 'OUTBOUND',
         probes: ships.PROBE,
@@ -977,18 +1308,24 @@ class GameLoop {
         cargoOre: outboundCargo.ore,
         cargoPolymers: outboundCargo.polymers,
         cargoPlasma: outboundCargo.plasma,
+        cargoAntimatter: antimatterCargo,
         pickupOre: request.ore,
         pickupPolymers: request.polymers,
+        pickupPlasma: request.plasma,
         fuelSpent: plan.fuel,
         antimatterSpent: plan.antimatter,
         interstellar: plan.kind === 'INTERSTELLAR',
+        viaGate: plan.viaGate === true,
+        jointLeadId: jointLead?.id ?? null,
+        holdSeconds: holdMs / 1000,
+        holdUntil: holdMs > 0 ? new Date(arrivesAt + holdMs) : null,
         distance: plan.distance,
         speed: plan.speed,
         departedAt: new Date(now),
         arrivesAt: new Date(arrivesAt),
         returnsAt: new Date(returnsAt),
       },
-      include: { originPlanet: true, targetPlanet: true, targetHub: true, targetSystem: true },
+      include: FLEET_INCLUDE,
     });
 
     commander.fleets.push(toFleetRuntime(created));
@@ -997,10 +1334,13 @@ class GameLoop {
     return {
       ok: true,
       message:
-        mission === 'EXPEDITION'
+        jointLead
+          ? `Флот присоединился к атаке: ${fleetSize(ships)} кораблей, у цели вместе с ведущим через ` +
+            `${Math.ceil((arrivesAt - now) / 1000)} с`
+          : mission === 'EXPEDITION'
           ? `Экспедиция стартовала: ${fleetSize(ships)} кораблей, до точки ${plan.flightSeconds} с`
           : plan.kind === 'INTERSTELLAR'
-          ? `Гиперпрыжок: ${fleetSize(ships)} кораблей, в пути ${plan.flightSeconds} с, ` +
+          ? `${plan.viaGate ? 'Через Браму' : 'Гиперпрыжок'}: ${fleetSize(ships)} кораблей, в пути ${plan.flightSeconds} с, ` +
             `сожжено ${plan.antimatter} антиматерии`
           : `Флот вылетел: ${fleetSize(ships)} кораблей, в пути ${plan.flightSeconds} с, ` +
             `сожжено ${plan.fuel} плазмы`,
@@ -1033,7 +1373,23 @@ class GameLoop {
     if (this.collectingRent) return;
     this.collectingRent = true;
     try {
-      const storages = await prisma.hubStorage.findMany({
+      /*
+       * Размер склада теперь один на командира. У тех, кто расширял склады
+       * до этого и с тех пор не открывал биржу, счета еще нет — заводим его
+       * здесь, иначе они жили бы без платы за уже купленное место.
+       */
+      const orphans = await prisma.hubStorage.groupBy({
+        by: ['commanderId'],
+        where: { level: { gt: 1 }, commander: { hubAccount: null } },
+        _max: { level: true },
+      });
+      if (orphans.length > 0) {
+        await prisma.hubAccount.createMany({
+          data: orphans.map((row) => ({ commanderId: row.commanderId, level: row._max.level ?? 1 })),
+          skipDuplicates: true,
+        });
+      }
+      const storages = await prisma.hubAccount.findMany({
         where: { level: { gt: 1 } },
         select: { commanderId: true, level: true },
       });
@@ -1065,6 +1421,28 @@ class GameLoop {
     }
   }
 
+  /** Смена членства: налог с фермы уходит в казну нового синдиката или не уходит никуда. */
+  syncSyndicate(commanderId: string, syndicate: CommanderRuntimeState['syndicate']): void {
+    const commander = this.commanders.get(commanderId);
+    if (commander) commander.syndicate = syndicate;
+  }
+
+  /** Смена ставки налога: у всех загруженных участников синдиката сразу. */
+  syncSyndicateTax(syndicateId: string, tax: NonNullable<CommanderRuntimeState['syndicate']>['tax']): void {
+    for (const commander of this.commanders.values()) {
+      if (commander.syndicate?.id === syndicateId) commander.syndicate = { ...commander.syndicate, tax };
+    }
+  }
+
+  /** Изучение синдиката началось или завершилось: бонусы у загруженных участников. */
+  syncSyndicateTechs(syndicateId: string, state: SyndicateTechState): void {
+    for (const commander of this.commanders.values()) {
+      if (commander.syndicate?.id === syndicateId) {
+        commander.syndicate = { ...commander.syndicate, techs: state.levels, research: state.research };
+      }
+    }
+  }
+
   syncCredits(commanderId: string, credits: number): void {
     const commander = this.commanders.get(commanderId);
     if (!commander) return;
@@ -1072,27 +1450,156 @@ class GameLoop {
     this.emitUser(commanderId);
   }
 
-  /** Орбита и координаты системы цели — нужны для предрасчета маршрута. */
+  /**
+   * Отзыв флота с удержания — в пути или уже на орбите.
+   *
+   * Стоящий на орбите летит домой полный путь, а развернутый в пути — столько,
+   * сколько уже пролетел. Условный UPDATE по статусу: отзыв в тот же миг,
+   * когда вышел срок, не развернет флот дважды.
+   */
+  async recallFleet(commanderId: string, fleetId: string): Promise<ActionResult> {
+    const fleet = await prisma.fleet.findUnique({ where: { id: fleetId } });
+    if (!fleet || fleet.commanderId !== commanderId) return { ok: false, error: 'Флот не найден' };
+    if (fleet.mission !== 'HOLD' || (fleet.status !== 'OUTBOUND' && fleet.status !== 'HOLDING')) {
+      return { ok: false, error: 'Отозвать можно только флот, идущий на удержание или стоящий на нем' };
+    }
+    const now = Date.now();
+    const backMs = fleet.status === 'HOLDING' ? holdFlightMs(fleet) : Math.max(0, now - fleet.departedAt.getTime());
+    const updated = await prisma.fleet.updateMany({
+      where: { id: fleetId, status: fleet.status },
+      data: {
+        status: 'RETURNING',
+        returnsAt: new Date(now + backMs),
+        holdUntil: null,
+        ...(fleet.status === 'OUTBOUND' ? { arrivesAt: new Date(now) } : {}),
+      },
+    });
+    if (updated.count === 0) return { ok: false, error: 'Флот уже возвращается' };
+
+    const commander = this.commanders.get(commanderId);
+    if (commander) {
+      const rows = await prisma.fleet.findMany({ where: { commanderId }, include: FLEET_INCLUDE, orderBy: { arrivesAt: 'asc' } });
+      commander.fleets = rows.map(toFleetRuntime);
+      this.emitUser(commanderId);
+    }
+    return { ok: true, message: `Флот отозван: дома через ${Math.ceil(backMs / 1000)} с` };
+  }
+
+  /**
+   * Атаки на планету, к которым командир может присоединиться: свои и участников
+   * его синдиката, пока ведущему лететь дольше порога присоединения.
+   */
+  async jointAttacks(commanderId: string, planetId: string): Promise<JointAttackView[]> {
+    const me = await prisma.commander.findUnique({ where: { id: commanderId }, select: { syndicateId: true } });
+    // Союзники по пакту собирают атаки вместе, как участники одного синдиката.
+    const allies = me?.syndicateId ? await alliedSyndicateIds(me.syndicateId) : [];
+    const now = Date.now();
+    const leads = await prisma.fleet.findMany({
+      where: {
+        mission: 'ATTACK',
+        status: 'OUTBOUND',
+        targetPlanetId: planetId,
+        jointLeadId: null,
+        arrivesAt: { gt: new Date(now + JOINT_MIN_LEAD_MS) },
+        commander: me?.syndicateId
+          ? { OR: [{ id: commanderId }, { syndicateId: { in: [me.syndicateId, ...allies] } }] }
+          : { id: commanderId },
+      },
+      include: { commander: { select: { nickname: true } }, jointFleets: { select: { id: true } } },
+      orderBy: { arrivesAt: 'asc' },
+    });
+    return leads.map((lead) => ({
+      leadFleetId: lead.id,
+      leader: lead.commander.nickname,
+      arrivesInSeconds: Math.ceil((lead.arrivesAt.getTime() - now) / 1000),
+      fleets: 1 + lead.jointFleets.length,
+      ships: fleetSize(shipsFromFleetColumns(lead)),
+      full: 1 + lead.jointFleets.length >= MAX_JOINT_FLEETS,
+    }));
+  }
+
+  /** Орбита, координаты и система цели — нужны для предрасчета маршрута. */
   async getTargetLocation(
-    target: { planetId?: string; hubId?: string; systemId?: string },
-  ): Promise<{ position: number; system: { galaxyX: number; galaxyY: number } } | null> {
+    target: { planetId?: string; hubId?: string; systemId?: string; syndicateId?: string },
+  ): Promise<{ position: number; system: { galaxyX: number; galaxyY: number }; systemId: string } | null> {
+    if (target.syndicateId) {
+      const syndicate = await prisma.syndicate.findUnique({
+        where: { id: target.syndicateId },
+        include: { kishSystem: true },
+      });
+      return syndicate?.kishSystem
+        ? { position: KISH_POSITION, system: syndicate.kishSystem, systemId: syndicate.kishSystem.id }
+        : null;
+    }
     if (target.systemId) {
       const system = await prisma.solarSystem.findUnique({ where: { id: target.systemId } });
-      return system ? { position: DEEP_SPACE_POSITION, system } : null;
+      return system ? { position: DEEP_SPACE_POSITION, system, systemId: system.id } : null;
     }
     if (target.hubId) {
       const hub = await prisma.tradeHub.findUnique({
         where: { id: target.hubId },
         include: { system: true },
       });
-      return hub ? { position: hub.position, system: hub.system } : null;
+      return hub ? { position: hub.position, system: hub.system, systemId: hub.systemId } : null;
     }
     if (!target.planetId) return null;
     const planet = await prisma.planet.findUnique({
       where: { id: target.planetId },
       include: { system: true },
     });
-    return planet ? { position: planet.position, system: planet.system } : null;
+    return planet ? { position: planet.position, system: planet.system, systemId: planet.systemId } : null;
+  }
+
+  /**
+   * Можно ли лететь через Браму: Брамы своего синдиката в обеих системах
+   * и свободное место в часовом окне врат вылета. `reason` объясняет,
+   * почему нельзя, когда врата есть, но не пропустят.
+   */
+  async gateRoute(
+    commanderId: string,
+    fromSystemId: string,
+    toSystemId: string,
+    shipCount: number,
+  ): Promise<{ usable: boolean; reason: string | null }> {
+    const member = await prisma.commander.findUnique({ where: { id: commanderId }, select: { syndicateId: true } });
+    if (!member?.syndicateId || fromSystemId === toSystemId) return { usable: false, reason: null };
+    const fromGate = await this.usableGate(member.syndicateId, fromSystemId);
+    const toGate = await this.usableGate(member.syndicateId, toSystemId);
+    if (!fromGate || !toGate) return { usable: false, reason: null };
+    const windowOpen = Date.now() - fromGate.windowStartedAt.getTime() < GATE_WINDOW_MS;
+    const used = windowOpen ? fromGate.windowShips : 0;
+    const limit = bramaThroughput(fromGate.level);
+    if (used + shipCount > limit) {
+      return { usable: false, reason: `Брама пропустила за час ${used} из ${limit} кораблей` };
+    }
+    return { usable: true, reason: null };
+  }
+
+  /**
+   * Брама в системе, через которую синдикат может прыгать: своя или союзника
+   * по пакту. Своя берется первой — ее окно синдикат считает своим.
+   */
+  private async usableGate(syndicateId: string, systemId: string) {
+    const owners = [syndicateId, ...(await alliedSyndicateIds(syndicateId))];
+    const gates = await prisma.syndicateGate.findMany({ where: { systemId, syndicateId: { in: owners } } });
+    return gates.find((gate) => gate.syndicateId === syndicateId) ?? gates[0] ?? null;
+  }
+
+  /** Резерв места в часовом окне Брамы вылета — одним условным UPDATE, без гонок. */
+  private async reserveGate(commanderId: string, fromSystemId: string, shipCount: number): Promise<boolean> {
+    const member = await prisma.commander.findUnique({ where: { id: commanderId }, select: { syndicateId: true } });
+    if (!member?.syndicateId) return false;
+    const gate = await this.usableGate(member.syndicateId, fromSystemId);
+    if (!gate) return false;
+    const limit = bramaThroughput(gate.level);
+    const expired = new Date(Date.now() - GATE_WINDOW_MS);
+    const updated = await prisma.$executeRaw`
+      UPDATE syndicate_gates SET
+        "windowShips" = CASE WHEN "windowStartedAt" < ${expired} THEN ${shipCount} ELSE "windowShips" + ${shipCount} END,
+        "windowStartedAt" = CASE WHEN "windowStartedAt" < ${expired} THEN NOW() ELSE "windowStartedAt" END
+      WHERE id = ${gate.id}
+        AND (CASE WHEN "windowStartedAt" < ${expired} THEN ${shipCount} ELSE "windowShips" + ${shipCount} END) <= ${limit}`;
+    return updated > 0;
   }
 
   /** Заказ стационарной обороны. Очередь своя, но правила те же, что у кораблей. */
@@ -1125,7 +1632,7 @@ class GameLoop {
       type,
       base.levels.SHIPYARD,
       systemModifiers(base.anomaly),
-      buildSpeedup(commander.techs),
+      commanderBuildSpeedup(commander),
     );
     subtractResources(base.resources, cost);
     if (!this.mergeIntoQueue(base.defenseJobs, type, quantity, unitSeconds)) {
@@ -1295,7 +1802,7 @@ class GameLoop {
   private accrueTo(base: BaseRuntimeState, commander: CommanderRuntimeState, time: number): void {
     const seconds = (time - base.lastTickAt) / 1000;
     if (seconds <= 0) return;
-    accrue(base, commander.techs, seconds, commander);
+    accrue(base, commander.techs, seconds, commander, commanderSyndicateBuffs(commander).mining);
     base.lastTickAt = time;
   }
 
@@ -1382,9 +1889,10 @@ class GameLoop {
         OR: [
           { status: 'OUTBOUND', arrivesAt: { lte: timestamp } },
           { status: 'RETURNING', returnsAt: { lte: timestamp } },
+          { status: 'HOLDING', holdUntil: { lte: timestamp } },
         ],
       },
-      include: { originPlanet: true, targetPlanet: true, targetHub: true, targetSystem: true },
+      include: FLEET_INCLUDE,
       orderBy: { arrivesAt: 'asc' },
       take: 200,
     });
@@ -1396,6 +1904,9 @@ class GameLoop {
       try {
         if (fleet.status === 'OUTBOUND') {
           await this.handleArrival(fleet, now);
+        } else if (fleet.status === 'HOLDING') {
+          // Срок удержания вышел — домой; время возврата посчитано еще при вылете.
+          await prisma.fleet.updateMany({ where: { id: fleet.id, status: 'HOLDING' }, data: { status: 'RETURNING' } });
         } else {
           await this.handleReturn(fleet);
         }
@@ -1411,7 +1922,7 @@ class GameLoop {
       if (!commander) continue;
       const rows = await prisma.fleet.findMany({
         where: { commanderId },
-        include: { originPlanet: true, targetPlanet: true, targetHub: true, targetSystem: true },
+        include: FLEET_INCLUDE,
         orderBy: { arrivesAt: 'asc' },
       });
       commander.fleets = rows.map(toFleetRuntime);
@@ -1426,6 +1937,44 @@ class GameLoop {
    * и груз зачислился бы дважды.
    */
   private async handleArrival(fleet: FleetRow, now: number): Promise<void> {
+    if (fleet.targetSyndicateId && (fleet.mission === 'KISH_RAID' || fleet.mission === 'HOLD' || fleet.mission === 'HARVEST')) {
+      if (fleet.mission === 'KISH_RAID') {
+        await this.resolveKishRaid(fleet, fleet.targetSyndicateId, now);
+      } else if (fleet.mission === 'HARVEST') {
+        await this.harvestKishDebris(fleet, fleet.targetSyndicateId);
+      } else {
+        // Удержание своего Коша: вышедший в пути разворачивается.
+        const owner = await prisma.commander.findUnique({ where: { id: fleet.commanderId }, select: { syndicateId: true } });
+        if (owner?.syndicateId !== fleet.targetSyndicateId) {
+          await prisma.fleet.update({
+            where: { id: fleet.id },
+            data: { status: 'RETURNING', returnsAt: new Date(now + holdFlightMs(fleet)), holdUntil: null },
+          });
+        } else {
+          await prisma.fleet.update({ where: { id: fleet.id }, data: { status: 'HOLDING' } });
+        }
+      }
+      return;
+    }
+
+    if (fleet.mission === 'HOLD' && fleet.targetPlanetId) {
+      // Союзник мог выйти из синдиката или потерять колонию, пока флот летел.
+      const host = await prisma.base.findUnique({
+        where: { planetId: fleet.targetPlanetId },
+        select: { commanderId: true },
+      });
+      if (!host || !(await sameSyndicate(fleet.commanderId, host.commanderId))) {
+        const flightMs = holdFlightMs(fleet);
+        await prisma.fleet.update({
+          where: { id: fleet.id },
+          data: { status: 'RETURNING', returnsAt: new Date(now + flightMs), holdUntil: null },
+        });
+        return;
+      }
+      await prisma.fleet.update({ where: { id: fleet.id }, data: { status: 'HOLDING' } });
+      return;
+    }
+
     if (fleet.mission === 'TRANSPORT' && fleet.targetPlanetId) {
       const targetBase = await prisma.base.findUnique({ where: { planetId: fleet.targetPlanetId } });
       if (!targetBase) {
@@ -1593,9 +2142,11 @@ class GameLoop {
           )?.level ?? 0
         : 0;
 
+      // Контрразведка синдиката прибавляет защитнику уровни «Шпионажа».
+      const counterIntel = defenderId ? (await syndicateBuffsFor(defenderId)).counterIntel : 0;
       const outcome = resolveEspionage(
         spy?.techs.ESPIONAGE ?? 0,
-        defenderLevel,
+        defenderLevel + counterIntel,
         espionageSeed(fleet.id, planetId),
       );
 
@@ -1699,6 +2250,17 @@ class GameLoop {
       return;
     }
 
+    if (fleet.mission === 'KISH_DELIVERY' || fleet.mission === 'KISH_PICKUP') {
+      // Синдикат распустили, пока флот был в пути: Коша нет, груз летит домой.
+      if (!fleet.targetSyndicateId) {
+        await prisma.fleet.update({ where: { id: fleet.id }, data: { status: 'RETURNING' } });
+        return;
+      }
+      if (fleet.mission === 'KISH_DELIVERY') await this.unloadToKish(fleet, fleet.targetSyndicateId);
+      else await this.loadFromKish(fleet, fleet.targetSyndicateId);
+      return;
+    }
+
     if (fleet.mission === 'HUB_DELIVERY' && fleet.targetHubId) {
       await this.unloadToHub(fleet, fleet.targetHubId);
       return;
@@ -1722,7 +2284,7 @@ class GameLoop {
    * что осталось. Дюпнуть обломки нельзя: БД разрешит списать их ровно один раз.
    */
   private async harvestDebris(fleet: FleetRow, planetId: string): Promise<void> {
-    const capacity = fleetCapacity(fleetShips(fleet));
+    const capacity = fleetCapacity(fleetShips(fleet), (await syndicateBuffsFor(fleet.commanderId)).cargo);
     let takenOre = 0;
     let takenPolymers = 0;
 
@@ -1889,11 +2451,12 @@ class GameLoop {
 
     const commander = await this.getCommander(fleet.commanderId);
     const techs = commander ? commander.techs : emptyTechLevels();
-    const result = resolveExpedition(ships, fleetCapacity(ships), techs);
+    const cargoBuff = (await syndicateBuffsFor(fleet.commanderId)).cargo;
+    const result = resolveExpedition(ships, fleetCapacity(ships, cargoBuff), techs);
 
     const survivorCount = SHIP_TYPES.reduce((total, type) => total + result.survivors[type], 0);
     // Руда и полимеры занимают трюмы, антиматерия едет в баках.
-    const holdLimit = fleetCapacity(result.survivors);
+    const holdLimit = fleetCapacity(result.survivors, cargoBuff);
     const ore = Math.min(result.loot.ore, holdLimit);
     const polymers = Math.min(result.loot.polymers, Math.max(0, holdLimit - ore));
 
@@ -1979,14 +2542,39 @@ class GameLoop {
    * или груз, списанный у защитника, но не доехавший до атакующего.
    */
   private async resolveAttack(fleet: FleetRow, planetId: string, now: number): Promise<void> {
+    /*
+     * Совместная атака — один бой. Флоты группы прилетают в одну секунду,
+     * и бой разыгрывается на первом из них в скане; остальные к своей
+     * очереди уже не OUTBOUND и пропускаются, поэтому группа ищется заново
+     * по базе, а не берется из списка скана.
+     */
+    const groupKey = fleet.jointLeadId ?? fleet.id;
+    const group = await prisma.fleet.findMany({
+      where: {
+        mission: 'ATTACK',
+        status: 'OUTBOUND',
+        targetPlanetId: planetId,
+        arrivesAt: { lte: new Date(now) },
+        OR: [{ id: groupKey }, { jointLeadId: groupKey }],
+      },
+      include: FLEET_INCLUDE,
+      orderBy: { departedAt: 'asc' },
+    });
+    if (!group.some((row) => row.id === fleet.id)) return;
+    // Атакующим в отчете стоит владелец ведущего флота.
+    group.sort((a, b) => (a.id === groupKey ? -1 : b.id === groupKey ? 1 : 0));
+    const lead = group[0]!;
+    const groupIds = group.map((row) => row.id);
+    const attackerIds = [...new Set(group.map((row) => row.commanderId))];
+
     const planet = await prisma.planet.findUnique({
       where: { id: planetId },
       include: { base: true, system: true },
     });
 
     if (!planet?.base) {
-      // Колонию успели покинуть — атаковать некого, флот разворачивается.
-      await prisma.fleet.update({ where: { id: fleet.id }, data: { status: 'RETURNING' } });
+      // Колонию успели покинуть — атаковать некого, группа разворачивается.
+      await prisma.fleet.updateMany({ where: { id: { in: groupIds } }, data: { status: 'RETURNING' } });
       return;
     }
 
@@ -1996,7 +2584,11 @@ class GameLoop {
     // Сначала сбрасываем состояние защитника в БД, чтобы бой считался по актуальным силам.
     await this.flushBaseOwner(defenderBaseId);
 
-    const attackerShips = fleetShips(fleet);
+    const groupShips = group.map((row) => fleetShips(row));
+    const attackerShips = emptyShipCounts();
+    for (const ships of groupShips) {
+      for (const type of SHIP_TYPES) attackerShips[type] += ships[type];
+    }
 
     const result = await prisma.$transaction(async (tx) => {
       const base = await tx.base.findUniqueOrThrow({
@@ -2011,9 +2603,24 @@ class GameLoop {
         select: { level: true },
       });
       const defenderVault = Math.max(0, defenderResearch[0]?.level ?? 0) * 0.02;
+      // Трюмы налетчика и «Тайники» защитника — бонусы синдикатов обеих сторон.
+      const [defenderBuffs, ...attackerBuffs] = await Promise.all([
+        syndicateBuffsFor(defenderId),
+        ...group.map((row) => syndicateBuffsFor(row.commanderId)),
+      ]);
 
       const defenderShips = emptyShipCounts();
       for (const ship of base.ships) defenderShips[ship.type] = ship.count;
+      // Флоты союзников на удержании встают в бой рядом с кораблями базы.
+      const holders = await tx.fleet.findMany({
+        where: { targetPlanetId: planetId, mission: 'HOLD', status: 'HOLDING' },
+        include: { commander: { select: { nickname: true } } },
+      });
+      const baseShips = { ...defenderShips };
+      const holderShips = holders.map((holder) => shipsFromFleetColumns(holder));
+      for (const ships of holderShips) {
+        for (const type of SHIP_TYPES) defenderShips[type] += ships[type];
+      }
       const defenderDefenses = emptyDefenseCounts();
       for (const item of base.defenses) defenderDefenses[item.type] = item.count;
 
@@ -2021,25 +2628,65 @@ class GameLoop {
       const defender: SideForces = { ships: defenderShips, defenses: defenderDefenses };
       const outcome = resolveBattle(attacker, defender);
 
+      // Уцелевшие атакующие делятся между флотами группы по вкладу, а трюмы
+      // каждого считаются со своим бонусом синдиката.
+      const attackerShares = splitSurvivors(outcome.attackerSurvivors, groupShips);
+      const capacities = attackerShares.map((ships, index) => fleetCapacity(ships, attackerBuffs[index]!.cargo));
+      const groupCapacity = capacities.reduce((sum, capacity) => sum + capacity, 0);
+
       // Грабеж: только победивший атакующий, только уязвимый излишек склада
       // и только в пределах трюмов уцелевших кораблей.
-      const plunder = plunderAmount(
+      const offered = plunderAmount(
         { ore: base.ore, polymers: base.polymers, plasma: base.plasma },
         {
           ore: storageCapacityForLevel(base.oreStorageLevel),
           polymers: storageCapacityForLevel(base.polymerStorageLevel),
           plasma: storageCapacityForLevel(base.plasmaStorageLevel),
         },
-        outcome.winner === 'ATTACKER' ? fleetCapacity(outcome.attackerSurvivors) : 0,
+        outcome.winner === 'ATTACKER' ? groupCapacity : 0,
         defenderVault,
+        defenderBuffs.vault,
       );
+      const loot = splitLoot(offered, capacities);
+      // Со склада списывается ровно увезенное: остаток, не влезший в трюмы, остается.
+      const plunder = {
+        ...offered,
+        ore: loot.reduce((sum, part) => sum + part.ore, 0),
+        polymers: loot.reduce((sum, part) => sum + part.polymers, 0),
+        plasma: loot.reduce((sum, part) => sum + part.plasma, 0),
+      };
 
       // Потери защитника: корабли и оборона списываются безвозвратно.
+      // Уцелевшие делятся между базой и флотами на удержании пропорционально вкладу.
+      const shares = splitSurvivors(outcome.defenderSurvivorShips, [baseShips, ...holderShips]);
+      const baseSurvivors = shares[0]!;
       for (const type of SHIP_TYPES) {
         await tx.ship.upsert({
           where: { baseId_type: { baseId: defenderBaseId, type } },
-          create: { baseId: defenderBaseId, type, count: outcome.defenderSurvivorShips[type] },
-          update: { count: outcome.defenderSurvivorShips[type] },
+          create: { baseId: defenderBaseId, type, count: baseSurvivors[type] },
+          update: { count: baseSurvivors[type] },
+        });
+      }
+      for (const [index, holder] of holders.entries()) {
+        const left = shares[index + 1]!;
+        const before = holderShips[index]!;
+        if (fleetSize(left) === 0) {
+          await tx.fleet.delete({ where: { id: holder.id } });
+        } else {
+          await tx.fleet.update({ where: { id: holder.id }, data: shipColumnsOf(left) });
+        }
+        const lost = fleetSize(before) - fleetSize(left);
+        await tx.message.create({
+          data: {
+            recipientId: holder.commanderId,
+            type: 'FLEET',
+            subject: `Удержание: бой у ${planet.name}`,
+            body:
+              `Флот на удержании у планеты ${planet.name} принял бой вместе с ее защитниками. ` +
+              (fleetSize(left) === 0
+                ? `Флот погиб целиком: ${lost} кораблей.`
+                : `Потеряно кораблей: ${lost}, уцелело ${fleetSize(left)} — удержание продолжается.`),
+          },
         });
       }
       for (const type of DEFENSE_TYPES) {
@@ -2073,46 +2720,34 @@ class GameLoop {
         });
       }
 
-      const survivorCount =
-        outcome.attackerSurvivors.PROBE +
-        outcome.attackerSurvivors.SMALL_CARGO +
-        outcome.attackerSurvivors.LIGHT_FIGHTER;
-
-      if (survivorCount > 0) {
-        await tx.fleet.update({
-          where: { id: fleet.id },
-          data: {
-            status: 'RETURNING',
-            probes: outcome.attackerSurvivors.PROBE,
-            smallCargo: outcome.attackerSurvivors.SMALL_CARGO,
-            largeCargo: outcome.attackerSurvivors.LARGE_CARGO,
-            lightFighters: outcome.attackerSurvivors.LIGHT_FIGHTER,
-            heavyFighters: outcome.attackerSurvivors.HEAVY_FIGHTER,
-            cruisers: outcome.attackerSurvivors.CRUISER,
-            frigates: outcome.attackerSurvivors.FRIGATE,
-            bombers: outcome.attackerSurvivors.BOMBER,
-            battleships: outcome.attackerSurvivors.BATTLESHIP,
-            carriers: outcome.attackerSurvivors.CARRIER,
-            recyclers: outcome.attackerSurvivors.RECYCLER,
-            colonyShips: outcome.attackerSurvivors.COLONY_SHIP,
-            cargoOre: plunder.ore,
-            cargoPolymers: plunder.polymers,
-            cargoPlasma: plunder.plasma,
-          },
-        });
-      } else {
-        // Флот уничтожен полностью — возвращаться некому.
-        await tx.fleet.delete({ where: { id: fleet.id } });
+      for (const [index, row] of group.entries()) {
+        const left = attackerShares[index]!;
+        if (fleetSize(left) > 0) {
+          await tx.fleet.update({
+            where: { id: row.id },
+            data: {
+              status: 'RETURNING',
+              ...shipColumnsOf(left),
+              cargoOre: loot[index]!.ore,
+              cargoPolymers: loot[index]!.polymers,
+              cargoPlasma: loot[index]!.plasma,
+            },
+          });
+        } else {
+          // Флот уничтожен полностью — возвращаться некому.
+          await tx.fleet.delete({ where: { id: row.id } });
+        }
       }
 
-      const [attackerProfile, defenderProfile] = await Promise.all([
-        tx.commander.findUniqueOrThrow({ where: { id: fleet.commanderId }, select: { nickname: true } }),
-        tx.commander.findUniqueOrThrow({ where: { id: defenderId }, select: { nickname: true } }),
+      const [attackerProfiles, defenderProfile] = await Promise.all([
+        tx.commander.findMany({ where: { id: { in: attackerIds } }, select: { id: true, nickname: true, syndicateId: true } }),
+        tx.commander.findUniqueOrThrow({ where: { id: defenderId }, select: { nickname: true, syndicateId: true } }),
       ]);
+      const nicknameOf = (id: string) => attackerProfiles.find((row) => row.id === id)?.nickname ?? '—';
 
-      // Счетчики боев в профиле командира.
-      await tx.commander.update({
-        where: { id: fleet.commanderId },
+      // Счетчики боев в профиле командира — у каждого участника атаки.
+      await tx.commander.updateMany({
+        where: { id: { in: attackerIds } },
         data:
           outcome.winner === 'ATTACKER'
             ? { battlesWon: { increment: 1 } }
@@ -2126,9 +2761,39 @@ class GameLoop {
             : { battlesLost: { increment: 1 } },
       });
 
+      /*
+       * Военный рейтинг синдикатов. Уничтоженный флот засчитывается синдикату
+       * той стороны, которая его уничтожила, — в момент боя, а не по нынешнему
+       * составу: иначе новичок приносил бы в синдикат чужие победы. Считается
+       * только флот: оборона восстанавливается на месте, и за «убитую» турель
+       * очки начислялись бы бесконечно.
+       */
+      const destroyedByAttacker = spentOnFleet(shipsLost(defenderShips, outcome.defenderSurvivorShips));
+      const destroyedByDefender = spentOnFleet(shipsLost(attackerShips, outcome.attackerSurvivors));
+      // В группе один синдикат — чужих в нее не пускают, — поэтому уничтоженное
+      // засчитывается ему один раз, а не по разу на каждый флот.
+      const attackerSyndicateIds = [
+        ...new Set(attackerProfiles.map((row) => row.syndicateId).filter((id): id is string => id !== null)),
+      ];
+      const defenderSyndicateId = defenderProfile.syndicateId;
+      if (destroyedByAttacker > 0) {
+        for (const syndicateId of attackerSyndicateIds) {
+          await tx.syndicate.updateMany({
+            where: { id: syndicateId },
+            data: { destroyedValue: { increment: destroyedByAttacker } },
+          });
+        }
+      }
+      if (defenderSyndicateId && destroyedByDefender > 0) {
+        await tx.syndicate.updateMany({
+          where: { id: defenderSyndicateId },
+          data: { destroyedValue: { increment: destroyedByDefender } },
+        });
+      }
+
       await tx.battleReport.create({
         data: {
-          attackerId: fleet.commanderId,
+          attackerId: lead.commanderId,
           defenderId,
           planetId,
           winner: outcome.winner,
@@ -2137,8 +2802,12 @@ class GameLoop {
           plunderPlasma: plunder.plasma,
           data: toJson({
             planetName: planet.name,
-            attackerName: attackerProfile.nickname,
+            attackerName: nicknameOf(lead.commanderId),
             defenderName: defenderProfile.nickname,
+            jointAttack:
+              group.length > 1
+                ? group.map((row, index) => ({ name: nicknameOf(row.commanderId), ships: groupShips[index] }))
+                : null,
             attackerForces: attackerShips,
             defenderForces: { ships: defenderShips, defenses: defenderDefenses },
             attackerPower: outcome.attackerPower,
@@ -2167,7 +2836,7 @@ class GameLoop {
         outcome,
         plunder,
         defenderBaseId,
-        attackerName: attackerProfile.nickname,
+        attackerName: attackerIds.map(nicknameOf).join(', '),
         defenderName: defenderProfile.nickname,
       };
     });
@@ -2177,9 +2846,8 @@ class GameLoop {
 
     // Обе стороны получают свой экземпляр отчета: один и тот же бой, но с их
     // точки зрения — иначе защитник читал бы письмо про «свои» трофеи.
-    await this.notify(
-      buildBattleMail({
-        attackerId: fleet.commanderId,
+    const mails = buildBattleMail({
+        attackerId: lead.commanderId,
         defenderId,
         attackerName: result.attackerName,
         defenderName: result.defenderName,
@@ -2192,8 +2860,228 @@ class GameLoop {
         },
         outcome: result.outcome,
         plunder: result.plunder,
-      }),
-    );
+      });
+    // Участники совместной атаки получают копию письма ведущего: бой у них общий.
+    const attackerMail = mails.find((mail) => mail.recipientId === lead.commanderId);
+    const copies = attackerMail
+      ? attackerIds.filter((id) => id !== lead.commanderId).map((id) => ({ ...attackerMail, recipientId: id }))
+      : [];
+    await this.notify([...mails, ...copies]);
+  }
+
+  /**
+   * Налет на Кіш чужого синдиката.
+   *
+   * Защитники — оборона Коша, купленная из казны, и флоты участников
+   * на удержании у Коша. Победитель уносит уязвимую часть ресурсной казны
+   * в пределах трюмов; несгораемую долю задает Скарбниця. Гривну не грабят —
+   * это счет, а не склад. Разбитые корабли оставляют осколки у Коша,
+   * а письмо о бое получают налетчик и все участники синдиката.
+   */
+  private async resolveKishRaid(fleet: FleetRow, syndicateId: string, now: number): Promise<void> {
+    const attackerShips = fleetShips(fleet);
+    const cargoBuff = (await syndicateBuffsFor(fleet.commanderId)).cargo;
+
+    const result = await prisma.$transaction(async (tx) => {
+      const syndicate = await tx.syndicate.findUnique({
+        where: { id: syndicateId },
+        include: { bank: true, defenses: true, kishSystem: true, members: { select: { id: true } } },
+      });
+      if (!syndicate?.kishSystem || !syndicate.bank) {
+        await tx.fleet.update({ where: { id: fleet.id }, data: { status: 'RETURNING' } });
+        return null;
+      }
+
+      const holders = await tx.fleet.findMany({
+        where: { targetSyndicateId: syndicateId, mission: 'HOLD', status: 'HOLDING' },
+      });
+      const holderShips = holders.map((holder) => shipsFromFleetColumns(holder));
+      const defenderShips = emptyShipCounts();
+      for (const ships of holderShips) {
+        for (const type of SHIP_TYPES) defenderShips[type] += ships[type];
+      }
+      const defenderDefenses = emptyDefenseCounts();
+      for (const row of syndicate.defenses) defenderDefenses[row.type] = row.count;
+
+      const outcome = resolveBattle(
+        { ships: attackerShips, defenses: emptyDefenseCounts() },
+        { ships: defenderShips, defenses: defenderDefenses },
+      );
+
+      for (const row of syndicate.defenses) {
+        await tx.syndicateDefense.update({ where: { id: row.id }, data: { count: outcome.defenderSurvivorDefenses[row.type] } });
+      }
+
+      const shares = splitSurvivors(outcome.defenderSurvivorShips, holderShips);
+      for (const [index, holder] of holders.entries()) {
+        const left = shares[index]!;
+        const lost = fleetSize(holderShips[index]!) - fleetSize(left);
+        if (fleetSize(left) === 0) await tx.fleet.delete({ where: { id: holder.id } });
+        else await tx.fleet.update({ where: { id: holder.id }, data: shipColumnsOf(left) });
+        await tx.message.create({
+          data: {
+            recipientId: holder.commanderId,
+            type: 'FLEET',
+            subject: `Удержание: налет на Кіш [${syndicate.tag}]`,
+            body:
+              `Флот на удержании у Коша принял бой. ` +
+              (fleetSize(left) === 0
+                ? `Флот погиб целиком: ${lost} кораблей.`
+                : `Потеряно кораблей: ${lost}, уцелело ${fleetSize(left)} — удержание продолжается.`),
+          },
+        });
+      }
+
+      if (outcome.debris.ore > 0 || outcome.debris.polymers > 0) {
+        await tx.syndicate.update({
+          where: { id: syndicateId },
+          data: { debrisOre: { increment: outcome.debris.ore }, debrisPolymers: { increment: outcome.debris.polymers } },
+        });
+      }
+
+      let loot = plunderTreasury({ ore: 0, polymers: 0, plasma: 0 }, 0, 0);
+      if (outcome.winner === 'ATTACKER') {
+        const offer = plunderTreasury(
+          syndicate.bank,
+          treasuryProtectedShare(syndicate.treasuryLevel),
+          fleetCapacity(outcome.attackerSurvivors, cargoBuff),
+        );
+        loot = { ...offer, ore: 0, polymers: 0, plasma: 0 };
+        if (offer.ore + offer.polymers + offer.plasma > 0) {
+          const taken = await tx.syndicateBank.updateMany({
+            where: { syndicateId, ore: { gte: offer.ore }, polymers: { gte: offer.polymers }, plasma: { gte: offer.plasma } },
+            data: { ore: { decrement: offer.ore }, polymers: { decrement: offer.polymers }, plasma: { decrement: offer.plasma } },
+          });
+          if (taken.count > 0) {
+            loot = offer;
+            await tx.syndicateTransaction.create({
+              data: {
+                syndicateId,
+                actorId: fleet.commanderId,
+                kind: 'KISH_RAIDED',
+                amount: 0,
+                ore: offer.ore,
+                polymers: offer.polymers,
+                plasma: offer.plasma,
+                comment: 'Налет на Кіш',
+              },
+            });
+          }
+        }
+      }
+
+      if (fleetSize(outcome.attackerSurvivors) > 0) {
+        await tx.fleet.update({
+          where: { id: fleet.id },
+          data: {
+            ...shipColumnsOf(outcome.attackerSurvivors),
+            status: 'RETURNING',
+            cargoOre: loot.ore,
+            cargoPolymers: loot.polymers,
+            cargoPlasma: loot.plasma,
+          },
+        });
+      } else {
+        await tx.fleet.delete({ where: { id: fleet.id } });
+      }
+
+      const attacker = await tx.commander.findUniqueOrThrow({
+        where: { id: fleet.commanderId },
+        select: { nickname: true, syndicateId: true },
+      });
+      await tx.commander.update({
+        where: { id: fleet.commanderId },
+        data: outcome.winner === 'ATTACKER' ? { battlesWon: { increment: 1 } } : { battlesLost: { increment: 1 } },
+      });
+      const destroyedByAttacker = spentOnFleet(shipsLost(defenderShips, outcome.defenderSurvivorShips));
+      const destroyedByDefender = spentOnFleet(shipsLost(attackerShips, outcome.attackerSurvivors));
+      if (attacker.syndicateId && destroyedByAttacker > 0) {
+        await tx.syndicate.updateMany({ where: { id: attacker.syndicateId }, data: { destroyedValue: { increment: destroyedByAttacker } } });
+      }
+      if (destroyedByDefender > 0) {
+        await tx.syndicate.update({ where: { id: syndicateId }, data: { destroyedValue: { increment: destroyedByDefender } } });
+      }
+
+      return {
+        outcome,
+        loot,
+        attackerName: attacker.nickname,
+        leaderId: syndicate.leaderId,
+        memberIds: syndicate.members.map((member) => member.id),
+        tag: syndicate.tag,
+        system: syndicate.kishSystem,
+      };
+    });
+    if (!result) return;
+
+    const kishName = `Кіш [${result.tag}]`;
+    const plunder: PlunderResult = {
+      ore: result.loot.ore,
+      polymers: result.loot.polymers,
+      plasma: result.loot.plasma,
+      protectedAmount: result.loot.protectedAmount,
+      surplus: result.loot.takeable,
+      takeable: result.loot.takeable,
+      cargoLimited: result.loot.cargoLimited,
+      stored: result.loot.protectedAmount + result.loot.takeable,
+      storageCapacity: result.loot.protectedAmount + result.loot.takeable,
+    };
+    const mails = buildBattleMail({
+      attackerId: fleet.commanderId,
+      defenderId: result.leaderId,
+      attackerName: result.attackerName,
+      defenderName: kishName,
+      location: {
+        planetName: kishName,
+        systemName: result.system.name,
+        position: KISH_POSITION,
+        galaxyX: result.system.galaxyX,
+        galaxyY: result.system.galaxyY,
+      },
+      outcome: result.outcome,
+      plunder,
+    });
+    // Кіш общий: письмо защитника получают все участники, а не только главарь.
+    const defenderMail = mails.find((mail) => mail.recipientId === result.leaderId);
+    const copies = defenderMail
+      ? result.memberIds.filter((id) => id !== result.leaderId).map((id) => ({ ...defenderMail, recipientId: id }))
+      : [];
+    await this.notify([...mails, ...copies]);
+    void now;
+  }
+
+  /** Сбор осколков у Коша — тем же условным списанием, что и поле у планеты. */
+  private async harvestKishDebris(fleet: FleetRow, syndicateId: string): Promise<void> {
+    const capacity = fleetCapacity(fleetShips(fleet), (await syndicateBuffsFor(fleet.commanderId)).cargo);
+    let takenOre = 0;
+    let takenPolymers = 0;
+    for (let attempt = 0; attempt < HARVEST_RETRIES; attempt += 1) {
+      const field = await prisma.syndicate.findUnique({
+        where: { id: syndicateId },
+        select: { debrisOre: true, debrisPolymers: true },
+      });
+      if (!field) break;
+      const ore = Math.floor(Math.min(field.debrisOre, capacity));
+      const polymers = Math.floor(Math.min(field.debrisPolymers, Math.max(0, capacity - ore)));
+      if (ore <= 0 && polymers <= 0) break;
+      const { count } = await prisma.syndicate.updateMany({
+        where: { id: syndicateId, debrisOre: { gte: ore }, debrisPolymers: { gte: polymers } },
+        data: { debrisOre: { decrement: ore }, debrisPolymers: { decrement: polymers } },
+      });
+      if (count > 0) {
+        takenOre = ore;
+        takenPolymers = polymers;
+        break;
+      }
+    }
+    await prisma.fleet.update({
+      where: { id: fleet.id },
+      data: {
+        status: 'RETURNING',
+        cargoOre: { increment: takenOre },
+        cargoPolymers: { increment: takenPolymers },
+      },
+    });
   }
 
   /**
@@ -2324,64 +3212,190 @@ class GameLoop {
    */
   private async unloadToHub(fleet: FleetRow, hubId: string): Promise<void> {
     await prisma.$transaction(async (tx) => {
-      const storage = await tx.hubStorage.upsert({
-        where: { commanderId_hubId: { commanderId: fleet.commanderId, hubId } },
-        create: { commanderId: fleet.commanderId, hubId },
-        update: {},
+      // Привезенное ложится на склад этого хаба: забрать его можно только здесь.
+      const stored = await depositLocal(tx, fleet.commanderId, hubId, {
+        ore: fleet.cargoOre,
+        polymers: fleet.cargoPolymers,
       });
-
-      const capacity = storageCapacity(storage.level);
-      const free = Math.max(0, capacity - storageUsed(storage));
-      const ore = Math.min(fleet.cargoOre, free);
-      const polymers = Math.min(fleet.cargoPolymers, Math.max(0, free - ore));
-
-      if (ore > 0 || polymers > 0) {
-        await tx.hubStorage.update({
-          where: { id: storage.id },
-          data: { ore: { increment: ore }, polymers: { increment: polymers } },
-        });
-      }
-
       await tx.fleet.update({
         where: { id: fleet.id },
         data: {
           status: 'RETURNING',
-          cargoOre: fleet.cargoOre - ore,
-          cargoPolymers: fleet.cargoPolymers - polymers,
+          cargoOre: fleet.cargoOre - stored.ore,
+          cargoPolymers: fleet.cargoPolymers - stored.polymers,
         },
       });
     });
   }
 
-  /** Погрузка товара со склада хаба в трюмы — обратно повезем домой. */
+  /**
+   * Погрузка с хаба: сначала со склада этого хаба, потом с общего склада
+   * купленного — его можно забирать с любого хаба.
+   */
   private async loadFromHub(fleet: FleetRow, hubId: string): Promise<void> {
-    const capacity = fleetCapacity(fleetShips(fleet));
+    const capacity = fleetCapacity(fleetShips(fleet), (await syndicateBuffsFor(fleet.commanderId)).cargo);
 
     await prisma.$transaction(async (tx) => {
-      const storage = await tx.hubStorage.findUnique({
-        where: { commanderId_hubId: { commanderId: fleet.commanderId, hubId } },
-      });
-
-      const ore = storage ? Math.min(fleet.pickupOre, storage.ore, capacity) : 0;
-      const polymers = storage
-        ? Math.min(fleet.pickupPolymers, storage.polymers, Math.max(0, capacity - ore))
-        : 0;
-
-      if (storage && (ore > 0 || polymers > 0)) {
-        // Условное списание: параллельная сделка на бирже могла увести товар.
-        const taken = await tx.hubStorage.updateMany({
-          where: { id: storage.id, ore: { gte: ore }, polymers: { gte: polymers } },
-          data: { ore: { decrement: ore }, polymers: { decrement: polymers } },
-        });
-        if (taken.count === 0) {
-          await tx.fleet.update({ where: { id: fleet.id }, data: { status: 'RETURNING' } });
-          return;
+      await lockHubStocks(tx, [fleet.commanderId]);
+      const request = { ore: fleet.pickupOre, polymers: fleet.pickupPolymers };
+      const taken = { ore: 0, polymers: 0 };
+      let room = capacity;
+      for (const field of ['ore', 'polymers'] as const) {
+        const available = await availableAt(tx, fleet.commanderId, hubId);
+        const want = Math.floor(Math.min(request[field], available[field], room));
+        if (want <= 0) continue;
+        if (await withdrawStock(tx, fleet.commanderId, hubId, field, want)) {
+          taken[field] = want;
+          room -= want;
         }
       }
-
       await tx.fleet.update({
         where: { id: fleet.id },
-        data: { status: 'RETURNING', cargoOre: ore, cargoPolymers: polymers },
+        data: { status: 'RETURNING', cargoOre: taken.ore, cargoPolymers: taken.polymers },
+      });
+    });
+  }
+
+  /**
+   * Разгрузка в казну Коша.
+   *
+   * Вышедший или исключенный в пути ничего не сдает: груз возвращается домой
+   * вместе с флотом. Привезенное идет в заслуги участника и в экономический
+   * счет синдиката один к одному, как и взносы гривной.
+   */
+  private async unloadToKish(fleet: FleetRow, syndicateId: string): Promise<void> {
+    await prisma.$transaction(async (tx) => {
+      const owner = await tx.commander.findUnique({
+        where: { id: fleet.commanderId },
+        select: { syndicateId: true },
+      });
+      const cargo = {
+        ore: fleet.cargoOre,
+        polymers: fleet.cargoPolymers,
+        plasma: fleet.cargoPlasma,
+        antimatter: fleet.cargoAntimatter,
+      };
+      const units = Math.floor(cargo.ore + cargo.polymers + cargo.plasma + cargo.antimatter);
+      const back = () => tx.fleet.update({ where: { id: fleet.id }, data: { status: 'RETURNING' } });
+      if (owner?.syndicateId !== syndicateId || units <= 0) {
+        await back();
+        return;
+      }
+
+      const stored = await tx.syndicateBank.updateMany({
+        where: { syndicateId },
+        data: {
+          ore: { increment: cargo.ore },
+          polymers: { increment: cargo.polymers },
+          plasma: { increment: cargo.plasma },
+          antimatter: { increment: cargo.antimatter },
+        },
+      });
+      if (stored.count === 0) {
+        await back();
+        return;
+      }
+      await tx.syndicate.update({ where: { id: syndicateId }, data: { contributedValue: { increment: units } } });
+      await tx.commander.update({ where: { id: fleet.commanderId }, data: { syndicateMerit: { increment: units } } });
+      await tx.syndicateTransaction.create({
+        data: {
+          syndicateId,
+          commanderId: fleet.commanderId,
+          kind: 'RESOURCE_DELIVERY',
+          amount: units,
+          ore: cargo.ore,
+          polymers: cargo.polymers,
+          plasma: cargo.plasma,
+          antimatter: cargo.antimatter,
+        },
+      });
+      await tx.fleet.update({
+        where: { id: fleet.id },
+        data: { status: 'RETURNING', cargoOre: 0, cargoPolymers: 0, cargoPlasma: 0, cargoAntimatter: 0 },
+      });
+    });
+  }
+
+  /**
+   * Погрузка из казны Коша.
+   *
+   * Право и лимит проверяются заново на прилете и под блокировкой синдиката:
+   * за время полета ранг могли сменить, а лимит — выбрать другими рейсами
+   * и выдачей гривны. Берется столько, сколько позволяют одновременно
+   * запрос, запас казны, трюмы и остаток лимита; остальное не вывозится.
+   */
+  private async loadFromKish(fleet: FleetRow, syndicateId: string): Promise<void> {
+    const capacity = fleetCapacity(fleetShips(fleet), (await syndicateBuffsFor(fleet.commanderId)).cargo);
+
+    await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${syndicateId}))::text AS locked`;
+      const back = () => tx.fleet.update({ where: { id: fleet.id }, data: { status: 'RETURNING' } });
+
+      const owner = await tx.commander.findUnique({
+        where: { id: fleet.commanderId },
+        select: { syndicateId: true, syndicateRank: true, syndicate: { select: { leaderId: true } } },
+      });
+      const bank = await tx.syndicateBank.findUnique({ where: { syndicateId } });
+      if (!owner || owner.syndicateId !== syndicateId || !bank) {
+        await back();
+        return;
+      }
+      const isLeader = owner.syndicate?.leaderId === fleet.commanderId;
+      const authority = {
+        isLeader,
+        position: isLeader ? 0 : Math.max(1, owner.syndicateRank?.position ?? 99),
+        permissions: owner.syndicateRank?.permissions ?? [],
+      };
+      if (!hasPermission(authority, 'WITHDRAW')) {
+        await back();
+        return;
+      }
+
+      let room = Math.min(
+        capacity,
+        withdrawAllowance(
+          authority,
+          owner.syndicateRank?.dailyWithdrawLimit ?? 0,
+          await withdrawnToday(syndicateId, fleet.commanderId, tx),
+        ),
+      );
+      const take = (want: number, stock: number): number => {
+        const amount = Math.max(0, Math.floor(Math.min(want, stock, room)));
+        room -= amount;
+        return amount;
+      };
+      const ore = take(fleet.pickupOre, bank.ore);
+      const polymers = take(fleet.pickupPolymers, bank.polymers);
+      const plasma = take(fleet.pickupPlasma, bank.plasma);
+      const units = ore + polymers + plasma;
+      if (units <= 0) {
+        await back();
+        return;
+      }
+
+      const taken = await tx.syndicateBank.updateMany({
+        where: { syndicateId, ore: { gte: ore }, polymers: { gte: polymers }, plasma: { gte: plasma } },
+        data: { ore: { decrement: ore }, polymers: { decrement: polymers }, plasma: { decrement: plasma } },
+      });
+      if (taken.count === 0) {
+        await back();
+        return;
+      }
+      await tx.syndicateTransaction.create({
+        data: {
+          syndicateId,
+          commanderId: fleet.commanderId,
+          actorId: fleet.commanderId,
+          kind: 'RESOURCE_PICKUP',
+          amount: units,
+          ore,
+          polymers,
+          plasma,
+        },
+      });
+      await tx.fleet.update({
+        where: { id: fleet.id },
+        data: { status: 'RETURNING', cargoOre: ore, cargoPolymers: polymers, cargoPlasma: plasma },
       });
     });
   }
@@ -2645,15 +3659,51 @@ class GameLoop {
      * секунд незачем, а за час они складываются в заметную сумму.
      */
     const mined = Math.floor(commander.minedCredits);
+    /*
+     * Налог синдиката удерживается здесь же, в той же транзакции: намытое
+     * и налог с него либо записываются вместе, либо не записываются вовсе.
+     *
+     * Казна правится условным `updateMany`, а журнал налога — таблица без
+     * внешних ключей: синдикат могут распустить между загрузкой командира
+     * и сбросом, и тогда налог просто никуда не зачислится, а не уронит
+     * сохранение всего остального состояния.
+     */
+    const syndicate = commander.syndicate;
+    const { tax, kept } = syndicate
+      ? splitTax(mined, effectiveTaxRate(syndicate.tax, Date.now()))
+      : { tax: 0, kept: mined };
     if (mined > 0) {
       commander.minedCredits -= mined;
-      commander.credits += mined;
+      commander.credits += kept;
       operations.push(
         prisma.commander.update({
           where: { id: commander.commanderId },
-          data: { credits: { increment: mined } },
+          data: {
+            credits: { increment: kept },
+            ...(tax > 0 ? { syndicateMerit: { increment: tax } } : {}),
+          },
         }),
       );
+      if (syndicate && tax > 0) {
+        const day = utcDay(new Date());
+        operations.push(
+          prisma.syndicateBank.updateMany({
+            where: { syndicateId: syndicate.id },
+            data: { credits: { increment: tax } },
+          }),
+          prisma.syndicate.updateMany({
+            where: { id: syndicate.id },
+            data: { contributedValue: { increment: tax } },
+          }),
+          prisma.syndicateTaxLedger.upsert({
+            where: {
+              syndicateId_commanderId_day: { syndicateId: syndicate.id, commanderId: commander.commanderId, day },
+            },
+            create: { syndicateId: syndicate.id, commanderId: commander.commanderId, day, amount: tax },
+            update: { amount: { increment: tax } },
+          }),
+        );
+      }
     }
 
     for (const base of commander.bases.values()) {
@@ -2780,6 +3830,7 @@ class GameLoop {
           }),
         );
       }
+      operations.push(prisma.researchHelper.deleteMany({ where: { commanderId: commander.commanderId } }));
       operations.push(prisma.researchJob.deleteMany({ where: { commanderId: commander.commanderId } }));
       if (commander.research) {
         operations.push(
@@ -2791,9 +3842,25 @@ class GameLoop {
               targetLevel: commander.research.targetLevel,
               startedAt: new Date(commander.research.startedAt),
               finishesAt: new Date(commander.research.finishesAt),
+              labLevel: commander.research.labLevel,
             },
           }),
         );
+        if (commander.research.helpers.length > 0) {
+          operations.push(
+            prisma.researchHelper.createMany({
+              data: commander.research.helpers.map((helper) => ({
+                commanderId: commander.commanderId,
+                baseId: helper.baseId,
+                labLevel: helper.labLevel,
+                ore: helper.paid.ore,
+                polymers: helper.paid.polymers,
+                plasma: helper.paid.plasma,
+                savedSeconds: helper.savedSeconds,
+              })),
+            }),
+          );
+        }
       }
     }
 
@@ -2815,8 +3882,84 @@ class GameLoop {
         base.jobsDirty = true;
       }
       commander.researchDirty = researchWasDirty;
+      // Намытое не записалось — возвращаем его в счетчик, иначе оно пропало бы
+      // насовсем: в базе прибавки нет, а в памяти счетчик уже уменьшен.
+      if (mined > 0) {
+        commander.minedCredits += mined;
+        commander.credits -= kept;
+      }
     }
   }
+}
+
+/** Сколько кораблей каждого класса не пережило боя. */
+function shipsLost(before: ShipCounts, after: ShipCounts): ShipCounts {
+  const lost = emptyShipCounts();
+  for (const type of SHIP_TYPES) lost[type] = Math.max(0, before[type] - after[type]);
+  return lost;
+}
+
+/**
+ * Длительность пути в одну сторону у рейса на удержание.
+ *
+ * Берется из пары «конец удержания — возврат»: обе метки ставятся при вылете
+ * и больше не меняются. Время прилета для этого не годится — отзыв в пути
+ * переписывает его на момент разворота.
+ */
+function holdFlightMs(fleet: { holdUntil: Date | null; returnsAt: Date; arrivesAt: Date; departedAt: Date }): number {
+  if (fleet.holdUntil) return Math.max(0, fleet.returnsAt.getTime() - fleet.holdUntil.getTime());
+  return Math.max(0, fleet.arrivesAt.getTime() - fleet.departedAt.getTime());
+}
+
+/** Состав флота из колонок записи полета. */
+function shipsFromFleetColumns(row: Prisma.FleetModel): ShipCounts {
+  return {
+    PROBE: row.probes,
+    SMALL_CARGO: row.smallCargo,
+    LARGE_CARGO: row.largeCargo,
+    LIGHT_FIGHTER: row.lightFighters,
+    HEAVY_FIGHTER: row.heavyFighters,
+    CRUISER: row.cruisers,
+    FRIGATE: row.frigates,
+    BOMBER: row.bombers,
+    BATTLESHIP: row.battleships,
+    CARRIER: row.carriers,
+    RECYCLER: row.recyclers,
+    COLONY_SHIP: row.colonyShips,
+  };
+}
+
+/** Колонки записи полета из состава флота. */
+function shipColumnsOf(ships: ShipCounts): Prisma.FleetUpdateInput {
+  return {
+    probes: ships.PROBE,
+    smallCargo: ships.SMALL_CARGO,
+    largeCargo: ships.LARGE_CARGO,
+    lightFighters: ships.LIGHT_FIGHTER,
+    heavyFighters: ships.HEAVY_FIGHTER,
+    cruisers: ships.CRUISER,
+    frigates: ships.FRIGATE,
+    bombers: ships.BOMBER,
+    battleships: ships.BATTLESHIP,
+    carriers: ships.CARRIER,
+    recyclers: ships.RECYCLER,
+    colonyShips: ships.COLONY_SHIP,
+  };
+}
+
+/** Часовое окно пропускной способности Брамы. */
+const GATE_WINDOW_MS = 60 * 60 * 1000;
+
+/** Уровни технологий синдиката из строк базы. */
+function syndicateTechLevelsFrom(rows: Array<{ tech: SyndicateTech; level: number }>): SyndicateTechLevels {
+  const levels = emptySyndicateTechLevels();
+  for (const row of rows) levels[row.tech] = row.level;
+  return levels;
+}
+
+/** Сутки по UTC — ключ журнала налога. */
+function utcDay(date: Date): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
 }
 
 /** Prisma требует индексируемый тип для Json-полей, обычные объекты не подходят. */
@@ -2855,13 +3998,24 @@ type FleetRow = Prisma.FleetModel & {
   targetPlanet: Prisma.PlanetModel | null;
   targetHub: Prisma.TradeHubModel | null;
   targetSystem: Prisma.SolarSystemModel | null;
+  targetSyndicate: (Prisma.SyndicateModel & { kishSystem: Prisma.SolarSystemModel | null }) | null;
 };
+
+/** Что читается вместе с полетом: концы маршрута нужны и тику, и карте. */
+const FLEET_INCLUDE = {
+  originPlanet: true,
+  targetPlanet: true,
+  targetHub: true,
+  targetSystem: true,
+  targetSyndicate: { include: { kishSystem: true } },
+} as const;
 
 function toFleetRuntime(row: FleetRow): FleetRuntimeState {
   return {
     id: row.id,
     mission: row.mission,
     status: row.status,
+    holdUntil: row.holdUntil?.getTime() ?? null,
     originBaseId: row.originBaseId,
     originPlanetId: row.originPlanetId,
     originPlanetName: row.originPlanet.name,
@@ -2869,11 +4023,23 @@ function toFleetRuntime(row: FleetRow): FleetRuntimeState {
     // между звездами, а планет на ней нет вовсе.
     fromSystemId: row.originPlanet.systemId,
     toSystemId:
-      row.targetPlanet?.systemId ?? row.targetHub?.systemId ?? row.targetSystemId ?? null,
-    targetKind: row.targetSystemId ? 'DEEP_SPACE' : row.targetHubId ? 'HUB' : 'PLANET',
+      row.targetPlanet?.systemId ??
+      row.targetHub?.systemId ??
+      row.targetSyndicate?.kishSystemId ??
+      row.targetSystemId ??
+      null,
+    targetKind: row.targetSystemId
+      ? 'DEEP_SPACE'
+      : row.targetHubId
+        ? 'HUB'
+        : row.targetSyndicateId !== null || row.mission === 'KISH_DELIVERY' || row.mission === 'KISH_PICKUP'
+          ? 'KISH'
+          : 'PLANET',
     targetPlanetId: row.targetPlanetId,
     targetHubId: row.targetHubId,
+    targetSyndicateId: row.targetSyndicateId,
     targetName:
+      (row.targetSyndicate ? `Кіш [${row.targetSyndicate.tag}]` : null) ??
       row.targetHub?.name ??
       row.targetPlanet?.name ??
       (row.targetSystem ? `глубокий космос · ${row.targetSystem.name}` : 'неизвестно'),

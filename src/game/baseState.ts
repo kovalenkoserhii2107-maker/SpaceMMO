@@ -1,4 +1,12 @@
 /** Состояние игрока и его баз в памяти Game Loop + снимки для клиента. */
+import {
+  NEUTRAL_SYNDICATE_BUFFS,
+  effectiveSyndicateTechs,
+  syndicateBuffs,
+  type SyndicateBuffs,
+  type SyndicateTech,
+  type SyndicateTechLevels,
+} from './syndicate.js';
 import type {
   BaseSnapshot,
   BuildingCard,
@@ -39,7 +47,9 @@ import {
   researchCost,
   timeCompressionDrain,
   vaultBonus,
+  researchJoinQuote,
   researchSeconds,
+  type ResearchJoinQuote,
   techDescription,
   techLabel,
   TECHNOLOGY_TYPES,
@@ -102,14 +112,17 @@ export interface ShipJobState {
 export interface FleetRuntimeState {
   id: string;
   mission: FleetMission;
-  status: 'OUTBOUND' | 'RETURNING';
+  status: 'OUTBOUND' | 'RETURNING' | 'HOLDING';
+  /** До какого момента флот стоит на удержании у союзника. */
+  holdUntil: number | null;
   originBaseId: string;
   originPlanetId: string;
   fromSystemId: string;
   toSystemId: string | null;
   originPlanetName: string;
   /// Цель — планета или торговый хаб.
-  targetKind: 'PLANET' | 'HUB' | 'DEEP_SPACE';
+  targetKind: 'PLANET' | 'HUB' | 'DEEP_SPACE' | 'KISH';
+  targetSyndicateId: string | null;
   targetPlanetId: string | null;
   targetHubId: string | null;
   targetName: string;
@@ -124,6 +137,16 @@ export interface FleetRuntimeState {
   returnsAt: number;
 }
 
+export interface ResearchHelperState {
+  baseId: string;
+  /** Уровень лаборатории на момент присоединения: вклад фиксируется им. */
+  labLevel: number;
+  /** Уплачено за присоединение — при отмене возвращается этой же базе. */
+  paid: { ore: number; polymers: number; plasma: number };
+  /** Сколько секунд срезала: из них восстанавливается полный срок исследования. */
+  savedSeconds: number;
+}
+
 export interface ResearchJobState {
   tech: TechnologyType;
   targetLevel: number;
@@ -131,6 +154,10 @@ export interface ResearchJobState {
   baseId: string;
   startedAt: number;
   finishesAt: number;
+  /** Уровень ведущей лаборатории на момент запуска — по нему считался срок. */
+  labLevel: number;
+  /** Лаборатории других колоний, присоединившиеся к работе. */
+  helpers: ResearchHelperState[];
 }
 
 export interface BaseRuntimeState {
@@ -182,6 +209,20 @@ export interface CommanderRuntimeState {
    * в БД инкрементом.
    */
   minedCredits: number;
+  /**
+   * Синдикат и его расписание налога. Держится в памяти ради сброса:
+   * налог удерживается в той же транзакции, что и намытое, и ходить
+   * за ставкой в базу на каждом сбросе незачем. Смену членства и ставки
+   * сервис синдиката сообщает тику сам.
+   */
+  syndicate: {
+    id: string;
+    tax: { taxRate: number; pendingTaxRate: number | null; taxEffectiveAt: number | null };
+    /** Когда командир вступил: бонусы технологий действуют через двое суток. */
+    joinedAt: number | null;
+    techs: SyndicateTechLevels;
+    research: { tech: SyndicateTech; targetLevel: number; finishesAt: number } | null;
+  } | null;
   bases: Map<string, BaseRuntimeState>;
   /** Флоты игрока в полете. Источник правды — БД, здесь кэш для отрисовки. */
   fleets: FleetRuntimeState[];
@@ -209,6 +250,8 @@ export function accrue(
    * на базе, поэтому база их не хранит, а только досыпает в общий счетчик.
    */
   commander?: { minedCredits: number },
+  /** Множитель добычи от технологий синдиката: у командира без синдиката единица. */
+  miningMultiplier = 1,
 ): void {
   if (!Number.isFinite(seconds) || seconds <= 0) return;
 
@@ -221,7 +264,7 @@ export function accrue(
   const perSecond = productionPerSecond(
     state.levels,
     state.richness,
-    economyBonuses(techs),
+    { ...economyBonuses(techs), mining: economyBonuses(techs).mining * miningMultiplier },
     defenseEnergyUsage(state.defenses),
     systemModifiers(state.anomaly),
     // Тот же расход, что и в снимке для клиента: иначе интерфейс показывал бы
@@ -262,8 +305,61 @@ export function accrue(
   state.dirty = true;
 }
 
-export function toSnapshot(state: BaseRuntimeState, commander: CommanderRuntimeState, now: number): BaseSnapshot {
+function researchJoinSnapshot(
+  commander: CommanderRuntimeState,
+  state: BaseRuntimeState,
+  now: number,
+): BaseSnapshot['researchJoin'] {
+  const check = researchJoinCheck(commander, state, now);
+  if (check.kind === 'none') return null;
+  if (check.kind === 'blocked') {
+    return {
+      available: false,
+      reason: check.reason,
+      share: 0,
+      labLevel: state.levels.SCIENCE_CENTER,
+      savedSeconds: 0,
+      price: { ore: 0, polymers: 0, plasma: 0 },
+      canAfford: false,
+    };
+  }
+  return {
+    available: true,
+    reason: null,
+    share: check.quote.share,
+    labLevel: state.levels.SCIENCE_CENTER,
+    savedSeconds: check.quote.savedSeconds,
+    price: check.quote.price,
+    canAfford: hasEnoughResources(state.resources, check.quote.price),
+  };
+}
+
+
+/**
+ * Бонусы технологий синдиката для командира в памяти тика.
+ *
+ * Завершенное по сроку изучение уже действует, даже если его еще никто
+ * не записал в базу: синдикаты тик в памяти не держит и завершает их лениво.
+ */
+export function commanderSyndicateBuffs(commander: CommanderRuntimeState, now = Date.now()): SyndicateBuffs {
+  const syndicate = commander.syndicate;
+  if (!syndicate) return NEUTRAL_SYNDICATE_BUFFS;
+  return syndicateBuffs(effectiveSyndicateTechs(syndicate.techs, syndicate.research, now), syndicate.joinedAt, now);
+}
+
+/** Экономические бонусы командира: свои технологии и технологии синдиката. */
+export function commanderEconomyBonuses(commander: CommanderRuntimeState, now = Date.now()): ReturnType<typeof economyBonuses> {
   const bonuses = economyBonuses(commander.techs);
+  return { ...bonuses, mining: bonuses.mining * commanderSyndicateBuffs(commander, now).mining };
+}
+
+/** Ускорение стройки и сборки: робототехника, сжатие времени и артель синдиката. */
+export function commanderBuildSpeedup(commander: CommanderRuntimeState, now = Date.now()): number {
+  return buildSpeedup(commander.techs) * commanderSyndicateBuffs(commander, now).construction;
+}
+
+export function toSnapshot(state: BaseRuntimeState, commander: CommanderRuntimeState, now: number): BaseSnapshot {
+  const bonuses = commanderEconomyBonuses(commander);
   const modifiers = systemModifiers(state.anomaly);
   const defenseDrain = defenseEnergyUsage(state.defenses);
   const output = energyOutput(state.levels, state.richness, bonuses);
@@ -322,6 +418,7 @@ export function toSnapshot(state: BaseRuntimeState, commander: CommanderRuntimeS
       : null,
     buildings: BUILDING_TYPES.map((type) => buildingCard(type, state, commander)),
     technologies: TECHNOLOGY_TYPES.map((tech) => technologyCard(tech, state, commander)),
+    researchJoin: researchJoinSnapshot(commander, state, now),
     ships: SHIP_TYPES.map((type) => shipCard(type, state, commander)),
     defenseCards: DEFENSE_TYPES.map((type) => defenseCard(type, state, commander)),
     fleet: { ...state.ships },
@@ -364,7 +461,7 @@ function defenseCard(
       type,
       state.levels.SHIPYARD,
       systemModifiers(state.anomaly),
-      buildSpeedup(commander.techs),
+      commanderBuildSpeedup(commander),
     ),
     owned: state.defenses[type],
     canAfford: hasEnoughResources(state.resources, cost),
@@ -392,7 +489,7 @@ function buildingCard(
     level: state.levels[type],
     nextLevel,
     cost,
-    seconds: buildSeconds(type, nextLevel, systemModifiers(state.anomaly), buildSpeedup(commander.techs)),
+    seconds: buildSeconds(type, nextLevel, systemModifiers(state.anomaly), commanderBuildSpeedup(commander)),
     canAfford: hasEnoughResources(state.resources, cost),
     requirements: missing,
     effect: buildingEffect(type, state, commander, nextLevel),
@@ -435,7 +532,7 @@ function buildingEffect(
   nextLevel: number,
 ): { icon: string | null; text: string } | null {
   const level = state.levels[type];
-  const bonuses = economyBonuses(commander.techs);
+  const bonuses = commanderEconomyBonuses(commander);
   const modifiers = systemModifiers(state.anomaly);
   const drain = defenseEnergyUsage(state.defenses);
   const techDrain = timeCompressionDrain(commander.techs);
@@ -476,7 +573,7 @@ function buildingEffect(
   }
 
   if (type === 'SHIPYARD') {
-    const speedup = buildSpeedup(commander.techs);
+    const speedup = commanderBuildSpeedup(commander);
     const now = shipUnitSeconds('LIGHT_FIGHTER', level, modifiers, speedup);
     const after = shipUnitSeconds('LIGHT_FIGHTER', nextLevel, modifiers, speedup);
     // Формулировка короткая намеренно: в три строки она ломала выравнивание
@@ -565,7 +662,7 @@ function shipCard(type: ShipType, state: BaseRuntimeState, commander: CommanderR
       type,
       state.levels.SHIPYARD,
       systemModifiers(state.anomaly),
-      buildSpeedup(commander.techs),
+      commanderBuildSpeedup(commander),
     ),
     owned: state.ships[type],
     canAfford: hasEnoughResources(state.resources, cost),
@@ -584,9 +681,75 @@ export function researchSnapshot(commander: CommanderRuntimeState, now: number):
           baseId: commander.research.baseId,
           totalSeconds: Math.round((commander.research.finishesAt - commander.research.startedAt) / 1000),
           remainingSeconds: Math.max(0, Math.ceil((commander.research.finishesAt - now) / 1000)),
+          participants: [
+            { baseId: commander.research.baseId, labLevel: commander.research.labLevel, share: 0, lead: true },
+            ...commander.research.helpers.map((helper) => ({
+              baseId: helper.baseId,
+              labLevel: helper.labLevel,
+              share: fullResearchSeconds(commander.research!) > 0
+                ? helper.savedSeconds / fullResearchSeconds(commander.research!)
+                : 0,
+              lead: false,
+            })),
+          ].map((row) => ({ ...row, baseName: commander.bases.get(row.baseId)?.name ?? '—' })),
         }
       : null,
   };
+}
+
+/**
+ * Полный срок исследования на момент запуска, до всякой помощи.
+ *
+ * Отдельно не хранится: он складывается из нынешнего срока и того, что срезали
+ * помощницы. Доля каждой следующей меряется от него же, иначе вторая
+ * помощница считала бы свою четверть от уже урезанного срока и получала
+ * меньше, чем заплатила.
+ */
+export function fullResearchSeconds(job: ResearchJobState): number {
+  return (job.finishesAt - job.startedAt) / 1000 + job.helpers.reduce((sum, helper) => sum + helper.savedSeconds, 0);
+}
+
+export type ResearchJoinCheck =
+  | { kind: 'none' }
+  | { kind: 'blocked'; reason: string }
+  | { kind: 'ready'; quote: ResearchJoinQuote };
+
+/**
+ * Может ли лаборатория этой базы присоединиться к идущему исследованию.
+ *
+ * Одна проверка на снимок и на само действие: иначе интерфейс однажды
+ * предложил бы кнопку, на которую сервер ответит отказом, или цену,
+ * которая разойдется со списанной.
+ *
+ * «Нечего показывать» и «нельзя» — разные ответы. Ведущей и уже
+ * присоединившейся лаборатории предлагать нечего; базе без лаборатории
+ * и почти готовому исследованию есть что объяснить.
+ */
+export function researchJoinCheck(
+  commander: CommanderRuntimeState,
+  base: BaseRuntimeState,
+  now: number,
+): ResearchJoinCheck {
+  const job = commander.research;
+  if (!job) return { kind: 'none' };
+  if (job.baseId === base.id || job.helpers.some((helper) => helper.baseId === base.id)) {
+    return { kind: 'none' };
+  }
+  if (base.levels.SCIENCE_CENTER < 1) {
+    return { kind: 'blocked', reason: 'На этой базе нет лаборатории' };
+  }
+  const quote = researchJoinQuote({
+    tech: job.tech,
+    targetLevel: job.targetLevel,
+    leadLevel: job.labLevel,
+    joiningLevel: base.levels.SCIENCE_CENTER,
+    remainingSeconds: (job.finishesAt - now) / 1000,
+    totalSeconds: fullResearchSeconds(job),
+  });
+  if (quote.savedSeconds < 1) {
+    return { kind: 'blocked', reason: 'Исследование почти готово — ускорять нечего' };
+  }
+  return { kind: 'ready', quote };
 }
 
 /** Снимки флотов в полете: клиент сам плавно двигает маркеры по меткам времени. */
@@ -602,11 +765,13 @@ export function fleetSnapshots(commander: CommanderRuntimeState, now: number): F
       mission: fleet.mission,
       missionLabel: MISSION_LABELS[fleet.mission],
       status: fleet.status,
+      holdUntil: fleet.holdUntil,
       originPlanetId: fleet.originPlanetId,
       originPlanetName: fleet.originPlanetName,
       fromSystemId: fleet.fromSystemId,
       toSystemId: fleet.toSystemId,
       targetKind: fleet.targetKind,
+      targetSyndicateId: fleet.targetSyndicateId,
       targetPlanetId: fleet.targetPlanetId,
       targetHubId: fleet.targetHubId,
       targetName: fleet.targetName,

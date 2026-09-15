@@ -74,8 +74,13 @@ export function spentOnUpgrade(building: BuildingType, targetLevel: number): num
   return costUnits(upgradeCost(building, targetLevel));
 }
 
-export function spentOnResearchJob(tech: TechnologyType, targetLevel: number): number {
-  return costUnits(researchCost(tech, targetLevel));
+export function spentOnResearchJob(
+  tech: TechnologyType,
+  targetLevel: number,
+  helpers: ReadonlyArray<{ ore: number; polymers: number; plasma: number }> = [],
+): number {
+  // Уплаченное помощниками тоже вложено в эту технологию, а не потеряно.
+  return helpers.reduce((sum, paid) => sum + costUnits(paid), costUnits(researchCost(tech, targetLevel)));
 }
 
 export function spentOnShipQueue(jobs: Array<{ type: ShipType; remaining: number }>): number {

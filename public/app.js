@@ -159,6 +159,26 @@
     cargoPolymersLabel: $('cargo-polymers-label'),
     cargoPlasma: $('cargo-plasma'),
     cargoPlasmaField: $('cargo-plasma-field'),
+    cargoAntimatter: $('cargo-antimatter'),
+    cargoAntimatterMax: $('cargo-antimatter-max'),
+    cargoAntimatterLabel: $('cargo-antimatter-label'),
+    cargoAntimatterField: $('cargo-antimatter-field'),
+    holdRow: $('hold-row'),
+    holdHours: $('hold-hours'),
+    jointRow: $('joint-row'),
+    jointAttack: $('joint-attack'),
+    kishOverview: $('kish-overview'),
+    kishModules: $('kish-modules'),
+    kishResearchJob: $('kish-research-job'),
+    kishTechs: $('kish-techs'),
+    kishDefenseSummary: $('kish-defense-summary'),
+    kishDefenses: $('kish-defenses'),
+    kishAway: $('kish-away'),
+    kishFleet: $('kish-fleet'),
+    kishBuildJob: $('kish-build-job'),
+    dispatchOriginRow: $('dispatch-origin-row'),
+    dispatchOrigin: $('dispatch-origin'),
+    kishAwayTitle: $('kish-away-title'),
     cargoInputs: $('cargo-inputs'),
     adminSearch: $('admin-search'),
     ratingNote: $('rating-note'),
@@ -230,6 +250,9 @@
     battles: $('battles'),
     expeditionSlots: $('expedition-slots'),
     expeditions: $('expeditions'),
+    warTabs: $('war-tabs'),
+    battleFilter: $('battle-filter'),
+    achievementsHead: $('achievements-head'),
     resAntimatter: $('res-antimatter'),
     rateAntimatter: $('rate-antimatter'),
     galaxyMap: $('galaxy-map'),
@@ -291,6 +314,22 @@
   function fmtEnergy(value) {
     const number = Number(value) || 0;
     return Math.abs(number) < 10 ? number.toFixed(1).replace('.', ',') : fmt(Math.round(number));
+  }
+
+  /**
+   * Крупные суммы короче: 1 млн, 1,1 млн, 15,6 млн. В узкой таблице вклада
+   * полные «1 500 000» раздвигали колонки, и было не понять, чье это число.
+   */
+  function fmtCompact(value) {
+    const number = Number(value) || 0;
+    const abs = Math.abs(number);
+    const short = (divisor, unit) => {
+      const rounded = Math.round((number / divisor) * 10) / 10;
+      return `${String(rounded).replace('.', ',')} ${unit}`;
+    };
+    if (abs >= 1e9) return short(1e9, 'млрд');
+    if (abs >= 1e6) return short(1e6, 'млн');
+    return fmt(number);
   }
 
   function icon(name, extraClass = '') {
@@ -455,8 +494,22 @@
     });
   }
 
+  /**
+   * Версия игры в меню и на экране входа. Номер приходит с сервера, а не
+   * записан в разметке: после выкатки его видно сразу, и игрок сверяет письмо
+   * об обновлении с тем, что у него действительно открыто.
+   */
+  function showVersion(version) {
+    if (!version) return;
+    for (const node of document.querySelectorAll('[data-version]')) {
+      node.textContent = `Версия ${version}`;
+      node.hidden = false;
+    }
+  }
+
   async function initGoogleSignIn() {
     const config = await api('/api/auth/config');
+    if (config.ok) showVersion(config.data.version);
     const clientId = config.ok ? config.data.googleClientId : null;
     if (!clientId) {
       el.googleNote.hidden = false;
@@ -616,7 +669,7 @@
     applyState(data);
     connectSocket();
     renderProfile();
-    await loadMap();
+    await loadMap(mapSystemId());
     await loadGalaxy();
     await loadMarket();
     await loadWar();
@@ -684,22 +737,32 @@
   /* --- профиль и достижения --- */
   function renderProfile() {
     if (!auth.profile) return;
-    const p = auth.profile;
-    const avatar = auth.avatars.find((item) => item.id === p.avatarId);
+    renderWarSummary();
+    renderAchievements();
+    renderWarTabs();
+  }
 
-    el.commanderProfile.innerHTML =
-      `<div class="hub-storage"><b>${avatar ? avatar.glyph : '✦'} ${p.nickname}</b><br>` +
-      `боев выиграно: <b>${p.battlesWon}</b> · проиграно: <b>${p.battlesLost}</b><br>` +
-      `родная колония: <b>${p.homePlanet || '—'}</b><br>` +
-      `в строю с ${new Date(p.createdAt).toLocaleDateString('ru-RU')}</div>`;
+  /** Достижения: сколько получено — сразу сверху, полученные карточки идут первыми. */
+  function renderAchievements() {
+    const achievements = (auth.profile && auth.profile.achievements) || [];
+    const unlocked = achievements.filter((item) => item.unlockedAt);
+    el.achievementsHead.innerHTML = '';
+    el.achievementsHead.appendChild(synEl('h3', 'section-title', 'Достижения'));
+    el.achievementsHead.appendChild(synEl('div', 'war-slots-label', `Получено ${unlocked.length} из ${achievements.length}`));
+    const bar = synEl('div', 'storage-bar');
+    const fill = synEl('i', 'bar-safe');
+    fill.style.width = `${achievements.length ? Math.round((unlocked.length / achievements.length) * 100) : 0}%`;
+    bar.appendChild(fill);
+    el.achievementsHead.appendChild(bar);
 
     el.achievements.innerHTML = '';
-    for (const achievement of p.achievements || []) {
+    const ordered = [...achievements].sort((a, b) => Number(Boolean(b.unlockedAt)) - Number(Boolean(a.unlockedAt)));
+    for (const achievement of ordered) {
       const card = document.createElement('article');
       card.className = `card achievement${achievement.unlockedAt ? ' unlocked' : ''}`;
       card.innerHTML =
-        `<header><h4>${achievement.icon} ${achievement.title}</h4></header>` +
-        `<div class="desc">${achievement.description}</div>` +
+        `<header><h4>${achievement.icon} ${escapeHtml(achievement.title)}</h4></header>` +
+        `<div class="desc">${escapeHtml(achievement.description)}</div>` +
         (achievement.unlockedAt
           ? `<div class="when">получено ${new Date(achievement.unlockedAt).toLocaleString('ru-RU')}</div>`
           : '<div class="time">еще не получено</div>');
@@ -954,7 +1017,7 @@
    */
   function showPanel(name) {
     state.activeTab = name;
-    const panel = TAB_PANEL[name] || name;
+    const panel = kishPanelFor(name) || TAB_PANEL[name] || name;
 
     markActiveTab();
     for (const node of document.querySelectorAll('[data-panel]')) {
@@ -964,7 +1027,7 @@
     closeNav();
 
     if (name === 'map') {
-      void loadMap();
+      void loadMap(mapSystemId());
       void loadGalaxy();
     }
     if (name === 'galaxy') {
@@ -973,6 +1036,7 @@
     }
     if (name === 'market') void loadMarket();
     if (name === 'syndicate') void loadSyndicate();
+    if (panel.startsWith('kish-')) void loadSyndicate();
     if (name === 'war') {
       void loadWar();
       void refreshProfile();
@@ -1010,6 +1074,12 @@
     if (!state.bases.some((base) => base.baseId === state.activeBaseId)) {
       state.activeBaseId = state.bases[0].baseId;
     }
+    // Кіш в переключателе колоний требует данных синдиката. В режиме Коша
+    // они освежаются раз в пятнадцать секунд: тревоги и изучение меняются.
+    if (!syndicate.loadedAt || (state.kishMode && Date.now() - syndicate.loadedAt > 15000)) {
+      syndicate.loadedAt = Date.now();
+      void loadSyndicate();
+    }
     renderBaseList();
     renderActiveBase();
   }
@@ -1040,7 +1110,8 @@
     const signature =
       state.bases.map((base) => `${base.baseId}:${base.baseName}`).join('|') +
       `#${state.activeBaseId}#${galaxy.data ? 'xy' : 'names'}` +
-      `#${state.colonies.used}/${state.colonies.slots}`;
+      `#${state.colonies.used}/${state.colonies.slots}` +
+      `#${kishSwitchKey()}`;
     if (signature === baseListSignature) return;
     baseListSignature = signature;
 
@@ -1049,7 +1120,7 @@
       const li = document.createElement('li');
       const button = document.createElement('button');
       button.type = 'button';
-      button.className = base.baseId === state.activeBaseId ? 'active' : '';
+      button.className = base.baseId === state.activeBaseId && !state.kishMode ? 'active' : '';
       button.textContent = base.baseName;
       const meta = document.createElement('small');
       meta.textContent = baseCoords(base);
@@ -1057,6 +1128,10 @@
       button.addEventListener('click', () => {
         state.activeBaseId = base.baseId;
         closeBaseMenu();
+        if (state.kishMode) {
+          leaveKish();
+          return;
+        }
         renderBaseList();
         renderActiveBase();
       });
@@ -1072,6 +1147,10 @@
       `Колоний: ${state.colonies.used} из ${state.colonies.slots}` +
       (state.colonies.used >= state.colonies.slots ? ' · нужен уровень астрофизики' : '');
     el.baseList.appendChild(foot);
+
+    // Кіш — последней строкой, после счетчика колоний: к колониям он не относится.
+    appendKishSwitchItem();
+    renderDispatchOrigin();
   }
 
   /* --- выпадающий список баз в шапке --- */
@@ -1179,7 +1258,11 @@
 
     el.baseSwitchName.textContent = base.baseName;
     el.baseSwitchCoords.textContent = baseCoords(base);
-    el.baseSwitch.classList.toggle('single', state.bases.length < 2);
+    el.baseSwitch.classList.toggle('single', state.bases.length + (syndicate.data && syndicate.data.mine ? 1 : 0) < 2);
+    // Шапку Коша ставим сразу после шапки колонии, а не только в конце:
+    // если перерисовка ниже упадет на данных колонии, шапка не должна
+    // остаться колониальной, пока разделы уже показывают Кіш.
+    if (state.kishMode) renderKishHeader();
 
     el.baseName.textContent = base.baseName;
     el.planetMeta.textContent =
@@ -1200,11 +1283,22 @@
       onRush: () => send(`/api/bases/${base.baseId}/rush`),
       onCancel: () => send(`/api/bases/${base.baseId}/build/cancel`),
     });
-    renderJobBanner(el.researchJob, state.research.active && {
-      title: `${state.research.active.label} → ур. ${state.research.active.targetLevel}`,
-      remainingSeconds: state.research.active.remainingSeconds,
-      totalSeconds: state.research.active.totalSeconds,
+    const research = state.research.active;
+    const join = base.researchJoin;
+    renderJobBanner(el.researchJob, research && {
+      title: `${research.label} → ур. ${research.targetLevel}`,
+      remainingSeconds: research.remainingSeconds,
+      totalSeconds: research.totalSeconds,
       onCancel: () => send(`/api/bases/${base.baseId}/research/cancel`),
+      note: researchNote(research, join),
+      // Кнопка видна и тогда, когда ресурсов не хватает, — выключенной:
+      // игрок должен знать, что лаборатория этой базы могла бы помочь.
+      joinLabel: join && join.available
+        ? `Взять ${Math.round(join.share * 100)}% · быстрее на ${fmtTime(join.savedSeconds)}`
+        : null,
+      onJoin: join && join.available && join.canAfford
+        ? () => send(`/api/bases/${base.baseId}/research/join`)
+        : null,
     });
 
     renderCards(base);
@@ -1215,6 +1309,7 @@
     renderFleetMarkers();
     renderGalaxyFleetMarkers();
     if (map.data) renderPlanetInfo();
+    if (state.kishMode) renderKishHeader();
   }
 
   /**
@@ -1634,6 +1729,37 @@
   }
 
 
+  /**
+   * Кто работает над исследованием и во что обойдется помощь этой базы.
+   *
+   * Технологии общие на все колонии, поэтому одна и та же полоса видна
+   * с любой базы — и вопрос у игрока всегда один: чем может помочь та,
+   * на которой он сейчас стоит. У помощниц стоит взятая доля: по одному
+   * уровню не понять, сколько работы лаборатория на себя взяла.
+   */
+  function researchNote(research, join) {
+    const lines = [];
+    const participants = Array.isArray(research.participants) ? research.participants : [];
+    if (participants.length > 1) {
+      const names = participants.map((row) =>
+        `${row.baseName} ур. ${row.labLevel}${row.lead ? '' : ` · ${Math.round(row.share * 100)}%`}`);
+      lines.push(`Лаборатории: ${names.join(' · ')}`);
+    }
+    if (join && join.available) {
+      const price = ['ore', 'polymers', 'plasma']
+        .filter((key) => join.price[key] > 0)
+        .map((key) => `${RESOURCE_WORDS[key]} ${Math.round(join.price[key]).toLocaleString('ru-RU')}`)
+        .join(', ');
+      lines.push(`Помощь этой базы: ${Math.round(join.share * 100)}% срока за ${price || 'бесплатно'}` +
+        `${join.canAfford ? '' : ' — не хватает ресурсов'}`);
+    } else if (join && join.reason) {
+      lines.push(join.reason);
+    }
+    return lines.join('\n');
+  }
+
+  const RESOURCE_WORDS = { ore: 'руда', polymers: 'полимеры', plasma: 'плазма' };
+
   function renderJobBanner(node, job) {
     if (!job) {
       node.hidden = true;
@@ -1647,8 +1773,24 @@
         '<div class="bar"><i></i></div>' +
         '<div class="job-meta"><span></span><span></span>' +
         '<button type="button" class="job-rush" hidden>Ускорить</button>' +
-        '<button type="button" class="job-cancel" hidden>Отменить</button></div>';
+        '<button type="button" class="job-cancel" hidden>Отменить</button></div>' +
+        '<div class="job-note" hidden></div>' +
+        '<button type="button" class="job-join" hidden></button>';
     }
+
+    /*
+     * Строка состава и кнопка присоединения живут только у исследования:
+     * это единственная очередь, общая на все колонии. Остальным полосам
+     * нечего сюда передать, и элементы у них просто скрыты.
+     */
+    const note = node.querySelector('.job-note');
+    note.hidden = !job.note;
+    note.textContent = job.note || '';
+    const join = node.querySelector('.job-join');
+    join.hidden = !job.joinLabel;
+    join.textContent = job.joinLabel || '';
+    join.disabled = typeof job.onJoin !== 'function';
+    join.onclick = job.onJoin || null;
 
     /*
      * Кнопка спешки живет только там, где спешка возможна. Полоса ожидания
@@ -1960,11 +2102,11 @@
       // Оболочка карточки прячет строку по умолчанию: она есть только
       // у построек, у кораблей и техники своего расхода нет.
       card.energyRow.hidden = false;
-      card.energy.innerHTML =
-        nextUsage <= 0
-          ? '<span class="muted">нет</span>'
-          : `<span>${fmtEnergy(usage)} → ${fmtEnergy(nextUsage)}</span>` +
-            (grow > 0 ? ` <span class="grow">+${fmtEnergy(grow)}</span>` : '');
+      // Только прирост: сколько сейчас и сколько станет — в подробностях карточки,
+      // а на самой карточке решает одно число — на сколько вырастет расход.
+      card.energy.innerHTML = grow > 0
+        ? `<span class="grow">+${fmtEnergy(grow)}</span>`
+        : '<span class="muted">не растет</span>';
     }
     fillCost(card, building.cost, base.resources);
     card.time.textContent = fmtTime(building.seconds);
@@ -2476,6 +2618,12 @@
   const MISSION_OPTIONS = {
     /* Своя колония: атаковать себя нельзя, зато можно перебросить туда флот. */
     OWN_PLANET: [['TRANSPORT', 'Транспортировка'], ['DEPLOY', 'Дислокация']],
+    /* Колония участника своего синдиката: помочь, прикрыть, посмотреть. Атаки нет — своих не бьют. */
+    ALLY_PLANET: [
+      ['HOLD', 'Удержание'],
+      ['TRANSPORT', 'Отправить груз или помощь'],
+      ['SCAN', 'Разведка зондом'],
+    ],
     /* Чужая колония. Порядок как у игрока в голове: напасть, помочь, посмотреть. */
     ENEMY_PLANET: [
       ['ATTACK', 'Атака'],
@@ -2500,6 +2648,9 @@
       ['TRANSPORT', 'Отправить груз или помощь'],
     ],
     HUB: [['HUB_DELIVERY', 'Доставка на хаб'], ['HUB_PICKUP', 'Вывоз с хаба']],
+    KISH: [['KISH_DELIVERY', 'Доставка в Кіш'], ['KISH_PICKUP', 'Вывоз из казны'], ['HOLD', 'Удержание Коша']],
+    /* Кіш чужого синдиката: налет объявляет войну синдикатов, если ее еще нет. */
+    FOREIGN_KISH: [['KISH_RAID', 'Налет на Кіш']],
     DEEP_SPACE: [['EXPEDITION', 'Экспедиция']],
   };
 
@@ -2508,7 +2659,7 @@
    * Не первым пунктом списка: у чужой колонии первая — атака, а она объявляет
    * войну, и подставлять ее молча нельзя. Разведка ничего не разрушает.
    */
-  const SAFE_DEFAULT_MISSIONS = ['SCAN', 'TRANSPORT', 'HUB_DELIVERY', 'EXPEDITION'];
+  const SAFE_DEFAULT_MISSIONS = ['SCAN', 'TRANSPORT', 'HUB_DELIVERY', 'KISH_DELIVERY', 'EXPEDITION'];
 
   /** Самая дальняя занятая орбита — по ней раскладываются остальные. */
   function maxPosition() {
@@ -2518,7 +2669,8 @@
 
   /** Первая орбита: в системе с хабом она отодвинута за его кольцо. */
   function firstOrbit() {
-    return MAP.firstOrbit + (map.data && map.data.hub ? MAP.hubClearance : 0);
+    const stations = map.data && (map.data.hub || (map.data.kishes || []).length);
+    return MAP.firstOrbit + (stations ? MAP.hubClearance : 0);
   }
 
   /**
@@ -2604,6 +2756,19 @@
 
   function hubPoint() {
     return polar(MAP.hubOrbit, HUB_ANGLE);
+  }
+
+  /*
+   * Коши стоят на кольце хаба с другой его стороны: станций в системе может
+   * быть несколько, и каждой следующей отводится свой угол, чтобы они
+   * не легли друг на друга и на торговый хаб.
+   */
+  const KISH_ANGLE = (-35 * Math.PI) / 180;
+  const KISH_ANGLE_STEP = (30 * Math.PI) / 180;
+
+  function kishPointFor(syndicateId) {
+    const index = (map.data && map.data.kishes ? map.data.kishes : []).findIndex((kish) => kish.syndicateId === syndicateId);
+    return index < 0 ? null : polar(MAP.hubOrbit, KISH_ANGLE + index * KISH_ANGLE_STEP);
   }
 
   function deepSpacePoint() {
@@ -2843,6 +3008,7 @@
     }
 
     if (map.data.hub) renderHub(map.data.hub);
+    (map.data.kishes || []).forEach((kish, index) => renderKish(kish, index));
     renderDeepSpace();
     renderFleetMarkers();
   }
@@ -3020,6 +3186,45 @@
     svg.appendChild(group);
   }
 
+  function renderKish(kish, index) {
+    const svg = el.systemMap;
+    const point = polar(MAP.hubOrbit, KISH_ANGLE + index * KISH_ANGLE_STEP);
+    const { x, y } = point;
+    const group = svgEl('g', {
+      class: `hub-node kish-node${kish.own ? ' own' : ''}` +
+        `${map.selectedKind === 'KISH' && map.selectedId === kish.syndicateId ? ' selected' : ''}`,
+    });
+    celestialBody(group, x, y, HUB_RADIUS, {
+      kind: 'glow',
+      fill: kish.own ? 'rgba(77, 210, 255, 0.18)' : 'rgba(248, 180, 90, 0.14)',
+      src: '/assets/planets/kish.webp',
+      spread: 1.6,
+    });
+    const label = svgEl('text', { x, y: y + HUB_RADIUS + 16, class: 'planet-label name hub-label' });
+    label.textContent = kish.name;
+    group.appendChild(label);
+    group.addEventListener('mouseenter', () => showKishTooltip(kish, x, y));
+    group.addEventListener('mouseleave', hideTooltip);
+    group.addEventListener('click', () => selectKish(kish));
+    svg.appendChild(group);
+  }
+
+  function showKishTooltip(kish, x, y) {
+    const head =
+      `<div class="pd-head"><b>${escapeHtml(kish.name)}</b>` +
+      `<span>${kish.own ? 'хаб твоего синдиката' : 'хаб чужого синдиката'} · ур. ${kish.level}</span></div>`;
+    tipContent(
+      kish.own && kish.treasury
+        ? head + pdSection('казна', [
+          pdCell(icon('ore', 'sm'), fmt(kish.treasury.ore)),
+          pdCell(icon('polymers', 'sm'), fmt(kish.treasury.polymers)),
+          pdCell(icon('plasma', 'sm'), fmt(kish.treasury.plasma)),
+        ])
+        : head + '<div class="pd-note">казна чужого синдиката скрыта</div>',
+    );
+    anchorTooltip(el.systemMap, x, y, HUB_RADIUS);
+  }
+
   function showHubTooltip(hub, x, y) {
     const head =
       `<div class="pd-head"><b>${escapeHtml(hub.name)}</b>` +
@@ -3036,6 +3241,14 @@
         : head + '<div class="pd-note">склада на станции пока нет</div>',
     );
     anchorTooltip(el.systemMap, x, y, HUB_RADIUS);
+  }
+
+  function selectKish(kish) {
+    map.selectedKind = 'KISH';
+    map.selectedId = kish.syndicateId;
+    clearCoordTarget();
+    renderMap();
+    renderPlanetInfo();
   }
 
   function selectHub(hub) {
@@ -3060,12 +3273,15 @@
       const origin = byId.get(fleet.originPlanetId);
       const target = fleet.targetKind === 'HUB'
         ? { position: null, hub: true }
+        : fleet.targetKind === 'KISH'
+          ? { position: null, kish: fleet.targetSyndicateId }
         : fleet.targetKind === 'DEEP_SPACE'
           ? { position: null, deep: true }
           : byId.get(fleet.targetPlanetId);
       if (!origin || !target) continue;
 
-      const outbound = fleet.status === 'OUTBOUND';
+      // Флот на удержании стоит у цели: маркер там, где закончился путь туда.
+      const outbound = fleet.status === 'OUTBOUND' || fleet.status === 'HOLDING';
       const from = outbound ? origin : target;
       const to = outbound ? target : origin;
       const legStart = outbound ? fleet.departedAt : fleet.arrivesAt;
@@ -3074,8 +3290,12 @@
 
       // Точки на круговой карте, поэтому маршрут — отрезок между ними,
       // а маркер едет по этому отрезку пропорционально пройденному времени.
-      const a = from.hub ? hubPoint() : from.deep ? deepSpacePoint() : planetPoint(from.position);
-      const b = to.hub ? hubPoint() : to.deep ? deepSpacePoint() : planetPoint(to.position);
+      const pointOf = (end) => (end.hub ? hubPoint() : end.kish ? kishPointFor(end.kish)
+        : end.deep ? deepSpacePoint() : planetPoint(end.position));
+      const a = pointOf(from);
+      const b = pointOf(to);
+      // Кіш в другой системе на этой карте не нарисован — и рейс к нему тоже.
+      if (!a || !b) continue;
 
       layer.appendChild(svgEl('line', {
         class: 'fleet-line', x1: a.x, y1: a.y, x2: b.x, y2: b.y,
@@ -3349,6 +3569,11 @@
     return map.data.planets.find((p) => p.planetId === map.selectedId) || null;
   }
 
+  function selectedKish() {
+    if (!map.data || map.selectedKind !== 'KISH') return null;
+    return (map.data.kishes || []).find((kish) => kish.syndicateId === map.selectedId) || null;
+  }
+
   function selectedHub() {
     if (!map.data || map.selectedKind !== 'HUB') return null;
     return map.data.hub && map.data.hub.hubId === map.selectedId ? map.data.hub : null;
@@ -3372,28 +3597,41 @@
    */
   function cargoAvailable() {
     const base = activeBase();
+    if (map.mission === 'KISH_PICKUP') {
+      const kish = selectedKish();
+      const treasury = kish && kish.treasury;
+      return {
+        ore: treasury ? treasury.ore : 0,
+        polymers: treasury ? treasury.polymers : 0,
+        plasma: treasury ? treasury.plasma : 0,
+        antimatter: 0,
+      };
+    }
     if (map.mission === 'HUB_PICKUP') {
       const storage = market.data && market.data.storage;
       return {
         ore: storage ? storage.ore : 0,
         polymers: storage ? storage.polymers : 0,
         plasma: 0,
+        antimatter: 0,
       };
     }
     return {
       ore: base ? Math.floor(base.resources.ore) : 0,
       polymers: base ? Math.floor(base.resources.polymers) : 0,
       plasma: base ? Math.floor(base.resources.plasma) : 0,
+      antimatter: base ? Math.floor(base.resources.antimatter) : 0,
     };
   }
 
   function syncCargoLimits() {
     const available = cargoAvailable();
-    const pickup = map.mission === 'HUB_PICKUP';
+    const pickup = map.mission === 'HUB_PICKUP' || map.mission === 'KISH_PICKUP';
     const fields = [
       ['ore', 'Руда', pickup ? 'Забрать руды' : 'Руда', el.cargoOre, el.cargoOreMax, el.cargoOreLabel],
       ['polymers', 'Полимеры', pickup ? 'Забрать полимеров' : 'Полимеры', el.cargoPolymers, el.cargoPolymersMax, el.cargoPolymersLabel],
-      ['plasma', 'Плазма', 'Плазма', el.cargoPlasma, el.cargoPlasmaMax, el.cargoPlasmaLabel],
+      ['plasma', 'Плазма', pickup ? 'Забрать плазмы' : 'Плазма', el.cargoPlasma, el.cargoPlasmaMax, el.cargoPlasmaLabel],
+      ['antimatter', 'Антиматерия', 'Антиматерия', el.cargoAntimatter, el.cargoAntimatterMax, el.cargoAntimatterLabel],
     ];
 
     for (const [resource, , label, input, max, caption] of fields) {
@@ -3422,10 +3660,18 @@
         ? MISSION_OPTIONS.FREE_PLANET
         : unknown
           ? MISSION_OPTIONS.UNKNOWN_PLANET
-          : planet
+          : planet && target.ally
+            ? MISSION_OPTIONS.ALLY_PLANET
+            : planet
             ? MISSION_OPTIONS.ENEMY_PLANET
             : MISSION_OPTIONS[kind] || MISSION_OPTIONS.UNKNOWN_PLANET;
     const options = [...base];
+    // Вывоз из казны предлагается только рангу с правом выдачи: остальным
+    // пункт ответил бы отказом, а доставка открыта любому участнику.
+    if (kind === 'KISH' && !(target && target.canPickup)) {
+      const index = options.findIndex(([value]) => value === 'KISH_PICKUP');
+      if (index >= 0) options.splice(index, 1);
+    }
 
     /*
      * Колонизация — на планету, про которую не известно, что она занята.
@@ -3440,6 +3686,11 @@
 
     // «Переработка» появляется только когда в составе есть переработчик и над
     // планетой действительно висит поле: пустой пункт меню сбивал бы с толку.
+    // Осколки у Коша собирают так же, как обломки у планеты — и у своего, и у чужого.
+    if (!map.coordTarget && map.selectedKind === 'KISH') {
+      const kish = selectedKish();
+      if (kish && kish.debris && kish.debris.ore + kish.debris.polymers > 0) options.push(['HARVEST', 'Сбор осколков']);
+    }
     if (!map.coordTarget && map.selectedKind === 'PLANET') {
       const planet = selectedPlanet();
       const hasDebris = planet && planet.debris && planet.debris.ore + planet.debris.polymers > 0;
@@ -3469,11 +3720,14 @@
 
     syncFleetFields();
 
-    const pickup = map.mission === 'HUB_PICKUP';
     syncCargoLimits();
 
     // Хаб торгует только рудой и полимерами, плазму туда не возят.
-    const hubRun = pickup || map.mission === 'HUB_DELIVERY';
+    // В казну Коша плазма идет наравне с остальным.
+    const hubRun = map.mission === 'HUB_PICKUP' || map.mission === 'HUB_DELIVERY';
+    // Антиматерию возят только в казну Коша: она нужна на перенос Коша через Браму.
+    el.cargoAntimatterField.hidden = map.mission !== 'KISH_DELIVERY';
+    if (el.cargoAntimatterField.hidden) el.cargoAntimatter.value = '0';
     el.cargoPlasmaField.hidden = hubRun;
     if (hubRun) el.cargoPlasma.value = '0';
 
@@ -3485,7 +3739,11 @@
 
     // Переработчики летят за обломками, а не с грузом: трюмы должны быть пусты.
     // Разведке трюмы тоже ни к чему — зонд везет данные, а не ресурсы.
-    const harvest = map.mission === 'HARVEST' || map.mission === 'SCAN';
+    // Удержание тоже без груза: флот встает на орбиту защищать, а не везти.
+    el.holdRow.hidden = map.mission !== 'HOLD';
+    el.jointRow.hidden = map.mission !== 'ATTACK';
+    if (map.mission === 'ATTACK') loadJointAttacks();
+    const harvest = map.mission === 'HARVEST' || map.mission === 'SCAN' || map.mission === 'HOLD' || map.mission === 'KISH_RAID';
     el.cargoInputs.hidden = harvest;
     if (harvest) {
       el.cargoOre.value = '0';
@@ -3506,6 +3764,30 @@
         (slots ? `слотов экспедиций: <b>${slots.used}</b> из <b>${slots.total}</b>` : '');
       el.dispatch.hidden = !base;
       if (base) {
+        renderFleetInputs();
+        syncMissionOptions();
+        renderDispatchTarget();
+      }
+      return;
+    }
+
+    const kish = selectedKish();
+    if (kish) {
+      // Чужой Кіш виден как станция, но рейсов к нему нет: возить в чужую
+      // казну незачем, а вывоз из нее — грабеж, он придет с войнами синдикатов.
+      el.planetInfo.innerHTML = kish.own && kish.treasury
+        ? `<b>${escapeHtml(kish.name)}</b><br>хаб твоего синдиката · ур. ${kish.level}<br>` +
+          `казна: ${icon('ore', 'sm')} <b>${fmt(kish.treasury.ore)}</b> · ` +
+          `${icon('polymers', 'sm')} <b>${fmt(kish.treasury.polymers)}</b> · ` +
+          `${icon('plasma', 'sm')} <b>${fmt(kish.treasury.plasma)}</b>`
+        : `<b>${escapeHtml(kish.name)}</b><br>хаб чужого синдиката · ур. ${kish.level}<br>` +
+          'Налет возможен только в войне синдикатов — если ее нет, вылет объявит ее.';
+      if (kish.debris && kish.debris.ore + kish.debris.polymers > 0) {
+        el.planetInfo.innerHTML += `<br>осколки: ${icon('ore', 'sm')} <b>${fmt(kish.debris.ore)}</b> · ` +
+          `${icon('polymers', 'sm')} <b>${fmt(kish.debris.polymers)}</b>`;
+      }
+      el.dispatch.hidden = !base;
+      if (!el.dispatch.hidden) {
         renderFleetInputs();
         syncMissionOptions();
         renderDispatchTarget();
@@ -3772,6 +4054,30 @@
         colonized: false,
       };
     }
+    const kish = selectedKish();
+    if (kish && !kish.own) {
+      return {
+        kind: 'FOREIGN_KISH',
+        request: { targetSyndicateId: kish.syndicateId },
+        name: kish.name,
+        place: `хаб чужого синдиката · ур. ${kish.level}`,
+        owner: null,
+        isOwn: false,
+        colonized: false,
+      };
+    }
+    if (kish && kish.own) {
+      return {
+        kind: 'KISH',
+        request: { targetSyndicateId: kish.syndicateId },
+        name: kish.name,
+        place: `хаб синдиката · ур. ${kish.level}`,
+        owner: null,
+        isOwn: true,
+        colonized: false,
+        canPickup: kish.canPickup,
+      };
+    }
     const hub = selectedHub();
     if (hub) {
       return {
@@ -3793,6 +4099,7 @@
         place: `система ${map.data.systemName} · орбита ${planet.position}`,
         owner: planet.owner,
         isOwn: planet.isOwn,
+        ally: Boolean(planet.ally),
         // На карте это три состояния, а не два: у неразведанной планеты
         // владелец скрыт туманом войны, и пустой владелец не значит «свободна».
         colonized: planet.colonized,
@@ -3867,7 +4174,8 @@
       const cargo =
         Number(el.cargoOre.value || 0) +
         Number(el.cargoPolymers.value || 0) +
-        Number(el.cargoPlasma.value || 0);
+        Number(el.cargoPlasma.value || 0) +
+        Number(el.cargoAntimatter.value || 0);
       const overload = cargo > map.plan.capacity;
       const jump = map.plan.kind === 'INTERSTELLAR';
 
@@ -3885,7 +4193,8 @@
 
       el.flightPlan.innerHTML =
         (jump
-          ? `<b>Гиперпрыжок</b> · дистанция <b>${map.plan.distance}</b> ед. по галактике<br>`
+          ? `<b>${map.plan.viaGate ? 'Через Браму' : 'Гиперпрыжок'}</b> · дистанция <b>${map.plan.distance}</b> ед. по галактике` +
+            (map.plan.viaGate ? ` · плазмы до врат и от них <b>${fmtAmount(map.plan.fuel)}</b>` : '') + '<br>'
           : `дистанция: <b>${map.plan.distance}</b> орбит · скорость <b>${map.plan.speed}</b><br>`) +
         `время в пути: <b>${fmtTime(map.plan.flightSeconds)}</b>` +
         (oneWay ? ' — флот остается на месте<br>' : ' в одну сторону<br>') +
@@ -3898,6 +4207,45 @@
     }
   }
 
+  /*
+   * Совместная атака: к атаке своего синдиката на ту же планету можно
+   * присоединиться. Список грузится по смене цели и не чаще раза в пятнадцать
+   * секунд — форма перерисовывается от любой правки состава, а список
+   * меняется редко. Состояние лежит в `map`, а не в отдельной переменной:
+   * форма может перерисоваться раньше, чем до нее дойдет объявление.
+   */
+  async function loadJointAttacks(force = false) {
+    const target = currentTarget();
+    const planetId = target && target.targetPlanetId ? target.targetPlanetId : null;
+    const joint = map.joint || (map.joint = { planetId: null, loadedAt: 0, ticket: 0 });
+    if (!force && planetId === joint.planetId && Date.now() - joint.loadedAt < 15000) return;
+    joint.planetId = planetId;
+    joint.loadedAt = Date.now();
+    const ticket = ++joint.ticket;
+    const selected = el.jointAttack.value;
+    const options = [['', 'Своя атака']];
+    if (planetId) {
+      const result = await api(`/api/planets/${encodeURIComponent(planetId)}/joint-attacks`);
+      if (ticket !== joint.ticket) return;
+      const attacks = result.ok && Array.isArray(result.data.attacks) ? result.data.attacks : [];
+      for (const attack of attacks) {
+        if (attack.full) continue;
+        options.push([
+          attack.leadFleetId,
+          `Присоединиться: ${attack.leader} · ${fmt(attack.ships)} корпусов · у цели через ${fmtTime(attack.arrivesInSeconds)}`,
+        ]);
+      }
+    }
+    el.jointAttack.innerHTML = '';
+    for (const [value, label] of options) {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      el.jointAttack.appendChild(option);
+    }
+    el.jointAttack.value = options.some(([value]) => value === selected) ? selected : '';
+  }
+
   async function sendFleet() {
     const base = activeBase();
     const target = currentTarget();
@@ -3908,15 +4256,18 @@
       polymers: Number(el.cargoPolymers.value) || 0,
       plasma: Number(el.cargoPlasma.value) || 0,
     };
-    const pickup = map.mission === 'HUB_PICKUP';
+    const antimatter = Number(el.cargoAntimatter.value) || 0;
+    const pickup = map.mission === 'HUB_PICKUP' || map.mission === 'KISH_PICKUP';
 
     const ok = await send(`/api/bases/${base.baseId}/fleets`, {
       ...target,
       mission: map.mission,
       oneWay: el.oneWay.checked,
+      holdHours: map.mission === 'HOLD' ? Number(el.holdHours.value) : 0,
+      joinFleetId: map.mission === 'ATTACK' && el.jointAttack.value ? el.jointAttack.value : null,
       ships: readComposition(),
-      cargo: pickup ? { ore: 0, polymers: 0, plasma: 0 } : amounts,
-      pickup: pickup ? { ore: amounts.ore, polymers: amounts.polymers } : { ore: 0, polymers: 0 },
+      cargo: pickup ? { ore: 0, polymers: 0, plasma: 0 } : { ...amounts, antimatter },
+      pickup: pickup ? { ...amounts } : { ore: 0, polymers: 0, plasma: 0 },
     });
 
     // Сбрасываем форму, чтобы повторный клик не отправил тот же флот дважды.
@@ -3925,13 +4276,16 @@
       el.cargoOre.value = '0';
       el.cargoPolymers.value = '0';
       el.cargoPlasma.value = '0';
+      el.cargoAntimatter.value = '0';
       el.presetSelect.value = '';
       el.oneWay.checked = false;
+      el.jointAttack.value = '';
+      map.joint = null;
       map.plan = null;
       el.flightPlan.textContent = 'Выбери корабли, чтобы увидеть расчет.';
       showMissionWarning(null);
     }
-    await loadMap();
+    await loadMap(mapSystemId());
     await loadGalaxy();
     await loadMarket();
     await loadWar();
@@ -3963,7 +4317,9 @@
       const title = document.createElement('b');
       const direction = fleet.status === 'OUTBOUND'
         ? `${fleet.originPlanetName} → ${fleet.targetName}`
-        : `${fleet.targetName} → ${fleet.originPlanetName} (возврат)`;
+        : fleet.status === 'HOLDING'
+          ? `${fleet.targetName} (на удержании)`
+          : `${fleet.targetName} → ${fleet.originPlanetName} (возврат)`;
       const cargo = fleet.cargo.ore + fleet.cargo.polymers > 0
         ? `, груз ${icon('ore', 'sm')} ${fmt(fleet.cargo.ore)} · ` +
           `${icon('polymers', 'sm')} ${fmt(fleet.cargo.polymers)}` +
@@ -3973,9 +4329,22 @@
       const meta = document.createElement('span');
       // Строка груза содержит иконки-разметку, поэтому только innerHTML:
       // через textContent теги вывалились бы в интерфейс текстом.
+      const holdLeft = fleet.status === 'HOLDING' && fleet.holdUntil
+        ? Math.max(0, Math.ceil((fleet.holdUntil - Date.now()) / 1000))
+        : null;
       meta.innerHTML =
-        `${escapeHtml(fleet.composition)}${cargo} · прибытие через ${fmtTime(fleet.etaSeconds)}`;
+        `${escapeHtml(fleet.composition)}${cargo} · ` +
+        (holdLeft !== null ? `удержание еще ${fmtTime(holdLeft)}` : `прибытие через ${fmtTime(fleet.etaSeconds)}`);
       item.append(title, meta);
+      // Удержание можно прервать: флот идет домой, а не стоит до конца срока.
+      if (fleet.mission === 'HOLD' && (fleet.status === 'OUTBOUND' || fleet.status === 'HOLDING')) {
+        const recall = document.createElement('button');
+        recall.type = 'button';
+        recall.className = 'ghost tiny';
+        recall.textContent = 'Отозвать';
+        recall.addEventListener('click', () => void send(`/api/fleets/${fleet.id}/recall`, {}));
+        item.appendChild(recall);
+      }
       node.appendChild(item);
     }
   }
@@ -3983,7 +4352,7 @@
   /* От склада на хабе до рейса за ним — один шаг. */
   el.hubTransport.addEventListener('click', async () => {
     showPanel('map');
-    await loadMap();
+    await loadMap(mapSystemId());
     const hub = map.data && map.data.hub;
     if (!hub) return;
     selectHub(hub);
@@ -4152,23 +4521,48 @@
       return;
     }
 
-    const used = storage.ore + storage.polymers;
-    const row = (label, resource, amount) => {
-      const share = storage.capacity > 0 ? Math.min(1, amount / storage.capacity) : 0;
-      return (
-        `<div class="mk-store-row"><span class="mk-store-name">${icon(resource, 'sm')} ${label}</span>` +
-        `<b class="mk-store-amount">${fmt(amount)}</b>` +
-        `<span class="storage-bar"><i class="bar-safe" style="width:${(share * 100).toFixed(1)}%"></i></span></div>`
-      );
-    };
+    /*
+     * Складов три, и путали их именно потому, что показывались они одним
+     * списком: склад этого хаба (привезенное флотом), общий склад (купленное
+     * и полученное обменом) и склады других хабов. Размер у них один на всех,
+     * поэтому полоса общая, а куски на ней — по складам. Под полосой каждый
+     * склад своей колонкой с подписью, откуда его можно забрать.
+     */
+    const used = typeof storage.used === 'number' ? storage.used : storage.ore + storage.polymers;
+    const local = storage.local || { ore: 0, polymers: 0 };
+    const shared = storage.global || { ore: 0, polymers: 0 };
+    const elsewhere = storage.elsewhere || { ore: 0, polymers: 0 };
+    const hubName = escapeHtml(market.data.hub?.name ?? 'этого хаба');
+    const part = (amounts) => amounts.ore + amounts.polymers;
+    const percent = (amount) => (storage.capacity > 0 ? Math.min(100, (amount / storage.capacity) * 100) : 0).toFixed(1);
+    const column = (className, title, hint, amounts) =>
+      `<div class="mk-store-col ${className}">` +
+      `<div class="mk-store-col-title"><i class="mk-dot"></i>${title}</div>` +
+      `<div class="mk-store-col-hint">${hint}</div>` +
+      `<div class="mk-store-col-row">${icon('ore', 'sm')}<span>Руда</span><b>${fmt(amounts.ore)}</b></div>` +
+      `<div class="mk-store-col-row">${icon('polymers', 'sm')}<span>Полимеры</span><b>${fmt(amounts.polymers)}</b></div>` +
+      '</div>';
 
     el.hubStorage.innerHTML =
-      `<div class="mk-store-head"><span>${escapeHtml(market.data.hub?.name ?? 'Хаб')} · склад ур. ${storage.level}</span>` +
-      `<b>${fmt(used)} / ${fmt(storage.capacity)}</b></div>` +
-      row('Руда', 'ore', storage.ore) +
-      row('Полимеры', 'polymers', storage.polymers) +
-      `<div class="mk-store-foot"><span>Свободно <b>${fmt(storage.free)}</b></span>` +
-      `<span>Аренда <b>${fmt(storage.rentPerHour)} ₴</b> в час</span></div>`;
+      '<div class="mk-store-top">' +
+      `<div><div class="mk-store-title">Склады биржи</div>` +
+      `<div class="mk-store-sub">уровень ${storage.level} · аренда ${fmt(storage.rentPerHour)} ₴ в час</div></div>` +
+      `<div class="mk-store-total"><b>${fmt(used)}</b> из ${fmt(storage.capacity)}</div>` +
+      '</div>' +
+      '<div class="mk-store-bar" role="img" aria-label="Занятость складов">' +
+      `<i class="here" style="width:${percent(part(local))}%"></i>` +
+      `<i class="shared" style="width:${percent(part(shared))}%"></i>` +
+      `<i class="elsewhere" style="width:${percent(part(elsewhere))}%"></i>` +
+      '</div>' +
+      '<div class="mk-store-cols">' +
+      column('here', `Склад хаба «${hubName}»`, 'привезенное флотом · забрать только здесь', local) +
+      column('shared', 'Общий склад', 'купленное и обмен · забрать с любого хаба', shared) +
+      column('elsewhere', 'Другие хабы', 'привезенное туда · забрать только там', elsewhere) +
+      '</div>' +
+      '<div class="mk-store-avail">' +
+      `<span>Можно вывезти отсюда: ${icon('ore', 'sm')} <b>${fmt(storage.ore)}</b> · ${icon('polymers', 'sm')} <b>${fmt(storage.polymers)}</b></span>` +
+      `<span>Свободно <b>${fmt(storage.free)}</b></span>` +
+      '</div>';
 
     // Расширение платится криптогривной, а не товаром со склада: товаром
     // платить приходилось ровно тогда, когда места нет, и нужного ресурса
@@ -4176,10 +4570,15 @@
     const afford = market.data.credits >= storage.upgradeCost;
     el.upgradeStorage.hidden = false;
     el.upgradeStorage.disabled = !afford;
-    el.upgradeStorage.textContent =
-      `Расширить до ур. ${storage.nextLevel} → ${fmt(storage.nextCapacity)} · ` +
-      `${fmt(storage.upgradeCost)} ₴ и ${fmt(storage.nextRentPerHour)} ₴ в час`;
+    el.upgradeStorage.innerHTML =
+      `<b>Расширить склад до ур. ${storage.nextLevel}</b>` +
+      `<span>вместимость ${fmt(storage.capacity)} → ${fmt(storage.nextCapacity)}</span>` +
+      `<span>разово ${fmt(storage.upgradeCost)} ₴ · аренда станет ${fmt(storage.nextRentPerHour)} ₴ в час</span>` +
+      (afford ? '' : `<span class="mk-action-warn">не хватает ${fmt(storage.upgradeCost - market.data.credits)} ₴</span>`);
     el.hubTransport.hidden = false;
+    el.hubTransport.innerHTML =
+      '<b>Транспортировка</b>' +
+      '<span>привезти товар на хаб или забрать купленное — рейсом с колонии</span>';
   }
 
   /**
@@ -4764,217 +5163,341 @@
       renderDiplomacy();
       renderBattles();
       renderExpeditions();
+      renderWarSummary();
+      renderWarTabs();
     } catch (error) {
       /* подтянется на следующем обновлении */
     }
   }
 
+  /*
+   * Дипломатия. Одиночка воюет лично с соседями по системе; участник
+   * синдиката — от лица синдиката: войны, пакты и список синдикатов идут
+   * отдельными карточками, чтобы действие не терялось среди статусов.
+   */
   function renderDiplomacy() {
     el.diplomacy.innerHTML = '';
-    const mySyndicate = war.data && war.data.syndicate;
-
-    // В синдикате дипломатия ведется на уровне альянсов, а не отдельных командиров.
-    if (mySyndicate) {
-      renderSyndicateDiplomacy(mySyndicate);
+    const data = war.data;
+    if (!data) return;
+    if (data.syndicate) {
+      renderSyndicateDiplomacy(data.syndicate);
       return;
     }
 
-    const players = (war.data && war.data.players) || [];
-
-    if (!players.length) {
-      const empty = document.createElement('div');
-      empty.className = 'queue-item';
-      empty.textContent = 'В системе нет других колоний';
-      el.diplomacy.appendChild(empty);
-      return;
-    }
-
+    const card = synCard('Соседи по системе');
+    card.appendChild(synEl('div', 'hub-storage',
+      'Пока ты не в синдикате, войны личные. Атака на колонию объявляет войну сама, мир заключается здесь.'));
+    const players = data.players || [];
+    if (!players.length) card.appendChild(synEl('div', 'hub-storage', 'В системе нет других колоний.'));
     for (const player of players) {
-      const item = document.createElement('div');
-      item.className = 'queue-item war-item';
-
-      const info = document.createElement('div');
-      const title = document.createElement('b');
-      title.textContent = `${player.nickname} · ${player.planetName}`;
-      const status = document.createElement('div');
-      status.className = player.atWar ? 'status-war' : 'status-peace';
-      status.textContent = player.atWar
-        ? `война${player.declaredByMe ? ' (объявили мы)' : ' (объявили нам)'}`
-        : 'мир';
-      info.append(title, status);
-
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = player.atWar ? 'ghost' : 'primary';
-      button.textContent = player.atWar ? 'Заключить мир' : 'Объявить войну';
-      button.addEventListener('click', async () => {
-        await send(`/api/war/${player.atWar ? 'peace' : 'declare'}`, { targetId: player.commanderId });
+      const row = synEl('div', 'syn-member');
+      const info = synEl('div', 'syn-member-info');
+      const name = synEl('div', 'syn-member-name');
+      name.append(synEl('span', null, player.nickname), synEl('span', `chip${player.atWar ? ' war' : ''}`, player.atWar ? 'война' : 'мир'));
+      info.append(name, synEl('div', 'syn-member-meta',
+        player.planetName + (player.atWar
+          ? ` · ${player.declaredByMe ? 'объявили мы' : 'объявили нам'}${player.declaredAt ? ` · с ${synDateTime(player.declaredAt)}` : ''}`
+          : '')));
+      const actions = synEl('div', 'member-actions');
+      const refresh = async () => {
         await loadWar();
-        await loadMap();
-      });
-
-      item.append(info, button);
-      el.diplomacy.appendChild(item);
+        await loadMap(mapSystemId());
+      };
+      actions.appendChild(player.atWar
+        ? synButton('Заключить мир', 'ghost', async () => {
+          await send('/api/war/peace', { targetId: player.commanderId });
+          await refresh();
+        })
+        : synConfirm('Объявить войну', 'Точно объявить?', 'ghost', async () => {
+          await send('/api/war/declare', { targetId: player.commanderId });
+          await refresh();
+        }));
+      row.append(info, actions);
+      card.appendChild(row);
     }
+    el.diplomacy.appendChild(card);
   }
 
-  /** Войны синдикатов: объявлять и мириться могут лидер и офицеры. */
   function renderSyndicateDiplomacy(mine) {
-    const canDeclare = mine.role === 'LEADER' || mine.role === 'OFFICER';
+    const data = war.data;
+    const canDeclare = Boolean(mine.canDeclare);
+    const others = data.otherSyndicates || [];
+    const pacts = data.pacts || [];
+    const wars = data.syndicateWars || [];
+    const nameOf = (id) => {
+      const other = others.find((item) => item.id === id);
+      return other ? `[${other.tag}] ${other.name}` : 'синдикат';
+    };
+    const act = (path, body) => async () => {
+      await send(path, body);
+      await loadWar();
+    };
 
-    const header = document.createElement('div');
-    header.className = 'queue-item';
-    header.innerHTML =
-      `<b>Синдикат [${mine.tag}] ${mine.name}</b>` +
-      `<span>${canDeclare
-        ? 'ты можешь объявлять войну и заключать мир от лица синдиката'
-        : 'войну объявляют лидер и офицеры — личные войны недоступны'}</span>`;
-    el.diplomacy.appendChild(header);
+    const head = synCard('Дипломатия синдиката');
+    head.appendChild(synEl('div', 'hub-storage', `[${mine.tag}] ${mine.name} · твой ранг: ${mine.rankName}`));
+    head.appendChild(synEl('div', 'hub-storage', canDeclare
+      ? 'Ты можешь объявлять войну, мириться и заключать пакты от лица синдиката.'
+      : 'Войну, мир и пакты от лица синдиката ведут ранги с правом дипломатии.'));
+    el.diplomacy.appendChild(head);
 
-    const others = (war.data.otherSyndicates || []);
-    if (!others.length) {
-      const empty = document.createElement('div');
-      empty.className = 'queue-item';
-      empty.textContent = 'Других синдикатов в галактике пока нет';
-      el.diplomacy.appendChild(empty);
+    const warsCard = synCard(`Войны · ${wars.length}`);
+    if (!wars.length) {
+      warsCard.appendChild(synEl('div', 'hub-storage',
+        'Синдикат ни с кем не воюет. Атака на участника или налет на Кіш объявляет войну сама.'));
+    }
+    for (const item of wars) {
+      const row = synEl('div', 'syn-member');
+      const info = synEl('div', 'syn-member-info');
+      const name = synEl('div', 'syn-member-name');
+      name.append(synEl('span', null, `[${item.tag}] ${item.name}`), synEl('span', 'chip war', 'война'));
+      info.append(name, synEl('div', 'syn-member-meta',
+        `${item.declaredByUs ? 'объявили мы' : 'объявили нам'} · с ${synDateTime(item.declaredAt)}`));
+      row.appendChild(info);
+      if (canDeclare) {
+        const actions = synEl('div', 'member-actions');
+        actions.appendChild(synButton('Заключить мир', 'ghost', act('/api/war/syndicate/peace', { targetSyndicateId: item.syndicateId })));
+        row.appendChild(actions);
+      }
+      warsCard.appendChild(row);
+    }
+    el.diplomacy.appendChild(warsCard);
+
+    const pactCard = synCard(`Пакты · ${pacts.length}`);
+    if (!pacts.length) {
+      pactCard.appendChild(synEl('div', 'hub-storage',
+        'Пактов нет. Ненападение и союз запрещают атаки между синдикатами, союз еще делится Брамами и Дозором, ' +
+        'торговое соглашение вдвое снижает комиссию биржи. Расторгнутый пакт действует еще сутки.'));
+    }
+    for (const pact of pacts) {
+      const row = synEl('div', 'syn-member');
+      const info = synEl('div', 'syn-member-info');
+      const name = synEl('div', 'syn-member-name');
+      name.append(synEl('span', null, nameOf(pact.syndicateId)), synEl('span', `chip${pact.status === 'ACTIVE' ? ' leader' : ''}`, pact.label));
+      info.append(name, synEl('div', 'syn-member-meta', pact.status === 'PROPOSED'
+        ? (pact.proposedByUs ? 'предложен нами, ждет ответа' : 'предложен нам')
+        : pact.endsAt ? `расторгнут · действует до ${synDateTime(pact.endsAt)}` : 'действует'));
+      row.appendChild(info);
+      if (canDeclare) {
+        const actions = synEl('div', 'member-actions');
+        if (pact.status === 'PROPOSED' && !pact.proposedByUs) {
+          actions.append(
+            synButton('Принять', 'primary', act('/api/war/syndicate/pact/respond', { pactId: pact.id, accept: true })),
+            synButton('Отклонить', 'ghost', act('/api/war/syndicate/pact/respond', { pactId: pact.id, accept: false })),
+          );
+        } else if (pact.status === 'PROPOSED') {
+          actions.appendChild(synButton('Отозвать', 'ghost', act('/api/war/syndicate/pact/cancel', { pactId: pact.id })));
+        } else if (!pact.endsAt) {
+          actions.appendChild(synConfirm('Расторгнуть', 'Точно расторгнуть?', 'ghost', act('/api/war/syndicate/pact/cancel', { pactId: pact.id })));
+        }
+        if (actions.children.length) row.appendChild(actions);
+      }
+      pactCard.appendChild(row);
+    }
+    el.diplomacy.appendChild(pactCard);
+
+    const PACT_KINDS = [['NON_AGGRESSION', 'Ненападение'], ['ALLIANCE', 'Союз'], ['TRADE', 'Торговое соглашение']];
+    const listCard = synCard('Синдикаты галактики');
+    if (!others.length) listCard.appendChild(synEl('div', 'hub-storage', 'Других синдикатов пока нет.'));
+    for (const other of others) {
+      const withThem = pacts.filter((pact) => pact.syndicateId === other.id);
+      const peaceBound = withThem.some((pact) => pact.status === 'ACTIVE' && pact.type !== 'TRADE');
+      const row = synEl('div', 'syn-member');
+      const info = synEl('div', 'syn-member-info');
+      const name = synEl('div', 'syn-member-name');
+      name.appendChild(synEl('span', null, `[${other.tag}] ${other.name}`));
+      if (other.atWar) name.appendChild(synEl('span', 'chip war', 'война'));
+      for (const pact of withThem.filter((item) => item.status === 'ACTIVE')) name.appendChild(synEl('span', 'chip leader', pact.label));
+      if (!other.atWar && !withThem.some((item) => item.status === 'ACTIVE')) name.appendChild(synEl('span', 'chip muted', 'нейтралитет'));
+      info.appendChild(name);
+      row.appendChild(info);
+      if (canDeclare && !other.atWar) {
+        const actions = synEl('div', 'member-actions');
+        const available = PACT_KINDS.filter(([kind]) => !withThem.some((pact) => pact.type === kind));
+        if (available.length) {
+          const select = synEl('select');
+          for (const [kind, label] of available) {
+            const option = synEl('option', null, label);
+            option.value = kind;
+            select.appendChild(option);
+          }
+          actions.append(select, synButton('Предложить пакт', 'ghost', async () => {
+            await send('/api/war/syndicate/pact/propose', { targetSyndicateId: other.id, type: select.value });
+            await loadWar();
+          }));
+        }
+        const declare = synConfirm('Объявить войну', 'Точно объявить войну?', 'ghost',
+          act('/api/war/syndicate/declare', { targetSyndicateId: other.id }));
+        declare.disabled = peaceBound;
+        if (peaceBound) declare.title = 'Действует пакт о ненападении';
+        actions.appendChild(declare);
+        row.appendChild(actions);
+      }
+      listCard.appendChild(row);
+    }
+    el.diplomacy.appendChild(listCard);
+  }
+
+  /*
+   * Сводка раздела: кто я в войне. Счетчики — ответы на вопросы, с которыми
+   * сюда заходят: как идут бои, с кем война, свободны ли слоты экспедиций.
+   */
+  function renderWarSummary() {
+    const profile = auth.profile;
+    if (!profile) return;
+    const data = war.data;
+    const node = el.commanderProfile;
+    node.innerHTML = '';
+
+    const avatar = auth.avatars.find((item) => item.id === profile.avatarId);
+    const head = synEl('div', 'war-hero-head');
+    const who = synEl('div', 'war-who');
+    who.append(
+      synEl('div', 'war-name', profile.nickname),
+      synEl('div', 'muted', `родная колония ${profile.homePlanet || '—'} · в строю с ${new Date(profile.createdAt).toLocaleDateString('ru-RU')}`),
+    );
+    head.append(synEl('div', 'war-avatar', avatar ? avatar.glyph : '✦'), who);
+    node.appendChild(head);
+
+    const total = profile.battlesWon + profile.battlesLost;
+    const wars = data ? (data.syndicate ? (data.syndicateWars || []).length : (data.players || []).filter((item) => item.atWar).length) : null;
+    const slots = data && data.expeditionSlots;
+    const achievements = profile.achievements || [];
+    const kpis = synEl('div', 'war-kpis');
+    const kpi = (label, value, hint, tone) => {
+      const cell = synEl('div', `war-kpi${tone ? ` ${tone}` : ''}`);
+      cell.append(synEl('span', 'war-kpi-label', label), synEl('b', null, value));
+      if (hint) cell.appendChild(synEl('span', 'war-kpi-hint', hint));
+      kpis.appendChild(cell);
+    };
+    kpi('Победы', fmt(profile.battlesWon), total ? `${Math.round((profile.battlesWon / total) * 100)}% боев` : 'боев не было', 'win');
+    kpi('Поражения', fmt(profile.battlesLost), null, profile.battlesLost ? 'loss' : '');
+    kpi('Войны', wars === null ? '—' : fmt(wars), data && data.syndicate ? 'войны синдиката' : 'личные войны', wars ? 'loss' : '');
+    kpi('Экспедиции', slots ? `${slots.used} из ${slots.total}` : '—', slots && slots.total ? 'слотов занято' : 'нужна «Астрофизика»');
+    kpi('Достижения', `${achievements.filter((item) => item.unlockedAt).length} из ${achievements.length}`, null);
+    node.appendChild(kpis);
+  }
+
+  const WAR_TABS = [['battles', 'Бои'], ['expeditions', 'Экспедиции'], ['diplomacy', 'Дипломатия'], ['achievements', 'Достижения']];
+  const BATTLE_FILTERS = [['ALL', 'Все'], ['WIN', 'Победы'], ['LOSS', 'Поражения'], ['ATTACKER', 'Мои атаки'], ['DEFENDER', 'Оборона']];
+
+  /** Состояние вкладок раздела живет в `war`, а не отдельной переменной: рендер может прийти раньше объявления. */
+  function warUi() {
+    return war.ui || (war.ui = { tab: 'battles', filter: 'ALL', expanded: new Set() });
+  }
+
+  function renderWarTabs() {
+    const ui = warUi();
+    const data = war.data;
+    const profile = auth.profile;
+    const counts = {
+      battles: data ? (data.battles || []).length : 0,
+      expeditions: data ? (data.expeditions || []).length : 0,
+      diplomacy: data
+        ? (data.syndicate ? (data.syndicateWars || []).length + (data.pacts || []).length : (data.players || []).filter((item) => item.atWar).length)
+        : 0,
+      achievements: profile ? (profile.achievements || []).filter((item) => item.unlockedAt).length : 0,
+    };
+    el.warTabs.innerHTML = '';
+    for (const [key, label] of WAR_TABS) {
+      const button = synButton(counts[key] ? `${label} · ${counts[key]}` : label, 'ghost', () => {
+        ui.tab = key;
+        renderWarTabs();
+      });
+      button.classList.toggle('active', ui.tab === key);
+      button.setAttribute('role', 'tab');
+      button.setAttribute('aria-selected', String(ui.tab === key));
+      el.warTabs.appendChild(button);
+    }
+    for (const pane of document.querySelectorAll('[data-war-pane]')) pane.hidden = pane.dataset.warPane !== ui.tab;
+  }
+
+  /*
+   * Бои: короткие строки — исход, где, когда, добыча и потери, — а полный
+   * отчет раскрывается по нажатию тем же компонентом, что в письме и
+   * симуляторе. Длинный текстовый отчет на каждый бой делал список нечитаемым.
+   */
+  function renderBattles() {
+    const ui = warUi();
+    const battles = (war.data && war.data.battles) || [];
+    el.battleFilter.innerHTML = '';
+    for (const [key, label] of BATTLE_FILTERS) {
+      const button = synButton(label, 'ghost', () => {
+        ui.filter = key;
+        renderBattles();
+      });
+      button.classList.toggle('active', ui.filter === key);
+      el.battleFilter.appendChild(button);
+    }
+
+    el.battles.innerHTML = '';
+    const shown = battles.filter((battle) =>
+      ui.filter === 'ALL' || (ui.filter === 'WIN' && battle.victory) || (ui.filter === 'LOSS' && !battle.victory) || battle.role === ui.filter);
+    if (!shown.length) {
+      el.battles.appendChild(synEl('div', 'hub-card war-empty', battles.length
+        ? 'Под этот фильтр боев нет.'
+        : 'Боев еще не было. Атака объявляет войну сама — цель выбирают на карте системы.'));
       return;
     }
 
-    for (const other of others) {
-      const row = document.createElement('div');
-      row.className = 'queue-item war-item';
-
-      const info = document.createElement('div');
-      const title = document.createElement('b');
-      title.textContent = `[${other.tag}] ${other.name}`;
-      const status = document.createElement('div');
-      status.className = other.atWar ? 'status-war' : 'status-peace';
-      status.textContent = other.atWar ? 'война синдикатов' : 'мир';
-      info.append(title, status);
-
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = other.atWar ? 'ghost' : 'primary';
-      button.textContent = other.atWar ? 'Заключить мир' : 'Объявить войну';
-      button.disabled = !canDeclare;
-      button.addEventListener('click', async () => {
-        await send(`/api/war/syndicate/${other.atWar ? 'peace' : 'declare'}`, {
-          targetSyndicateId: other.syndicateId || other.id,
-        });
-        await loadWar();
+    for (const battle of shown) {
+      const item = synEl('article', `war-row ${battle.victory ? 'win' : 'loss'}`);
+      const summary = synEl('button', 'war-row-head');
+      summary.type = 'button';
+      const main = synEl('span', 'war-row-main');
+      main.append(
+        synEl('b', null, battle.role === 'ATTACKER' ? `Атака на ${battle.defenderName}` : `Оборона от ${battle.attackerName}`),
+        synEl('span', 'muted', `${battle.planetName} · ${synDateTime(battle.createdAt)}`),
+      );
+      const result = synEl('span', 'war-row-result');
+      const loot = [['ore', battle.plunder.ore], ['polymers', battle.plunder.polymers], ['plasma', battle.plunder.plasma]]
+        .filter(([, value]) => value > 0);
+      const lost = (battle.myLosses || []).reduce((sum, row) => sum + (row.lost || 0), 0);
+      const sign = battle.role === 'ATTACKER' ? '+' : '−';
+      result.innerHTML =
+        (loot.length
+          ? `<span class="${battle.role === 'ATTACKER' ? 'gain' : 'lost'}">${loot.map(([key, value]) => `${sign}${fmtCompact(value)} ${icon(key, 'sm')}`).join(' ')}</span>`
+          : '<span class="muted">без добычи</span>') +
+        `<span class="muted">потери: ${lost ? `${fmt(lost)} ед.` : 'нет'}</span>`;
+      summary.append(synEl('span', `war-chip ${battle.victory ? 'win' : 'loss'}`, battle.victory ? 'Победа' : 'Поражение'), main, result);
+      const expanded = ui.expanded.has(battle.id);
+      summary.setAttribute('aria-expanded', String(expanded));
+      summary.addEventListener('click', () => {
+        if (ui.expanded.has(battle.id)) ui.expanded.delete(battle.id);
+        else ui.expanded.add(battle.id);
+        renderBattles();
       });
-
-      row.append(info, button);
-      el.diplomacy.appendChild(row);
+      item.appendChild(summary);
+      if (expanded) item.appendChild(renderBattleReport(battleReportFromWar(battle)));
+      el.battles.appendChild(item);
     }
   }
 
-  function renderBattles() {
-    el.battles.innerHTML = '';
-    const battles = (war.data && war.data.battles) || [];
-
-    if (!battles.length) {
-      const empty = document.createElement('div');
-      empty.className = 'queue-item';
-      empty.textContent = 'Боев еще не было';
-      el.battles.appendChild(empty);
-      return;
-    }
-
-    for (const battle of battles) {
-      const card = document.createElement('article');
-      card.className = `battle ${battle.victory ? 'win' : 'loss'}`;
-
-      const header = document.createElement('header');
-      const title = document.createElement('h4');
-      title.textContent = `${battle.attackerName} → ${battle.defenderName} · ${battle.planetName}`;
-      const verdict = document.createElement('span');
-      verdict.className = 'verdict';
-      verdict.textContent = battle.victory
-        ? (battle.role === 'ATTACKER' ? 'победа: атака удалась' : 'победа: атака отбита')
-        : (battle.role === 'ATTACKER' ? 'поражение: флот разбит' : 'поражение: оборона пала');
-      header.append(title, verdict);
-
-      const powers = document.createElement('div');
-      powers.className = 'line';
-      powers.innerHTML =
-        `роль: <b>${battle.role === 'ATTACKER' ? 'атакующий' : 'защитник'}</b> · ` +
-        `огневая мощь <b>${fmt(battle.attackerPower)}</b> против <b>${fmt(battle.defenderPower)}</b>`;
-
-      const losses = document.createElement('div');
-      losses.className = 'line';
-      losses.innerHTML =
-        `мои потери: <b>${describeLosses(battle.myLosses)}</b><br>` +
-        `потери противника: <b>${describeLosses(battle.enemyLosses)}</b>`;
-
-      const plunder = document.createElement('div');
-      plunder.className = 'line';
-      const looted = battle.plunder.ore + battle.plunder.polymers + battle.plunder.plasma > 0;
-      plunder.innerHTML = looted
-        ? 'награблено: ' +
-          [
-            [battle.plunder.ore, 'ore'],
-            [battle.plunder.polymers, 'polymers'],
-            [battle.plunder.plasma, 'plasma'],
-          ]
-            .filter(([amount]) => amount > 0)
-            .map(([amount, res]) => `${icon(res, 'sm')} <b>${fmt(amount)}</b>`)
-            .join(' · ') +
-          `${battle.role === 'DEFENDER' ? ' (вывезено с нашего склада)' : ''}`
-        : 'ресурсы не вывозились';
-
-      // Почему увезли именно столько: сколько спрятало хранилище защитника.
-      const safe = battle.victory && battle.role === 'ATTACKER' ? battle.storageDefense : null;
-
-      // Обломки образуют обе стороны, поэтому строка одинакова для всех.
-      const debris = document.createElement('div');
-      debris.className = 'line';
-      const debrisTotal = battle.debris ? battle.debris.ore + battle.debris.polymers : 0;
-      debris.innerHTML =
-        debrisTotal > 0
-          ? `на орбите осело обломков: ${icon('ore', 'sm')} <b>${fmt(battle.debris.ore)}</b> · ` +
-            `${icon('polymers', 'sm')} <b>${fmt(battle.debris.polymers)}</b> — их можно собрать переработчиком`
-          : 'обломков не осталось';
-
-      const when = document.createElement('div');
-      when.className = 'line';
-      when.textContent = new Date(battle.createdAt).toLocaleString('ru-RU');
-
-      card.append(header, powers, losses);
-
-      // Куда ушел урон — главный ответ на вопрос «почему я проиграл».
-      for (const [report, title] of [
-        [battle.myDamage, 'мой урон'],
-        [battle.enemyDamage, 'урон противника'],
-      ]) {
-        if (!report) continue;
-        const line = document.createElement('div');
-        line.className = 'line';
-        const mix = (report.damageMix || []).map((d) => d.label).join(', ') || 'без оружия';
-        line.innerHTML =
-          `${title} (${mix}): щиты поглотили <b>${fmt(report.shield)}</b>, ` +
-          `броня <b>${fmt(report.armor)}</b>, по корпусу прошло <b>${fmt(report.hull)}</b>`;
-        card.appendChild(line);
-      }
-
-      card.append(plunder, debris);
-
-      if (safe) {
-        const line = document.createElement('div');
-        line.className = 'line';
-        const reason = safe.cargoLimited
-          ? 'остальное не влезло в трюмы уцелевших'
-          : 'больше из хранилища не достать';
-        line.innerHTML =
-          `хранилище врага (ур. вместимости <b>${fmt(safe.capacity)}</b>): на складе лежало ` +
-          `<b>${fmt(safe.stored)}</b>, из них защищено <b>${fmt(safe.protectedAmount)}</b>, ` +
-          `уязвимый излишек <b>${fmt(safe.surplus)}</b> — ${reason}`;
-        card.appendChild(line);
-      }
-
-      card.append(when);
-      el.battles.appendChild(card);
-    }
+  /** Бой из раздела войн → тот же отчет, что в письме и симуляторе. */
+  function battleReportFromWar(battle) {
+    const mineIsAttacker = battle.role === 'ATTACKER';
+    const damage = [[battle.myDamage, 'Мой урон'], [battle.enemyDamage, 'Урон противника']]
+      .filter(([report]) => report)
+      .map(([report, label]) =>
+        `${label}: щиты поглотили <b>${fmt(report.shield)}</b>, броня <b>${fmt(report.armor)}</b>, по корпусу прошло <b>${fmt(report.hull)}</b>.`)
+      .join('<br>');
+    const safe = battle.storageDefense && battle.victory && mineIsAttacker
+      ? `Хранилище врага укрыло <b>${fmt(battle.storageDefense.protectedAmount)}</b>` +
+        (battle.storageDefense.cargoLimited ? ', остальное не влезло в трюмы.' : '.')
+      : '';
+    return {
+      title: mineIsAttacker ? `Атака на ${battle.defenderName}` : `Оборона от ${battle.attackerName}`,
+      place: battle.planetName,
+      date: battle.createdAt,
+      role: battle.role,
+      result: battle.winner,
+      attacker: { name: battle.attackerName, losses: mineIsAttacker ? battle.myLosses : battle.enemyLosses },
+      defender: { name: battle.defenderName, losses: mineIsAttacker ? battle.enemyLosses : battle.myLosses },
+      debris: battle.debris,
+      plunder: battle.plunder,
+      plunderLabel: mineIsAttacker ? 'Награблено' : 'Вывезено со склада',
+      footer: [`Огневая мощь: <b>${fmt(battle.attackerPower)}</b> против <b>${fmt(battle.defenderPower)}</b>.`, damage, safe]
+        .filter(Boolean).join('<br>'),
+    };
   }
 
   function describeLosses(losses) {
@@ -5101,7 +5624,8 @@
       const to = byId.get(fleet.toSystemId);
       if (!from || !to) continue;
 
-      const outbound = fleet.status === 'OUTBOUND';
+      // Флот на удержании стоит у цели: маркер там, где закончился путь туда.
+      const outbound = fleet.status === 'OUTBOUND' || fleet.status === 'HOLDING';
       const a = galaxyPoint(outbound ? from : to, bounds);
       const b = galaxyPoint(outbound ? to : from, bounds);
       const legStart = outbound ? fleet.departedAt : fleet.arrivesAt;
@@ -5185,6 +5709,15 @@
         spread: SYSTEM_ICON_SPREAD,
         mask: 'glowCrop',
       });
+
+      // Своя Брама и Кіш — надписью над системой: по ним видна сеть,
+      // по которой флот прыгает без гипердвигателя.
+      if (system.syndicateGate || system.ownKish) {
+        const badge = svgEl('text', { x: point.x, y: point.y - SYSTEM_ICON / 2 - 8, class: 'system-label gate-badge' });
+        badge.textContent = [system.ownKish ? 'Кіш' : null, system.syndicateGate ? `Брама ${system.syndicateGate}` : null]
+          .filter(Boolean).join(' · ');
+        group.appendChild(badge);
+      }
 
       const label = svgEl('text', { x: point.x, y: point.y + SYSTEM_ICON / 2 + 14, class: `system-label name${system.isHome ? ' home' : ''}` });
       label.textContent = system.name;
@@ -5320,95 +5853,130 @@
     PIRATES_LOST: 'Флот потерян',
   };
 
+  /*
+   * Экспедиции: слоты полосой, флоты в полете с временем прибытия или возврата
+   * и отчеты карточками. Отправка — одной кнопкой: карта открывается уже
+   * с глубоким космосом целью и экспедицией миссией.
+   */
   function renderExpeditions() {
     const data = war.data;
     if (!data) return;
-
     const slots = data.expeditionSlots || { total: 0, used: 0 };
-    el.expeditionSlots.innerHTML = slots.total > 0
-      ? `<div class="hub-storage">Экспедиционных слотов: <b>${slots.used}</b> из <b>${slots.total}</b><br>` +
-        'Лимит задает уровень «Астрофизики»: 1 → 1, 4 → 2, 9 → 3.<br>' +
-        'Точка выхода — глубокий космос (16-я позиция) любой системы на карте.</div>'
-      : '<div class="hub-storage">Экспедиции недоступны: изучи технологию <b>«Астрофизика»</b>.</div>';
+    const card = el.expeditionSlots;
+    card.innerHTML = '';
+    card.appendChild(synEl('h3', 'section-title', 'Экспедиции в глубокий космос'));
+
+    if (slots.total > 0) {
+      card.appendChild(synEl('div', 'war-slots-label', `Занято слотов: ${slots.used} из ${slots.total}`));
+      const bar = synEl('div', 'war-slots');
+      for (let index = 0; index < slots.total; index += 1) bar.appendChild(synEl('i', index < slots.used ? 'used' : ''));
+      card.appendChild(bar);
+      card.appendChild(synEl('div', 'hub-storage',
+        'Слоты дает «Астрофизика»: 1 уровень — один, 4 — два, 9 — три. Флот летит в глубокий космос любой системы, ' +
+        'а там его ждут тишина, брошенный груз или пираты.'));
+      const full = slots.used >= slots.total;
+      card.appendChild(synButton(full ? 'Все слоты заняты' : 'Отправить экспедицию', 'primary', () => void openExpeditionDispatch(), full));
+    } else {
+      card.appendChild(synEl('div', 'hub-storage', 'Экспедиции откроются с технологией «Астрофизика».'));
+      card.appendChild(synButton('К исследованиям', 'ghost', () => showPanel('research')));
+    }
+
+    const flying = (state.fleets || []).filter((fleet) => fleet.mission === 'EXPEDITION');
+    if (flying.length) {
+      card.appendChild(synEl('h4', 'syn-subtitle', 'В полете'));
+      for (const fleet of flying) {
+        const ships = Object.values(fleet.ships || {}).reduce((sum, count) => sum + (count || 0), 0);
+        card.appendChild(synEl('div', 'war-flight',
+          `${fleet.targetName} · ${fmt(ships)} кораблей · ` +
+          (fleet.status === 'OUTBOUND' ? `у цели ${synDateTime(fleet.arrivesAt)}` : `дома ${synDateTime(fleet.returnsAt)}`)));
+      }
+    }
 
     el.expeditions.innerHTML = '';
     const reports = data.expeditions || [];
-
     if (!reports.length) {
-      const empty = document.createElement('div');
-      empty.className = 'queue-item';
-      empty.textContent = 'Отчетов об экспедициях еще нет';
-      el.expeditions.appendChild(empty);
+      el.expeditions.appendChild(synEl('div', 'hub-card war-empty', 'Отчетов об экспедициях еще нет.'));
       return;
     }
-
     for (const report of reports) {
       const tone = EXPEDITION_TONE[report.outcome] || 'neutral';
-      const card = document.createElement('article');
-      card.className = `battle ${tone === 'win' ? 'win' : tone === 'loss' ? 'loss' : ''}`;
-
-      const header = document.createElement('header');
-      const title = document.createElement('h4');
-      title.textContent = `${EXPEDITION_TITLE[report.outcome] || report.outcome} · ${report.systemName}`;
-      const when = document.createElement('span');
-      when.className = 'verdict';
-      when.textContent = new Date(report.createdAt).toLocaleString('ru-RU');
-      header.append(title, when);
-
-      const summary = document.createElement('div');
-      summary.className = 'line';
-      summary.textContent = report.summary;
-
-      card.append(header, summary);
-
-      const loot = report.loot.ore + report.loot.polymers + report.loot.antimatter;
-      if (loot > 0) {
-        const line = document.createElement('div');
-        line.className = 'line';
-        const parts = [];
-        if (report.loot.ore) parts.push(`${icon('ore', 'sm')} ${fmt(report.loot.ore)}`);
-        if (report.loot.polymers) parts.push(`${icon('polymers', 'sm')} ${fmt(report.loot.polymers)}`);
-        if (report.loot.antimatter) parts.push(`${icon('antimatter', 'sm')} ${fmtAmount(report.loot.antimatter)}`);
-        line.innerHTML = `добыча: <b>${parts.join(', ')}</b>`;
-        card.appendChild(line);
-      }
-
+      const item = synEl('article', `war-row ${tone}`);
+      const head = synEl('div', 'war-row-head static');
+      const main = synEl('span', 'war-row-main');
+      main.append(synEl('b', null, report.systemName), synEl('span', 'muted', synDateTime(report.createdAt)));
+      const result = synEl('span', 'war-row-result');
+      const loot = [['ore', report.loot.ore], ['polymers', report.loot.polymers], ['antimatter', report.loot.antimatter]]
+        .filter(([, value]) => value > 0);
+      result.innerHTML = loot.length
+        ? `<span class="gain">${loot.map(([key, value]) => `+${key === 'antimatter' ? fmtAmount(value) : fmtCompact(value)} ${icon(key, 'sm')}`).join(' ')}</span>`
+        : '<span class="muted">без добычи</span>';
+      head.append(synEl('span', `war-chip ${tone}`, EXPEDITION_TITLE[report.outcome] || report.outcome), main, result);
+      item.appendChild(head);
+      item.appendChild(synEl('p', 'war-row-text', report.summary));
       if (report.losses.length) {
-        const line = document.createElement('div');
-        line.className = 'line';
-        line.innerHTML =
-          'потери: <b>' + report.losses.map((l) => `${l.label} −${l.lost} из ${l.before}`).join(', ') + '</b>';
-        card.appendChild(line);
+        item.appendChild(synEl('p', 'war-row-text lost',
+          'Потери: ' + report.losses.map((loss) => `${loss.label} −${loss.lost} из ${loss.before}`).join(', ')));
       }
-
-      el.expeditions.appendChild(card);
+      el.expeditions.appendChild(item);
     }
   }
 
+  async function openExpeditionDispatch() {
+    showPanel('map');
+    await loadMap(mapSystemId());
+    selectDeepSpace();
+    map.mission = 'EXPEDITION';
+    syncMissionOptions();
+    schedulePlan();
+  }
 
   /* ---------- Синдикаты ---------- */
 
   const syndicate = { data: null };
-  const ROLE_LABELS = { LEADER: 'лидер', OFFICER: 'офицер', MEMBER: 'участник' };
-  const TX_LABELS = { DONATION: 'пожертвование', FOUNDING: 'основание', PAYOUT: 'выплата' };
+  const TX_LABELS = {
+    DONATION: 'пожертвование',
+    FOUNDING: 'основание',
+    PAYOUT: 'выдача из казны',
+    TAX: 'налог',
+    ENTRY_FEE: 'вступительный взнос',
+    KISH_UPGRADE: 'развитие Коша',
+    WATCH_UPGRADE: 'развитие Дозора',
+    RESOURCE_DELIVERY: 'доставка в казну',
+    RESOURCE_PICKUP: 'вывоз из казны',
+    ACADEMY_UPGRADE: 'развитие Академии',
+    SYNDICATE_RESEARCH: 'наука синдиката',
+    GATE_BUILD: 'Брама',
+    KISH_MOVE: 'перенос Коша',
+    TREASURY_UPGRADE: 'Скарбниця',
+    KISH_DEFENSE: 'оборона Коша',
+    KISH_RAIDED: 'налет на Кіш',
+    BUILD_REFUND: 'возврат за стройку',
+  };
+  const RECRUITMENT_LABELS = { OPEN: 'открыт', APPLICATION: 'по заявке', CLOSED: 'закрыт' };
 
   async function loadSyndicate() {
     const result = await api('/api/syndicates');
     if (!result.ok) return;
     syndicate.data = result.data;
+    syndicate.loadedAt = Date.now();
     renderSyndicate();
     renderSyndicateTag();
     syncBroadcastForm();
+    // Вышел или исключен, пока смотрел Кіш, — возвращаемся к колонии.
+    if (state.kishMode && !syndicate.data.mine) leaveKish();
+    renderBaseList();
+    renderKishPanels();
+    if (state.kishMode) renderKishHeader();
   }
 
   /**
-   * Форма рассылки видна только тем, кто вправе ее отправить.
+   * Форма рассылки видна только тем, чей ранг дает право рассылки.
    * Право проверяет и сервер, но прятать заведомо запрещенную кнопку честнее,
    * чем показывать ее и отвечать отказом.
    */
   function syncBroadcastForm() {
     const mine = syndicate.data && syndicate.data.mine;
-    el.mailBroadcast.hidden = !mine || (mine.role !== 'LEADER' && mine.role !== 'OFFICER');
+    el.mailBroadcast.hidden = !mine || !mine.me.permissions.includes('BROADCAST');
   }
 
   /** Отправка действия синдиката с последующим обновлением панели. */
@@ -5431,77 +5999,169 @@
     const data = syndicate.data;
     if (!data) return;
     el.syndicatePanel.innerHTML = '';
+    el.syndicatePanel.classList.add('syndicate-stack');
     if (data.mine) renderMySyndicate(data);
     else renderSyndicateList(data);
   }
 
+  /*
+   * Мелкие строители разметки панели синдиката. Текст игроков — кодекс,
+   * названия, позывные — кладется только через textContent: кодекс пишут
+   * люди, и разметка в нем должна оставаться текстом.
+   */
+  function synEl(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined && text !== null) node.textContent = text;
+    return node;
+  }
+
+  function synButton(label, className, onClick, disabled) {
+    const node = synEl('button', className, label);
+    node.type = 'button';
+    node.disabled = Boolean(disabled);
+    if (onClick) node.addEventListener('click', onClick);
+    return node;
+  }
+
+  function synCard(title) {
+    const card = synEl('div', 'hub-card');
+    card.appendChild(synEl('h3', 'section-title', title));
+    return card;
+  }
+
+  function synField(label, input) {
+    const field = synEl('label', 'field');
+    field.appendChild(synEl('span', null, label));
+    field.appendChild(input);
+    return field;
+  }
+
+  function synNumber(value, min, max) {
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = String(min);
+    if (max !== undefined) input.max = String(max);
+    input.step = '1';
+    input.value = String(value);
+    return input;
+  }
+
+  /**
+   * Целое из поля. Пустое или дробное уходит как `null`, и сервер отвечает
+   * отказом с объяснением: подставить ноль молча значило бы обнулить налог
+   * или взнос нечаянной очисткой поля.
+   */
+  function synInt(input) {
+    const value = input.value.trim();
+    return /^\d+$/.test(value) ? parseInt(value, 10) : null;
+  }
+
+  /**
+   * Кнопка необратимого действия срабатывает со второго нажатия.
+   * Модальные подтверждения в игре запрещены, а роспуск сжигает казну
+   * и передача лидерства не отменяется — одного случайного касания мало.
+   */
+  function synConfirm(label, confirmLabel, className, onConfirm) {
+    const node = synButton(label, className, () => {
+      if (node.dataset.armed === '1') {
+        onConfirm();
+        return;
+      }
+      node.dataset.armed = '1';
+      node.textContent = confirmLabel;
+      setTimeout(() => {
+        node.dataset.armed = '';
+        node.textContent = label;
+      }, 4000);
+    });
+    return node;
+  }
+
+  function synDateTime(ms) {
+    return new Date(ms).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  }
+
   /* --- без синдиката: список и создание --- */
   function renderSyndicateList(data) {
-    const grid = document.createElement('div');
-    grid.className = 'syndicate-grid';
+    const grid = synEl('div', 'syndicate-grid');
 
-    const create = document.createElement('div');
-    create.className = 'hub-card';
-    create.innerHTML =
-      '<h3 class="section-title">Создать синдикат</h3>' +
-      `<div class="hub-storage">Основание стоит <b>${fmt(data.foundingCost)}</b> ${icon('credits', 'sm')} ` +
-      `(на счету ${fmt(data.credits)}). Основатель становится лидером.</div>`;
-
-    const nameField = document.createElement('label');
-    nameField.className = 'field';
-    nameField.innerHTML = '<span>Название</span>';
-    const nameInput = document.createElement('input');
-    nameInput.type = 'text';
-    nameInput.maxLength = 32;
-    nameField.appendChild(nameInput);
-
-    const tagField = document.createElement('label');
-    tagField.className = 'field';
-    tagField.innerHTML = '<span>Тег (2-5 символов)</span>';
-    const tagInput = document.createElement('input');
-    tagInput.type = 'text';
-    tagInput.maxLength = 5;
-    tagField.appendChild(tagInput);
-
-    const createButton = document.createElement('button');
-    createButton.type = 'button';
-    createButton.className = 'primary';
-    createButton.textContent = 'Основать синдикат';
-    createButton.disabled = data.credits < data.foundingCost;
-    createButton.addEventListener('click', () =>
-      syndicateAction('/api/syndicates', { name: nameInput.value, tag: tagInput.value }));
-
-    create.append(nameField, tagField, createButton);
-
-    const list = document.createElement('div');
-    list.className = 'hub-card';
-    list.innerHTML = '<h3 class="section-title">Действующие синдикаты</h3>';
-
-    if (!data.list.length) {
-      const empty = document.createElement('div');
-      empty.className = 'hub-storage';
-      empty.textContent = 'Синдикатов пока нет — станешь первым.';
-      list.appendChild(empty);
+    const create = synCard('Создать синдикат');
+    const cost = synEl('div', 'hub-storage');
+    cost.innerHTML =
+      `Основание стоит <b>${fmt(data.foundingCost)}</b> ${icon('credits', 'sm')} ` +
+      `(на счету ${fmt(data.credits)}). Основатель становится главарем, а Кіш встает в системе его столицы.`;
+    create.appendChild(cost);
+    if (data.cooldownUntil) {
+      create.appendChild(synEl('div', 'hub-storage warn',
+        `После выхода из синдиката вступить или основать новый можно с ${synDateTime(data.cooldownUntil)}`));
     }
 
+    const nameInput = synEl('input');
+    nameInput.type = 'text';
+    nameInput.maxLength = 32;
+    const tagInput = synEl('input');
+    tagInput.type = 'text';
+    tagInput.maxLength = 5;
+    create.append(
+      synField('Название', nameInput),
+      synField('Тег (2-5 символов)', tagInput),
+      synButton('Основать синдикат', 'primary',
+        () => syndicateAction('/api/syndicates', { name: nameInput.value, tag: tagInput.value }),
+        data.credits < data.foundingCost || Boolean(data.cooldownUntil)),
+    );
+
+    const list = synCard('Действующие синдикаты');
+    if (!data.list.length) list.appendChild(synEl('div', 'hub-storage', 'Синдикатов пока нет — станешь первым.'));
+
     for (const item of data.list) {
-      const row = document.createElement('div');
-      row.className = 'queue-item member-row';
+      const row = synEl('div', 'queue-item member-row syndicate-row');
+      const info = synEl('div');
+      info.appendChild(synEl('b', null, `[${item.tag}] ${item.name}`));
+      if (item.description) info.appendChild(synEl('div', 'syn-desc-small', item.description));
+      info.appendChild(synEl('div', 'role',
+        `главарь: ${item.leader} · участников ${item.members}/${item.memberCap} · Кіш ур. ${item.kishLevel} · ` +
+        `набор ${RECRUITMENT_LABELS[item.recruitment] || item.recruitment} · налог ${item.taxRate}%` +
+        (item.entryFee > 0 ? ` · взнос ${fmt(item.entryFee)} ₴` : '') +
+        (item.minScore > 0 ? ` · рейтинг от ${fmt(item.minScore)}` : '')));
 
-      const info = document.createElement('div');
-      info.innerHTML =
-        `<b>[${item.tag}] ${item.name}</b>` +
-        `<div class="role">лидер: ${item.leader} · участников: ${item.members}</div>`;
-
-      const action = document.createElement('button');
-      action.type = 'button';
-      action.className = 'ghost';
-      if (item.applicationStatus === 'PENDING') {
-        action.textContent = 'Заявка отправлена';
-        action.disabled = true;
+      const full = item.members >= item.memberCap;
+      const joinLabel = item.recruitment === 'OPEN' ? 'Вступить' : 'Подать заявку';
+      let action;
+      if (item.applicationStatus === 'PENDING') action = synButton('Заявка отправлена', 'ghost', null, true);
+      else if (item.recruitment === 'CLOSED') action = synButton('Набор закрыт', 'ghost', null, true);
+      else if (full) action = synButton('Мест нет', 'ghost', null, true);
+      else if (data.cooldownUntil) action = synButton('Пауза после выхода', 'ghost', null, true);
+      else if (item.hasCodex) {
+        // Кодекс читается до вступления: кнопка раскрывает его под строкой,
+        // а вступить можно только отметив, что принял именно эту редакцию.
+        action = synButton(`Кодекс и ${joinLabel.toLowerCase()}`, 'ghost', async () => {
+          const existing = row.querySelector('.syndicate-codex');
+          if (existing) {
+            existing.remove();
+            return;
+          }
+          const result = await api(`/api/syndicates/${item.id}/codex`);
+          const codex = result.ok && result.data.codex;
+          const block = synEl('div', 'syndicate-codex');
+          if (!codex) {
+            block.appendChild(synEl('div', 'hub-storage', 'Кодекс снят — можно вступать без него.'));
+            block.appendChild(synButton(joinLabel, 'primary', () => syndicateAction(`/api/syndicates/${item.id}/apply`, {})));
+          } else {
+            block.appendChild(synEl('pre', 'codex-text', codex.text));
+            const agree = synEl('label', 'codex-accept');
+            const box = document.createElement('input');
+            box.type = 'checkbox';
+            agree.append(box, synEl('span', null, 'Прочитал и принимаю кодекс'));
+            const confirm = synButton(joinLabel, 'primary',
+              () => syndicateAction(`/api/syndicates/${item.id}/apply`, { codexId: codex.id }), true);
+            box.addEventListener('change', () => { confirm.disabled = !box.checked; });
+            block.append(agree, confirm);
+          }
+          row.appendChild(block);
+        });
       } else {
-        action.textContent = 'Подать заявку';
-        action.addEventListener('click', () => syndicateAction(`/api/syndicates/${item.id}/apply`));
+        action = synButton(joinLabel, 'ghost', () => syndicateAction(`/api/syndicates/${item.id}/apply`, {}));
       }
 
       row.append(info, action);
@@ -5513,183 +6173,1060 @@
   }
 
   /* --- свой синдикат --- */
+
+  /*
+   * Раздел собран по вопросам, а не по таблицам базы: кто мы (шапка),
+   * сколько у нас и кто вносит (казна, вклад, журнал), по каким правилам
+   * живем (налог, набор, устав) и кто мы поименно (состав, ранги).
+   * Казна показана один раз: гривна и ресурсы — в одной карточке.
+   * Модули Коша живут в самом Коше, сюда из них ведет только кнопка.
+   */
   function renderMySyndicate(data) {
     const mine = data.mine;
-    const canReview = mine.role === 'LEADER' || mine.role === 'OFFICER';
-    const isLeader = mine.role === 'LEADER';
+    const me = mine.me;
+    const can = (permission) => me.permissions.includes(permission);
+    const myRank = mine.ranks.find((rank) => rank.id === me.rankId);
+    const myPosition = me.isLeader ? 0 : (myRank ? myRank.position : 99);
+    const panel = el.syndicatePanel;
 
-    const header = document.createElement('div');
-    header.className = 'syndicate-header';
-    header.innerHTML =
-      `<div><h3><span class="tag">[${mine.tag}]</span> ${mine.name}</h3>` +
-      `<div class="role">твоя роль: <b>${ROLE_LABELS[mine.role]}</b> · участников: ${mine.members.length} · ` +
-      `основан ${new Date(mine.createdAt).toLocaleDateString('ru-RU')}</div></div>` +
-      `<div class="bank">банк синдиката<b>${fmt(mine.bank)} ${icon('credits', 'sm')}</b>` +
-      `личный счет: ${fmt(data.credits)} ${icon('credits', 'sm')}</div>`;
-    el.syndicatePanel.appendChild(header);
+    panel.appendChild(renderSyndicateHero(mine));
 
-    const grid = document.createElement('div');
-    grid.className = 'syndicate-grid';
+    const money = synEl('div', 'syndicate-grid');
+    money.append(renderSyndicateTreasury(mine, data, can), renderContributions(mine));
+    panel.appendChild(money);
+    panel.appendChild(renderTreasuryLog(mine));
 
-    // Пожертвования
-    const bank = document.createElement('div');
-    bank.className = 'hub-card';
-    bank.innerHTML = '<h3 class="section-title">Пожертвование в банк</h3>';
-    const donateForm = document.createElement('div');
-    donateForm.className = 'donate-form';
-    const amount = document.createElement('input');
-    amount.type = 'number';
-    amount.min = '1';
-    amount.value = '100';
-    const donateButton = document.createElement('button');
-    donateButton.type = 'button';
-    donateButton.className = 'primary';
-    donateButton.textContent = 'Внести';
-    donateButton.addEventListener('click', () =>
-      syndicateAction('/api/syndicates/donate', { amount: Number(amount.value) }));
-    donateForm.append(amount, donateButton);
-    bank.appendChild(donateForm);
+    const rules = synEl('div', 'syndicate-grid');
+    rules.append(renderTaxCard(mine, can), renderRecruitmentCard(mine, data, can));
+    panel.appendChild(rules);
+    panel.appendChild(renderCharterCard(mine, data, can));
 
-    const log = document.createElement('div');
-    log.className = 'queue';
-    for (const tx of mine.transactions) {
-      const row = document.createElement('div');
-      row.className = 'queue-item';
-      const title = document.createElement('b');
-      title.innerHTML = `${tx.nickname || 'система'} — ${fmt(tx.amount)} ${icon('credits', 'sm')}`;
-      const meta = document.createElement('span');
-      meta.textContent = `${TX_LABELS[tx.kind] || tx.kind} · ${new Date(tx.createdAt).toLocaleString('ru-RU')}`;
-      row.append(title, meta);
-      log.appendChild(row);
+    const people = synEl('div', 'syndicate-grid');
+    people.append(renderMembersCard(mine, can, myPosition), renderRanksCard(mine, data));
+    panel.appendChild(people);
+
+    if (can('APPLICATIONS')) panel.appendChild(renderApplicationsCard(mine));
+    panel.appendChild(renderLeaveCard(me));
+  }
+
+  function renderSyndicateHero(mine) {
+    const hero = synEl('section', 'hub-card syn-hero');
+    hero.appendChild(artNode('KISH', 'Кіш', 'planet'));
+    const body = synEl('div', 'syn-hero-body');
+    const title = synEl('h2', 'syn-name');
+    title.append(synEl('span', 'syn-tag', mine.tag), synEl('span', null, mine.name));
+    body.appendChild(title);
+    body.appendChild(synEl('p', mine.description ? 'syn-desc' : 'syn-desc muted',
+      mine.description || 'Описание не задано. Его пишет ранг с правом правил набора в карточке «Устав».'));
+    const chips = synEl('div', 'syn-chips');
+    for (const text of [
+      `твой ранг: ${mine.me.rankName}`,
+      `состав ${mine.members.length} из ${mine.kish.memberCap}`,
+      `Кіш ур. ${mine.kish.level} · ${mine.kish.systemName || 'система не определена'}`,
+      `налог ${mine.tax.rate}%`,
+      `основан ${new Date(mine.createdAt).toLocaleDateString('ru-RU')}`,
+    ]) {
+      chips.appendChild(synEl('span', 'chip', text));
     }
-    if (!mine.transactions.length) {
-      const empty = document.createElement('div');
-      empty.className = 'queue-item';
-      empty.textContent = 'Операций пока не было';
-      log.appendChild(empty);
+    body.appendChild(chips);
+    if (mine.watch.incoming.length) {
+      body.appendChild(synEl('div', 'hub-storage warn',
+        `Вражеских флотов в пути: ${mine.watch.incoming.length} — подробности в центре управления Коша.`));
     }
-    bank.appendChild(log);
+    body.appendChild(synButton('Открыть Кіш', 'primary', () => enterKish('overview')));
+    hero.appendChild(body);
+    return hero;
+  }
 
-    // Состав
-    const roster = document.createElement('div');
-    roster.className = 'hub-card';
-    roster.innerHTML = '<h3 class="section-title">Состав синдиката</h3>';
+  function renderSyndicateTreasury(mine, data, can) {
+    const card = synCard('Казна');
+    const grid = synEl('div', 'kish-treasury');
+    for (const [key, value] of [['credits', mine.bank], ['ore', mine.treasury.ore], ['polymers', mine.treasury.polymers],
+      ['plasma', mine.treasury.plasma], ['antimatter', mine.treasury.antimatter]]) {
+      const cell = synEl('div', 'kish-res');
+      cell.innerHTML = `${icon(key)} <b>${fmt(value)}</b>`;
+      grid.appendChild(cell);
+    }
+    card.appendChild(grid);
 
+    const week = mine.stats.week;
+    const flow = synEl('div', 'syn-flow');
+    for (const [label, credits, resources, className, sign] of [
+      ['Поступило за 7 дней', week.creditsIn, week.resourcesIn, 'in', '+'],
+      ['Потрачено за 7 дней', week.creditsOut, week.resourcesOut, 'out', '−'],
+    ]) {
+      const cell = synEl('div', className);
+      cell.appendChild(synEl('span', null, label));
+      const value = synEl('b');
+      value.innerHTML = `${sign}${fmtCompact(credits)} ${icon('credits', 'sm')}`;
+      cell.append(value, synEl('span', null, `ресурсов ${sign}${fmtCompact(resources)}`));
+      flow.appendChild(cell);
+    }
+    card.appendChild(flow);
+
+    const donate = synEl('div', 'row syn-form-row');
+    const amount = synNumber(100, 1);
+    donate.append(synField(`Внести с личного счета (${fmt(data.credits)} ₴)`, amount),
+      synButton('Внести', 'primary', () => syndicateAction('/api/syndicates/donate', { amount: synInt(amount) })));
+    card.appendChild(donate);
+
+    if (can('WITHDRAW')) {
+      const whom = synEl('select');
+      for (const member of mine.members) {
+        const option = synEl('option', null, member.nickname);
+        option.value = member.commanderId;
+        whom.appendChild(option);
+      }
+      const sum = synNumber(100, 1);
+      const payout = synEl('div', 'row syn-form-row');
+      payout.append(
+        synField(mine.me.withdrawLeft === null ? 'Выдать участнику (без предела)' : `Выдать участнику (осталось ${fmt(mine.me.withdrawLeft)} ₴ на сутки)`, whom),
+        synField('Сумма, ₴', sum),
+        synButton('Выдать', 'ghost', () => syndicateAction(`/api/syndicates/members/${whom.value}/payout`, { amount: synInt(sum) })),
+      );
+      card.appendChild(payout);
+    }
+    card.appendChild(synEl('div', 'hub-storage',
+      'Ресурсы в казну привозят и вывозят флотом с колонии. Вывоз и выдача гривны идут в один дневной лимит ранга.'));
+    return card;
+  }
+
+  function renderContributions(mine) {
+    const card = synCard('Вклад участников');
+    const rows = mine.stats.contributions;
+    const top = Math.max(1, ...rows.map((row) => row.merit));
+    const table = synEl('div', 'syn-table');
+    const head = synEl('div', 'syn-row head');
+    for (const label of ['Участник', 'Взносы', 'Налог', 'Ресурсы']) head.appendChild(synEl('span', null, label));
+    table.appendChild(head);
+    for (const row of rows) {
+      const line = synEl('div', 'syn-row');
+      const who = synEl('span', 'syn-who');
+      who.appendChild(synEl('b', null, row.nickname));
+      const bar = synEl('span', 'syn-bar');
+      const fill = synEl('i');
+      fill.style.width = `${Math.round((row.merit / top) * 100)}%`;
+      bar.appendChild(fill);
+      who.appendChild(bar);
+      line.append(who, synEl('span', null, fmtCompact(row.credits)), synEl('span', null, fmtCompact(row.tax)),
+        synEl('span', null, fmtCompact(row.resources)));
+      table.appendChild(line);
+    }
+    card.appendChild(table);
+    card.appendChild(synEl('div', 'hub-storage',
+      'Взносы и налог — в гривне, ресурсы — в единицах. Полоса — заслуги: гривна и ресурсы, внесенные в казну, единица за единицу. Счет за все время в синдикате.'));
+    return card;
+  }
+
+  function renderTreasuryLog(mine) {
+    const card = synCard('Журнал казны');
+    const modes = [['ALL', 'Все'], ['IN', 'Поступления'], ['OUT', 'Расходы']];
+    const filter = synEl('div', 'syn-seg');
+    const list = synEl('div', 'syn-table syn-log');
+    const draw = () => {
+      const mode = syndicate.logFilter || 'ALL';
+      for (const button of filter.children) button.classList.toggle('active', button.dataset.mode === mode);
+      list.innerHTML = '';
+      const rows = mine.transactions.filter((tx) => mode === 'ALL' || tx.flow === mode);
+      if (!rows.length) list.appendChild(synEl('div', 'hub-storage', 'Операций нет'));
+      for (const tx of rows) {
+        const row = synEl('div', `syn-row ${tx.flow.toLowerCase()}`);
+        row.appendChild(synEl('span', 'syn-when', synDateTime(tx.createdAt)));
+        const what = synEl('span', 'syn-what');
+        what.appendChild(synEl('b', null, TX_LABELS[tx.kind] || tx.kind));
+        const who = [tx.nickname, tx.kind === 'PAYOUT' && tx.actor ? `выдал ${tx.actor}` : null, tx.comment]
+          .filter(Boolean).join(' · ');
+        if (who) what.appendChild(synEl('span', 'muted', who));
+        row.appendChild(what);
+        const sign = tx.flow === 'IN' ? '+' : tx.flow === 'OUT' ? '−' : '';
+        const parts = [];
+        const credits = tx.kind === 'RESOURCE_DELIVERY' || tx.kind === 'RESOURCE_PICKUP' ? 0 : tx.amount;
+        if (credits > 0) parts.push(`${sign}${fmt(credits)} ${icon('credits', 'sm')}`);
+        for (const key of ['ore', 'polymers', 'plasma', 'antimatter']) {
+          if (tx[key] > 0) parts.push(`${sign}${fmt(tx[key])} ${icon(key, 'sm')}`);
+        }
+        const amount = synEl('span', 'syn-amount');
+        amount.innerHTML = parts.join('<br>') || '—';
+        row.appendChild(amount);
+        list.appendChild(row);
+      }
+    };
+    for (const [mode, label] of modes) {
+      const button = synButton(label, 'ghost', () => {
+        syndicate.logFilter = mode;
+        draw();
+      });
+      button.dataset.mode = mode;
+      filter.appendChild(button);
+    }
+    card.append(filter, list);
+    draw();
+    return card;
+  }
+
+  function renderTaxCard(mine, can) {
+    const tax = synCard('Налог с крипто-фермы');
+    tax.appendChild(synEl('div', 'syn-big', `${mine.tax.rate}%`));
+    if (mine.tax.pendingRate !== null && mine.tax.effectiveAt) {
+      tax.appendChild(synEl('div', 'hub-storage warn', `С ${synDateTime(mine.tax.effectiveAt)} — ${mine.tax.pendingRate}%`));
+    }
+    tax.appendChild(synEl('div', 'hub-storage',
+      'Удерживается с дохода крипто-фермы и уходит в казну. Повышение вступает в силу через сутки, снижение — сразу.'));
+    if (can('TAX')) {
+      const rate = synNumber(mine.tax.pendingRate ?? mine.tax.rate, 0, mine.tax.maxRate);
+      const line = synEl('div', 'row syn-form-row');
+      line.append(synField(`Ставка, % (0–${mine.tax.maxRate})`, rate),
+        synButton('Установить', 'ghost', () => syndicateAction('/api/syndicates/tax', { rate: synInt(rate) })));
+      tax.appendChild(line);
+    }
+    return tax;
+  }
+
+  function renderRecruitmentCard(mine, data, can) {
+    const rules = synCard('Правила набора');
+    const chips = synEl('div', 'syn-chips');
+    for (const text of [
+      `набор ${RECRUITMENT_LABELS[mine.rules.recruitment]}`,
+      `взнос ${fmt(mine.rules.entryFee)} ₴`,
+      `рейтинг от ${fmt(mine.rules.minScore)}`,
+    ]) {
+      chips.appendChild(synEl('span', 'chip', text));
+    }
+    rules.appendChild(chips);
+    if (can('RULES')) {
+      const mode = synEl('select');
+      for (const [value, label] of Object.entries(RECRUITMENT_LABELS)) {
+        const option = synEl('option', null, label);
+        option.value = value;
+        option.selected = value === mine.rules.recruitment;
+        mode.appendChild(option);
+      }
+      const fee = synNumber(mine.rules.entryFee, 0, data.limits.maxEntryFee);
+      const minScore = synNumber(mine.rules.minScore, 0);
+      const form = synEl('div', 'syndicate-form');
+      form.append(
+        synField('Набор', mode),
+        synField('Вступительный взнос, ₴', fee),
+        synField('Минимальный рейтинг', minScore),
+        synButton('Сохранить правила', 'ghost', () => syndicateAction('/api/syndicates/rules', {
+          recruitment: mode.value,
+          entryFee: synInt(fee),
+          minScore: synInt(minScore),
+        })),
+      );
+      rules.appendChild(form);
+    }
+    return rules;
+  }
+
+  /** Устав: описание — лицо синдиката для кандидатов, кодекс — правила для своих. */
+  function renderCharterCard(mine, data, can) {
+    const card = synCard('Устав');
+    card.appendChild(synEl('h4', 'syn-subtitle', 'Описание'));
+    if (can('RULES')) {
+      const input = synEl('textarea', 'syndicate-textarea short');
+      input.maxLength = data.limits.descriptionMaxLength;
+      input.value = mine.description;
+      const counter = synEl('div', 'hub-storage');
+      const sync = () => { counter.textContent = `${input.value.length} / ${data.limits.descriptionMaxLength}`; };
+      input.addEventListener('input', sync);
+      sync();
+      card.append(input, counter, synButton('Сохранить описание', 'ghost',
+        () => syndicateAction('/api/syndicates/description', { text: input.value })));
+    } else {
+      card.appendChild(synEl('div', 'hub-storage', mine.description || 'Описания нет.'));
+    }
+
+    card.appendChild(synEl('h4', 'syn-subtitle', 'Кодекс'));
+    if (mine.codex) {
+      card.appendChild(synEl('pre', 'codex-text', mine.codex.text));
+      card.appendChild(synEl('div', 'hub-storage',
+        `редакция от ${synDateTime(mine.codex.updatedAt)}${mine.codex.author ? ` · ${mine.codex.author}` : ''}`));
+    } else {
+      card.appendChild(synEl('div', 'hub-storage', 'Кодекса пока нет: кандидаты вступают без него.'));
+    }
+    if (can('CODEX')) {
+      const area = synEl('textarea', 'syndicate-textarea');
+      area.maxLength = data.limits.codexMaxLength;
+      area.value = mine.codex ? mine.codex.text : '';
+      const counter = synEl('div', 'hub-storage');
+      const sync = () => { counter.textContent = `${area.value.length} / ${data.limits.codexMaxLength}`; };
+      area.addEventListener('input', sync);
+      sync();
+      card.append(area, counter, synButton('Сохранить редакцию', 'ghost',
+        () => syndicateAction('/api/syndicates/codex', { text: area.value })));
+      card.appendChild(synEl('div', 'hub-storage', 'Участники получат новую редакцию письмом. Пустой текст снимает кодекс.'));
+    }
+    return card;
+  }
+
+  function renderMembersCard(mine, can, myPosition) {
+    const roster = synCard(`Состав · ${mine.members.length} из ${mine.kish.memberCap}`);
+    const me = mine.me;
+    const assignable = mine.ranks.filter((rank) => rank.position !== 0 && (me.isLeader || rank.position > myPosition));
     for (const member of mine.members) {
-      const row = document.createElement('div');
-      row.className = 'queue-item member-row';
-      const info = document.createElement('div');
-      info.innerHTML =
-        `<b>${member.nickname}</b><div class="role ${member.role}">${ROLE_LABELS[member.role]} · ` +
-        `боев ${member.battlesWon}/${member.battlesLost}</div>`;
+      const row = synEl('div', 'syn-member');
+      const info = synEl('div', 'syn-member-info');
+      const name = synEl('div', 'syn-member-name');
+      name.append(synEl('span', null, member.nickname), synEl('span', `chip${member.isLeader ? ' leader' : ''}`, member.rankName));
+      info.appendChild(name);
+      info.appendChild(synEl('div', 'syn-member-meta',
+        `заслуги ${fmt(member.merit)} · налог сегодня ${fmt(member.taxToday)} ₴ · бои ${member.battlesWon}/${member.battlesLost}` +
+        (member.joinedAt ? ` · с ${new Date(member.joinedAt).toLocaleDateString('ru-RU')}` : '')));
+      row.appendChild(info);
 
-      const actions = document.createElement('div');
-      actions.className = 'member-actions';
-      // Лидер правит всем составом, офицер может исключить рядового.
-      if (!isLeader && mine.role === 'OFFICER' && member.role === 'MEMBER') {
-        const kick = document.createElement('button');
-        kick.type = 'button';
-        kick.className = 'ghost';
-        kick.textContent = 'Исключить';
-        kick.addEventListener('click', () =>
-          syndicateAction(`/api/syndicates/members/${member.commanderId}/kick`));
-        actions.appendChild(kick);
+      const actions = synEl('div', 'member-actions');
+      if (member.outrankedByMe && can('PROMOTE') && assignable.length) {
+        const select = synEl('select');
+        for (const rank of assignable) {
+          const option = synEl('option', null, rank.name);
+          option.value = rank.id;
+          option.selected = rank.id === member.rankId;
+          select.appendChild(option);
+        }
+        select.addEventListener('change', () =>
+          syndicateAction(`/api/syndicates/members/${member.commanderId}/rank`, { rankId: select.value }));
+        actions.appendChild(select);
       }
-
-      if (isLeader && member.role !== 'LEADER') {
-        const crown = document.createElement('button');
-        crown.type = 'button';
-        crown.className = 'ghost';
-        crown.textContent = 'Сделать лидером';
-        crown.addEventListener('click', () =>
-          syndicateAction(`/api/syndicates/members/${member.commanderId}/role`, { role: 'LEADER' }));
-        actions.appendChild(crown);
-
-        const promote = document.createElement('button');
-        promote.type = 'button';
-        promote.className = 'ghost';
-        promote.textContent = member.role === 'OFFICER' ? 'Снять офицера' : 'В офицеры';
-        promote.addEventListener('click', () =>
-          syndicateAction(`/api/syndicates/members/${member.commanderId}/role`, {
-            role: member.role === 'OFFICER' ? 'MEMBER' : 'OFFICER',
-          }));
-
-        const kick = document.createElement('button');
-        kick.type = 'button';
-        kick.className = 'ghost';
-        kick.textContent = 'Исключить';
-        kick.addEventListener('click', () =>
-          syndicateAction(`/api/syndicates/members/${member.commanderId}/kick`));
-
-        actions.append(promote, kick);
+      if (member.outrankedByMe && can('KICK')) {
+        actions.appendChild(synConfirm('Исключить', 'Точно исключить?', 'ghost',
+          () => syndicateAction(`/api/syndicates/members/${member.commanderId}/kick`)));
       }
-
-      row.append(info, actions);
+      if (me.isLeader && !member.isLeader) {
+        actions.appendChild(synConfirm('Сделать главарем', 'Передать лидерство?', 'ghost',
+          () => syndicateAction(`/api/syndicates/members/${member.commanderId}/leader`)));
+      }
+      if (actions.children.length) row.appendChild(actions);
       roster.appendChild(row);
     }
+    return roster;
+  }
 
-    grid.append(bank, roster);
-    el.syndicatePanel.appendChild(grid);
-
-    // Заявки видны только тем, кто их разбирает
-    if (canReview) {
-      const applications = document.createElement('div');
-      applications.className = 'hub-card';
-      applications.innerHTML = '<h3 class="section-title">Заявки на вступление</h3>';
-
-      if (!mine.applications.length) {
-        const empty = document.createElement('div');
-        empty.className = 'hub-storage';
-        empty.textContent = 'Новых заявок нет';
-        applications.appendChild(empty);
+  /** Ранги: название и число людей строкой, права — ярлыками, а не сплошным текстом. */
+  function renderRanksCard(mine, data) {
+    const ranks = synCard('Ранги');
+    const labelOf = new Map(data.permissionCatalog.map((item) => [item.key, item.label]));
+    for (const rank of mine.ranks) {
+      if (mine.me.isLeader) {
+        // У редактора свой заголовок: без него название ранга терялось среди полей.
+        const block = synEl('div', 'rank-block');
+        const head = synEl('div', 'rank-head');
+        head.append(synEl('b', null, rank.name), synEl('span', null, `участников: ${rank.members}`));
+        block.append(head, rankEditor(rank, data, labelOf));
+        ranks.appendChild(block);
+        continue;
       }
-
-      for (const application of mine.applications) {
-        const row = document.createElement('div');
-        row.className = 'queue-item member-row';
-        const info = document.createElement('div');
-        info.innerHTML =
-          `<b>${application.nickname}</b><div class="role">подана ` +
-          `${new Date(application.createdAt).toLocaleString('ru-RU')}</div>`;
-
-        const actions = document.createElement('div');
-        actions.className = 'member-actions';
-        const accept = document.createElement('button');
-        accept.type = 'button';
-        accept.className = 'primary';
-        accept.textContent = 'Принять';
-        accept.addEventListener('click', () =>
-          syndicateAction(`/api/syndicates/applications/${application.id}/approve`));
-        const reject = document.createElement('button');
-        reject.type = 'button';
-        reject.className = 'ghost';
-        reject.textContent = 'Отклонить';
-        reject.addEventListener('click', () =>
-          syndicateAction(`/api/syndicates/applications/${application.id}/reject`));
-
-        actions.append(accept, reject);
-        row.append(info, actions);
-        applications.appendChild(row);
+      const block = synEl('div', 'rank-block');
+      const head = synEl('div', 'rank-head');
+      head.append(synEl('b', null, rank.name), synEl('span', null, `участников: ${rank.members}`));
+      block.appendChild(head);
+      const perms = synEl('div', 'syn-chips');
+      if (rank.position === 0) perms.appendChild(synEl('span', 'chip leader', 'все права'));
+      else if (!rank.permissions.length) perms.appendChild(synEl('span', 'chip muted', 'без прав'));
+      for (const key of rank.position === 0 ? [] : rank.permissions) perms.appendChild(synEl('span', 'chip', labelOf.get(key) || key));
+      block.appendChild(perms);
+      if (rank.position !== 0 && rank.permissions.includes('WITHDRAW')) {
+        block.appendChild(synEl('div', 'syn-member-meta', `выдача из казны до ${fmt(rank.dailyWithdrawLimit)} ₴ в сутки`));
       }
-      el.syndicatePanel.appendChild(applications);
+      ranks.appendChild(block);
     }
+    if (mine.me.isLeader && mine.ranks.length < data.limits.maxRanks) {
+      ranks.appendChild(synEl('h4', 'syn-subtitle', 'Новый ранг'));
+      ranks.appendChild(rankEditor(null, data, labelOf));
+    }
+    return ranks;
+  }
 
-    // Выход и роспуск
-    const footer = document.createElement('div');
-    footer.className = 'hub-card';
-    const exit = document.createElement('button');
-    exit.type = 'button';
-    exit.className = 'ghost';
-    if (isLeader) {
-      exit.textContent = 'Распустить синдикат';
-      exit.addEventListener('click', () => syndicateAction('/api/syndicates/disband'));
-      footer.innerHTML = '<div class="hub-storage">Роспуск вернет остаток банка лидеру.</div>';
+  function renderApplicationsCard(mine) {
+    const applications = synCard('Заявки на вступление');
+    if (!mine.applications.length) applications.appendChild(synEl('div', 'hub-storage', 'Новых заявок нет'));
+    for (const application of mine.applications) {
+      const row = synEl('div', 'syn-member');
+      const info = synEl('div', 'syn-member-info');
+      info.append(synEl('div', 'syn-member-name', application.nickname),
+        synEl('div', 'syn-member-meta', `подана ${synDateTime(application.createdAt)}`));
+      const actions = synEl('div', 'member-actions');
+      actions.append(
+        synButton('Принять', 'primary', () => syndicateAction(`/api/syndicates/applications/${application.id}/approve`)),
+        synButton('Отклонить', 'ghost', () => syndicateAction(`/api/syndicates/applications/${application.id}/reject`)),
+      );
+      row.append(info, actions);
+      applications.appendChild(row);
+    }
+    return applications;
+  }
+
+  function renderLeaveCard(me) {
+    const footer = synEl('div', 'hub-card');
+    if (me.isLeader) {
+      footer.appendChild(synEl('div', 'hub-storage', 'Роспуск сожжет казну синдиката целиком — она никому не вернется.'));
+      footer.appendChild(synConfirm('Распустить синдикат', 'Точно? Казна сгорит', 'ghost',
+        () => syndicateAction('/api/syndicates/disband')));
     } else {
-      exit.textContent = 'Покинуть синдикат';
-      exit.addEventListener('click', () => syndicateAction('/api/syndicates/leave'));
+      footer.appendChild(synEl('div', 'hub-storage', 'После выхода вступить в другой синдикат можно только через сутки.'));
+      footer.appendChild(synConfirm('Покинуть синдикат', 'Точно выйти?', 'ghost',
+        () => syndicateAction('/api/syndicates/leave')));
     }
-    footer.appendChild(exit);
-    el.syndicatePanel.appendChild(footer);
+    return footer;
+  }
+
+  /* ---------- Кіш как колония ---------- */
+
+  /*
+   * Кіш выбирается в переключателе колоний, и разделы колонии показывают его
+   * сторону: центр управления, модули, технологии синдиката и оборону. Верфь,
+   * биржа и карты к Кошу не относятся — там объяснение и путь назад к колонии.
+   * Колонии в это время не трогаются: тик рисует их в скрытые панели.
+   */
+  const KISH_PANELS = {
+    overview: 'kish-overview',
+    buildings: 'kish-modules',
+    research: 'kish-research',
+    shipyard: 'kish-fleet',
+    defense: 'kish-defense',
+  };
+  // Пункта биржи в режиме Коша нет, но ссылка из письма может туда вести.
+  const KISH_AWAY_LABELS = { market: 'Хаб и биржа' };
+
+  /**
+   * Меню Коша говорит своими словами: мостик, отсеки, академія, флотилия,
+   * бастион. Одинаковые с колонией названия путали, где ты сейчас.
+   * Исходная подпись запоминается при первой подмене и возвращается при выходе.
+   */
+  function syncKishNav() {
+    for (const node of document.querySelectorAll('[data-kish-label] span, [data-kish-title]')) {
+      const host = node.matches('[data-kish-title]') ? node : node.closest('[data-kish-label]');
+      if (!node.dataset.baseLabel) node.dataset.baseLabel = node.textContent;
+      node.textContent = state.kishMode
+        ? (host.dataset.kishLabel || host.dataset.kishTitle)
+        : node.dataset.baseLabel;
+    }
+  }
+  /** Выбор в списках и полях Коша переживает пересборку карточек. */
+  const kishForm = {};
+  let kishRenderKey = '';
+
+  function kishPanelFor(name) {
+    if (!state.kishMode) return null;
+    if (KISH_PANELS[name]) return KISH_PANELS[name];
+    if (KISH_AWAY_LABELS[name]) {
+      renderKishAway(KISH_AWAY_LABELS[name]);
+      return 'kish-away';
+    }
+    return null;
+  }
+
+  /** В режиме Коша карта системы стоит на его системе, а не на системе колонии. */
+  function mapSystemId() {
+    const mine = state.kishMode && syndicate.data && syndicate.data.mine;
+    return (mine && mine.kish.systemId) || undefined;
+  }
+
+  /**
+   * Колония вылета в форме отправки. Нужна только в режиме Коша: шапка там
+   * показывает казну, и форма не должна молча брать последнюю выбранную
+   * колонию. Выбор здесь и есть выбор активной колонии — состав и груз
+   * формы сразу считаются по ее ангару и складу.
+   */
+  function renderDispatchOrigin() {
+    el.dispatchOriginRow.hidden = !state.kishMode || !state.bases.length;
+    if (el.dispatchOriginRow.hidden) return;
+    el.dispatchOrigin.innerHTML = '';
+    for (const base of state.bases) {
+      const option = document.createElement('option');
+      option.value = base.baseId;
+      option.textContent = `${base.baseName} · ${baseCoords(base)}`;
+      option.selected = base.baseId === state.activeBaseId;
+      el.dispatchOrigin.appendChild(option);
+    }
+  }
+
+  el.dispatchOrigin.addEventListener('change', () => {
+    state.activeBaseId = el.dispatchOrigin.value;
+    renderActiveBase();
+  });
+
+  function kishSwitchKey() {
+    const mine = syndicate.data && syndicate.data.mine;
+    return mine ? `${state.kishMode ? 'on' : 'off'}:${mine.tag}:${mine.kish.level}:${mine.kish.systemName}` : 'none';
+  }
+
+  function appendKishSwitchItem() {
+    const mine = syndicate.data && syndicate.data.mine;
+    if (!mine) return;
+    const li = document.createElement('li');
+    li.className = 'base-list-kish';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = state.kishMode ? 'active' : '';
+    button.textContent = `Кіш [${mine.tag}]`;
+    const meta = document.createElement('small');
+    meta.textContent = `${mine.kish.systemName || 'система не определена'} · ур. ${mine.kish.level}`;
+    button.appendChild(meta);
+    button.addEventListener('click', () => {
+      closeBaseMenu();
+      enterKish();
+    });
+    li.appendChild(button);
+    el.baseList.appendChild(li);
+  }
+
+  function enterKish(tab) {
+    if (!syndicate.data || !syndicate.data.mine) return;
+    state.kishMode = true;
+    document.body.classList.add('kish-mode');
+    syncKishNav();
+    // Кнопка «Открыть Кіш» стоит внизу раздела синдиката: без прокрутки наверх
+    // игрок оставался посреди Мостика и думал, что ничего не произошло.
+    window.scrollTo(0, 0);
+    renderBaseList();
+    renderActiveBase();
+    renderKishPanels();
+    showPanel(tab || (KISH_PANELS[state.activeTab] ? state.activeTab : 'overview'));
+  }
+
+  function leaveKish() {
+    state.kishMode = false;
+    document.body.classList.remove('kish-mode');
+    syncKishNav();
+    el.resCredits.textContent = fmt(state.credits);
+    renderBaseList();
+    renderActiveBase();
+    showPanel(state.activeTab);
+  }
+
+  /** Шапка Коша: вместо склада колонии — ресурсная казна и гривна синдиката. */
+  function renderKishHeader() {
+    const mine = syndicate.data && syndicate.data.mine;
+    if (!mine) return;
+    el.resOre.textContent = fmt(mine.treasury.ore);
+    el.resPolymers.textContent = fmt(mine.treasury.polymers);
+    el.resPlasma.textContent = fmt(mine.treasury.plasma);
+    el.resAntimatter.textContent = fmt(mine.treasury.antimatter);
+    el.resCredits.textContent = fmt(mine.bank);
+    for (const node of [el.rateOre, el.ratePolymers, el.ratePlasma, el.rateAntimatter]) {
+      node.textContent = 'казна';
+      node.style.color = '';
+    }
+    el.baseSwitchName.textContent = `Кіш [${mine.tag}]`;
+    el.baseSwitchCoords.textContent = `${mine.kish.systemName || '—'} · ур. ${mine.kish.level}`;
+    renderKishResearchBanner();
+  }
+
+  /**
+   * Полосы изучения и стройки тикают между загрузками сами — от момента
+   * последнего ответа сервера. Отменить стройку может ранг с тем же правом,
+   * что и строить: Академию — право Академии, остальное — развитие Коша.
+   */
+  function renderKishResearchBanner() {
+    const mine = syndicate.data && syndicate.data.mine;
+    const elapsed = syndicate.loadedAt ? (Date.now() - syndicate.loadedAt) / 1000 : 0;
+    const research = mine && mine.academy.research;
+    renderJobBanner(el.kishResearchJob, research && {
+      title: `${research.label} → ур. ${research.targetLevel}`,
+      remainingSeconds: Math.max(0, Math.round(research.remainingSeconds - elapsed)),
+      totalSeconds: research.totalSeconds,
+    });
+    const build = mine && mine.construction;
+    const canCancel = Boolean(build) && mine.me.permissions.includes(build.module === 'AKADEMIIA' ? 'ACADEMY' : 'KISH');
+    renderJobBanner(el.kishBuildJob, build && {
+      title: `${build.label}${build.systemName ? ` · ${build.systemName}` : ''} → ур. ${build.targetLevel}`,
+      remainingSeconds: Math.max(0, Math.round(build.remainingSeconds - elapsed)),
+      totalSeconds: build.totalSeconds,
+      onCancel: canCancel ? () => syndicateAction('/api/syndicates/construction/cancel') : undefined,
+    });
+  }
+
+
+  function renderKishPanels() {
+    const mine = syndicate.data && syndicate.data.mine;
+    if (!mine) {
+      kishRenderKey = '';
+      for (const node of [el.kishOverview, el.kishModules, el.kishTechs, el.kishDefenseSummary, el.kishDefenses, el.kishFleet]) {
+        node.innerHTML = '';
+      }
+      return;
+    }
+    // Пересборка только при изменении данных: таймеры тикают сами, а полная
+    // перерисовка сбрасывала бы кнопку, на которую как раз нажимают.
+    const key = JSON.stringify({
+      ...mine,
+      transactions: null,
+      members: mine.members.length,
+      academy: { ...mine.academy, research: mine.academy.research && [mine.academy.research.tech, mine.academy.research.targetLevel] },
+      watch: { ...mine.watch, incoming: mine.watch.incoming.map((fleet) => fleet.fleetId) },
+      construction: mine.construction && [mine.construction.module, mine.construction.systemId, mine.construction.targetLevel],
+      me: mine.me.permissions,
+    });
+    if (key === kishRenderKey) {
+      renderKishResearchBanner();
+      return;
+    }
+    kishRenderKey = key;
+    const can = (permission) => mine.me.permissions.includes(permission);
+    renderKishOverview(mine, can);
+    renderKishModules(mine, can);
+    renderKishResearch(mine, can);
+    renderKishDefenses(mine, can);
+    renderKishFleet(mine);
+  }
+
+  function renderKishAway(label) {
+    el.kishAwayTitle.textContent = label;
+    el.kishAway.innerHTML = '';
+    el.kishAway.appendChild(synEl('div', 'hub-storage',
+      `Выбран Кіш. «${label}» относится к колониям: Кіш не строит корабли, не торгует и не отправляет флоты. ` +
+      'Флоты к Кошу — доставку, вывоз и караул — отправляют с колонии, а видны они во «Флотилии».'));
+    const row = synEl('div', 'row');
+    for (const base of state.bases) {
+      row.appendChild(synButton(`К колонии ${base.baseName}`, 'ghost', () => {
+        state.activeBaseId = base.baseId;
+        leaveKish();
+      }));
+    }
+    el.kishAway.appendChild(row);
+  }
+
+  /**
+   * Подробности модуля Коша или технологии синдиката — та же панель, что
+   * у построек колонии: описание, арт и уровни вперед. Таблица своя: вместо
+   * добычи и энергии — эффект уровня, цена из казны с гривной, у технологий
+   * еще срок и уровень Академии, без которого уровень не взять.
+   */
+  async function openKishDetail(url, artType, kind) {
+    openDetailShell();
+    el.detailTitle.textContent = '';
+    el.detailLevel.textContent = '';
+    el.detailDesc.textContent = '';
+    el.detailArt.innerHTML = '';
+    el.detailBody.innerHTML = '<p class="detail-note">Считаю…</p>';
+    el.detailClose.focus();
+
+    const { ok, data } = await api(url);
+    if (el.detailScrim.hidden) return;
+    if (!ok) {
+      el.detailBody.innerHTML = `<p class="detail-note">${escapeHtml(data.error || 'Не удалось загрузить')}</p>`;
+      return;
+    }
+    el.detailTitle.textContent = data.label;
+    el.detailLevel.textContent = data.level > 0
+      ? `Сейчас уровень ${data.level}`
+      : kind === 'tech' ? 'Еще не изучено' : 'Еще не построено';
+    el.detailDesc.textContent = data.description;
+    el.detailArt.appendChild(artNode(artType, data.label, kind));
+
+    const withTime = data.rows.some((row) => row.seconds !== null);
+    const head = `<tr><th>Уровень</th><th>${escapeHtml(data.effectLabel)}</th><th>цена</th>${withTime ? '<th>время</th>' : ''}</tr>`;
+    const body = data.rows.map((row) => {
+      const cost = row.cost
+        ? [['credits', row.cost.credits], ['ore', row.cost.ore], ['polymers', row.cost.polymers]]
+          .filter(([, value]) => value > 0)
+          .map(([key, value]) => `${icon(key, 'sm')} ${fmt(value)}`)
+          .join(' ') || '—'
+        : '—';
+      const note = row.note ? `<br><span class="muted">${escapeHtml(row.note)}</span>` : '';
+      return `<tr class="${row.current ? 'current' : ''}"><td>${row.level}</td>` +
+        `<td>${escapeHtml(row.effect)}${note}</td><td>${cost}</td>` +
+        (withTime ? `<td>${row.seconds === null ? '—' : fmtTime(row.seconds)}</td>` : '') + '</tr>';
+    }).join('');
+    el.detailBody.innerHTML = `<table class="detail-table"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+  }
+
+  function treasuryCovers(mine, cost) {
+    return mine.bank >= (cost.credits || 0) && mine.treasury.ore >= (cost.ore || 0) &&
+      mine.treasury.polymers >= (cost.polymers || 0) && mine.treasury.plasma >= (cost.plasma || 0);
+  }
+
+  /** Цена из казны в строке стоимости карточки: гривна и ресурсы, нехватка красным. */
+  function fillTreasuryCost(card, cost, mine) {
+    setCostPart(card.costOre, 'ore', cost.ore || 0, mine.treasury.ore);
+    setCostPart(card.costPolymers, 'polymers', cost.polymers || 0, mine.treasury.polymers);
+    setCostPart(card.costPlasma, 'plasma', cost.plasma || 0, mine.treasury.plasma);
+    const row = card.costOre.parentNode;
+    let credits = row.querySelector('.cost-credits');
+    if (!credits) {
+      credits = document.createElement('span');
+      credits.className = 'cost-credits';
+      row.prepend(credits);
+    }
+    credits.hidden = (cost.credits || 0) <= 0;
+    credits.innerHTML = `${icon('credits', 'sm')} ${fmt(cost.credits || 0)}`;
+    credits.classList.toggle('lack', mine.bank < (cost.credits || 0));
+  }
+
+  /**
+   * Модуль Коша в облике постройки колонии: арт, уровень, эффект, цена
+   * из казны и кнопка. Ставится сразу, поэтому строка времени скрыта.
+   * Без права кнопка выключена с подсказкой — видеть модули должны все.
+   */
+  function kishModuleCard(container, options) {
+    const card = createActionCard(container, options.title, options.description, options.onClick, options.type, options.kind || 'building');
+    if (options.detailUrl) {
+      makeDetailed(card, options.title, () => openKishDetail(options.detailUrl, options.type, options.kind || 'building'));
+    }
+    card.level.textContent = options.level;
+    card.combat.textContent = options.effect;
+    fillTreasuryCost(card, options.cost, options.mine);
+    // Модули строятся по времени: срок стоит в той же строке, что у построек колонии.
+    if (typeof options.seconds === 'number') card.time.textContent = fmtTime(options.seconds);
+    else card.time.parentNode.hidden = true;
+    if (options.extra) card.article.insertBefore(options.extra, card.button);
+    const affordable = treasuryCovers(options.mine, options.cost);
+    const construction = options.mine.construction;
+    const constructionKey = construction
+      ? (construction.module === 'BRAMA' && construction.targetLevel === 1 && !options.mine.gates.list.some((gate) => gate.systemId === construction.systemId)
+        ? 'BRAMA:new'
+        : `${construction.module}:${construction.systemId || ''}`)
+      : null;
+    const buildingThis = constructionKey !== null && constructionKey === options.buildKey;
+    card.article.classList.toggle('built', options.built !== false);
+    card.button.textContent = buildingThis ? 'Идет стройка' : options.label;
+    card.button.disabled = !options.allowed || !affordable || Boolean(construction);
+    card.button.title = !options.allowed ? options.deniedHint
+      : construction && !buildingThis ? 'В Коше уже идет стройка — стройка одна на синдикат'
+      : !affordable ? 'В казне не хватает на это' : '';
+    return card;
+  }
+
+  function renderKishModules(mine, can) {
+    const node = el.kishModules;
+    node.innerHTML = '';
+    const kish = mine.kish;
+    const denyKish = 'Нужно право развития Коша';
+
+    kishModuleCard(node, {
+      mine, type: 'KISH', kind: 'planet', title: 'Кіш', detailUrl: '/api/syndicates/projection/module/KISH',
+      description: 'Хаб синдиката. Каждый уровень добавляет одно место в составе.',
+      level: `Ур. ${kish.level} → ${kish.level + 1}`,
+      effect: `мест в составе: ${kish.memberCap}`,
+      cost: { credits: kish.nextLevelCost }, seconds: kish.nextLevelSeconds, buildKey: 'KISH:', allowed: can('KISH'), deniedHint: denyKish,
+      label: 'Улучшить', onClick: () => syndicateAction('/api/syndicates/kish/upgrade'),
+    });
+    kishModuleCard(node, {
+      mine, type: 'SKARBNYTSIA', title: 'Скарбниця', detailUrl: '/api/syndicates/projection/module/SKARBNYTSIA',
+      description: 'Бережет часть ресурсной казны при налете на Кіш. Гривну не грабят вовсе.',
+      level: `Ур. ${kish.treasuryLevel} → ${kish.treasuryLevel + 1}`,
+      effect: `несгораемо ${Math.round(kish.protectedShare * 100)}% ресурсов казны`,
+      cost: kish.nextTreasuryCost, seconds: kish.nextTreasurySeconds, buildKey: 'SKARBNYTSIA:', allowed: can('KISH'), deniedHint: denyKish, built: kish.treasuryLevel > 0,
+      label: kish.treasuryLevel > 0 ? 'Улучшить' : 'Построить', onClick: () => syndicateAction('/api/syndicates/treasury/upgrade'),
+    });
+    kishModuleCard(node, {
+      mine, type: 'AKADEMIIA', title: 'Академия', detailUrl: '/api/syndicates/projection/module/AKADEMIIA',
+      description: 'Открывает технологии синдиката. Ее уровень — потолок уровня любой технологии.',
+      level: `Ур. ${mine.academy.level} → ${mine.academy.level + 1}`,
+      effect: mine.academy.level > 0 ? `технологии до ур. ${mine.academy.level}` : 'технологии синдиката закрыты',
+      cost: mine.academy.nextLevelCost, seconds: mine.academy.nextLevelSeconds, buildKey: 'AKADEMIIA:', allowed: can('ACADEMY'), deniedHint: 'Нужно право Академии', built: mine.academy.level > 0,
+      label: mine.academy.level > 0 ? 'Улучшить' : 'Построить', onClick: () => syndicateAction('/api/syndicates/academy/upgrade'),
+    });
+    kishModuleCard(node, {
+      mine, type: 'DOZOR', title: 'Дозор', detailUrl: '/api/syndicates/projection/module/DOZOR',
+      description: 'Показывает всем участникам вражеские атаки на колонии в радиусе от Коша.',
+      level: `Ур. ${mine.watch.level} → ${mine.watch.level + 1}`,
+      effect: mine.watch.level <= 0 ? 'атаки на колонии не видны'
+        : mine.watch.radius === 0 ? 'наблюдает систему Коша' : `радиус ${mine.watch.radius} от Коша`,
+      cost: { credits: mine.watch.nextLevelCost }, seconds: mine.watch.nextLevelSeconds, buildKey: 'DOZOR:', allowed: can('KISH'), deniedHint: denyKish, built: mine.watch.level > 0,
+      label: mine.watch.level > 0 ? 'Улучшить' : 'Построить', onClick: () => syndicateAction('/api/syndicates/watch/upgrade'),
+    });
+
+    const gateDescription = 'Прыжок между системами со своими Брамами без «Гипердвигателя» и за треть антиматерии.';
+    for (const gate of mine.gates.list) {
+      kishModuleCard(node, {
+        mine, type: 'BRAMA', title: `Брама · ${gate.systemName}`, description: gateDescription,
+        detailUrl: `/api/syndicates/projection/module/BRAMA?systemId=${encodeURIComponent(gate.systemId)}`,
+        level: `Ур. ${gate.level} → ${gate.level + 1}`,
+        effect: `за час ${fmt(gate.windowShips)} из ${fmt(gate.throughput)} кораблей`,
+        cost: gate.nextLevelCost, seconds: gate.nextLevelSeconds, buildKey: `BRAMA:${gate.systemId}`, allowed: can('KISH'), deniedHint: denyKish,
+        label: 'Улучшить', onClick: () => syndicateAction('/api/syndicates/gates', { systemId: gate.systemId }),
+      });
+    }
+    if (mine.gates.candidates.length) {
+      const select = synEl('select');
+      for (const system of mine.gates.candidates) {
+        const option = synEl('option', null, system.systemName);
+        option.value = system.systemId;
+        option.selected = system.systemId === kishForm.gate;
+        select.appendChild(option);
+      }
+      select.addEventListener('change', () => { kishForm.gate = select.value; });
+      kishModuleCard(node, {
+        mine, type: 'BRAMA', title: 'Новая Брама', detailUrl: '/api/syndicates/projection/module/BRAMA', description: 'Строится в системе, где есть колония хотя бы одного участника.',
+        level: 'Ур. 0 → 1', effect: gateDescription, extra: synField('Система', select),
+        cost: mine.gates.firstLevelCost, seconds: mine.gates.firstLevelSeconds, buildKey: 'BRAMA:new', allowed: can('KISH'), deniedHint: denyKish, built: false,
+        label: 'Построить', onClick: () => syndicateAction('/api/syndicates/gates', { systemId: select.value }),
+      });
+    }
+  }
+
+  function renderKishResearch(mine, can) {
+    const academy = mine.academy;
+    const node = el.kishTechs;
+    node.innerHTML = '';
+    if (academy.level <= 0) {
+      node.appendChild(synEl('div', 'hub-card',
+        'Академия не построена: технологии синдиката откроются после ее постройки в разделе «Отсеки».'));
+    }
+    for (const tech of academy.techs) {
+      const card = createActionCard(node, tech.label, tech.effect,
+        () => syndicateAction('/api/syndicates/research', { tech: tech.tech }), `SYNDICATE_${tech.tech}`, 'tech');
+      makeDetailed(card, tech.label, () =>
+        openKishDetail(`/api/syndicates/projection/tech/${tech.tech}`, `SYNDICATE_${tech.tech}`, 'tech'));
+      card.level.textContent = `Ур. ${tech.level} → ${tech.level + 1}`;
+      fillTreasuryCost(card, tech.nextCost, mine);
+      card.time.textContent = fmtTime(tech.seconds);
+      const needsAcademy = academy.level < tech.level + 1;
+      card.reqs.hidden = !needsAcademy;
+      card.reqs.textContent = needsAcademy ? `Требуется: Академия ур. ${tech.level + 1}` : '';
+      card.article.classList.toggle('locked', needsAcademy);
+      card.article.classList.toggle('built', tech.level > 0);
+      const studying = academy.research && academy.research.tech === tech.tech;
+      const affordable = treasuryCovers(mine, tech.nextCost);
+      card.button.textContent = studying ? 'Изучается' : 'Изучать';
+      card.button.disabled = !can('ACADEMY') || !tech.available || !affordable;
+      card.button.title = !can('ACADEMY') ? 'Нужно право Академии'
+        : !tech.available ? (academy.research ? 'Академия занята другим изучением' : `Нужна Академия ур. ${tech.level + 1}`)
+        : !affordable ? 'В казне не хватает на это' : '';
+    }
+    renderKishResearchBanner();
+  }
+
+  function renderKishDefenses(mine, can) {
+    const kish = mine.kish;
+    const summary = el.kishDefenseSummary;
+    summary.innerHTML = '';
+    if (kish.underRaid) summary.appendChild(synEl('div', 'hub-storage warn', 'К Кошу летит вражеский налет.'));
+    const standing = kish.defenses.filter((item) => item.count > 0);
+    summary.appendChild(synEl('div', 'hub-storage', standing.length
+      ? 'На позиции: ' + standing.map((item) => `${item.label} ×${fmt(item.count)}`).join(' · ')
+      : 'Кіш не укреплен. Оборона ставится из ресурсной казны и сразу встает на позицию.'));
+    summary.appendChild(synEl('div', 'hub-storage',
+      `В бою рядом с установками встает караул флотилии: ${kish.guards.length ? `${kish.guards.length} флот(а) на удержании` : 'сейчас его нет'}.`));
+    summary.appendChild(synEl('div', 'hub-storage',
+      `Скарбниця бережет ${Math.round(kish.protectedShare * 100)}% ресурсов казны при налете; гривну не грабят.`));
+    const node = el.kishDefenses;
+    node.innerHTML = '';
+    for (const item of kish.defenses) {
+      const card = createCardShell(node, item.label, '', item.type, 'defense');
+      card.level.textContent = `На позиции: ${fmt(item.count)}`;
+      fillTreasuryCost(card, item.cost, mine);
+      card.time.parentNode.hidden = true;
+      const order = synEl('div', 'order');
+      const quantity = synNumber(kishForm[`defense:${item.type}`] || 1, 1, 100);
+      quantity.addEventListener('input', () => { kishForm[`defense:${item.type}`] = quantity.value; });
+      const button = synButton('Поставить', 'primary',
+        () => syndicateAction('/api/syndicates/kish/defenses', { type: item.type, quantity: synInt(quantity) }), !can('KISH'));
+      if (!can('KISH')) button.title = 'Нужно право развития Коша';
+      order.append(quantity, button);
+      card.article.appendChild(order);
+    }
+  }
+
+  function renderKishOverview(mine, can) {
+    const node = el.kishOverview;
+    node.innerHTML = '';
+    const kish = mine.kish;
+
+    const head = synEl('section', 'hub-card kish-head');
+    const info = synEl('div');
+    info.append(
+      synEl('h2', null, `Кіш [${mine.tag}] ${mine.name}`),
+      synEl('div', 'muted', `система ${kish.systemName || 'не определена'} · уровень ${kish.level} · состав ${mine.members.length} из ${kish.memberCap}`),
+      synEl('div', 'muted', `твой ранг: ${mine.me.rankName}`),
+    );
+    head.append(artNode('KISH', 'Кіш', 'planet'), info);
+    node.appendChild(head);
+
+    // Тревоги первыми: ради них в Кіш и заходят.
+    const alerts = synCard('Тревоги');
+    if (kish.underRaid) {
+      alerts.appendChild(synEl('div', 'queue-item watch-alert', 'К Кошу летит вражеский налет — переносить Кіш, пока он в пути, нельзя.'));
+    }
+    for (const fleet of mine.watch.incoming) {
+      const row = synEl('div', 'queue-item watch-alert');
+      row.appendChild(synEl('b', null, `${fleet.attackerTag ? `[${fleet.attackerTag}] ` : ''}${fleet.attacker} → ${fleet.target}`));
+      const place = fleet.systemName ? `${fleet.planetName} (${fleet.systemName})` : 'налет на Кіш';
+      row.appendChild(synEl('span', null,
+        `${place} · ${fmt(fleet.ships)} корпусов · прибытие ${synDateTime(Date.now() + fleet.arrivesInSeconds * 1000)}`));
+      alerts.appendChild(row);
+    }
+    if (!kish.underRaid && !mine.watch.incoming.length) {
+      alerts.appendChild(synEl('div', 'hub-storage', mine.watch.level > 0
+        ? 'Вражеских флотов в пути не видно.'
+        : 'Спокойно. Дозор не построен: видны только налеты на сам Кіш, атаки на колонии участников — нет.'));
+    }
+
+    const treasury = synCard('Ресурсная казна');
+    const grid = synEl('div', 'kish-treasury');
+    for (const [key, value] of [['credits', mine.bank], ['ore', mine.treasury.ore], ['polymers', mine.treasury.polymers],
+      ['plasma', mine.treasury.plasma], ['antimatter', mine.treasury.antimatter]]) {
+      const cell = synEl('div', 'kish-res');
+      cell.innerHTML = `${icon(key)} <b>${fmt(value)}</b>`;
+      grid.appendChild(cell);
+    }
+    treasury.append(grid, synEl('div', 'hub-storage',
+      `Ресурсы привозят рейсом «Доставка в Кіш» и вывозят «Вывозом из казны» с колонии. Взносы гривной, выдачи и журнал — в разделе «Синдикат».`));
+    treasury.appendChild(synButton('Казна и состав', 'ghost', () => showPanel('syndicate')));
+
+    const status = synCard('Состояние');
+    status.appendChild(synEl('div', 'hub-storage', mine.academy.research
+      ? `Изучается: ${mine.academy.research.label} → ур. ${mine.academy.research.targetLevel}`
+      : mine.academy.level > 0 ? 'Академия свободна — изучение ставится в разделе «Академия».' : 'Академия не построена.'));
+    if (mine.construction) {
+      const build = mine.construction;
+      status.appendChild(synEl('div', 'hub-storage warn',
+        `Стройка: ${build.label}${build.systemName ? ` · ${build.systemName}` : ''} → ур. ${build.targetLevel}, ` +
+        `готово ${synDateTime(Date.now() + build.remainingSeconds * 1000)}`));
+    }
+    status.appendChild(synEl('div', 'hub-storage', kish.guards.length
+      ? `На удержании у Коша: ${kish.guards.map((guard) => `${guard.nickname} (${fmt(guard.ships)})`).join(' · ')}`
+      : 'Флотов на удержании у Коша нет.'));
+    const standing = kish.defenses.reduce((sum, item) => sum + item.count, 0);
+    status.appendChild(synEl('div', 'hub-storage', `Оборона на позиции: ${fmt(standing)} · Брам: ${mine.gates.list.length}`));
+    if (kish.debris.ore + kish.debris.polymers > 0) {
+      status.appendChild(synEl('div', 'hub-storage', `Осколки у Коша: ${fmt(kish.debris.ore)} руды, ${fmt(kish.debris.polymers)} полимеров.`));
+    }
+
+    const first = synEl('div', 'syndicate-grid');
+    first.append(alerts, treasury);
+    const second = synEl('div', 'syndicate-grid');
+    second.append(status, renderKishMove(mine, can));
+    node.append(first, second);
+  }
+
+  /**
+   * Флотилия — корабли вокруг Коша, а не верфь: своих кораблей Кіш не строит.
+   * Караул на удержании, враги в пути к Кошу и осколки после боев.
+   */
+  function renderKishFleet(mine) {
+    const node = el.kishFleet;
+    node.innerHTML = '';
+    const kish = mine.kish;
+    const grid = synEl('div', 'syndicate-grid');
+
+    const guard = synCard(`Караул · ${kish.guards.length}`);
+    if (!kish.guards.length) {
+      guard.appendChild(synEl('div', 'hub-storage', 'На удержании у Коша никого нет.'));
+    }
+    for (const fleet of kish.guards) {
+      const row = synEl('div', 'syn-member');
+      const info = synEl('div', 'syn-member-info');
+      info.append(synEl('div', 'syn-member-name', fleet.nickname),
+        synEl('div', 'syn-member-meta', `${fmt(fleet.ships)} корпусов${fleet.until ? ` · до ${synDateTime(fleet.until)}` : ''}`));
+      row.appendChild(info);
+      guard.appendChild(row);
+    }
+    guard.appendChild(synEl('div', 'hub-storage',
+      'Караул ставят с колонии миссией «Удержание Коша» на 1, 4, 8 или 24 часа. В бою он встает рядом с Бастионом.'));
+
+    const threats = synCard('К Кошу летят');
+    const raids = mine.watch.incoming.filter((fleet) => !fleet.systemName);
+    if (!raids.length) threats.appendChild(synEl('div', 'hub-storage', 'Вражеских налетов на Кіш не видно.'));
+    for (const fleet of raids) {
+      const row = synEl('div', 'queue-item watch-alert');
+      row.appendChild(synEl('b', null, `${fleet.attackerTag ? `[${fleet.attackerTag}] ` : ''}${fleet.attacker}`));
+      row.appendChild(synEl('span', null,
+        `${fmt(fleet.ships)} корпусов · прибытие ${synDateTime(Date.now() + fleet.arrivesInSeconds * 1000)}`));
+      threats.appendChild(row);
+    }
+    if (kish.debris.ore + kish.debris.polymers > 0) {
+      threats.appendChild(synEl('h4', 'syn-subtitle', 'Осколки у Коша'));
+      threats.appendChild(synEl('div', 'hub-storage',
+        `${fmt(kish.debris.ore)} руды, ${fmt(kish.debris.polymers)} полимеров — их собирает переработчик рейсом «Сбор осколков».`));
+    }
+
+    grid.append(guard, threats);
+    node.appendChild(grid);
+  }
+
+  /** Перенос Коша живет рядом с его адресом: это решение о том, где Кіш стоит. */
+  function renderKishMove(mine, can) {
+    const kish = mine.kish;
+    const card = synCard('Расположение');
+    card.appendChild(synEl('div', 'hub-storage',
+      `Кіш стоит в системе ${kish.systemName || '—'}. Перенести его можно в систему со своей Брамой ` +
+      'за антиматерию казны, не чаще раза в сутки.'));
+    if (kish.nextMoveAt) {
+      card.appendChild(synEl('div', 'hub-storage warn', `Кіш переносили недавно: снова можно с ${synDateTime(kish.nextMoveAt)}`));
+    }
+    if (!kish.moveTargets.length) {
+      card.appendChild(synEl('div', 'hub-storage', 'Своих Брам в других системах нет — переносить некуда.'));
+      return card;
+    }
+    const select = synEl('select');
+    for (const target of kish.moveTargets) {
+      const option = synEl('option', null, `${target.systemName} · ${fmt(target.antimatter)} антиматерии`);
+      option.value = target.systemId;
+      option.disabled = mine.treasury.antimatter < target.antimatter;
+      option.selected = target.systemId === kishForm.move;
+      select.appendChild(option);
+    }
+    select.addEventListener('change', () => { kishForm.move = select.value; });
+    const move = synConfirm('Перенести Кіш', 'Точно перенести?', 'ghost',
+      () => syndicateAction('/api/syndicates/kish/move', { systemId: select.value }));
+    move.disabled = !can('KISH') || Boolean(kish.nextMoveAt) || kish.underRaid;
+    if (!can('KISH')) move.title = 'Нужно право развития Коша';
+    const form = synEl('div', 'syndicate-form');
+    form.append(synField('Куда перенести', select), move);
+    card.appendChild(form);
+    return card;
+  }
+
+  /**
+   * Редактор ранга. Вершина — ранг главаря: переименовать его можно,
+   * а права и место нет, поэтому эти поля у него выключены.
+   */
+  function rankEditor(rank, data, labelOf) {
+    const isTop = Boolean(rank) && rank.position === 0;
+    const box = synEl('div', 'rank-editor');
+
+    const name = synEl('input');
+    name.type = 'text';
+    name.maxLength = 24;
+    name.value = rank ? rank.name : '';
+    const position = synNumber(rank ? rank.position : 1, isTop ? 0 : 1, 99);
+    position.disabled = isTop;
+    const limit = synNumber(rank ? rank.dailyWithdrawLimit : 0, 0);
+    limit.disabled = isTop;
+
+    const head = synEl('div', 'row');
+    head.append(synField('Название', name), synField('Место (1 — выше)', position), synField('Выдача в сутки, ₴', limit));
+    box.appendChild(head);
+
+    const grid = synEl('div', 'perm-grid');
+    const boxes = [];
+    for (const item of data.permissionCatalog) {
+      const label = synEl('label');
+      const check = document.createElement('input');
+      check.type = 'checkbox';
+      check.value = item.key;
+      check.checked = isTop || Boolean(rank && rank.permissions.includes(item.key));
+      check.disabled = isTop;
+      boxes.push(check);
+      label.append(check, synEl('span', null, labelOf.get(item.key) || item.key));
+      grid.appendChild(label);
+    }
+    box.appendChild(grid);
+
+    const payload = () => ({
+      name: name.value,
+      position: synInt(position),
+      permissions: boxes.filter((item) => item.checked).map((item) => item.value),
+      dailyWithdrawLimit: synInt(limit),
+    });
+
+    const actions = synEl('div', 'row');
+    if (rank) {
+      actions.appendChild(synButton('Сохранить', 'ghost',
+        () => syndicateAction(`/api/syndicates/ranks/${rank.id}`, payload())));
+      if (!isTop) {
+        actions.appendChild(synConfirm('Удалить', 'Точно удалить?', 'ghost',
+          () => syndicateAction(`/api/syndicates/ranks/${rank.id}/delete`)));
+      }
+      actions.appendChild(synEl('span', 'hub-storage', `участников: ${rank.members}`));
+    } else {
+      actions.appendChild(synButton('Создать ранг', 'primary', () => syndicateAction('/api/syndicates/ranks', payload())));
+    }
+    box.appendChild(actions);
+    return box;
   }
 
 
@@ -7020,7 +8557,10 @@
     }
 
     if (rating.mode === 'syndicates') renderSyndicateRating(data.syndicates);
-    else renderPlayerRating(data.players, data.me);
+    else {
+      if (ratingBoards) ratingBoards.hidden = true;
+      renderPlayerRating(data.players, data.me);
+    }
   }
 
   /** Своя строка отдельно: игрок может не попасть в показанную сотню. */
@@ -7063,22 +8603,64 @@
     }
   }
 
-  function renderSyndicateRating(syndicates) {
-    el.ratingHead.innerHTML =
-      '<tr><th>#</th><th>Синдикат</th><th>Счет</th><th>Состав</th><th>В среднем</th></tr>';
+  /*
+   * У синдикатов три таблицы, и переключаются они здесь же, над таблицей:
+   * общий счет, военный и экономический. Порядок строк — порядок выбранного
+   * счета, поэтому и место считается по нему.
+   */
+  const SYNDICATE_BOARDS = [
+    { key: 'total', label: 'Общий' },
+    { key: 'military', label: 'Военный' },
+    { key: 'economy', label: 'Экономика' },
+    { key: 'science', label: 'Наука' },
+  ];
+  let ratingBoards = null;
 
-    el.ratingRows.innerHTML = '';
-    for (const row of syndicates) {
-      const tr = document.createElement('tr');
-      tr.innerHTML =
-        `<td>${row.rank}</td>` +
-        `<td><span class="rating-tag">[${escapeHtml(row.tag)}]</span> ${escapeHtml(row.name)}</td>` +
-        `<td><b>${fmt(row.total)}</b></td><td>${row.members}</td><td>${fmt(row.average)}</td>`;
-      el.ratingRows.appendChild(tr);
+  function renderSyndicateRating(syndicates) {
+    if (!rating.syndicateBoard) rating.syndicateBoard = 'total';
+    if (!ratingBoards) {
+      ratingBoards = document.createElement('div');
+      ratingBoards.className = 'rating-boards';
+      for (const board of SYNDICATE_BOARDS) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'mode';
+        button.dataset.board = board.key;
+        button.textContent = board.label;
+        button.addEventListener('click', () => {
+          rating.syndicateBoard = board.key;
+          renderRating();
+        });
+        ratingBoards.appendChild(button);
+      }
+      el.ratingHead.closest('table').before(ratingBoards);
+    }
+    ratingBoards.hidden = false;
+    for (const button of ratingBoards.querySelectorAll('.mode')) {
+      button.classList.toggle('active', button.dataset.board === rating.syndicateBoard);
     }
 
+    const key = rating.syndicateBoard;
+    const sorted = [...syndicates].sort((a, b) => (b[key] || 0) - (a[key] || 0) || a.name.localeCompare(b.name, 'ru'));
+
+    el.ratingHead.innerHTML =
+      '<tr><th>#</th><th>Синдикат</th><th>Общий</th><th>Военный</th><th>Экономика</th><th>Наука</th>' +
+      '<th>Вложено в Кіш</th><th>Состав</th><th>В среднем</th></tr>';
+
+    el.ratingRows.innerHTML = '';
+    sorted.forEach((row, index) => {
+      const tr = document.createElement('tr');
+      const cell = (field) => (field === key ? `<b>${fmt(row[field])}</b>` : fmt(row[field]));
+      tr.innerHTML =
+        `<td>${index + 1}</td>` +
+        `<td><span class="rating-tag">[${escapeHtml(row.tag)}]</span> ${escapeHtml(row.name)}</td>` +
+        `<td>${cell('total')}</td><td>${cell('military')}</td><td>${cell('economy')}</td><td>${cell('science')}</td>` +
+        `<td>${fmt(row.invested)}</td><td>${row.members}</td><td>${fmt(row.average)}</td>`;
+      el.ratingRows.appendChild(tr);
+    });
+
     if (!syndicates.length) {
-      el.ratingRows.innerHTML = '<tr><td colspan="5">Синдикатов пока нет</td></tr>';
+      el.ratingRows.innerHTML = '<tr><td colspan="9">Синдикатов пока нет</td></tr>';
     }
   }
 

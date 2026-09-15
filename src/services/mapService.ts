@@ -16,8 +16,10 @@ import {
 } from '../game/fogOfWar.js';
 import { emptyDefenseCounts, type DefenseCounts, type DefenseType } from '../game/defenses.js';
 import { emptyShipCounts, type ShipCounts } from '../game/ships.js';
-import { storageCapacity, storageUsed } from '../game/market.js';
-import type { GalaxyMap, HubView, SystemMap } from '../types/socket.js';
+import type { GalaxyMap, HubView, KishView, SystemMap } from '../types/socket.js';
+import { membershipOf } from './syndicateAccess.js';
+import { hubStockUsage } from './hubStock.js';
+import { hasPermission, KISH_POSITION } from '../game/syndicate.js';
 
 /**
  * Карта одной системы для игрока.
@@ -42,7 +44,7 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
     : home.system;
   if (!targetSystem) return null;
 
-  const [planets, scans, hub] = await Promise.all([
+  const [planets, scans, hub, kishes, viewer] = await Promise.all([
     prisma.planet.findMany({
       where: { systemId: targetSystem.id },
       orderBy: { position: 'asc' },
@@ -53,6 +55,8 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
       where: { systemId: targetSystem.id },
       include: { storages: { where: { commanderId } } },
     }),
+    prisma.syndicate.findMany({ where: { kishSystemId: targetSystem.id }, include: { bank: true } }),
+    prisma.commander.findUnique({ where: { id: commanderId }, select: { syndicateId: true } }),
   ]);
 
   const scanByPlanet = new Map(scans.map((scan) => [scan.planetId, scan]));
@@ -119,31 +123,56 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
     }
 
     const scan = scanByPlanet.get(planet.id);
-    return foreignPlanetView(
+    const view = foreignPlanetView(
       facts,
       // Снимок разведки пишет Game Loop, структура данных известна заранее.
       scan ? { data: scan.data as unknown as ScanPayload, scannedAt: scan.scannedAt } : null,
       now,
     );
+    // Членство в синдикате публично: его видно и в составе синдиката, и в рейтинге.
+    return {
+      ...view,
+      ally: Boolean(viewer?.syndicateId && planet.base && planet.base.commander.syndicateId === viewer.syndicateId),
+    };
   });
 
   const storage = hub?.storages[0] ?? null;
-  const hubView: HubView | null = hub
+  // На хабе доступны его склад и общий склад купленного; размер один на все хабы.
+  const stock = hub ? await hubStockUsage(prisma, commanderId) : null;
+  const hubView: HubView | null = hub && stock
     ? {
         hubId: hub.id,
         name: hub.name,
         position: hub.position,
-        storage: storage
-          ? {
-              ore: Math.round(storage.ore),
-              polymers: Math.round(storage.polymers),
-              level: storage.level,
-              capacity: storageCapacity(storage.level),
-              free: Math.max(0, storageCapacity(storage.level) - storageUsed(storage)),
-            }
-          : null,
+        storage: {
+          ore: Math.round((storage?.ore ?? 0) + stock.global.ore),
+          polymers: Math.round((storage?.polymers ?? 0) + stock.global.polymers),
+          level: stock.level,
+          capacity: stock.capacity,
+          free: Math.round(stock.free),
+        },
       }
     : null;
+
+  const ownKish = kishes.some((row) => row.id === viewer?.syndicateId);
+  const access = ownKish ? await membershipOf(commanderId) : null;
+  const kishViews: KishView[] = kishes.map((row) => {
+    const own = row.id === viewer?.syndicateId;
+    return {
+      syndicateId: row.id,
+      name: `Кіш [${row.tag}]`,
+      tag: row.tag,
+      level: row.kishLevel,
+      position: KISH_POSITION,
+      own,
+      treasury:
+        own && row.bank
+          ? { ore: Math.floor(row.bank.ore), polymers: Math.floor(row.bank.polymers), plasma: Math.floor(row.bank.plasma) }
+          : null,
+      canPickup: Boolean(own && access?.ok && hasPermission(access, 'WITHDRAW')),
+      debris: { ore: Math.floor(row.debrisOre), polymers: Math.floor(row.debrisPolymers) },
+    };
+  });
 
   return {
     systemId: targetSystem.id,
@@ -155,6 +184,7 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
     isHome: targetSystem.id === home.systemId,
     planets: views,
     hub: hubView,
+    kishes: kishViews,
   };
 }
 
@@ -176,7 +206,7 @@ export async function buildGalaxyMap(commanderId: string): Promise<GalaxyMap | n
   });
   if (!home) return null;
 
-  const [systems, scans] = await Promise.all([
+  const [systems, scans, member] = await Promise.all([
     prisma.solarSystem.findMany({
       orderBy: [{ galaxyX: 'asc' }, { galaxyY: 'asc' }],
       include: {
@@ -184,7 +214,13 @@ export async function buildGalaxyMap(commanderId: string): Promise<GalaxyMap | n
       },
     }),
     prisma.planetScan.findMany({ where: { commanderId }, select: { planetId: true } }),
+    prisma.commander.findUnique({
+      where: { id: commanderId },
+      select: { syndicate: { select: { kishSystemId: true, gates: { select: { systemId: true, level: true } } } } },
+    }),
   ]);
+  // Сеть своих Брам и Кіш на карте галактики: по ним видно, куда можно прыгнуть без гипердвигателя.
+  const gateLevel = new Map((member?.syndicate?.gates ?? []).map((gate) => [gate.systemId, gate.level]));
 
   const scanned = new Set(scans.map((scan) => scan.planetId));
 
@@ -202,6 +238,8 @@ export async function buildGalaxyMap(commanderId: string): Promise<GalaxyMap | n
       hasOwnColony: system.planets.some((planet) => planet.base?.commanderId === commanderId),
       colonized: system.planets.some((planet) => planet.base !== null),
       scannedPlanets: system.planets.filter((planet) => scanned.has(planet.id)).length,
+      syndicateGate: gateLevel.get(system.id) ?? null,
+      ownKish: member?.syndicate?.kishSystemId === system.id,
     })),
   };
 }

@@ -194,6 +194,7 @@
       </div>
 
       <p id="auth-message" class="auth-message" hidden></p>
+      <p class="game-version" data-version hidden></p>
     </div>
   </section>
 
@@ -311,22 +312,23 @@
       <aside class="sidebar" id="sidebar">
         <nav class="nav" id="tabs">
           <div class="nav-group">
-            <h2 class="nav-title">Обзор</h2>
-            <button type="button" class="tab active" data-tab="overview"><svg class="ico" aria-hidden="true"><use href="#ico-nav-overview"/></svg><span>Центр управления</span></button>
+            <h2 class="nav-title" data-kish-title="Кіш">Обзор</h2>
+            <button type="button" class="tab active" data-tab="overview" data-kish-label="Мостик"><svg class="ico" aria-hidden="true"><use href="#ico-nav-overview"/></svg><span>Центр управления</span></button>
           </div>
 
           <div class="nav-group">
-            <h2 class="nav-title">Развитие</h2>
-            <button type="button" class="tab" data-tab="buildings"><svg class="ico" aria-hidden="true"><use href="#ico-nav-buildings"/></svg><span>Инфраструктура</span></button>
-            <button type="button" class="tab" data-tab="research"><svg class="ico" aria-hidden="true"><use href="#ico-nav-research"/></svg><span>Исследования</span></button>
+            <h2 class="nav-title" data-kish-title="Развитие Коша">Развитие</h2>
+            <button type="button" class="tab" data-tab="buildings" data-kish-label="Отсеки"><svg class="ico" aria-hidden="true"><use href="#ico-nav-buildings"/></svg><span>Инфраструктура</span></button>
+            <button type="button" class="tab" data-tab="research" data-kish-label="Академия"><svg class="ico" aria-hidden="true"><use href="#ico-nav-research"/></svg><span>Исследования</span></button>
           </div>
 
           <div class="nav-group">
-            <h2 class="nav-title">Армия</h2>
-            <button type="button" class="tab" data-tab="shipyard"><svg class="ico" aria-hidden="true"><use href="#ico-nav-shipyard"/></svg><span>Верфь</span></button>
-            <button type="button" class="tab" data-tab="defense"><svg class="ico" aria-hidden="true"><use href="#ico-nav-defense"/></svg><span>Оборона</span></button>
+            <h2 class="nav-title" data-kish-title="Защита Коша">Армия</h2>
+            <button type="button" class="tab" data-tab="shipyard" data-kish-label="Флотилия"><svg class="ico" aria-hidden="true"><use href="#ico-nav-shipyard"/></svg><span>Верфь</span></button>
+            <button type="button" class="tab" data-tab="defense" data-kish-label="Бастион"><svg class="ico" aria-hidden="true"><use href="#ico-nav-defense"/></svg><span>Оборона</span></button>
           </div>
 
+          <!-- Карты в режиме Коша остаются: система открывается на системе Коша. Биржи у Коша нет. -->
           <div class="nav-group">
             <h2 class="nav-title">Командование</h2>
             <button type="button" class="tab" data-tab="map"><svg class="ico" aria-hidden="true"><use href="#ico-nav-system"/></svg><span>Карта системы</span></button>
@@ -335,7 +337,7 @@
 
           <div class="nav-group">
             <h2 class="nav-title">Операции</h2>
-            <button type="button" class="tab" data-tab="market"><svg class="ico" aria-hidden="true"><use href="#ico-nav-market"/></svg><span>Хаб и биржа</span></button>
+            <button type="button" class="tab" data-tab="market" data-kish-hidden><svg class="ico" aria-hidden="true"><use href="#ico-nav-market"/></svg><span>Хаб и биржа</span></button>
             <button type="button" class="tab" data-tab="syndicate"><svg class="ico" aria-hidden="true"><use href="#ico-nav-syndicate"/></svg><span>Синдикат</span></button>
             <button type="button" class="tab" data-tab="war"><svg class="ico" aria-hidden="true"><use href="#ico-nav-war"/></svg><span>Экспедиции и войны</span></button>
             <button type="button" class="tab" data-tab="rating"><svg class="ico" aria-hidden="true"><use href="#ico-nav-rating"/></svg><span>Рейтинг</span></button>
@@ -356,6 +358,8 @@
             <h2 class="nav-title">Сервер</h2>
             <button type="button" class="tab" data-tab="admin" id="admin-tab"><svg class="ico" aria-hidden="true"><use href="#ico-nav-admin"/></svg><span>Управление сервером</span></button>
           </div>
+
+          <p class="game-version nav-version" data-version hidden></p>
         </nav>
       </aside>
 
@@ -469,6 +473,44 @@
           <div id="defenses" class="cards"></div>
         </section>
 
+        <!--
+          Кіш синдиката выбирается в переключателе колоний, и разделы колонии
+          ведут сюда: центр управления, модули, технологии и оборона Коша.
+          Верфь, биржа и карты к Кошу не относятся — для них отдельная заглушка.
+        -->
+        <section data-panel="kish-overview" hidden>
+          <h3 class="panel-title">Мостик</h3>
+          <div id="kish-overview"></div>
+        </section>
+
+        <section data-panel="kish-modules" hidden>
+          <h3 class="panel-title">Отсеки Коша</h3>
+          <div id="kish-build-job" class="job-banner" hidden></div>
+          <div id="kish-modules" class="cards"></div>
+        </section>
+
+        <section data-panel="kish-research" hidden>
+          <h3 class="panel-title">Академия · технологии синдиката</h3>
+          <div id="kish-research-job" class="job-banner" hidden></div>
+          <div id="kish-techs" class="cards"></div>
+        </section>
+
+        <section data-panel="kish-defense" hidden>
+          <h3 class="panel-title">Бастион</h3>
+          <div id="kish-defense-summary" class="hub-card kish-summary"></div>
+          <div id="kish-defenses" class="cards"></div>
+        </section>
+
+        <section data-panel="kish-fleet" hidden>
+          <h3 class="panel-title">Флотилия</h3>
+          <div id="kish-fleet"></div>
+        </section>
+
+        <section data-panel="kish-away" hidden>
+          <h3 class="panel-title" id="kish-away-title">Недоступно для Коша</h3>
+          <div id="kish-away" class="hub-card"></div>
+        </section>
+
         <section data-panel="map" hidden>
           <div class="map-modes">
             <button type="button" class="mode" data-mode="system">Система</button>
@@ -495,13 +537,13 @@
             <div class="mk-head-top">
               <div id="hub-storage" class="mk-hub"></div>
               <div class="mk-hub-actions">
-                <button type="button" class="ghost tiny" id="upgrade-storage" hidden></button>
+                <button type="button" class="mk-action" id="upgrade-storage" hidden></button>
                 <!--
                   Отсюда до рейса один шаг: товар лежит на хабе, а везут его
                   формой у карты. Раньше путь был «вспомнить, что есть карта,
                   найти на ней станцию, кликнуть, выбрать миссию».
                 -->
-                <button type="button" class="ghost tiny" id="hub-transport">Транспортировка</button>
+                <button type="button" class="mk-action transport" id="hub-transport">Транспортировка</button>
               </div>
             </div>
             <div id="market-quotes" class="mk-stats"></div>
@@ -669,21 +711,33 @@
 
         <section data-panel="war" hidden>
           <h3 class="panel-title">Экспедиции и войны</h3>
-          <h3 class="section-title">Профиль командира</h3>
-          <div id="commander-profile" class="hub-card"></div>
+          <!--
+            Раздел отвечает на три вопроса: кто я в войне (сводка сверху), что со мной
+            случилось (бои и экспедиции) и с кем я воюю или дружу (дипломатия).
+            Части идут вкладками: одной лентой они прятали друг друга, и до отчетов
+            о боях приходилось листать мимо профиля и всех достижений.
+          -->
+          <div id="commander-profile" class="war-hero"></div>
+          <div id="war-tabs" class="syn-seg war-tabs" role="tablist"></div>
 
-          <h3 class="section-title">Достижения</h3>
-          <div id="achievements" class="cards"></div>
+          <div class="war-pane" data-war-pane="battles">
+            <div id="battle-filter" class="syn-seg"></div>
+            <div id="battles" class="war-list"></div>
+          </div>
 
-          <h3 class="section-title">Экспедиции в глубокий космос</h3>
-          <div id="expedition-slots" class="hub-card"></div>
-          <div id="expeditions" class="battles"></div>
+          <div class="war-pane" data-war-pane="expeditions" hidden>
+            <div id="expedition-slots" class="hub-card"></div>
+            <div id="expeditions" class="war-list"></div>
+          </div>
 
-          <h3 class="section-title">Дипломатия</h3>
-          <div id="diplomacy" class="queue"></div>
+          <div class="war-pane" data-war-pane="diplomacy" hidden>
+            <div id="diplomacy" class="war-stack"></div>
+          </div>
 
-          <h3 class="section-title">Отчеты о боях</h3>
-          <div id="battles" class="battles"></div>
+          <div class="war-pane" data-war-pane="achievements" hidden>
+            <div id="achievements-head" class="hub-card"></div>
+            <div id="achievements" class="cards"></div>
+          </div>
         </section>
 
         <section data-panel="rating" hidden>
@@ -884,6 +938,8 @@
 
         <section class="side-card dispatch" id="dispatch" hidden>
           <h3 class="section-title">Отправка флота</h3>
+          <!-- В режиме Коша флот уходит с колонии, выбранной здесь: своих кораблей у Коша нет. -->
+          <label class="field" id="dispatch-origin-row" hidden><span>Вылет с колонии</span><select id="dispatch-origin"></select></label>
 
           <!--
             Цель стоит над шагами, а не отдельным шагом: она уже выбрана кликом
@@ -948,12 +1004,17 @@
               <label class="field field-with-max"><span id="cargo-ore-label"><svg class="ico ore sm" role="img" aria-label="Руда"><title>Руда</title><use href="#ico-ore"/></svg> Руда</span><input id="cargo-ore" type="number" min="0" value="0"><button type="button" class="field-max" id="cargo-ore-max">все</button></label>
               <label class="field field-with-max"><span id="cargo-polymers-label"><svg class="ico polymers sm" role="img" aria-label="Полимеры"><title>Полимеры</title><use href="#ico-polymers"/></svg> Полимеры</span><input id="cargo-polymers" type="number" min="0" value="0"><button type="button" class="field-max" id="cargo-polymers-max">все</button></label>
               <label class="field field-with-max" id="cargo-plasma-field"><span id="cargo-plasma-label"><svg class="ico plasma sm" role="img" aria-label="Плазма"><title>Плазма</title><use href="#ico-plasma"/></svg> Плазма</span><input id="cargo-plasma" type="number" min="0" value="0"><button type="button" class="field-max" id="cargo-plasma-max">все</button></label>
+              <label class="field field-with-max" id="cargo-antimatter-field" hidden><span id="cargo-antimatter-label"><svg class="ico antimatter sm" role="img" aria-label="Антиматерия"><title>Антиматерия</title><use href="#ico-antimatter"/></svg> Антиматерия</span><input id="cargo-antimatter" type="number" min="0" value="0"><button type="button" class="field-max" id="cargo-antimatter-max">все</button></label>
             </div>
             <!--
               Рейс без возврата. Для дислокации и колонизации это свойство
               самой миссии, а транспорт летит и так, и так: помощь союзнику
               может уйти вместе с кораблями — именно этим передают флот.
             -->
+            <!-- Удержание: флот стоит у союзника выбранный срок и защищает его. -->
+            <label class="field" id="hold-row" hidden><span>Срок удержания</span><select id="hold-hours"><option value="1">1 час</option><option value="4">4 часа</option><option value="8" selected>8 часов</option><option value="24">24 часа</option></select></label>
+            <!-- Совместная атака: флот встает в группу атаки своего синдиката и дерется с ней одним боем. -->
+            <label class="field" id="joint-row" hidden><span>Совместная атака</span><select id="joint-attack"><option value="">Своя атака</option></select></label>
             <label class="check-row" id="one-way-row" hidden>
               <input id="one-way" type="checkbox">
               <span>Без возврата — корабли остаются у цели</span>

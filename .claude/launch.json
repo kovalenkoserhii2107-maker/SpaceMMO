@@ -4,8 +4,24 @@
     {
       "name": "spacemmo",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "port": 3000
+    },
+    {
+      "name": "spacemmo-labtest",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "DATABASE_URL=postgresql://postgres:test@localhost:55432/labtest",
+        "GEMINI_API_KEY=",
+        "PORT=3100",
+        "npx",
+        "tsx",
+        "src/index.ts"
+      ],
+      "port": 3100
     }
   ]
 }

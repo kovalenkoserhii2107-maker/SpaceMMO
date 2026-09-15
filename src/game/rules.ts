@@ -332,10 +332,61 @@ export function emptyLevels(): BuildingLevels {
   };
 }
 
+/*
+ * Кривая цены выполаживается наверху.
+ *
+ * Чистая геометрия множителем 2.3 к двенадцатому уровню требует десяти
+ * миллионов единиц накопительно — это не «дорого», а недостижимо: за месяц
+ * лучший бот доходил до верфи десятого, и авианосец с линкором не открывались
+ * ни у кого ни разу. Ворота, в которые никто не входит, контентом не являются.
+ *
+ * Убирать множитель целиком нельзя — на нем держится весь темп первых двух
+ * недель, и ровно он делает каждый следующий уровень событием. Поэтому
+ * экспонента остается до порога, а выше прирост слабеет уровень за уровнем:
+ * арка сохраняется, кривая перестает уходить в вертикаль.
+ *
+ * Пол нужен затем, чтобы затухание не выродилось в линейный рост: уровень
+ * обязан оставаться заметно дороже предыдущего на любой высоте.
+ */
+const TAPER_FROM = 8;
+const TAPER_DECAY = 0.8;
+const TAPER_FLOOR = 1.3;
+
+/**
+ * Накопленный множитель цены к уровню targetLevel со сглаженной вершиной.
+ *
+ * Считается произведением по уровням, а не степенью: выше порога у каждого
+ * уровня свой множитель, и закрытой формы у такого произведения нет.
+ */
+export function taperedScale(factor: number, targetLevel: number): number {
+  let scale = 1;
+  for (let level = 2; level <= targetLevel; level += 1) {
+    if (level <= TAPER_FROM) {
+      scale *= factor;
+      continue;
+    }
+    const faded = (factor - 1) * Math.pow(TAPER_DECAY, level - TAPER_FROM);
+    scale *= 1 + Math.max(TAPER_FLOOR - 1, faded);
+  }
+  return scale;
+}
+
+/*
+ * Выполаживание получают только верфь и лаборатория.
+ *
+ * Шахты и склады растут множителем 1.65 и в вертикаль не уходят вовсе,
+ * а их темп подобран замером против добычи — тронуть его значит пересобрать
+ * всю экономику ради чужой задачи. Стена стоит там, где ворота контента:
+ * верфь открывает классы кораблей, лаборатория — технологии.
+ */
+const TAPERED_BUILDINGS: readonly BuildingType[] = ['SHIPYARD', 'SCIENCE_CENTER'];
+
 /** Стоимость апгрейда до уровня targetLevel (>= 1). */
 export function upgradeCost(type: BuildingType, targetLevel: number): ResourceAmounts {
   const cost = COSTS[type];
-  const scale = Math.pow(cost.factor, targetLevel - 1);
+  const scale = TAPERED_BUILDINGS.includes(type)
+    ? taperedScale(cost.factor, targetLevel)
+    : Math.pow(cost.factor, targetLevel - 1);
   return {
     ore: Math.floor(cost.ore * scale),
     polymers: Math.floor(cost.polymers * scale),

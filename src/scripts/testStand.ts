@@ -52,7 +52,15 @@ for (const commander of [admiral, pilot]) {
 }
 await prisma.commander.updateMany({
   where: { id: { in: [admiral.id, pilot.id] } },
-  data: { credits: 10000, syndicateId: null, syndicateRole: null },
+  data: {
+    credits: 10000,
+    syndicateId: null,
+    syndicateRole: null,
+    syndicateRankId: null,
+    syndicateJoinedAt: null,
+    syndicateLeftAt: null,
+    syndicateMerit: 0,
+  },
 });
 
 for (const commander of [admiral, pilot]) {
@@ -60,6 +68,12 @@ for (const commander of [admiral, pilot]) {
     where: { commanderId_hubId: { commanderId: commander.id, hubId: hub.id } },
     create: { commanderId: commander.id, hubId: hub.id, ore: 20000, polymers: 20000, level: 8 },
     update: { ore: 20000, polymers: 20000, level: 8 },
+  });
+  // Размер склада теперь один на командира — стенду он нужен большим.
+  await prisma.hubAccount.upsert({
+    where: { commanderId: commander.id },
+    create: { commanderId: commander.id, level: 8 },
+    update: { level: 8, ore: 0, polymers: 0 },
   });
 }
 

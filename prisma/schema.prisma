@@ -67,37 +67,50 @@ model Commander {
   battlesWon  Int @default(0)
   battlesLost Int @default(0)
 
-  /// Членство в синдикате (Этап 9).
-  syndicateId   String?
-  syndicateRole SyndicateRole?
+  /// Членство в синдикате.
+  syndicateId       String?
+  /// Прежняя роль. Устарела вместе с появлением рангов и читается только затем,
+  /// чтобы разложить по стартовым рангам тех, кто вступил до них.
+  syndicateRole     SyndicateRole?
+  syndicateRankId   String?
+  syndicateJoinedAt DateTime?
+  /// Когда командир сам вышел из синдиката — от этого считается пауза перед новым.
+  syndicateLeftAt   DateTime?
+  /// Заслуги в текущем синдикате: взносы и налог. При вступлении обнуляются.
+  syndicateMerit    Int            @default(0)
 
   createdAt  DateTime @default(now())
   lastSeenAt DateTime @default(now())
 
-  user             User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  syndicate        Syndicate?             @relation("SyndicateMembers", fields: [syndicateId], references: [id], onDelete: SetNull)
-  leadingSyndicate Syndicate?             @relation("SyndicateLeader")
-  applications     SyndicateApplication[] @relation("ApplicationAuthor")
-  reviewed         SyndicateApplication[] @relation("ApplicationReviewer")
+  user             User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  syndicate        Syndicate?              @relation("SyndicateMembers", fields: [syndicateId], references: [id], onDelete: SetNull)
+  syndicateRank    SyndicateRank?          @relation("SyndicateRankMembers", fields: [syndicateRankId], references: [id], onDelete: SetNull)
+  codexVersions    SyndicateCodexVersion[] @relation("SyndicateCodexAuthor")
+  syndicateActions SyndicateTransaction[]  @relation("SyndicateTxActor")
+  leadingSyndicate Syndicate?              @relation("SyndicateLeader")
+  applications     SyndicateApplication[]  @relation("ApplicationAuthor")
+  reviewed         SyndicateApplication[]  @relation("ApplicationReviewer")
   bankOperations   SyndicateTransaction[]
   bases            Base[]
   researches       Research[]
   researchJob      ResearchJob?
+  researchHelpers  ResearchHelper[]
   fleets           Fleet[]
   fleetTemplates   FleetTemplate[]
-  inbox            Message[]              @relation("MessageRecipient")
-  sentMessages     Message[]              @relation("MessageSender")
+  inbox            Message[]               @relation("MessageRecipient")
+  sentMessages     Message[]               @relation("MessageSender")
   scans            PlanetScan[]
   hubStorages      HubStorage[]
+  hubAccount       HubAccount?
   orders           MarketOrder[]
   barterOffers     BarterOffer[]
-  purchases        Trade[]                @relation("TradeBuyer")
-  sales            Trade[]                @relation("TradeSeller")
+  purchases        Trade[]                 @relation("TradeBuyer")
+  sales            Trade[]                 @relation("TradeSeller")
   expeditions      ExpeditionReport[]
-  attacksMade      BattleReport[]         @relation("BattleAttacker")
-  attacksTaken     BattleReport[]         @relation("BattleDefender")
-  warsStarted      WarDeclaration[]       @relation("WarAggressor")
-  warsAgainst      WarDeclaration[]       @relation("WarTarget")
+  attacksMade      BattleReport[]          @relation("BattleAttacker")
+  attacksTaken     BattleReport[]          @relation("BattleDefender")
+  warsStarted      WarDeclaration[]        @relation("WarAggressor")
+  warsAgainst      WarDeclaration[]        @relation("WarTarget")
   achievements     CommanderAchievement[]
   bot              Bot?
 
@@ -151,16 +164,69 @@ model Syndicate {
   /// Короткий тег для отображения рядом с позывным.
   tag      String @unique
   leaderId String @unique
+  /// Короткое описание под названием: кто мы и кого ищем. Видно и кандидатам.
+  description String @default("")
 
   createdAt DateTime @default(now())
 
-  leader       Commander              @relation("SyndicateLeader", fields: [leaderId], references: [id], onDelete: Cascade)
-  members      Commander[]            @relation("SyndicateMembers")
+  /// Правила набора: открыт, по заявке или закрыт.
+  recruitment SyndicateRecruitment @default(APPLICATION)
+  /// Минимальный счет рейтинга, с которым можно вступить.
+  minScore    Int                  @default(0)
+  /// Вступительный взнос в казну, криптогривна.
+  entryFee    Int                  @default(0)
+
+  /// Налог с крипто-фермы участников, в процентах.
+  taxRate        Int       @default(0)
+  /// Новая ставка вступает в силу не сразу: участник должен успеть узнать о ней.
+  pendingTaxRate Int?
+  taxEffectiveAt DateTime?
+
+  /// Кіш — хаб синдиката. Система заполняется при первом обращении у синдикатов,
+  /// основанных до его появления: у них ее просто нет.
+  kishSystemId   String?
+  kishLevel      Int       @default(1)
+  /// Когда Кіш переносили в последний раз: переносить можно не чаще раза в сутки.
+  kishMovedAt    DateTime?
+  /// «Дозор» — модуль Коша: видно вооруженные флоты, летящие к участникам.
+  /// Ноль — не построен.
+  watchLevel     Int       @default(0)
+  /// «Академія» — модуль Коша; уровень — потолок уровня любой технологии синдиката.
+  academyLevel   Int       @default(0)
+  /// «Скарбниця» — модуль Коша: чем выше уровень, тем больше казны не унести налетом.
+  treasuryLevel  Int       @default(0)
+  /// Осколки у Коша: разбитый здесь флот оставляет поле, как у планеты.
+  debrisOre      Float     @default(0)
+  debrisPolymers Float     @default(0)
+
+  /// Счетчики рейтингов синдиката. Копятся в момент события, а не выводятся
+  /// из текущего состава: бой и взнос засчитываются тому синдикату, в котором
+  /// участник состоял тогда, и новичок не приносит с собой чужую историю.
+  /// Стоимость флота противника, уничтоженного участниками.
+  destroyedValue   Float @default(0)
+  /// Взносы, вступительные и налог — все, что участники отдали в казну.
+  contributedValue Float @default(0)
+  /// Вложено из казны в Кіш и его модули.
+  investedValue    Float @default(0)
+
+  leader       Commander               @relation("SyndicateLeader", fields: [leaderId], references: [id], onDelete: Cascade)
+  members      Commander[]             @relation("SyndicateMembers")
+  kishSystem   SolarSystem?            @relation("SyndicateKish", fields: [kishSystemId], references: [id], onDelete: SetNull)
+  ranks        SyndicateRank[]
+  codex        SyndicateCodexVersion[]
+  kishFleets   Fleet[]                 @relation("KishFleets")
+  technologies SyndicateTechnology[]
+  research     SyndicateResearch?
+  gates        SyndicateGate[]
+  defenses     SyndicateDefense[]
   bank         SyndicateBank?
   applications SyndicateApplication[]
   transactions SyndicateTransaction[]
-  warsStarted  SyndicateWar[]         @relation("SyndicateWarAggressor")
-  warsAgainst  SyndicateWar[]         @relation("SyndicateWarTarget")
+  warsStarted  SyndicateWar[]          @relation("SyndicateWarAggressor")
+  warsAgainst  SyndicateWar[]          @relation("SyndicateWarTarget")
+  pactsFirst   SyndicatePact[]         @relation("PactFirst")
+  construction SyndicateConstruction?
+  pactsSecond  SyndicatePact[]         @relation("PactSecond")
 
   @@map("syndicates")
 }
@@ -170,6 +236,13 @@ model SyndicateBank {
   id          String @id @default(cuid())
   syndicateId String @unique
   credits     Float  @default(0)
+  /// Ресурсная казна Коша. Привозят и вывозят ее флотом — логистика
+  /// остается частью игры, а не кнопкой «перевести».
+  ore         Float  @default(0)
+  polymers    Float  @default(0)
+  plasma      Float  @default(0)
+  /// Антиматерия казны — на перенос Коша через Браму.
+  antimatter  Float  @default(0)
 
   syndicate Syndicate @relation(fields: [syndicateId], references: [id], onDelete: Cascade)
 
@@ -184,21 +257,83 @@ model SyndicateTransaction {
   kind        SyndicateTxKind
   amount      Float
   comment     String?
+  /// Кто совершил операцию, если это не сам участник строки: при выдаче
+  /// из казны получатель — `commanderId`, выдавший — `actorId`.
+  actorId     String?
+  /// Ресурсы операции. `amount` у ресурсных операций — сумма единиц:
+  /// по нему считается общий с гривной дневной лимит выдачи.
+  ore         Float           @default(0)
+  polymers    Float           @default(0)
+  plasma      Float           @default(0)
+  antimatter  Float           @default(0)
   createdAt   DateTime        @default(now())
 
   syndicate Syndicate  @relation(fields: [syndicateId], references: [id], onDelete: Cascade)
   commander Commander? @relation(fields: [commanderId], references: [id], onDelete: SetNull)
+  actor     Commander? @relation("SyndicateTxActor", fields: [actorId], references: [id], onDelete: SetNull)
 
   @@index([syndicateId, createdAt])
   @@map("syndicate_transactions")
 }
 
 /// Заявка на вступление. Одобряет лидер или офицер.
-model SyndicateApplication {
-  id          String            @id @default(cuid())
+/// Ранг синдиката: название, место в иерархии и права.
+/// Место (`position`) решает, кто над кем: ноль — вершина, действовать
+/// можно только на тех, чей ранг ниже своего.
+model SyndicateRank {
+  id                 String                @id @default(cuid())
+  syndicateId        String
+  name               String
+  position           Int
+  permissions        SyndicatePermission[]
+  /// Сколько криптогривны обладатель ранга может выдать из казны за сутки.
+  dailyWithdrawLimit Int                   @default(0)
+  createdAt          DateTime              @default(now())
+
+  syndicate Syndicate   @relation(fields: [syndicateId], references: [id], onDelete: Cascade)
+  members   Commander[] @relation("SyndicateRankMembers")
+
+  @@unique([syndicateId, name])
+  @@map("syndicate_ranks")
+}
+
+/// Версия кодекса. Текущая — последняя; прежние хранятся, чтобы было видно,
+/// на каких условиях вступал каждый.
+model SyndicateCodexVersion {
+  id          String   @id @default(cuid())
+  syndicateId String
+  text        String
+  authorId    String?
+  createdAt   DateTime @default(now())
+
+  syndicate Syndicate  @relation(fields: [syndicateId], references: [id], onDelete: Cascade)
+  author    Commander? @relation("SyndicateCodexAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([syndicateId, createdAt])
+  @@map("syndicate_codex_versions")
+}
+
+/// Налог участника за сутки. Без внешних ключей намеренно: пишется в сбросе
+/// тика, и исчезнувший между кешем и записью синдикат не должен ронять
+/// всю транзакцию сохранения.
+model SyndicateTaxLedger {
+  id          String   @id @default(cuid())
   syndicateId String
   commanderId String
-  status      ApplicationStatus @default(PENDING)
+  day         DateTime @db.Date
+  amount      Int      @default(0)
+
+  @@unique([syndicateId, commanderId, day])
+  @@map("syndicate_tax_ledger")
+}
+
+model SyndicateApplication {
+  id             String            @id @default(cuid())
+  syndicateId    String
+  commanderId    String
+  status         ApplicationStatus @default(PENDING)
+  /// Версия кодекса, которую кандидат принял, подавая заявку.
+  codexVersionId String?
 
   createdAt    DateTime  @default(now())
   resolvedAt   DateTime?
@@ -243,6 +378,41 @@ enum SyndicateTxKind {
   DONATION
   FOUNDING
   PAYOUT
+  TAX
+  ENTRY_FEE
+  KISH_UPGRADE
+  WATCH_UPGRADE
+  RESOURCE_DELIVERY
+  RESOURCE_PICKUP
+  ACADEMY_UPGRADE
+  SYNDICATE_RESEARCH
+  GATE_BUILD
+  KISH_MOVE
+  TREASURY_UPGRADE
+  KISH_DEFENSE
+  KISH_RAIDED
+  /// Возврат казны за отмененную стройку в Коше.
+  BUILD_REFUND
+}
+
+enum SyndicatePermission {
+  APPLICATIONS
+  KICK
+  PROMOTE
+  BROADCAST
+  WITHDRAW
+  TAX
+  CODEX
+  RULES
+  DIPLOMACY
+  KISH
+  ACADEMY
+}
+
+enum SyndicateRecruitment {
+  OPEN
+  APPLICATION
+  CLOSED
 }
 
 /// Каталог достижений. Наполняется при старте сервера.
@@ -301,10 +471,12 @@ model SolarSystem {
   anomaly   SystemAnomaly @default(NONE)
   createdAt DateTime      @default(now())
 
-  planets     Planet[]
-  hub         TradeHub?
-  fleets      Fleet[]
-  expeditions ExpeditionReport[]
+  planets        Planet[]
+  kishes         Syndicate[]        @relation("SyndicateKish")
+  syndicateGates SyndicateGate[]
+  hub            TradeHub?
+  fleets         Fleet[]
+  expeditions    ExpeditionReport[]
 
   @@unique([galaxyX, galaxyY])
   @@map("solar_systems")
@@ -387,15 +559,16 @@ model Base {
   lastTickAt DateTime @default(now())
   createdAt  DateTime @default(now())
 
-  commander   Commander    @relation(fields: [commanderId], references: [id], onDelete: Cascade)
-  planet      Planet       @relation(fields: [planetId], references: [id], onDelete: Cascade)
-  fleets      Fleet[]
-  buildJob    BuildJob?
-  shipJobs    ShipJob[]
-  ships       Ship[]
-  defenses    Defense[]
-  defenseJobs DefenseJob[]
-  researchJob ResearchJob?
+  commander    Commander       @relation(fields: [commanderId], references: [id], onDelete: Cascade)
+  planet       Planet          @relation(fields: [planetId], references: [id], onDelete: Cascade)
+  fleets       Fleet[]
+  buildJob     BuildJob?
+  researchHelp ResearchHelper?
+  shipJobs     ShipJob[]
+  ships        Ship[]
+  defenses     Defense[]
+  defenseJobs  DefenseJob[]
+  researchJob  ResearchJob?
 
   @@index([commanderId])
   @@map("bases")
@@ -438,11 +611,40 @@ model ResearchJob {
   targetLevel Int
   startedAt   DateTime       @default(now())
   finishesAt  DateTime
+  /// Уровень ведущей лаборатории на момент запуска. Срок считался по нему,
+  /// и пересчет при присоединении помощника должен исходить из него же,
+  /// а не из нынешнего уровня. У заданий старше помощников поля нет.
+  labLevel    Int?
 
   commander Commander @relation(fields: [commanderId], references: [id], onDelete: Cascade)
   base      Base      @relation(fields: [baseId], references: [id], onDelete: Cascade)
 
   @@map("research_jobs")
+}
+
+/// Лаборатория другой колонии, присоединившаяся к идущему исследованию.
+/// Привязана к командиру, а не к заданию: задание переписывается при каждом
+/// сбросе удалением и созданием, и помощники пишутся тем же способом рядом.
+model ResearchHelper {
+  id           String   @id @default(cuid())
+  commanderId  String
+  baseId       String   @unique
+  /// Уровень лаборатории на момент присоединения: вклад фиксируется им.
+  labLevel     Int
+  /// Уплачено за присоединение — возвращается этой же базе при отмене.
+  ore          Int
+  polymers     Int
+  plasma       Int
+  /// Сколько секунд срезано: из них восстанавливается полный срок исследования,
+  /// от которого меряется доля следующей помощницы.
+  savedSeconds Int
+  joinedAt     DateTime @default(now())
+
+  commander Commander @relation(fields: [commanderId], references: [id], onDelete: Cascade)
+  base      Base      @relation(fields: [baseId], references: [id], onDelete: Cascade)
+
+  @@index([commanderId])
+  @@map("research_helpers")
 }
 
 /// Корабли, стоящие на базе. Перемещение флота — Этап 3.
@@ -586,16 +788,19 @@ model ShipJob {
 
 /// Полет флота между планетами. Время в пути и возврат считает Game Loop.
 model Fleet {
-  id             String  @id @default(cuid())
-  commanderId    String
+  id                String  @id @default(cuid())
+  commanderId       String
   /// База отправления — туда вернется флот и оттуда списано топливо.
-  originBaseId   String
-  originPlanetId String
+  originBaseId      String
+  originPlanetId    String
   /// Цель полета: планета или торговый хаб (заполнено ровно одно поле).
-  targetPlanetId String?
-  targetHubId    String?
+  targetPlanetId    String?
+  targetHubId       String?
   /// Цель экспедиции: глубокий космос указанной системы.
-  targetSystemId String?
+  targetSystemId    String?
+  /// Рейс в Кіш синдиката. Кіш не планета: место определяет синдикат,
+  /// а при роспуске в пути ссылка обнуляется и груз летит домой.
+  targetSyndicateId String?
 
   mission FleetMission
   status  FleetStatus  @default(OUTBOUND)
@@ -624,17 +829,25 @@ model Fleet {
   /// Сколько запрошено к вывозу с хаба (для миссии HUB_PICKUP).
   pickupOre      Float @default(0)
   pickupPolymers Float @default(0)
+  pickupPlasma   Float @default(0)
 
   /// Сожженная плазма за весь маршрут (списана при отправке).
   fuelSpent       Float
   /// Сожженная антиматерия — только для межзвездных прыжков.
-  antimatterSpent Float   @default(0)
+  antimatterSpent Float     @default(0)
   /// Прыжок между системами, а не полет внутри одной.
-  interstellar    Boolean @default(false)
+  interstellar    Boolean   @default(false)
   /// Рейс без возврата: флот остается в точке назначения.
   /// У колонизации и дислокации это свойство самой миссии, а транспорт
   /// летит и туда-обратно, и в один конец — поэтому признак хранится.
-  oneWay          Boolean @default(false)
+  oneWay          Boolean   @default(false)
+  /// Прыжок через Браму: по нему считается пропускная способность врат.
+  viaGate         Boolean   @default(false)
+  /// Удержание: сколько секунд стоять у союзника и до какого момента.
+  holdSeconds     Int       @default(0)
+  holdUntil       DateTime?
+  /// Совместная атака: ведущий флот группы. У самого ведущего пусто.
+  jointLeadId     String?
   /// Расстояние в орбитах и скорость флота — для отображения.
   distance        Int
   speed           Float
@@ -644,12 +857,17 @@ model Fleet {
   returnsAt  DateTime
   createdAt  DateTime @default(now())
 
-  commander    Commander    @relation(fields: [commanderId], references: [id], onDelete: Cascade)
-  originBase   Base         @relation(fields: [originBaseId], references: [id], onDelete: Cascade)
-  originPlanet Planet       @relation("FleetOrigin", fields: [originPlanetId], references: [id], onDelete: Cascade)
-  targetPlanet Planet?      @relation("FleetTarget", fields: [targetPlanetId], references: [id], onDelete: Cascade)
-  targetHub    TradeHub?    @relation(fields: [targetHubId], references: [id], onDelete: Cascade)
-  targetSystem SolarSystem? @relation(fields: [targetSystemId], references: [id], onDelete: Cascade)
+  commander       Commander    @relation(fields: [commanderId], references: [id], onDelete: Cascade)
+  originBase      Base         @relation(fields: [originBaseId], references: [id], onDelete: Cascade)
+  targetSyndicate Syndicate?   @relation("KishFleets", fields: [targetSyndicateId], references: [id], onDelete: SetNull)
+  originPlanet    Planet       @relation("FleetOrigin", fields: [originPlanetId], references: [id], onDelete: Cascade)
+  targetPlanet    Planet?      @relation("FleetTarget", fields: [targetPlanetId], references: [id], onDelete: Cascade)
+  targetHub       TradeHub?    @relation(fields: [targetHubId], references: [id], onDelete: Cascade)
+  targetSystem    SolarSystem? @relation(fields: [targetSystemId], references: [id], onDelete: Cascade)
+  jointLead       Fleet?       @relation("JointAttack", fields: [jointLeadId], references: [id], onDelete: SetNull)
+  jointFleets     Fleet[]      @relation("JointAttack")
+
+  @@index([jointLeadId])
 
   @@index([status, arrivesAt])
   @@index([status, returnsAt])
@@ -768,7 +986,8 @@ model HubStorage {
 
   ore      Float @default(0)
   polymers Float @default(0)
-  /// Уровень склада определяет вместимость.
+  /// Устарел: размер склада теперь один на командира (`HubAccount`). Читается
+  /// только затем, чтобы перенести уровень при первом обращении.
   level    Int   @default(1)
 
   commander Commander @relation(fields: [commanderId], references: [id], onDelete: Cascade)
@@ -782,6 +1001,10 @@ model HubStorage {
 model MarketOrder {
   id          String @id @default(cuid())
   hubId       String
+  /// Сколько товара взято в залог со склада хаба; остальное — с общего склада.
+  /// По ней отмена возвращает товар туда, откуда он ушел. Пусто у заявок,
+  /// выставленных до общего склада: те целиком со склада хаба.
+  localPart   Float?
   commanderId String
 
   side         OrderSide
@@ -812,6 +1035,10 @@ model BarterOffer {
   id          String @id @default(cuid())
   commanderId String
   hubId       String
+  /// Сколько товара взято в залог со склада хаба; остальное — с общего склада.
+  /// По ней отмена возвращает товар туда, откуда он ушел. Пусто у заявок,
+  /// выставленных до общего склада: те целиком со склада хаба.
+  localPart   Float?
 
   /// Что отдаю: товар лежит в залоге на складе хаба, как и у обычной продажи.
   giveResource TradeResource
@@ -870,6 +1097,10 @@ enum FleetMission {
   EXPEDITION
   HARVEST
   COLONIZE
+  KISH_DELIVERY
+  KISH_PICKUP
+  HOLD
+  KISH_RAID
 }
 
 enum ExpeditionOutcome {
@@ -883,6 +1114,8 @@ enum ExpeditionOutcome {
 enum FleetStatus {
   OUTBOUND
   RETURNING
+  /// Стоит на орбите союзника и защищает его до конца срока.
+  HOLDING
 }
 
 enum BuildingType {
@@ -961,4 +1194,161 @@ enum PlanetType {
   GAS_GIANT
   VOLCANIC
   TOXIC
+}
+
+/// Технологии синдиката: действуют на участников, пробывших в нем двое суток.
+enum SyndicateTechType {
+  MINING
+  CONSTRUCTION
+  CARGO
+  TRADE
+  VAULT
+  COUNTERINTEL
+  /// Ускоряет стройку модулей Коша и изучение технологий синдиката.
+  ENGINEERING
+}
+
+model SyndicateTechnology {
+  id          String            @id @default(cuid())
+  syndicateId String
+  tech        SyndicateTechType
+  level       Int               @default(0)
+
+  syndicate Syndicate @relation(fields: [syndicateId], references: [id], onDelete: Cascade)
+
+  @@unique([syndicateId, tech])
+  @@map("syndicate_technologies")
+}
+
+/// Идущее изучение синдиката: одно за раз. Завершается лениво — по сроку,
+/// при первом обращении, а не тиком: тик синдикаты в памяти не держит.
+model SyndicateResearch {
+  id          String            @id @default(cuid())
+  syndicateId String            @unique
+  tech        SyndicateTechType
+  targetLevel Int
+  startedAt   DateTime          @default(now())
+  finishesAt  DateTime
+
+  syndicate Syndicate @relation(fields: [syndicateId], references: [id], onDelete: Cascade)
+
+  @@map("syndicate_research")
+}
+
+/// Торговый счет командира на бирже. Размер склада один на все: частные
+/// склады всех хабов и общий склад вместе. Общий склад держит купленное
+/// и полученное обменом — его можно забрать с любого хаба; привезенное
+/// флотом лежит на складе конкретного хаба и забирается только там.
+model HubAccount {
+  id          String @id @default(cuid())
+  commanderId String @unique
+  level       Int    @default(1)
+  ore         Float  @default(0)
+  polymers    Float  @default(0)
+
+  commander Commander @relation(fields: [commanderId], references: [id], onDelete: Cascade)
+
+  @@map("hub_accounts")
+}
+
+/// Брама — врата синдиката в системе. Между системами со своими Брамами флот
+/// прыгает без «Гипердвигателя» и за треть антиматерии. Ставится только там,
+/// где есть колония хотя бы одного участника.
+model SyndicateGate {
+  id              String   @id @default(cuid())
+  syndicateId     String
+  systemId        String
+  level           Int      @default(1)
+  /// Часовое окно пропускной способности: открывается первым прыжком
+  /// и держится час. Резервируется при вылете одним условным UPDATE.
+  windowStartedAt DateTime @default(now())
+  windowShips     Int      @default(0)
+  createdAt       DateTime @default(now())
+
+  syndicate Syndicate   @relation(fields: [syndicateId], references: [id], onDelete: Cascade)
+  system    SolarSystem @relation(fields: [systemId], references: [id], onDelete: Cascade)
+
+  @@unique([syndicateId, systemId])
+  @@map("syndicate_gates")
+}
+
+/// Оборона Коша: установки, купленные из казны. В бою восстанавливаются
+/// так же, как оборона колонии.
+model SyndicateDefense {
+  id          String      @id @default(cuid())
+  syndicateId String
+  type        DefenseType
+  count       Int         @default(0)
+
+  syndicate Syndicate @relation(fields: [syndicateId], references: [id], onDelete: Cascade)
+
+  @@unique([syndicateId, type])
+  @@map("syndicate_defenses")
+}
+
+/// Вид пакта между синдикатами. Союз включает ненападение.
+enum PactType {
+  NON_AGGRESSION
+  ALLIANCE
+  TRADE
+}
+
+enum PactStatus {
+  PROPOSED
+  ACTIVE
+}
+
+/// Пакт между двумя синдикатами. Пара хранится упорядоченной по id,
+/// поэтому один пакт одного вида на пару — уникальный индекс.
+model SyndicatePact {
+  id                  String     @id @default(cuid())
+  firstSyndicateId    String
+  secondSyndicateId   String
+  type                PactType
+  status              PactStatus @default(PROPOSED)
+  /// Кто предложил: принять или отклонить может только другая сторона.
+  proposerSyndicateId String
+  proposedById        String?
+  createdAt           DateTime   @default(now())
+  activatedAt         DateTime?
+  /// Расторгнутый пакт действует до этого момента — сутки на подготовку.
+  endsAt              DateTime?
+
+  first  Syndicate @relation("PactFirst", fields: [firstSyndicateId], references: [id], onDelete: Cascade)
+  second Syndicate @relation("PactSecond", fields: [secondSyndicateId], references: [id], onDelete: Cascade)
+
+  @@unique([firstSyndicateId, secondSyndicateId, type])
+  @@index([secondSyndicateId])
+  @@map("syndicate_pacts")
+}
+
+/// Модули Коша, которые строятся по времени.
+enum SyndicateModuleKind {
+  KISH
+  SKARBNYTSIA
+  AKADEMIIA
+  DOZOR
+  BRAMA
+}
+
+/// Стройка в Коше: одна на синдикат. Цена списана при запуске и хранится
+/// здесь же — ее полностью возвращает отмена.
+model SyndicateConstruction {
+  id          String              @id @default(cuid())
+  syndicateId String              @unique
+  module      SyndicateModuleKind
+  /// Система Брамы; у остальных модулей пусто.
+  systemId    String?
+  targetLevel Int
+  startedAt   DateTime            @default(now())
+  finishesAt  DateTime
+  credits     Int                 @default(0)
+  ore         Int                 @default(0)
+  polymers    Int                 @default(0)
+  actorId     String?
+
+  syndicate Syndicate @relation(fields: [syndicateId], references: [id], onDelete: Cascade)
+
+  @@index([finishesAt])
+  @@map("syndicate_constructions")
 }

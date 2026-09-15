@@ -1,10 +1,11 @@
+import { commanderSyndicateBuffs } from '../game/baseState.js';
 import { Router, type Response } from 'express';
 import { gameLoop } from '../game/gameLoop.js';
 import { isBuildingType } from '../game/rules.js';
 import { isTechnologyType } from '../game/techTree.js';
 import { isShipType } from '../game/ships.js';
 import { isDefenseType } from '../game/defenses.js';
-import { isFleetMission, planFlight, resolveOneWay } from '../game/fleets.js';
+import { fleetSize, isFleetMission, planFlight, resolveOneWay } from '../game/fleets.js';
 import { buildGalaxyMap, buildSystemMap } from '../services/mapService.js';
 import { prisma } from '../db/prisma.js';
 import { attackWarning } from '../services/warService.js';
@@ -12,10 +13,11 @@ import { getLeaderboard } from '../services/scoreService.js';
 import { getBuildingProjection } from '../services/buildingService.js';
 import { getTechnologyProjection } from '../services/technologyService.js';
 import { currentCommander, requireAuth, requireCommander } from './middleware.js';
-import { amountsOrNull, cargoOrNull, positiveInt, shipCountsOrNull } from './validation.js';
+import { cargoOrNull, nonNegativeInt, positiveInt, shipCountsOrNull } from './validation.js';
 import type { BuildingProjection, TechnologyProjection } from '../types/socket.js';
 import type {
   ActionResponse,
+  JointAttacksResponse,
   ErrorResponse,
   FlightPreviewResponse,
   LeaderboardResponse,
@@ -128,6 +130,12 @@ gameRouter.post('/bases/:baseId/research/cancel', async (req, res: Response<Acti
   res.status(result.ok ? 200 : 409).json(result);
 });
 
+/** Присоединить лабораторию базы к идущему исследованию командира. */
+gameRouter.post('/bases/:baseId/research/join', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const result = await gameLoop.joinResearch(currentCommander(req).id, req.params.baseId);
+  res.status(result.ok ? 200 : 409).json(result);
+});
+
 gameRouter.post('/bases/:baseId/ships/cancel', async (req, res: Response<ActionResponse | ErrorResponse>) => {
   const jobId = (req.body as { jobId?: unknown } | undefined)?.jobId;
   if (typeof jobId !== 'string' || jobId.length === 0) {
@@ -222,19 +230,27 @@ interface FleetRequestBody {
   targetPlanetId?: unknown;
   targetHubId?: unknown;
   targetSystemId?: unknown;
+  targetSyndicateId?: unknown;
   mission?: unknown;
   ships?: Record<string, unknown>;
-  cargo?: { ore?: unknown; polymers?: unknown; plasma?: unknown };
-  pickup?: { ore?: unknown; polymers?: unknown };
+  cargo?: { ore?: unknown; polymers?: unknown; plasma?: unknown; antimatter?: unknown };
+  pickup?: { ore?: unknown; polymers?: unknown; plasma?: unknown };
   /** Оставить флот у цели. Действует только там, где выбор вообще есть. */
   oneWay?: unknown;
+  /** Срок удержания в часах. */
+  holdHours?: unknown;
+  /** Ведущий флот совместной атаки. */
+  joinFleetId?: unknown;
 }
 
-function readTarget(body: FleetRequestBody): { planetId?: string; hubId?: string; systemId?: string } {
-  const target: { planetId?: string; hubId?: string; systemId?: string } = {};
+function readTarget(
+  body: FleetRequestBody,
+): { planetId?: string; hubId?: string; systemId?: string; syndicateId?: string } {
+  const target: { planetId?: string; hubId?: string; systemId?: string; syndicateId?: string } = {};
   if (typeof body.targetPlanetId === 'string') target.planetId = body.targetPlanetId;
   if (typeof body.targetHubId === 'string') target.hubId = body.targetHubId;
   if (typeof body.targetSystemId === 'string') target.systemId = body.targetSystemId;
+  if (typeof body.targetSyndicateId === 'string') target.syndicateId = body.targetSyndicateId;
   return target;
 }
 
@@ -320,7 +336,12 @@ gameRouter.post('/bases/:baseId/fleets/preview', async (req, res: Response<Fligh
     commander.techs,
     { position: base.position, system: base.galaxy },
     target,
-    { oneWay },
+    {
+      oneWay,
+      cargoMultiplier: commanderSyndicateBuffs(commander).cargo,
+      // Предпросмотр показывает тот же маршрут, по которому пойдет вылет: через Браму, если можно.
+      viaGate: (await gameLoop.gateRoute(commander.commanderId, base.systemId, target.systemId, fleetSize(ships))).usable,
+    },
   );
 
   // Предупреждение считается только для атаки и только по живой цели:
@@ -343,7 +364,7 @@ gameRouter.post('/bases/:baseId/fleets', async (req, res: Response<ActionRespons
 
   // Экспедиция без явной цели уходит в глубокий космос родной системы.
   const target = readTarget(body);
-  const targetless = !target.planetId && !target.hubId && !target.systemId;
+  const targetless = !target.planetId && !target.hubId && !target.systemId && !target.syndicateId;
   if (targetless && body.mission !== 'EXPEDITION') {
     res.status(400).json({ error: 'Не указана цель полета' });
     return;
@@ -356,8 +377,11 @@ gameRouter.post('/bases/:baseId/fleets', async (req, res: Response<ActionRespons
   }
 
   const cargo = cargoOrNull(body.cargo);
-  const pickup = amountsOrNull(body.pickup);
-  if (!cargo || !pickup) {
+  const antimatter = nonNegativeInt(body.cargo?.antimatter);
+  // Вывоз из Коша берет и плазму, поэтому запрос читается тем же разбором,
+  // что и груз: у хаба плазма в запросе просто будет нулем.
+  const pickup = cargoOrNull(body.pickup);
+  if (!cargo || !pickup || antimatter === null) {
     res.status(400).json({ error: 'Объем груза должен быть целым неотрицательным числом' });
     return;
   }
@@ -368,9 +392,22 @@ gameRouter.post('/bases/:baseId/fleets', async (req, res: Response<ActionRespons
     target,
     body.mission,
     ships,
-    cargo,
+    { ...cargo, antimatter },
     pickup,
     body.oneWay === true,
+    typeof body.holdHours === 'number' ? body.holdHours : 0,
+    typeof body.joinFleetId === 'string' && body.joinFleetId ? body.joinFleetId : null,
   );
+  res.status(result.ok ? 200 : 409).json(result);
+});
+
+/** Совместные атаки на планету, к которым можно присоединиться. */
+gameRouter.get('/planets/:planetId/joint-attacks', async (req, res: Response<JointAttacksResponse>) => {
+  res.json({ attacks: await gameLoop.jointAttacks(currentCommander(req).id, req.params.planetId) });
+});
+
+/** Отозвать флот с удержания. */
+gameRouter.post('/fleets/:fleetId/recall', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const result = await gameLoop.recallFleet(currentCommander(req).id, req.params.fleetId);
   res.status(result.ok ? 200 : 409).json(result);
 });

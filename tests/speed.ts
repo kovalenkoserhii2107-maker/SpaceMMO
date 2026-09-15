@@ -7,7 +7,8 @@
  */
 import { buildSeconds, energyUsage, energyEfficiency, emptyLevels, productionPerSecond, type BuildingLevels, type PlanetRichness } from '../src/game/rules.js';
 import {
-  buildSpeedup, emptyTechLevels, researchSeconds, roboticsSpeedup,
+  buildSpeedup, emptyTechLevels, helperShare, researchCost, researchJoinQuote,
+  researchSeconds, roboticsSpeedup,
   timeCompressionDrain, timeCompressionSpeedup, type TechLevels,
 } from '../src/game/techTree.js';
 import { shipUnitSeconds } from '../src/game/ships.js';
@@ -103,6 +104,43 @@ console.log('\n=== 3. Плата за сжатие — энергия ===');
   check('с развитой энергетикой сжатие ничего не отнимает',
     energyEfficiency(strong, RICH, undefined, 0, drain) === 1,
     `КПД ${(energyEfficiency(strong, RICH, undefined, 0, drain) * 100).toFixed(0)}%`);
+}
+
+console.log('\n=== Лаборатории колоний присоединяются к общему исследованию ===');
+{
+  check('помощница того же уровня берет половину', helperShare(12, 12) === 0.5);
+  check('помощница выше ведущей все равно берет не больше половины', helperShare(12, 20) === 0.5);
+  check('шестой уровень при ведущей двенадцатого берет четверть', helperShare(12, 6) === 0.25);
+  check('база без лаборатории не берет ничего', helperShare(12, 0) === 0);
+
+  const total = researchSeconds('ASTROPHYSICS', 9, 12, techs());
+  const cost = researchCost('ASTROPHYSICS', 9);
+  const job = { tech: 'ASTROPHYSICS' as const, targetLevel: 9, leadLevel: 12, totalSeconds: total };
+  // Срезанное время — целые секунды, поэтому цена может разойтись с «ровной
+  // долей» не больше чем на стоимость одной секунды исследования.
+  const perSecond = cost.polymers / total + 1;
+
+  const half = researchJoinQuote({ ...job, joiningLevel: 12, remainingSeconds: total });
+  check('равная лаборатория на старте срезает половину всего срока',
+    half.savedSeconds === Math.floor(total / 2), `${total} с → ${half.remainingSeconds} с`);
+  check('и доплачивает половину всей цены',
+    Math.abs(half.price.polymers - Math.ceil(cost.polymers * half.share)) <= 1 &&
+      Math.abs(half.price.polymers - cost.polymers / 2) <= perSecond,
+    `полимеры ${half.price.polymers} из ${cost.polymers}`);
+
+  const quarter = researchJoinQuote({ ...job, joiningLevel: 6, remainingSeconds: total * 0.8 });
+  check('шестой уровень срезает четверть всего срока, а не остатка',
+    quarter.savedSeconds === Math.floor(total * 0.25), `срезано ${quarter.savedSeconds} с из ${total}`);
+  check('и платит четверть всей цены',
+    Math.abs(quarter.price.polymers - cost.polymers / 4) <= perSecond, `полимеры ${quarter.price.polymers}`);
+
+  const late = researchJoinQuote({ ...job, joiningLevel: 12, remainingSeconds: total * 0.1 });
+  check('опоздавшая срезает только остаток', late.remainingSeconds === total * 0.1 - late.savedSeconds && late.remainingSeconds < 1);
+  check('и платит только за остаток, а не за половину',
+    Math.abs(late.price.polymers - cost.polymers * 0.1) <= perSecond, `полимеры ${late.price.polymers}`);
+
+  const none = researchJoinQuote({ ...job, joiningLevel: 0, remainingSeconds: total });
+  check('без лаборатории ничего не срезается и не платится', none.savedSeconds === 0 && none.price.polymers === 0);
 }
 
 const passed = results.filter((r) => r.passed).length;
