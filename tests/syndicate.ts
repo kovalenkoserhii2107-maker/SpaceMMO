@@ -76,15 +76,15 @@ console.log('\n=== 1б. Дозор ===');
     watchUpgradeCost(1) === 200_000 && watchUpgradeCost(2) === 400_000 && watchUpgradeCost(5) === 3_200_000);
 }
 
-console.log('\n=== 1в. Академія и технологии ===');
+console.log('\n=== 1в. Академия и технологии ===');
 {
   const first = syndicateTechCost(1);
   const seventh = syndicateTechCost(7);
   check('первый уровень технологии — базовая цена', first.credits === 10_000 && first.ore === 10_000);
   check('каждый уровень втрое дороже предыдущего',
     syndicateTechCost(2).credits === 30_000 && seventh.credits === 7_290_000, `седьмой ${seventh.credits}`);
-  check('Академія дорожает вдвое', academyUpgradeCost(1).credits === 300_000 && academyUpgradeCost(3).credits === 1_200_000);
-  check('лишние уровни Академії ускоряют изучение',
+  check('Академия дорожает вдвое', academyUpgradeCost(1).credits === 300_000 && academyUpgradeCost(3).credits === 1_200_000);
+  check('лишние уровни Академии ускоряют изучение',
     syndicateResearchSeconds(3, 5) < syndicateResearchSeconds(3, 3), `${syndicateResearchSeconds(3, 3)} с → ${syndicateResearchSeconds(3, 5)} с`);
 
   const levels = { ...emptySyndicateTechLevels(), MINING: 7, TRADE: 40, COUNTERINTEL: 7 };

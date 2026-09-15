@@ -3510,3 +3510,16 @@ button.tiny { padding: 4px 10px; font-size: 11px; flex: none; }
 }
 .syndicate-textarea:focus { outline: none; border-color: var(--accent); }
 .rank-block .rank-editor { padding-top: 0; border-bottom: 0; }
+
+/* Списки в разделе синдиката — в палитре игры: смена ранга участнику рисовалась белой. */
+#syndicate-panel select {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 13px;
+}
+#syndicate-panel select:focus { outline: none; border-color: var(--accent); }
+#syndicate-panel select option { background: #0b1121; color: var(--text); }

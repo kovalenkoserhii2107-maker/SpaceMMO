@@ -186,7 +186,7 @@ export interface SyndicateView {
       level: number;
       nextCost: TreasuryCost;
       seconds: number;
-      /** Можно ли изучать следующий уровень прямо сейчас: Академія позволяет и она свободна. */
+      /** Можно ли изучать следующий уровень прямо сейчас: Академия позволяет и она свободна. */
       available: boolean;
     }>;
     research: { tech: SyndicateTech; label: string; targetLevel: number; remainingSeconds: number; totalSeconds: number } | null;
@@ -1511,7 +1511,7 @@ export async function buyKishDefense(commanderId: string, type: DefenseType, qua
   return { ok: true, message: `У Коша поставлено: ${defenseLabel(type)} ×${quantity}` };
 }
 
-/* ------------------------- Академія ------------------------- */
+/* ------------------------- Академия ------------------------- */
 
 /** Списание цены из казны одним условным UPDATE: гривна и ресурсы — все или ничего. */
 async function payFromTreasury(tx: Prisma.TransactionClient, syndicateId: string, cost: TreasuryCost): Promise<void> {
@@ -1562,7 +1562,7 @@ async function settleSyndicateResearch(syndicateId: string): Promise<void> {
   });
 }
 
-/** Постройка и повышение Академії из казны: гривна, руда и полимеры. */
+/** Постройка и повышение Академии из казны: гривна, руда и полимеры. */
 export async function upgradeAcademy(commanderId: string): Promise<SyndicateResult> {
   const access = await requirePermission(commanderId, 'ACADEMY');
   if (!access.ok) return access;
@@ -1579,7 +1579,7 @@ export async function upgradeAcademy(commanderId: string): Promise<SyndicateResu
         where: { id: access.syndicateId, academyLevel: syndicate.academyLevel },
         data: { academyLevel: target, investedValue: { increment: costUnits(cost) } },
       });
-      if (raised.count === 0) throw new SyndicateError('Академію уже повысили', 409);
+      if (raised.count === 0) throw new SyndicateError('Академию уже повысили', 409);
       await tx.syndicateTransaction.create({
         data: {
           syndicateId: access.syndicateId,
@@ -1588,23 +1588,23 @@ export async function upgradeAcademy(commanderId: string): Promise<SyndicateResu
           amount: cost.credits,
           ore: cost.ore,
           polymers: cost.polymers,
-          comment: `Академія → ур. ${target}`,
+          comment: `Академия → ур. ${target}`,
         },
       });
     });
   } catch (error) {
-    return toError(error, 'Не удалось повысить Академію');
+    return toError(error, 'Не удалось повысить Академию');
   }
   return {
     ok: true,
-    message: target === 1 ? 'Академія построена: открыты технологии первого уровня' : `Академія ${target} уровня`,
+    message: target === 1 ? 'Академия построена: открыты технологии первого уровня' : `Академия ${target} уровня`,
   };
 }
 
 /**
  * Запуск изучения технологии синдиката.
  *
- * Изучение одно за раз, уровень не выше уровня Академії, цена — из казны.
+ * Изучение одно за раз, уровень не выше уровня Академии, цена — из казны.
  * Бонусы получают участники, пробывшие в синдикате двое суток.
  */
 export async function startSyndicateResearch(commanderId: string, tech: SyndicateTech): Promise<SyndicateResult> {
@@ -1615,11 +1615,11 @@ export async function startSyndicateResearch(commanderId: string, tech: Syndicat
   const syndicate = await prisma.syndicate.findUnique({ where: { id: access.syndicateId } });
   if (!syndicate) return { ok: false, error: 'Синдикат не найден', status: 404 };
   const state = await syndicateTechState(access.syndicateId);
-  if (state.research) return { ok: false, error: 'Академія уже занята изучением', status: 409 };
+  if (state.research) return { ok: false, error: 'Академия уже занята изучением', status: 409 };
 
   const target = state.levels[tech] + 1;
   if (syndicate.academyLevel < target) {
-    return { ok: false, error: `Для ${target} уровня нужна Академія ${target} уровня`, status: 409 };
+    return { ok: false, error: `Для ${target} уровня нужна Академия ${target} уровня`, status: 409 };
   }
   const cost = syndicateTechCost(target);
   const seconds = syndicateResearchSeconds(target, syndicate.academyLevel);
@@ -1652,7 +1652,7 @@ export async function startSyndicateResearch(commanderId: string, tech: Syndicat
       });
     });
   } catch (error) {
-    if (isUniqueViolation(error)) return { ok: false, error: 'Академія уже занята изучением', status: 409 };
+    if (isUniqueViolation(error)) return { ok: false, error: 'Академия уже занята изучением', status: 409 };
     return toError(error, 'Не удалось начать изучение');
   }
 

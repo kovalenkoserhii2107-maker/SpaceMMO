@@ -319,7 +319,7 @@
           <div class="nav-group">
             <h2 class="nav-title" data-kish-title="Развитие Коша">Развитие</h2>
             <button type="button" class="tab" data-tab="buildings" data-kish-label="Отсеки"><svg class="ico" aria-hidden="true"><use href="#ico-nav-buildings"/></svg><span>Инфраструктура</span></button>
-            <button type="button" class="tab" data-tab="research" data-kish-label="Академія"><svg class="ico" aria-hidden="true"><use href="#ico-nav-research"/></svg><span>Исследования</span></button>
+            <button type="button" class="tab" data-tab="research" data-kish-label="Академия"><svg class="ico" aria-hidden="true"><use href="#ico-nav-research"/></svg><span>Исследования</span></button>
           </div>
 
           <div class="nav-group">
@@ -328,8 +328,8 @@
             <button type="button" class="tab" data-tab="defense" data-kish-label="Бастион"><svg class="ico" aria-hidden="true"><use href="#ico-nav-defense"/></svg><span>Оборона</span></button>
           </div>
 
-          <!-- Карты и биржа к Кошу не относятся: в режиме Коша их пунктов нет вовсе. -->
-          <div class="nav-group" data-kish-hidden>
+          <!-- Карты в режиме Коша остаются: система открывается на системе Коша. Биржи у Коша нет. -->
+          <div class="nav-group">
             <h2 class="nav-title">Командование</h2>
             <button type="button" class="tab" data-tab="map"><svg class="ico" aria-hidden="true"><use href="#ico-nav-system"/></svg><span>Карта системы</span></button>
             <button type="button" class="tab" data-tab="galaxy"><svg class="ico" aria-hidden="true"><use href="#ico-nav-galaxy"/></svg><span>Карта галактики</span></button>
@@ -489,7 +489,7 @@
         </section>
 
         <section data-panel="kish-research" hidden>
-          <h3 class="panel-title">Академія · технологии синдиката</h3>
+          <h3 class="panel-title">Академия · технологии синдиката</h3>
           <div id="kish-research-job" class="job-banner" hidden></div>
           <div id="kish-techs" class="cards"></div>
         </section>

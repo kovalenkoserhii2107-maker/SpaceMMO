@@ -281,7 +281,7 @@ syndicateRouter.post('/kish/move', async (req, res: Response<ActionResponse | Er
   send(res, await moveKish(currentCommander(req).id, systemId));
 });
 
-/** Построить или повысить Академію из казны. */
+/** Построить или повысить Академию из казны. */
 syndicateRouter.post('/academy/upgrade', async (req, res: Response<ActionResponse | ErrorResponse>) => {
   send(res, await upgradeAcademy(currentCommander(req).id));
 });

@@ -98,7 +98,7 @@ export function watchUpgradeCost(targetLevel: number): number {
   return Math.round(WATCH_UPGRADE_BASE * Math.pow(2, targetLevel - 1));
 }
 
-/* ------------------------- Академія и технологии ------------------------- */
+/* ------------------------- Академия и технологии ------------------------- */
 
 export const SYNDICATE_TECHS = ['MINING', 'CONSTRUCTION', 'CARGO', 'TRADE', 'VAULT', 'COUNTERINTEL'] as const;
 export type SyndicateTech = (typeof SYNDICATE_TECHS)[number];
@@ -157,8 +157,8 @@ export function syndicateTechCost(targetLevel: number): TreasuryCost {
 }
 
 /*
- * Академія — модуль Коша, и ее уровень — потолок уровня любой технологии.
- * Сверх потолка она ускоряет изучение: каждый лишний уровень Академії
+ * Академия — модуль Коша, и ее уровень — потолок уровня любой технологии.
+ * Сверх потолка она ускоряет изучение: каждый лишний уровень Академии
  * над изучаемым сокращает срок на четверть, так же как лаборатория
  * ускоряет собственную науку командира.
  */

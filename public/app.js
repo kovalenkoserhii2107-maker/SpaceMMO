@@ -995,7 +995,9 @@
     closeNav();
 
     if (name === 'map') {
-      void loadMap();
+      // В режиме Коша карта открывается на его системе, а не на системе колонии.
+      const kishSystem = state.kishMode && syndicate.data && syndicate.data.mine && syndicate.data.mine.kish.systemId;
+      void loadMap(kishSystem || undefined);
       void loadGalaxy();
     }
     if (name === 'galaxy') {
@@ -5804,7 +5806,7 @@
     WATCH_UPGRADE: 'развитие Дозора',
     RESOURCE_DELIVERY: 'доставка в казну',
     RESOURCE_PICKUP: 'вывоз из казны',
-    ACADEMY_UPGRADE: 'развитие Академії',
+    ACADEMY_UPGRADE: 'развитие Академии',
     SYNDICATE_RESEARCH: 'наука синдиката',
     GATE_BUILD: 'Брама',
     KISH_MOVE: 'перенос Коша',
@@ -6444,8 +6446,8 @@
     shipyard: 'kish-fleet',
     defense: 'kish-defense',
   };
-  // Пунктов карт и биржи в режиме Коша нет, но ссылка из письма может туда вести.
-  const KISH_AWAY_LABELS = { market: 'Хаб и биржа', map: 'Карта системы', galaxy: 'Карта галактики' };
+  // Пункта биржи в режиме Коша нет, но ссылка из письма может туда вести.
+  const KISH_AWAY_LABELS = { market: 'Хаб и биржа' };
 
   /**
    * Меню Коша говорит своими словами: мостик, отсеки, академія, флотилия,
@@ -6664,11 +6666,11 @@
       label: kish.treasuryLevel > 0 ? 'Улучшить' : 'Построить', onClick: () => syndicateAction('/api/syndicates/treasury/upgrade'),
     });
     kishModuleCard(node, {
-      mine, type: 'AKADEMIIA', title: 'Академія',
+      mine, type: 'AKADEMIIA', title: 'Академия',
       description: 'Открывает технологии синдиката. Ее уровень — потолок уровня любой технологии.',
       level: `Ур. ${mine.academy.level} → ${mine.academy.level + 1}`,
       effect: mine.academy.level > 0 ? `технологии до ур. ${mine.academy.level}` : 'технологии синдиката закрыты',
-      cost: mine.academy.nextLevelCost, allowed: can('ACADEMY'), deniedHint: 'Нужно право Академії', built: mine.academy.level > 0,
+      cost: mine.academy.nextLevelCost, allowed: can('ACADEMY'), deniedHint: 'Нужно право Академии', built: mine.academy.level > 0,
       label: mine.academy.level > 0 ? 'Улучшить' : 'Построить', onClick: () => syndicateAction('/api/syndicates/academy/upgrade'),
     });
     kishModuleCard(node, {
@@ -6715,7 +6717,7 @@
     node.innerHTML = '';
     if (academy.level <= 0) {
       node.appendChild(synEl('div', 'hub-card',
-        'Академія не построена: технологии синдиката откроются после ее постройки в разделе «Отсеки».'));
+        'Академия не построена: технологии синдиката откроются после ее постройки в разделе «Отсеки».'));
     }
     for (const tech of academy.techs) {
       const card = createActionCard(node, tech.label, tech.effect,
@@ -6725,15 +6727,15 @@
       card.time.textContent = fmtTime(tech.seconds);
       const needsAcademy = academy.level < tech.level + 1;
       card.reqs.hidden = !needsAcademy;
-      card.reqs.textContent = needsAcademy ? `Требуется: Академія ур. ${tech.level + 1}` : '';
+      card.reqs.textContent = needsAcademy ? `Требуется: Академия ур. ${tech.level + 1}` : '';
       card.article.classList.toggle('locked', needsAcademy);
       card.article.classList.toggle('built', tech.level > 0);
       const studying = academy.research && academy.research.tech === tech.tech;
       const affordable = treasuryCovers(mine, tech.nextCost);
       card.button.textContent = studying ? 'Изучается' : 'Изучать';
       card.button.disabled = !can('ACADEMY') || !tech.available || !affordable;
-      card.button.title = !can('ACADEMY') ? 'Нужно право Академії'
-        : !tech.available ? (academy.research ? 'Академія занята другим изучением' : `Нужна Академія ур. ${tech.level + 1}`)
+      card.button.title = !can('ACADEMY') ? 'Нужно право Академии'
+        : !tech.available ? (academy.research ? 'Академия занята другим изучением' : `Нужна Академия ур. ${tech.level + 1}`)
         : !affordable ? 'В казне не хватает на это' : '';
     }
     renderKishResearchBanner();
@@ -6819,7 +6821,7 @@
     const status = synCard('Состояние');
     status.appendChild(synEl('div', 'hub-storage', mine.academy.research
       ? `Изучается: ${mine.academy.research.label} → ур. ${mine.academy.research.targetLevel}`
-      : mine.academy.level > 0 ? 'Академія свободна — изучение ставится в разделе «Академія».' : 'Академія не построена.'));
+      : mine.academy.level > 0 ? 'Академия свободна — изучение ставится в разделе «Академия».' : 'Академия не построена.'));
     status.appendChild(synEl('div', 'hub-storage', kish.guards.length
       ? `На удержании у Коша: ${kish.guards.map((guard) => `${guard.nickname} (${fmt(guard.ships)})`).join(' · ')}`
       : 'Флотов на удержании у Коша нет.'));
