@@ -175,6 +175,8 @@
     kishDefenses: $('kish-defenses'),
     kishAway: $('kish-away'),
     kishFleet: $('kish-fleet'),
+    dispatchOriginRow: $('dispatch-origin-row'),
+    dispatchOrigin: $('dispatch-origin'),
     kishAwayTitle: $('kish-away-title'),
     cargoInputs: $('cargo-inputs'),
     adminSearch: $('admin-search'),
@@ -647,7 +649,7 @@
     applyState(data);
     connectSocket();
     renderProfile();
-    await loadMap();
+    await loadMap(mapSystemId());
     await loadGalaxy();
     await loadMarket();
     await loadWar();
@@ -974,7 +976,7 @@
    * На вкладке шахт она отбирала бы ширину у карточек, ничего не показывая.
    */
   function syncOpsPanel() {
-    const onMap = MAP_TABS.has(state.activeTab) && !state.kishMode;
+    const onMap = MAP_TABS.has(state.activeTab);
     el.opsPanel.hidden = !onMap;
     el.layout.classList.toggle('with-side', onMap);
   }
@@ -995,9 +997,7 @@
     closeNav();
 
     if (name === 'map') {
-      // В режиме Коша карта открывается на его системе, а не на системе колонии.
-      const kishSystem = state.kishMode && syndicate.data && syndicate.data.mine && syndicate.data.mine.kish.systemId;
-      void loadMap(kishSystem || undefined);
+      void loadMap(mapSystemId());
       void loadGalaxy();
     }
     if (name === 'galaxy') {
@@ -1109,9 +1109,6 @@
       el.baseList.appendChild(li);
     }
 
-    // Кіш — под колониями, отдельной строкой: сверху его путали с колонией.
-    appendKishSwitchItem();
-
     // Предел расширения виден там же, где список колоний: иначе о нем узнают
     // только отказом на вылете колонизатора, уже построив его за десять тысяч.
     const foot = document.createElement('li');
@@ -1120,6 +1117,10 @@
       `Колоний: ${state.colonies.used} из ${state.colonies.slots}` +
       (state.colonies.used >= state.colonies.slots ? ' · нужен уровень астрофизики' : '');
     el.baseList.appendChild(foot);
+
+    // Кіш — последней строкой, после счетчика колоний: к колониям он не относится.
+    appendKishSwitchItem();
+    renderDispatchOrigin();
   }
 
   /* --- выпадающий список баз в шапке --- */
@@ -4250,7 +4251,7 @@
       el.flightPlan.textContent = 'Выбери корабли, чтобы увидеть расчет.';
       showMissionWarning(null);
     }
-    await loadMap();
+    await loadMap(mapSystemId());
     await loadGalaxy();
     await loadMarket();
     await loadWar();
@@ -4317,7 +4318,7 @@
   /* От склада на хабе до рейса за ним — один шаг. */
   el.hubTransport.addEventListener('click', async () => {
     showPanel('map');
-    await loadMap();
+    await loadMap(mapSystemId());
     const hub = map.data && map.data.hub;
     if (!hub) return;
     selectHub(hub);
@@ -5158,7 +5159,7 @@
       button.addEventListener('click', async () => {
         await send(`/api/war/${player.atWar ? 'peace' : 'declare'}`, { targetId: player.commanderId });
         await loadWar();
-        await loadMap();
+        await loadMap(mapSystemId());
       });
 
       item.append(info, button);
@@ -6476,6 +6477,36 @@
     }
     return null;
   }
+
+  /** В режиме Коша карта системы стоит на его системе, а не на системе колонии. */
+  function mapSystemId() {
+    const mine = state.kishMode && syndicate.data && syndicate.data.mine;
+    return (mine && mine.kish.systemId) || undefined;
+  }
+
+  /**
+   * Колония вылета в форме отправки. Нужна только в режиме Коша: шапка там
+   * показывает казну, и форма не должна молча брать последнюю выбранную
+   * колонию. Выбор здесь и есть выбор активной колонии — состав и груз
+   * формы сразу считаются по ее ангару и складу.
+   */
+  function renderDispatchOrigin() {
+    el.dispatchOriginRow.hidden = !state.kishMode || !state.bases.length;
+    if (el.dispatchOriginRow.hidden) return;
+    el.dispatchOrigin.innerHTML = '';
+    for (const base of state.bases) {
+      const option = document.createElement('option');
+      option.value = base.baseId;
+      option.textContent = `${base.baseName} · ${baseCoords(base)}`;
+      option.selected = base.baseId === state.activeBaseId;
+      el.dispatchOrigin.appendChild(option);
+    }
+  }
+
+  el.dispatchOrigin.addEventListener('change', () => {
+    state.activeBaseId = el.dispatchOrigin.value;
+    renderActiveBase();
+  });
 
   function kishSwitchKey() {
     const mine = syndicate.data && syndicate.data.mine;
