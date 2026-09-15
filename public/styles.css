@@ -3523,3 +3523,86 @@ button.tiny { padding: 4px 10px; font-size: 11px; flex: none; }
 }
 #syndicate-panel select:focus { outline: none; border-color: var(--accent); }
 #syndicate-panel select option { background: #0b1121; color: var(--text); }
+
+/*
+ * Склады биржи: полоса одна на весь размер, куски на ней — по складам,
+ * и те же цвета у колонок ниже. Цвет закреплен за складом, а не за
+ * заполненностью: иначе различие «где лежит» потерялось бы снова.
+ */
+.mk-head-top { display: grid; grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr); align-items: start; gap: 16px; }
+.mk-hub { gap: 12px; }
+.mk-store-top { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.mk-store-title { font-size: 16px; font-weight: 700; }
+.mk-store-sub { font-size: 12px; color: var(--muted); }
+.mk-store-total { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.mk-store-total b { font-size: 18px; color: var(--text); }
+.mk-store-bar { display: flex; height: 10px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--line); overflow: hidden; }
+.mk-store-bar i { display: block; height: 100%; }
+.mk-store-bar .here, .mk-store-col.here .mk-dot { background: var(--accent); }
+.mk-store-bar .shared, .mk-store-col.shared .mk-dot { background: var(--accent-2); }
+.mk-store-bar .elsewhere, .mk-store-col.elsewhere .mk-dot { background: var(--warm); }
+.mk-store-cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.mk-store-col { display: grid; gap: 4px; padding: 10px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--line); }
+.mk-store-col-title { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
+.mk-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.mk-store-col-hint { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+.mk-store-col-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.mk-store-col-row b { color: var(--text); font-size: 13px; font-variant-numeric: tabular-nums; }
+.mk-store-avail { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--muted); padding-top: 8px; border-top: 1px solid var(--line); }
+.mk-store-avail b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* Действия склада — настоящие кнопки с заголовком и строкой условий, а не мелкий текст. */
+.mk-hub-actions { flex-direction: column; margin-top: 0; }
+.mk-action {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--accent);
+  background: rgba(77, 210, 255, 0.1);
+  color: var(--text);
+  text-align: left;
+  line-height: 1.35;
+}
+.mk-action b { font-size: 14px; }
+.mk-action span { font-size: 12px; color: var(--muted); }
+.mk-action:hover:not(:disabled) { background: rgba(77, 210, 255, 0.18); }
+.mk-action.transport { border-color: var(--accent-2); background: rgba(157, 123, 255, 0.1); }
+.mk-action.transport:hover:not(:disabled) { background: rgba(157, 123, 255, 0.2); }
+.mk-action .mk-action-warn { color: var(--err); }
+
+@media (max-width: 760px) {
+  .mk-head-top { grid-template-columns: 1fr; }
+  .mk-store-cols { grid-template-columns: 1fr; }
+}
+
+/*
+ * Шапка биржи — сетка без явных колонок, и ее единственный трек растягивался
+ * по самому широкому содержимому: на телефоне склады и кнопки уезжали
+ * за правый край. Трек ограничен шириной экрана, вложенные блоки могут сжиматься.
+ */
+.mk-head { grid-template-columns: minmax(0, 1fr); }
+.mk-head > *, .mk-head-top > *, .mk-store-cols > *, .mk-hub-actions > * { min-width: 0; }
+.mk-store-col-title, .mk-store-col-hint { overflow-wrap: anywhere; }
+
+/*
+ * Колонка основного содержимого ограничена шириной экрана. Без `minmax(0, 1fr)`
+ * трек сетки растягивался до самой широкой таблицы биржи (720px), хотя таблица
+ * лежит в прокручиваемом контейнере: на телефоне весь раздел становился шире
+ * экрана, и склады с кнопками уезжали за правый край.
+ */
+.content { grid-template-columns: minmax(0, 1fr); }
+.content > section { min-width: 0; }
+
+/*
+ * Таблица вклада: каждая строка — своя сетка, поэтому колонки обязаны быть
+ * фиксированной ширины. С `auto` ширина считалась по числам строки, и на
+ * телефоне «1 500 000» у одного и «100» у другого стояли под разными заголовками.
+ */
+.syn-table .syn-row { grid-template-columns: minmax(0, 1fr) 84px 70px 84px; }
+.syn-log .syn-row { grid-template-columns: 104px minmax(0, 1fr) auto; }
+@media (max-width: 600px) {
+  .syn-table .syn-row { grid-template-columns: minmax(0, 1fr) 64px 52px 64px; gap: 6px; }
+  .syn-log .syn-row { grid-template-columns: minmax(0, 1fr) auto; }
+}

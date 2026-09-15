@@ -3,6 +3,7 @@ import { isDefenseType } from '../game/defenses.js';
 import { gameLoop } from '../game/gameLoop.js';
 import { validateBody, validateSubject } from '../services/mailService.js';
 import {
+  MAX_DONATION,
   applyToSyndicate,
   assignRank,
   broadcast,
@@ -361,7 +362,13 @@ syndicateRouter.post('/broadcast', async (req, res: Response<ActionResponse | Er
 
 /** Пожертвование в общий банк. */
 syndicateRouter.post('/donate', async (req, res: Response<ActionResponse | ErrorResponse>) => {
-  const amount = Math.floor(Number((req.body as { amount?: unknown } | undefined)?.amount));
+  // Сумма разбирается как целое в пределах, а не через Number(): пустое поле
+  // и null иначе молча превращались бы в ноль (правило 13).
+  const amount = integerIn((req.body as { amount?: unknown } | undefined)?.amount, 1, MAX_DONATION);
+  if (amount === null) {
+    res.status(400).json({ error: `Взнос: целое число от 1 до ${MAX_DONATION.toLocaleString('ru-RU')} ₴` });
+    return;
+  }
   const result = await donate(currentCommander(req).id, amount);
   res.status(result.ok ? 200 : result.status).json(result.ok ? result : { error: result.error });
 });

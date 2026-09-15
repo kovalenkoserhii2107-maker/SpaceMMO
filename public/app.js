@@ -312,6 +312,22 @@
     return Math.abs(number) < 10 ? number.toFixed(1).replace('.', ',') : fmt(Math.round(number));
   }
 
+  /**
+   * Крупные суммы короче: 1 млн, 1,1 млн, 15,6 млн. В узкой таблице вклада
+   * полные «1 500 000» раздвигали колонки, и было не понять, чье это число.
+   */
+  function fmtCompact(value) {
+    const number = Number(value) || 0;
+    const abs = Math.abs(number);
+    const short = (divisor, unit) => {
+      const rounded = Math.round((number / divisor) * 10) / 10;
+      return `${String(rounded).replace('.', ',')} ${unit}`;
+    };
+    if (abs >= 1e9) return short(1e9, 'млрд');
+    if (abs >= 1e6) return short(1e6, 'млн');
+    return fmt(number);
+  }
+
   function icon(name, extraClass = '') {
     const label = RESOURCE_NAMES[name] || name;
     return (
@@ -4491,37 +4507,48 @@
       return;
     }
 
-    // Занятое считает сервер по всем складам сразу: размер один на все хабы и общий склад.
+    /*
+     * Складов три, и путали их именно потому, что показывались они одним
+     * списком: склад этого хаба (привезенное флотом), общий склад (купленное
+     * и полученное обменом) и склады других хабов. Размер у них один на всех,
+     * поэтому полоса общая, а куски на ней — по складам. Под полосой каждый
+     * склад своей колонкой с подписью, откуда его можно забрать.
+     */
     const used = typeof storage.used === 'number' ? storage.used : storage.ore + storage.polymers;
-    const row = (label, resource, amount) => {
-      const share = storage.capacity > 0 ? Math.min(1, amount / storage.capacity) : 0;
-      return (
-        `<div class="mk-store-row"><span class="mk-store-name">${icon(resource, 'sm')} ${label}</span>` +
-        `<b class="mk-store-amount">${fmt(amount)}</b>` +
-        `<span class="storage-bar"><i class="bar-safe" style="width:${(share * 100).toFixed(1)}%"></i></span></div>`
-      );
-    };
+    const local = storage.local || { ore: 0, polymers: 0 };
+    const shared = storage.global || { ore: 0, polymers: 0 };
+    const elsewhere = storage.elsewhere || { ore: 0, polymers: 0 };
+    const hubName = escapeHtml(market.data.hub?.name ?? 'этого хаба');
+    const part = (amounts) => amounts.ore + amounts.polymers;
+    const percent = (amount) => (storage.capacity > 0 ? Math.min(100, (amount / storage.capacity) * 100) : 0).toFixed(1);
+    const column = (className, title, hint, amounts) =>
+      `<div class="mk-store-col ${className}">` +
+      `<div class="mk-store-col-title"><i class="mk-dot"></i>${title}</div>` +
+      `<div class="mk-store-col-hint">${hint}</div>` +
+      `<div class="mk-store-col-row">${icon('ore', 'sm')}<span>Руда</span><b>${fmt(amounts.ore)}</b></div>` +
+      `<div class="mk-store-col-row">${icon('polymers', 'sm')}<span>Полимеры</span><b>${fmt(amounts.polymers)}</b></div>` +
+      '</div>';
 
     el.hubStorage.innerHTML =
-      `<div class="mk-store-head"><span>${escapeHtml(market.data.hub?.name ?? 'Хаб')} · склад ур. ${storage.level}</span>` +
-      `<b>${fmt(used)} / ${fmt(storage.capacity)}</b></div>` +
-      row('Руда', 'ore', storage.ore) +
-      row('Полимеры', 'polymers', storage.polymers) +
-      `<div class="mk-store-foot"><span>Свободно <b>${fmt(storage.free)}</b></span>` +
-      `<span>Аренда <b>${fmt(storage.rentPerHour)} ₴</b> в час</span></div>` +
-      (storage.local && storage.global
-        ? `<div class="mk-store-foot"><span>Склад хаба: ${icon('ore', 'sm')} <b>${fmt(storage.local.ore)}</b> ` +
-          `${icon('polymers', 'sm')} <b>${fmt(storage.local.polymers)}</b></span>` +
-          `<span>Общий склад: ${icon('ore', 'sm')} <b>${fmt(storage.global.ore)}</b> ` +
-          `${icon('polymers', 'sm')} <b>${fmt(storage.global.polymers)}</b></span></div>`
-        : '') +
-      (storage.elsewhere && storage.elsewhere.ore + storage.elsewhere.polymers > 0
-        ? `<p class="storage-note">На складах других хабов: ${icon('ore', 'sm')} ${fmt(storage.elsewhere.ore)} · ` +
-          `${icon('polymers', 'sm')} ${fmt(storage.elsewhere.polymers)} — забрать можно только там.</p>`
-        : '') +
-      '<p class="storage-note">Привезенное флотом лежит на складе хаба и забирается только там. ' +
-      'Купленное и полученное обменом ложится на общий склад — его можно забрать с любого хаба. ' +
-      'Размер склада один на все: склады всех хабов и общий вместе.</p>';
+      '<div class="mk-store-top">' +
+      `<div><div class="mk-store-title">Склады биржи</div>` +
+      `<div class="mk-store-sub">уровень ${storage.level} · аренда ${fmt(storage.rentPerHour)} ₴ в час</div></div>` +
+      `<div class="mk-store-total"><b>${fmt(used)}</b> из ${fmt(storage.capacity)}</div>` +
+      '</div>' +
+      '<div class="mk-store-bar" role="img" aria-label="Занятость складов">' +
+      `<i class="here" style="width:${percent(part(local))}%"></i>` +
+      `<i class="shared" style="width:${percent(part(shared))}%"></i>` +
+      `<i class="elsewhere" style="width:${percent(part(elsewhere))}%"></i>` +
+      '</div>' +
+      '<div class="mk-store-cols">' +
+      column('here', `Склад хаба «${hubName}»`, 'привезенное флотом · забрать только здесь', local) +
+      column('shared', 'Общий склад', 'купленное и обмен · забрать с любого хаба', shared) +
+      column('elsewhere', 'Другие хабы', 'привезенное туда · забрать только там', elsewhere) +
+      '</div>' +
+      '<div class="mk-store-avail">' +
+      `<span>Можно вывезти отсюда: ${icon('ore', 'sm')} <b>${fmt(storage.ore)}</b> · ${icon('polymers', 'sm')} <b>${fmt(storage.polymers)}</b></span>` +
+      `<span>Свободно <b>${fmt(storage.free)}</b></span>` +
+      '</div>';
 
     // Расширение платится криптогривной, а не товаром со склада: товаром
     // платить приходилось ровно тогда, когда места нет, и нужного ресурса
@@ -4529,10 +4556,15 @@
     const afford = market.data.credits >= storage.upgradeCost;
     el.upgradeStorage.hidden = false;
     el.upgradeStorage.disabled = !afford;
-    el.upgradeStorage.textContent =
-      `Расширить до ур. ${storage.nextLevel} → ${fmt(storage.nextCapacity)} · ` +
-      `${fmt(storage.upgradeCost)} ₴ и ${fmt(storage.nextRentPerHour)} ₴ в час`;
+    el.upgradeStorage.innerHTML =
+      `<b>Расширить склад до ур. ${storage.nextLevel}</b>` +
+      `<span>вместимость ${fmt(storage.capacity)} → ${fmt(storage.nextCapacity)}</span>` +
+      `<span>разово ${fmt(storage.upgradeCost)} ₴ · аренда станет ${fmt(storage.nextRentPerHour)} ₴ в час</span>` +
+      (afford ? '' : `<span class="mk-action-warn">не хватает ${fmt(storage.upgradeCost - market.data.credits)} ₴</span>`);
     el.hubTransport.hidden = false;
+    el.hubTransport.innerHTML =
+      '<b>Транспортировка</b>' +
+      '<span>привезти товар на хаб или забрать купленное — рейсом с колонии</span>';
   }
 
   /**
@@ -6125,8 +6157,8 @@
       const cell = synEl('div', className);
       cell.appendChild(synEl('span', null, label));
       const value = synEl('b');
-      value.innerHTML = `${sign}${fmt(credits)} ${icon('credits', 'sm')}`;
-      cell.append(value, synEl('span', null, `ресурсов ${sign}${fmt(resources)}`));
+      value.innerHTML = `${sign}${fmtCompact(credits)} ${icon('credits', 'sm')}`;
+      cell.append(value, synEl('span', null, `ресурсов ${sign}${fmtCompact(resources)}`));
       flow.appendChild(cell);
     }
     card.appendChild(flow);
@@ -6164,7 +6196,7 @@
     const top = Math.max(1, ...rows.map((row) => row.merit));
     const table = synEl('div', 'syn-table');
     const head = synEl('div', 'syn-row head');
-    for (const label of ['Участник', 'Взносы ₴', 'Налог ₴', 'Ресурсы']) head.appendChild(synEl('span', null, label));
+    for (const label of ['Участник', 'Взносы', 'Налог', 'Ресурсы']) head.appendChild(synEl('span', null, label));
     table.appendChild(head);
     for (const row of rows) {
       const line = synEl('div', 'syn-row');
@@ -6175,12 +6207,13 @@
       fill.style.width = `${Math.round((row.merit / top) * 100)}%`;
       bar.appendChild(fill);
       who.appendChild(bar);
-      line.append(who, synEl('span', null, fmt(row.credits)), synEl('span', null, fmt(row.tax)), synEl('span', null, fmt(row.resources)));
+      line.append(who, synEl('span', null, fmtCompact(row.credits)), synEl('span', null, fmtCompact(row.tax)),
+        synEl('span', null, fmtCompact(row.resources)));
       table.appendChild(line);
     }
     card.appendChild(table);
     card.appendChild(synEl('div', 'hub-storage',
-      'Полоса — заслуги: гривна и ресурсы, внесенные в казну, единица за единицу. Счет за все время в синдикате.'));
+      'Взносы и налог — в гривне, ресурсы — в единицах. Полоса — заслуги: гривна и ресурсы, внесенные в казну, единица за единицу. Счет за все время в синдикате.'));
     return card;
   }
 
@@ -6542,6 +6575,9 @@
     state.kishMode = true;
     document.body.classList.add('kish-mode');
     syncKishNav();
+    // Кнопка «Открыть Кіш» стоит внизу раздела синдиката: без прокрутки наверх
+    // игрок оставался посреди Мостика и думал, что ничего не произошло.
+    window.scrollTo(0, 0);
     renderBaseList();
     renderActiveBase();
     renderKishPanels();
