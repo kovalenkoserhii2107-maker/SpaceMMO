@@ -59,6 +59,11 @@ import {
   watchUpgradeCost,
   withdrawAllowance,
   type SyndicatePermission,
+  missingSyndicateRequirements,
+  requirementViews,
+  requirementsText,
+  syndicateProgress,
+  type SyndicateRequirementView,
 } from '../game/syndicate.js';
 import { alliedSyndicateIds,
   ensureSyndicateSetup,
@@ -173,11 +178,14 @@ export interface SyndicateView {
       windowShips: number;
       nextLevelCost: TreasuryCost;
       nextLevelSeconds: number;
+      /** Чего не хватает на следующий уровень — как у построек колонии. */
+      nextLevelRequirements: SyndicateRequirementView[];
     }>;
     /** Системы с колониями участников, где Брамы еще нет. */
     candidates: Array<{ systemId: string; systemName: string }>;
     firstLevelCost: TreasuryCost;
     firstLevelSeconds: number;
+    firstLevelRequirements: SyndicateRequirementView[];
   };
   kish: {
     level: number;
@@ -186,6 +194,7 @@ export interface SyndicateView {
     memberCap: number;
     nextLevelCost: number;
     nextLevelSeconds: number;
+    nextLevelRequirements: SyndicateRequirementView[];
     /** Когда Кіш снова можно перенести; `null` — хоть сейчас. */
     nextMoveAt: number | null;
     /** К Кошу летит налет: пока он в пути, переносить Кіш нельзя. */
@@ -195,6 +204,7 @@ export interface SyndicateView {
     protectedShare: number;
     nextTreasuryCost: TreasuryCost;
     nextTreasurySeconds: number;
+    nextTreasuryRequirements: SyndicateRequirementView[];
     defenses: Array<{ type: DefenseType; label: string; count: number; cost: { ore: number; polymers: number; plasma: number } }>;
     debris: { ore: number; polymers: number };
     /** Флоты участников на удержании у Коша. */
@@ -206,6 +216,7 @@ export interface SyndicateView {
     level: number;
     nextLevelCost: TreasuryCost;
     nextLevelSeconds: number;
+    nextLevelRequirements: SyndicateRequirementView[];
     techs: Array<{
       tech: SyndicateTech;
       label: string;
@@ -213,7 +224,9 @@ export interface SyndicateView {
       level: number;
       nextCost: TreasuryCost;
       seconds: number;
-      /** Можно ли изучать следующий уровень прямо сейчас: Академия позволяет и она свободна. */
+      /** Чего не хватает на следующий уровень; Академия — одно из требований. */
+      requirements: SyndicateRequirementView[];
+      /** Можно ли изучать следующий уровень прямо сейчас: требования выполнены и Академия свободна. */
       available: boolean;
     }>;
     research: { tech: SyndicateTech; label: string; targetLevel: number; remainingSeconds: number; totalSeconds: number } | null;
@@ -224,6 +237,7 @@ export interface SyndicateView {
     radius: number;
     nextLevelCost: number;
     nextLevelSeconds: number;
+    nextLevelRequirements: SyndicateRequirementView[];
     incoming: WatchedFleet[];
   };
   rules: { recruitment: SyndicateRecruitment; minScore: number; entryFee: number };
@@ -472,6 +486,9 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
   ]);
   const techState = await syndicateTechState(syndicateId);
   const engineering = techState.levels.ENGINEERING;
+  const progress = syndicateProgress(syndicate, techState.levels);
+  const needs = (target: SyndicateModule | SyndicateTech, level: number) =>
+    requirementViews(missingSyndicateRequirements(target, level, progress));
   const schedule = commitSchedule(syndicate);
   const allowance = withdrawAllowance(access, access.dailyWithdrawLimit, spentToday);
 
@@ -536,6 +553,7 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
         windowShips: now - gate.windowStartedAt.getTime() < 3_600_000 ? gate.windowShips : 0,
         nextLevelCost: bramaUpgradeCost(gate.level + 1),
         nextLevelSeconds: syndicateBuildSeconds('BRAMA', gate.level + 1, engineering),
+        nextLevelRequirements: needs('BRAMA', gate.level + 1),
       })),
       candidates: [
         ...new Map(
@@ -547,6 +565,7 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
       ],
       firstLevelCost: bramaUpgradeCost(1),
       firstLevelSeconds: syndicateBuildSeconds('BRAMA', 1, engineering),
+      firstLevelRequirements: needs('BRAMA', 1),
     },
     kish: {
       level: syndicate.kishLevel,
@@ -555,6 +574,7 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
       memberCap: memberCap(syndicate.kishLevel),
       nextLevelCost: kishUpgradeCost(syndicate.kishLevel + 1),
       nextLevelSeconds: syndicateBuildSeconds('KISH', syndicate.kishLevel + 1, engineering),
+      nextLevelRequirements: needs('KISH', syndicate.kishLevel + 1),
       nextMoveAt: kishMoveAvailableAt(syndicate.kishMovedAt?.getTime() ?? null) > now
         ? kishMoveAvailableAt(syndicate.kishMovedAt?.getTime() ?? null)
         : null,
@@ -563,6 +583,7 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
       protectedShare: treasuryProtectedShare(syndicate.treasuryLevel),
       nextTreasuryCost: treasuryUpgradeCost(syndicate.treasuryLevel + 1),
       nextTreasurySeconds: syndicateBuildSeconds('SKARBNYTSIA', syndicate.treasuryLevel + 1, engineering),
+      nextTreasuryRequirements: needs('SKARBNYTSIA', syndicate.treasuryLevel + 1),
       defenses: DEFENSE_TYPES.map((type) => ({
         type,
         label: defenseLabel(type),
@@ -588,8 +609,10 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
       level: syndicate.academyLevel,
       nextLevelCost: academyUpgradeCost(syndicate.academyLevel + 1),
       nextLevelSeconds: syndicateBuildSeconds('AKADEMIIA', syndicate.academyLevel + 1, engineering),
+      nextLevelRequirements: needs('AKADEMIIA', syndicate.academyLevel + 1),
       techs: SYNDICATE_TECHS.map((tech) => {
         const level = techState.levels[tech];
+        const requirements = needs(tech, level + 1);
         return {
           tech,
           label: SYNDICATE_TECH_LABELS[tech],
@@ -597,7 +620,8 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
           level,
           nextCost: syndicateTechCost(level + 1),
           seconds: syndicateResearchSeconds(level + 1, syndicate.academyLevel, engineering),
-          available: !techState.research && syndicate.academyLevel >= level + 1,
+          requirements,
+          available: !techState.research && requirements.length === 0,
         };
       }),
       research: techState.research
@@ -615,6 +639,7 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
       radius: watchRadius(syndicate.watchLevel),
       nextLevelCost: watchUpgradeCost(syndicate.watchLevel + 1),
       nextLevelSeconds: syndicateBuildSeconds('DOZOR', syndicate.watchLevel + 1, engineering),
+      nextLevelRequirements: needs('DOZOR', syndicate.watchLevel + 1),
       incoming,
     },
     rules: { recruitment: syndicate.recruitment, minScore: syndicate.minScore, entryFee: syndicate.entryFee },
@@ -1238,11 +1263,12 @@ export async function getSyndicateProjection(
   if (!syndicate) return { ok: false, error: 'Синдикат не найден', status: 404 };
   const techState = await syndicateTechState(access.syndicateId);
   const engineering = techState.levels.ENGINEERING;
+  const progress = syndicateProgress(syndicate, techState.levels);
 
   if ('tech' in target) {
     return {
       ok: true,
-      projection: syndicateTechProjection(target.tech, techState.levels[target.tech], syndicate.academyLevel, engineering),
+      projection: syndicateTechProjection(target.tech, techState.levels[target.tech], syndicate.academyLevel, engineering, progress),
     };
   }
   const levels: Record<Exclude<SyndicateModule, 'BRAMA'>, number> = {
@@ -1262,7 +1288,7 @@ export async function getSyndicateProjection(
   } else {
     level = levels[target.module];
   }
-  return { ok: true, projection: syndicateModuleProjection(target.module, level, engineering) };
+  return { ok: true, projection: syndicateModuleProjection(target.module, level, engineering, progress) };
 }
 
 /** Описание синдиката пишет тот же ранг, что и правила набора: оба текста — лицо синдиката для кандидатов. */
@@ -1584,6 +1610,11 @@ async function startConstruction(commanderId: string, module: SyndicateModule, s
   const target = current + 1;
   const cost = syndicateModuleCost(module, target);
   const techState = await syndicateTechState(access.syndicateId);
+  // Требования проверяются до списания: отказ после оплаты вернул бы казну только отменой.
+  const missing = missingSyndicateRequirements(module, target, syndicateProgress(syndicate, techState.levels));
+  if (missing.length > 0) {
+    return { ok: false, error: `Для ${syndicateModuleLabel(module)} ур. ${target} нужно: ${requirementsText(missing)}`, status: 409 };
+  }
   const seconds = syndicateBuildSeconds(module, target, techState.levels.ENGINEERING);
   const label = syndicateModuleLabel(module);
 
@@ -1766,8 +1797,10 @@ export async function startSyndicateResearch(commanderId: string, tech: Syndicat
   if (state.research) return { ok: false, error: 'Академия уже занята изучением', status: 409 };
 
   const target = state.levels[tech] + 1;
-  if (syndicate.academyLevel < target) {
-    return { ok: false, error: `Для ${target} уровня нужна Академия ${target} уровня`, status: 409 };
+  // Академия — одно из требований цепи, отдельной проверки у нее больше нет.
+  const missing = missingSyndicateRequirements(tech, target, syndicateProgress(syndicate, state.levels));
+  if (missing.length > 0) {
+    return { ok: false, error: `Для ${SYNDICATE_TECH_LABELS[tech]} ур. ${target} нужно: ${requirementsText(missing)}`, status: 409 };
   }
   const cost = syndicateTechCost(target);
   const seconds = syndicateResearchSeconds(target, syndicate.academyLevel, state.levels.ENGINEERING);

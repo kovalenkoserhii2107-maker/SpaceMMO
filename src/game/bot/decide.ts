@@ -72,6 +72,9 @@ import {
 } from './personality.js';
 import {
   isSyndicateTech,
+  missingSyndicateRequirements,
+  progressLevel,
+  syndicateProgress,
   syndicateModuleCost,
   syndicateTechCost,
   type SyndicateModule,
@@ -2364,25 +2367,46 @@ export interface SyndicateGoal {
  * технологией из плана; иначе она съедала бы казну раньше самих технологий.
  */
 export function syndicateGoal(syndicate: BotSyndicate, focus: readonly SyndicateFocus[]): SyndicateGoal | null {
-  const moduleLevel: Record<Exclude<SyndicateModule, 'BRAMA'>, number> = {
-    KISH: syndicate.kishLevel,
-    SKARBNYTSIA: syndicate.treasuryLevel,
-    AKADEMIIA: syndicate.academyLevel,
-    DOZOR: syndicate.watchLevel,
-  };
+  const progress = syndicateProgress(syndicate, syndicate.techs);
   const ceiling = focus.some((key) => isSyndicateTech(key) && syndicate.techs[key] >= syndicate.academyLevel);
 
-  for (const key of focus) {
-    if (isSyndicateTech(key)) {
-      if (syndicate.research) continue;
-      const target = syndicate.techs[key] + 1;
-      if (syndicate.academyLevel < target) continue;
-      return { kind: 'tech', key, cost: syndicateTechCost(target) };
+  /*
+   * Первое, что можно начать ради пункта плана: сам пункт, а если он заперт
+   * требованиями — его недостающее требование, и так вглубь.
+   *
+   * Без этого цепь запирала бы план: «Инженерный корпус» первым пунктом при
+   * нулевой артели стоял бы вечно, а копить было бы не на что — цель
+   * недоступна. Подтянутое требование строится и тогда, когда само по себе
+   * не прошло бы: Кіш тянут не ради мест, а потому что без него не взять
+   * Академию, и Академию — не ради потолка, а ради того, что стоит на ней.
+   * Глубина ограничена: цепь неглубокая, и счетчик лишь страхует от ошибки
+   * в таблице требований.
+   */
+  const reach = (key: SyndicateFocus, pulled: boolean, depth: number): SyndicateGoal | null => {
+    if (key === 'BRAMA' || depth > 8) return null;
+    // Нужен ли пункт вообще — раньше требований: ненужная Академия не должна
+    // тянуть за собой Кіш, а тот — Скарбницю.
+    if (!pulled && key === 'KISH' && syndicate.members + syndicate.applications.length < syndicate.memberCap) return null;
+    if (!pulled && key === 'AKADEMIIA' && !ceiling) return null;
+
+    const target = progressLevel(progress, key) + 1;
+    const missing = missingSyndicateRequirements(key, target, progress);
+    if (missing.length > 0) {
+      for (const req of missing) {
+        const found = reach(req.key, true, depth + 1);
+        if (found) return found;
+      }
+      return null;
     }
-    if (key === 'BRAMA' || syndicate.construction) continue;
-    if (key === 'KISH' && syndicate.members + syndicate.applications.length < syndicate.memberCap) continue;
-    if (key === 'AKADEMIIA' && !ceiling) continue;
-    return { kind: 'module', key, cost: syndicateModuleCost(key, moduleLevel[key] + 1) };
+    if (isSyndicateTech(key)) {
+      return syndicate.research ? null : { kind: 'tech', key, cost: syndicateTechCost(target) };
+    }
+    return syndicate.construction ? null : { kind: 'module', key, cost: syndicateModuleCost(key, target) };
+  };
+
+  for (const key of focus) {
+    const goal = reach(key, false, 0);
+    if (goal) return goal;
   }
   return null;
 }

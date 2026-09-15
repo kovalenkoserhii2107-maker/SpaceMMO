@@ -2308,7 +2308,8 @@ function syndicateWith(overrides: Partial<BotSyndicate> = {}): BotSyndicate {
     canReview: false,
     members: 2,
     memberCap: 3,
-    kishLevel: 1,
+    // Второй уровень: на нем открывается Академия, и цель по умолчанию — она.
+    kishLevel: 2,
     treasuryLevel: 0,
     academyLevel: 0,
     watchLevel: 0,
@@ -2344,13 +2345,40 @@ function syndicateWith(overrides: Partial<BotSyndicate> = {}): BotSyndicate {
 
 {
   // Места в Коше тянут, только когда тесно: состав вместе с заявками уперся в предел.
-  const focus = ['KISH', 'DOZOR'] as const;
-  check('свободные места — Кіш не цель', syndicateGoal(syndicateWith({ members: 2 }), focus)?.key === 'DOZOR');
-  check('тесно — цель Кіш', syndicateGoal(syndicateWith({ members: 3 }), focus)?.key === 'KISH');
+  // Кіш первого уровня: второй требований не имеет, а Дозор без второго Коша заперт.
+  const focus = ['KISH', 'SKARBNYTSIA'] as const;
+  const small = { kishLevel: 1, memberCap: 3 };
+  check('свободные места — Кіш не цель', syndicateGoal(syndicateWith({ ...small, members: 2 }), ['KISH']) === null);
+  check('тесно — цель Кіш', syndicateGoal(syndicateWith({ ...small, members: 3 }), focus)?.key === 'KISH');
   const applicant = { id: 'заявка', commanderId: 'кандидат', nickname: 'Кандидат', isBot: false };
   check(
     'заявка сверх свободного места тоже делает тесно',
-    syndicateGoal(syndicateWith({ members: 2, applications: [applicant] }), focus)?.key === 'KISH',
+    syndicateGoal(syndicateWith({ ...small, members: 2, applications: [applicant] }), focus)?.key === 'KISH',
+  );
+}
+
+{
+  /*
+   * Цепь требований не запирает план: закрытый пункт тянет за собой
+   * недостающее. Инженерам нужна артель, артели — разработка недр, а той —
+   * Академия; Академии — второй Кіш.
+   */
+  check(
+    'закрытая технология тянет свое требование',
+    syndicateGoal(syndicateWith({ academyLevel: 2 }), ['ENGINEERING'])?.key === 'MINING',
+  );
+  check(
+    'требование тянется вглубь до первого доступного',
+    syndicateGoal(syndicateWith({ kishLevel: 1, academyLevel: 0 }), ['ENGINEERING'])?.key === 'KISH',
+  );
+  check(
+    'подтянутый Кіш строится и при свободных местах',
+    syndicateGoal(syndicateWith({ kishLevel: 1, members: 1 }), ['MINING'])?.key === 'KISH',
+  );
+  // Дозору второго уровня нужна «Контрразведка», а ей — Академия: в плане технологий нет вовсе.
+  check(
+    'подтянутая Академия строится и без потолка технологий',
+    syndicateGoal(syndicateWith({ watchLevel: 1 }), ['DOZOR'])?.key === 'AKADEMIIA',
   );
 }
 

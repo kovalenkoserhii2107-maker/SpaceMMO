@@ -6,6 +6,14 @@
  * Запуск: npm run test:syndicate
  */
 import {
+  missingSyndicateRequirements,
+  progressLevel,
+  syndicateRequirements,
+  SYNDICATE_MODULES,
+  SYNDICATE_TECHS,
+  type SyndicateProgress,
+  type SyndicateRequirement,
+  type SyndicateUnlock,
   BUFF_TENURE_MS,
   kishSpeedup,
   syndicateBuildSeconds,
@@ -238,7 +246,7 @@ console.log('\n=== 8. Подробности модулей и технолог�
   check('эффект Брамы растет с уровнем', brama.rows[0]!.effect === '400 кораблей' && brama.rows[1]!.effect === '600 кораблей', brama.rows[1]!.effect);
   const counter = syndicateTechProjection('COUNTERINTEL', 2, 1);
   check('контрразведка дает +1 на третьем уровне', counter.rows[1]!.effect === '+1 к «Шпионажу»', counter.rows[1]!.effect);
-  check('уровень выше Академии помечен', counter.rows[1]!.note === 'нужна Академия ур. 3' && counter.rows[0]!.note === null);
+  check('уровень выше Академии помечен', counter.rows[1]!.note === 'нужно: Академия ур. 3' && counter.rows[0]!.note === null, `${counter.rows[1]!.note}`);
   check('у технологии есть срок изучения, у текущего уровня — нет', counter.rows[1]!.seconds! > 0 && counter.rows[0]!.seconds === null);
 }
 
@@ -252,6 +260,70 @@ console.log('\n=== 9. Стройка в Коше и «Инженерный ко�
   check('Академию строит право Академии, остальное — право развития Коша',
     modulePermission('AKADEMIIA') === 'ACADEMY' && modulePermission('BRAMA') === 'KISH');
   check('у модулей в таблице уровней есть срок стройки', syndicateModuleProjection('DOZOR', 1).rows[1]!.seconds === syndicateBuildSeconds('DOZOR', 2));
+}
+
+console.log('\n=== 10. Цепь требований модулей и технологий ===');
+{
+  const fresh = (): SyndicateProgress => ({ kish: 1, treasury: 0, academy: 0, watch: 0, techs: emptySyndicateTechLevels() });
+  const bump = (progress: SyndicateProgress, key: SyndicateRequirement['key']): void => {
+    if (key === 'KISH') progress.kish += 1;
+    else if (key === 'SKARBNYTSIA') progress.treasury += 1;
+    else if (key === 'AKADEMIIA') progress.academy += 1;
+    else if (key === 'DOZOR') progress.watch += 1;
+    else progress.techs[key] += 1;
+  };
+  /*
+   * Жадная раскрутка из пустого синдиката: берем первое недостающее
+   * требование и поднимаем его на уровень, пока цель не откроется. Цикл
+   * в таблице здесь не зависнет, а упрется в предел глубины и провалит проверку.
+   */
+  const reach = (progress: SyndicateProgress, target: SyndicateUnlock, level: number, depth = 0): boolean => {
+    if (depth > 60) return false;
+    for (let guard = 0; guard < 500; guard += 1) {
+      const missing = missingSyndicateRequirements(target, level, progress);
+      if (missing.length === 0) return true;
+      const req = missing[0]!;
+      if (!reach(progress, req.key, progressLevel(progress, req.key) + 1, depth + 1)) return false;
+      bump(progress, req.key);
+    }
+    return false;
+  };
+
+  const everything: SyndicateUnlock[] = [...SYNDICATE_MODULES, ...SYNDICATE_TECHS];
+  const stuck = everything.flatMap((target) =>
+    Array.from({ length: target === 'BRAMA' ? 5 : 10 }, (_, index) => index + 1)
+      .filter((level) => !reach(fresh(), target, level))
+      .map((level) => `${target} ${level}`),
+  );
+  check('из пустого синдиката достижимо все: циклов в цепи нет', stuck.length === 0, stuck.join(', '));
+
+  check('второй Кіш требований не имеет — с него цепь и начинается', syndicateRequirements('KISH', 2).length === 0);
+  check(
+    'Академия — требование любой технологии на ее же уровне',
+    SYNDICATE_TECHS.every((tech) => syndicateRequirements(tech, 4).some((req) => req.key === 'AKADEMIIA' && req.level === 4)),
+  );
+
+  const gate = fresh();
+  reach(gate, 'BRAMA', 1);
+  check(
+    'первая Брама стоит на вершине дерева',
+    gate.kish >= 4 && gate.academy >= 3 && gate.treasury >= 2 && gate.watch >= 1 &&
+      gate.techs.CARGO >= 2 && gate.techs.ENGINEERING >= 3 && gate.techs.CONSTRUCTION >= 3 && gate.techs.MINING >= 3,
+    JSON.stringify(gate),
+  );
+  check(
+    'выполненные требования не мешают',
+    missingSyndicateRequirements('BRAMA', 1, gate).length === 0,
+  );
+  check(
+    'таблица подробностей называет недостающее',
+    (syndicateModuleProjection('BRAMA', 0, 0, fresh()).rows[1]?.note ?? '').includes('Кіш ур. 4'),
+    syndicateModuleProjection('BRAMA', 0, 0, fresh()).rows[1]?.note ?? 'пусто',
+  );
+  check(
+    'без картины синдиката таблица требований не выдумывает',
+    syndicateModuleProjection('BRAMA', 0).rows[1]?.note === null,
+  );
 }
 
 const passed = results.filter((r) => r.passed).length;

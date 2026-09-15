@@ -666,18 +666,25 @@ const MODULE_INFO: Record<SyndicateModule, {
   },
 };
 
-export function syndicateModuleProjection(module: SyndicateModule, level: number, engineeringLevel = 0): SyndicateProjection {
+export function syndicateModuleProjection(
+  module: SyndicateModule,
+  level: number,
+  engineeringLevel = 0,
+  /** Что уже есть в синдикате: без него в таблице нет строки требований. */
+  progress: SyndicateProgress | null = null,
+): SyndicateProjection {
   const info = MODULE_INFO[module];
   const current = Math.max(0, Math.floor(level));
   const rows: SyndicateProjectionRow[] = [{ level: current, current: true, cost: null, seconds: null, effect: info.effect(current), note: null }];
   for (let target = current + 1; target <= current + PROJECTION_DEPTH; target += 1) {
+    const missing = progress ? missingSyndicateRequirements(module, target, progress) : [];
     rows.push({
       level: target,
       current: false,
       cost: info.cost(target),
       seconds: syndicateBuildSeconds(module, target, engineeringLevel),
       effect: info.effect(target),
-      note: null,
+      note: missing.length > 0 ? `нужно: ${requirementsText(missing)}` : null,
     });
   }
   return { key: module, label: info.label, description: info.description, level: current, effectLabel: info.effectLabel, rows };
@@ -696,7 +703,13 @@ export function syndicateTechEffect(tech: SyndicateTech, level: number): string 
   }
 }
 
-export function syndicateTechProjection(tech: SyndicateTech, level: number, academyLevel: number, engineeringLevel = 0): SyndicateProjection {
+export function syndicateTechProjection(
+  tech: SyndicateTech,
+  level: number,
+  academyLevel: number,
+  engineeringLevel = 0,
+  progress: SyndicateProgress | null = null,
+): SyndicateProjection {
   const current = Math.max(0, Math.floor(level));
   const rows: SyndicateProjectionRow[] = [{
     level: current, current: true, cost: null, seconds: null, effect: syndicateTechEffect(tech, current), note: null,
@@ -708,7 +721,15 @@ export function syndicateTechProjection(tech: SyndicateTech, level: number, acad
       cost: syndicateTechCost(target),
       seconds: syndicateResearchSeconds(target, academyLevel, engineeringLevel),
       effect: syndicateTechEffect(tech, target),
-      note: academyLevel < target ? `нужна Академия ур. ${target}` : null,
+      note: (() => {
+        // Без картины синдиката остается одно требование, известное по параметрам, — Академия.
+        const missing = progress
+          ? missingSyndicateRequirements(tech, target, progress)
+          : academyLevel < target
+            ? [{ key: 'AKADEMIIA' as const, level: target }]
+            : [];
+        return missing.length > 0 ? `нужно: ${requirementsText(missing)}` : null;
+      })(),
     });
   }
   return {
@@ -719,4 +740,149 @@ export function syndicateTechProjection(tech: SyndicateTech, level: number, acad
     effectLabel: 'эффект',
     rows,
   };
+}
+
+/* ------------------------- Требования ------------------------- */
+
+/**
+ * Что уже построено и изучено в синдикате — по этому решаются требования.
+ *
+ * Уровней Брам здесь нет: врата у каждой системы свои, и требования на них
+ * ставятся по Кошу и технологиям, а не по соседним вратам.
+ */
+export interface SyndicateProgress {
+  kish: number;
+  treasury: number;
+  academy: number;
+  watch: number;
+  techs: SyndicateTechLevels;
+}
+
+export type SyndicateUnlock = SyndicateModule | SyndicateTech;
+
+export interface SyndicateRequirement {
+  key: Exclude<SyndicateUnlock, 'BRAMA'>;
+  level: number;
+}
+
+/**
+ * Что нужно, чтобы взять уровень модуля или технологии.
+ *
+ * Цепь сходится к Браме — самой сильной постройке синдиката: без нее
+ * расстояния значат столько, сколько задумано, а с ней флот ходит между
+ * системами без «Гипердвигателя». Поэтому врата стоят на вершине дерева
+ * и требуют почти всего остального: большого Коша с защищенной казной,
+ * Академии третьего уровня, Дозора, который увидит поток кораблей,
+ * «Обозных трюмов» под логистику и «Инженерного корпуса», которым врата
+ * и строятся, — а он сам тянет за собой артель и добычу.
+ *
+ * Остальные связи — по смыслу, а не для счета:
+ *   - Кіш растет вместе со Скарбницей: больше состав — больше казна,
+ *     и держать ее без защиты значит звать налетчиков;
+ *   - Скарбниця и Академия растут вместе с Кошем, на половину его шага;
+ *   - Дозор выше первого уровня стоит на «Контрразведке», а та — на Дозоре:
+ *     наблюдение и его защита растут парой, по полшага друг за другом;
+ *   - «Тайники» — ремесло Скарбници, артель выходит из разработки недр,
+ *     инженеры — из артели, трюмы — из торговых связей.
+ *
+ * Академия остается потолком любой технологии: это требование того же вида,
+ * что и прочие, и отдельной проверки у изучения больше нет.
+ *
+ * Циклов в цепи нет, и это проверяется тестом: каждое требование ведет
+ * к уровню ниже или к модулю, который сам от требующего не зависит.
+ * Уже взятые уровни требованиями не отнимаются — действуют они на стройку
+ * следующего, а не на то, что синдикат успел построить до цепи.
+ */
+export function syndicateRequirements(target: SyndicateUnlock, level: number): SyndicateRequirement[] {
+  const n = Math.max(1, Math.floor(level));
+  const need = (key: SyndicateRequirement['key'], required: number): SyndicateRequirement[] =>
+    required > 0 ? [{ key, level: required }] : [];
+
+  switch (target) {
+    case 'KISH':
+      return need('SKARBNYTSIA', n - 2);
+    case 'SKARBNYTSIA':
+    case 'AKADEMIIA':
+      return need('KISH', Math.ceil(n / 2) + 1);
+    case 'DOZOR':
+      return [...need('KISH', 2), ...need('COUNTERINTEL', n - 1)];
+    case 'BRAMA':
+      return [
+        ...need('KISH', 4),
+        ...need('AKADEMIIA', 3),
+        ...need('SKARBNYTSIA', 2),
+        ...need('DOZOR', n),
+        ...need('CARGO', 2),
+        ...need('ENGINEERING', n + 2),
+      ];
+    case 'MINING':
+    case 'TRADE':
+      return need('AKADEMIIA', n);
+    case 'CARGO':
+      return [...need('AKADEMIIA', n), ...need('TRADE', n - 1)];
+    case 'CONSTRUCTION':
+      return [...need('AKADEMIIA', n), ...need('MINING', n)];
+    case 'ENGINEERING':
+      return [...need('AKADEMIIA', n), ...need('CONSTRUCTION', n)];
+    case 'VAULT':
+      return [...need('AKADEMIIA', n), ...need('SKARBNYTSIA', n)];
+    case 'COUNTERINTEL':
+      return [...need('AKADEMIIA', n), ...need('DOZOR', Math.ceil(n / 2))];
+  }
+}
+
+export function progressLevel(progress: SyndicateProgress, key: SyndicateRequirement['key']): number {
+  switch (key) {
+    case 'KISH':
+      return progress.kish;
+    case 'SKARBNYTSIA':
+      return progress.treasury;
+    case 'AKADEMIIA':
+      return progress.academy;
+    case 'DOZOR':
+      return progress.watch;
+    default:
+      return progress.techs[key];
+  }
+}
+
+/** Чего не хватает прямо сейчас, чтобы взять уровень. Пусто — можно брать. */
+export function missingSyndicateRequirements(
+  target: SyndicateUnlock,
+  level: number,
+  progress: SyndicateProgress,
+): SyndicateRequirement[] {
+  return syndicateRequirements(target, level).filter((req) => progressLevel(progress, req.key) < req.level);
+}
+
+export function syndicateUnlockLabel(key: SyndicateUnlock): string {
+  return isSyndicateTech(key) ? SYNDICATE_TECH_LABELS[key] : syndicateModuleLabel(key);
+}
+
+/** «Кіш ур. 4, Академия ур. 3» — одна строка на карточку и в отказ сервера. */
+export function requirementsText(list: readonly SyndicateRequirement[]): string | null {
+  return list.length > 0 ? list.map((req) => `${syndicateUnlockLabel(req.key)} ур. ${req.level}`).join(', ') : null;
+}
+
+/**
+ * Требование в том виде, в каком его показывает карточка: так же, как у построек
+ * и технологий колонии, — ключ, подпись и уровень. Карточка рисует их одним
+ * и тем же компонентом, и синдикатное дерево читается ровно как колониальное.
+ */
+export interface SyndicateRequirementView {
+  key: SyndicateRequirement['key'];
+  label: string;
+  level: number;
+}
+
+export function requirementViews(list: readonly SyndicateRequirement[]): SyndicateRequirementView[] {
+  return list.map((req) => ({ key: req.key, label: syndicateUnlockLabel(req.key), level: req.level }));
+}
+
+/** Картина синдиката для требований — из строки синдиката и уровней технологий. */
+export function syndicateProgress(
+  row: { kishLevel: number; treasuryLevel: number; academyLevel: number; watchLevel: number },
+  techs: SyndicateTechLevels,
+): SyndicateProgress {
+  return { kish: row.kishLevel, treasury: row.treasuryLevel, academy: row.academyLevel, watch: row.watchLevel, techs };
 }

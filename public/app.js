@@ -6871,6 +6871,12 @@
     if (typeof options.seconds === 'number') card.time.textContent = fmtTime(options.seconds);
     else card.time.parentNode.hidden = true;
     if (options.extra) card.article.insertBefore(options.extra, card.button);
+    // Требования — тем же компонентом, что у построек колонии: список и запертая карточка.
+    // Старый ответ сервера поля не несет — тогда требований просто нет.
+    const requirements = options.requirements || [];
+    fillRequirements(card, requirements);
+    const locked = requirements.length > 0;
+    card.article.classList.toggle('locked', locked);
     const affordable = treasuryCovers(options.mine, options.cost);
     const construction = options.mine.construction;
     const constructionKey = construction
@@ -6881,8 +6887,9 @@
     const buildingThis = constructionKey !== null && constructionKey === options.buildKey;
     card.article.classList.toggle('built', options.built !== false);
     card.button.textContent = buildingThis ? 'Идет стройка' : options.label;
-    card.button.disabled = !options.allowed || !affordable || Boolean(construction);
-    card.button.title = !options.allowed ? options.deniedHint
+    card.button.disabled = locked || !options.allowed || !affordable || Boolean(construction);
+    card.button.title = locked ? 'Требования не выполнены'
+      : !options.allowed ? options.deniedHint
       : construction && !buildingThis ? 'В Коше уже идет стройка — стройка одна на синдикат'
       : !affordable ? 'В казне не хватает на это' : '';
     return card;
@@ -6899,7 +6906,7 @@
       description: 'Хаб синдиката. Каждый уровень добавляет одно место в составе.',
       level: `Ур. ${kish.level} → ${kish.level + 1}`,
       effect: `мест в составе: ${kish.memberCap}`,
-      cost: { credits: kish.nextLevelCost }, seconds: kish.nextLevelSeconds, buildKey: 'KISH:', allowed: can('KISH'), deniedHint: denyKish,
+      cost: { credits: kish.nextLevelCost }, seconds: kish.nextLevelSeconds, requirements: kish.nextLevelRequirements, buildKey: 'KISH:', allowed: can('KISH'), deniedHint: denyKish,
       label: 'Улучшить', onClick: () => syndicateAction('/api/syndicates/kish/upgrade'),
     });
     kishModuleCard(node, {
@@ -6907,7 +6914,7 @@
       description: 'Бережет часть ресурсной казны при налете на Кіш. Гривну не грабят вовсе.',
       level: `Ур. ${kish.treasuryLevel} → ${kish.treasuryLevel + 1}`,
       effect: `несгораемо ${Math.round(kish.protectedShare * 100)}% ресурсов казны`,
-      cost: kish.nextTreasuryCost, seconds: kish.nextTreasurySeconds, buildKey: 'SKARBNYTSIA:', allowed: can('KISH'), deniedHint: denyKish, built: kish.treasuryLevel > 0,
+      cost: kish.nextTreasuryCost, seconds: kish.nextTreasurySeconds, requirements: kish.nextTreasuryRequirements, buildKey: 'SKARBNYTSIA:', allowed: can('KISH'), deniedHint: denyKish, built: kish.treasuryLevel > 0,
       label: kish.treasuryLevel > 0 ? 'Улучшить' : 'Построить', onClick: () => syndicateAction('/api/syndicates/treasury/upgrade'),
     });
     kishModuleCard(node, {
@@ -6915,7 +6922,7 @@
       description: 'Открывает технологии синдиката. Ее уровень — потолок уровня любой технологии.',
       level: `Ур. ${mine.academy.level} → ${mine.academy.level + 1}`,
       effect: mine.academy.level > 0 ? `технологии до ур. ${mine.academy.level}` : 'технологии синдиката закрыты',
-      cost: mine.academy.nextLevelCost, seconds: mine.academy.nextLevelSeconds, buildKey: 'AKADEMIIA:', allowed: can('ACADEMY'), deniedHint: 'Нужно право Академии', built: mine.academy.level > 0,
+      cost: mine.academy.nextLevelCost, seconds: mine.academy.nextLevelSeconds, requirements: mine.academy.nextLevelRequirements, buildKey: 'AKADEMIIA:', allowed: can('ACADEMY'), deniedHint: 'Нужно право Академии', built: mine.academy.level > 0,
       label: mine.academy.level > 0 ? 'Улучшить' : 'Построить', onClick: () => syndicateAction('/api/syndicates/academy/upgrade'),
     });
     kishModuleCard(node, {
@@ -6924,7 +6931,7 @@
       level: `Ур. ${mine.watch.level} → ${mine.watch.level + 1}`,
       effect: mine.watch.level <= 0 ? 'атаки на колонии не видны'
         : mine.watch.radius === 0 ? 'наблюдает систему Коша' : `радиус ${mine.watch.radius} от Коша`,
-      cost: { credits: mine.watch.nextLevelCost }, seconds: mine.watch.nextLevelSeconds, buildKey: 'DOZOR:', allowed: can('KISH'), deniedHint: denyKish, built: mine.watch.level > 0,
+      cost: { credits: mine.watch.nextLevelCost }, seconds: mine.watch.nextLevelSeconds, requirements: mine.watch.nextLevelRequirements, buildKey: 'DOZOR:', allowed: can('KISH'), deniedHint: denyKish, built: mine.watch.level > 0,
       label: mine.watch.level > 0 ? 'Улучшить' : 'Построить', onClick: () => syndicateAction('/api/syndicates/watch/upgrade'),
     });
 
@@ -6935,7 +6942,7 @@
         detailUrl: `/api/syndicates/projection/module/BRAMA?systemId=${encodeURIComponent(gate.systemId)}`,
         level: `Ур. ${gate.level} → ${gate.level + 1}`,
         effect: `за час ${fmt(gate.windowShips)} из ${fmt(gate.throughput)} кораблей`,
-        cost: gate.nextLevelCost, seconds: gate.nextLevelSeconds, buildKey: `BRAMA:${gate.systemId}`, allowed: can('KISH'), deniedHint: denyKish,
+        cost: gate.nextLevelCost, seconds: gate.nextLevelSeconds, requirements: gate.nextLevelRequirements, buildKey: `BRAMA:${gate.systemId}`, allowed: can('KISH'), deniedHint: denyKish,
         label: 'Улучшить', onClick: () => syndicateAction('/api/syndicates/gates', { systemId: gate.systemId }),
       });
     }
@@ -6951,7 +6958,7 @@
       kishModuleCard(node, {
         mine, type: 'BRAMA', title: 'Новая Брама', detailUrl: '/api/syndicates/projection/module/BRAMA', description: 'Строится в системе, где есть колония хотя бы одного участника.',
         level: 'Ур. 0 → 1', effect: gateDescription, extra: synField('Система', select),
-        cost: mine.gates.firstLevelCost, seconds: mine.gates.firstLevelSeconds, buildKey: 'BRAMA:new', allowed: can('KISH'), deniedHint: denyKish, built: false,
+        cost: mine.gates.firstLevelCost, seconds: mine.gates.firstLevelSeconds, requirements: mine.gates.firstLevelRequirements, buildKey: 'BRAMA:new', allowed: can('KISH'), deniedHint: denyKish, built: false,
         label: 'Построить', onClick: () => syndicateAction('/api/syndicates/gates', { systemId: select.value }),
       });
     }
@@ -6973,17 +6980,22 @@
       card.level.textContent = `Ур. ${tech.level} → ${tech.level + 1}`;
       fillTreasuryCost(card, tech.nextCost, mine);
       card.time.textContent = fmtTime(tech.seconds);
-      const needsAcademy = academy.level < tech.level + 1;
-      card.reqs.hidden = !needsAcademy;
-      card.reqs.textContent = needsAcademy ? `Требуется: Академия ур. ${tech.level + 1}` : '';
-      card.article.classList.toggle('locked', needsAcademy);
+      // Как у технологий колонии: список недостающего и запертая карточка.
+      // Академия — одно из требований; у старого ответа поля нет, и тогда
+      // остается прежняя проверка по ее уровню.
+      const requirements = tech.requirements
+        || (academy.level < tech.level + 1 ? [{ label: 'Академия', level: tech.level + 1 }] : []);
+      fillRequirements(card, requirements);
+      const locked = requirements.length > 0;
+      card.article.classList.toggle('locked', locked);
       card.article.classList.toggle('built', tech.level > 0);
       const studying = academy.research && academy.research.tech === tech.tech;
       const affordable = treasuryCovers(mine, tech.nextCost);
       card.button.textContent = studying ? 'Изучается' : 'Изучать';
-      card.button.disabled = !can('ACADEMY') || !tech.available || !affordable;
+      card.button.disabled = !can('ACADEMY') || locked || !tech.available || !affordable;
       card.button.title = !can('ACADEMY') ? 'Нужно право Академии'
-        : !tech.available ? (academy.research ? 'Академия занята другим изучением' : `Нужна Академия ур. ${tech.level + 1}`)
+        : locked ? 'Требования не выполнены'
+        : !tech.available ? 'Академия занята другим изучением'
         : !affordable ? 'В казне не хватает на это' : '';
     }
     renderKishResearchBanner();
