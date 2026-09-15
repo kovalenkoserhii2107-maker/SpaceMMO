@@ -711,21 +711,33 @@
 
         <section data-panel="war" hidden>
           <h3 class="panel-title">Экспедиции и войны</h3>
-          <h3 class="section-title">Профиль командира</h3>
-          <div id="commander-profile" class="hub-card"></div>
+          <!--
+            Раздел отвечает на три вопроса: кто я в войне (сводка сверху), что со мной
+            случилось (бои и экспедиции) и с кем я воюю или дружу (дипломатия).
+            Части идут вкладками: одной лентой они прятали друг друга, и до отчетов
+            о боях приходилось листать мимо профиля и всех достижений.
+          -->
+          <div id="commander-profile" class="war-hero"></div>
+          <div id="war-tabs" class="syn-seg war-tabs" role="tablist"></div>
 
-          <h3 class="section-title">Достижения</h3>
-          <div id="achievements" class="cards"></div>
+          <div class="war-pane" data-war-pane="battles">
+            <div id="battle-filter" class="syn-seg"></div>
+            <div id="battles" class="war-list"></div>
+          </div>
 
-          <h3 class="section-title">Экспедиции в глубокий космос</h3>
-          <div id="expedition-slots" class="hub-card"></div>
-          <div id="expeditions" class="battles"></div>
+          <div class="war-pane" data-war-pane="expeditions" hidden>
+            <div id="expedition-slots" class="hub-card"></div>
+            <div id="expeditions" class="war-list"></div>
+          </div>
 
-          <h3 class="section-title">Дипломатия</h3>
-          <div id="diplomacy" class="queue"></div>
+          <div class="war-pane" data-war-pane="diplomacy" hidden>
+            <div id="diplomacy" class="war-stack"></div>
+          </div>
 
-          <h3 class="section-title">Отчеты о боях</h3>
-          <div id="battles" class="battles"></div>
+          <div class="war-pane" data-war-pane="achievements" hidden>
+            <div id="achievements-head" class="hub-card"></div>
+            <div id="achievements" class="cards"></div>
+          </div>
         </section>
 
         <section data-panel="rating" hidden>

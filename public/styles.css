@@ -3617,3 +3617,63 @@ button.tiny { padding: 4px 10px; font-size: 11px; flex: none; }
 @media (max-width: 600px) {
   .mk-form > .mk-field:first-child { grid-column: 1 / -1; }
 }
+
+/*
+ * Экспедиции и войны. Сводка сверху счетчиками, части вкладками, бои
+ * короткими строками с раскрытием отчета. Цвет строки закреплен за исходом:
+ * зеленый — победа или находка, красный — поражение или потеря.
+ */
+[data-panel="war"] { display: grid; gap: 16px; }
+[data-panel="war"][hidden] { display: none; }
+[data-panel="war"] > .section-title { margin: 0; }
+.war-hero { display: grid; gap: 14px; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+.war-hero-head { display: flex; gap: 14px; align-items: center; }
+.war-avatar { width: 56px; height: 56px; border-radius: 16px; display: grid; place-items: center; font-size: 28px; background: var(--panel-2); border: 1px solid var(--line); flex: none; }
+.war-who { display: grid; gap: 4px; min-width: 0; }
+.war-name { font-size: 22px; font-weight: 700; }
+.war-kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
+.war-kpi { display: grid; gap: 2px; padding: 10px 12px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--line); }
+.war-kpi-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; }
+.war-kpi b { font-size: 20px; font-variant-numeric: tabular-nums; }
+.war-kpi-hint { font-size: 11px; color: var(--muted); }
+.war-kpi.win b { color: var(--ok); }
+.war-kpi.loss b { color: var(--err); }
+.war-tabs { margin: 0; }
+.war-pane { display: grid; gap: 12px; }
+.war-pane[hidden] { display: none; }
+.war-pane > .syn-seg { margin: 0; }
+.war-list, .war-stack { display: grid; gap: 10px; }
+.war-empty { color: var(--muted); font-size: 13px; }
+.war-row { border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: 12px; background: var(--panel); overflow: hidden; }
+.war-row.win { border-left-color: var(--ok); }
+.war-row.loss { border-left-color: var(--err); }
+.war-row .battle-report { margin: 0 12px 12px; }
+.war-row-head {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center;
+  width: 100%; padding: 12px; background: none; border: 0; color: var(--text); text-align: left; font: inherit;
+}
+button.war-row-head:hover { background: rgba(120, 160, 255, 0.06); }
+.war-row-head.static { cursor: default; }
+.war-row-main { display: grid; gap: 2px; min-width: 0; }
+.war-row-main b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.war-row-main .muted { font-size: 12px; }
+.war-row-result { display: grid; gap: 2px; justify-items: end; font-size: 12px; font-variant-numeric: tabular-nums; }
+.war-row-result .gain { color: var(--ok); font-weight: 600; }
+.war-row-result .lost { color: var(--err); font-weight: 600; }
+.war-row-text { margin: 0 12px 10px; font-size: 13px; color: var(--muted); line-height: 1.5; }
+.war-row-text.lost { color: var(--err); }
+.war-chip { padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; border: 1px solid var(--line); white-space: nowrap; }
+.war-chip.win { color: var(--ok); border-color: rgba(74, 222, 128, 0.4); }
+.war-chip.loss { color: var(--err); border-color: rgba(248, 113, 113, 0.4); }
+.war-chip.neutral { color: var(--muted); }
+.chip.war { border-color: rgba(248, 113, 113, 0.5); color: var(--err); }
+.war-slots-label { font-size: 13px; margin-bottom: 6px; }
+.war-slots { display: flex; gap: 6px; margin-bottom: 10px; }
+.war-slots i { flex: 1; height: 10px; border-radius: 5px; background: var(--panel-2); border: 1px solid var(--line); }
+.war-slots i.used { background: var(--accent); border-color: var(--accent); }
+.war-flight { font-size: 13px; padding: 8px 10px; border-radius: 10px; background: var(--panel-2); margin-top: 6px; }
+@media (max-width: 600px) {
+  .war-row-head { grid-template-columns: auto minmax(0, 1fr); }
+  .war-row-result { grid-column: 1 / -1; justify-items: start; grid-auto-flow: column; justify-content: space-between; }
+  .war-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

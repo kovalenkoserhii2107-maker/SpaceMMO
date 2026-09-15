@@ -250,6 +250,9 @@
     battles: $('battles'),
     expeditionSlots: $('expedition-slots'),
     expeditions: $('expeditions'),
+    warTabs: $('war-tabs'),
+    battleFilter: $('battle-filter'),
+    achievementsHead: $('achievements-head'),
     resAntimatter: $('res-antimatter'),
     rateAntimatter: $('rate-antimatter'),
     galaxyMap: $('galaxy-map'),
@@ -734,22 +737,32 @@
   /* --- профиль и достижения --- */
   function renderProfile() {
     if (!auth.profile) return;
-    const p = auth.profile;
-    const avatar = auth.avatars.find((item) => item.id === p.avatarId);
+    renderWarSummary();
+    renderAchievements();
+    renderWarTabs();
+  }
 
-    el.commanderProfile.innerHTML =
-      `<div class="hub-storage"><b>${avatar ? avatar.glyph : '✦'} ${p.nickname}</b><br>` +
-      `боев выиграно: <b>${p.battlesWon}</b> · проиграно: <b>${p.battlesLost}</b><br>` +
-      `родная колония: <b>${p.homePlanet || '—'}</b><br>` +
-      `в строю с ${new Date(p.createdAt).toLocaleDateString('ru-RU')}</div>`;
+  /** Достижения: сколько получено — сразу сверху, полученные карточки идут первыми. */
+  function renderAchievements() {
+    const achievements = (auth.profile && auth.profile.achievements) || [];
+    const unlocked = achievements.filter((item) => item.unlockedAt);
+    el.achievementsHead.innerHTML = '';
+    el.achievementsHead.appendChild(synEl('h3', 'section-title', 'Достижения'));
+    el.achievementsHead.appendChild(synEl('div', 'war-slots-label', `Получено ${unlocked.length} из ${achievements.length}`));
+    const bar = synEl('div', 'storage-bar');
+    const fill = synEl('i', 'bar-safe');
+    fill.style.width = `${achievements.length ? Math.round((unlocked.length / achievements.length) * 100) : 0}%`;
+    bar.appendChild(fill);
+    el.achievementsHead.appendChild(bar);
 
     el.achievements.innerHTML = '';
-    for (const achievement of p.achievements || []) {
+    const ordered = [...achievements].sort((a, b) => Number(Boolean(b.unlockedAt)) - Number(Boolean(a.unlockedAt)));
+    for (const achievement of ordered) {
       const card = document.createElement('article');
       card.className = `card achievement${achievement.unlockedAt ? ' unlocked' : ''}`;
       card.innerHTML =
-        `<header><h4>${achievement.icon} ${achievement.title}</h4></header>` +
-        `<div class="desc">${achievement.description}</div>` +
+        `<header><h4>${achievement.icon} ${escapeHtml(achievement.title)}</h4></header>` +
+        `<div class="desc">${escapeHtml(achievement.description)}</div>` +
         (achievement.unlockedAt
           ? `<div class="when">получено ${new Date(achievement.unlockedAt).toLocaleString('ru-RU')}</div>`
           : '<div class="time">еще не получено</div>');
@@ -5150,266 +5163,341 @@
       renderDiplomacy();
       renderBattles();
       renderExpeditions();
+      renderWarSummary();
+      renderWarTabs();
     } catch (error) {
       /* подтянется на следующем обновлении */
     }
   }
 
+  /*
+   * Дипломатия. Одиночка воюет лично с соседями по системе; участник
+   * синдиката — от лица синдиката: войны, пакты и список синдикатов идут
+   * отдельными карточками, чтобы действие не терялось среди статусов.
+   */
   function renderDiplomacy() {
     el.diplomacy.innerHTML = '';
-    const mySyndicate = war.data && war.data.syndicate;
-
-    // В синдикате дипломатия ведется на уровне альянсов, а не отдельных командиров.
-    if (mySyndicate) {
-      renderSyndicateDiplomacy(mySyndicate);
+    const data = war.data;
+    if (!data) return;
+    if (data.syndicate) {
+      renderSyndicateDiplomacy(data.syndicate);
       return;
     }
 
-    const players = (war.data && war.data.players) || [];
-
-    if (!players.length) {
-      const empty = document.createElement('div');
-      empty.className = 'queue-item';
-      empty.textContent = 'В системе нет других колоний';
-      el.diplomacy.appendChild(empty);
-      return;
-    }
-
+    const card = synCard('Соседи по системе');
+    card.appendChild(synEl('div', 'hub-storage',
+      'Пока ты не в синдикате, войны личные. Атака на колонию объявляет войну сама, мир заключается здесь.'));
+    const players = data.players || [];
+    if (!players.length) card.appendChild(synEl('div', 'hub-storage', 'В системе нет других колоний.'));
     for (const player of players) {
-      const item = document.createElement('div');
-      item.className = 'queue-item war-item';
-
-      const info = document.createElement('div');
-      const title = document.createElement('b');
-      title.textContent = `${player.nickname} · ${player.planetName}`;
-      const status = document.createElement('div');
-      status.className = player.atWar ? 'status-war' : 'status-peace';
-      status.textContent = player.atWar
-        ? `война${player.declaredByMe ? ' (объявили мы)' : ' (объявили нам)'}`
-        : 'мир';
-      info.append(title, status);
-
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = player.atWar ? 'ghost' : 'primary';
-      button.textContent = player.atWar ? 'Заключить мир' : 'Объявить войну';
-      button.addEventListener('click', async () => {
-        await send(`/api/war/${player.atWar ? 'peace' : 'declare'}`, { targetId: player.commanderId });
+      const row = synEl('div', 'syn-member');
+      const info = synEl('div', 'syn-member-info');
+      const name = synEl('div', 'syn-member-name');
+      name.append(synEl('span', null, player.nickname), synEl('span', `chip${player.atWar ? ' war' : ''}`, player.atWar ? 'война' : 'мир'));
+      info.append(name, synEl('div', 'syn-member-meta',
+        player.planetName + (player.atWar
+          ? ` · ${player.declaredByMe ? 'объявили мы' : 'объявили нам'}${player.declaredAt ? ` · с ${synDateTime(player.declaredAt)}` : ''}`
+          : '')));
+      const actions = synEl('div', 'member-actions');
+      const refresh = async () => {
         await loadWar();
         await loadMap(mapSystemId());
-      });
-
-      item.append(info, button);
-      el.diplomacy.appendChild(item);
+      };
+      actions.appendChild(player.atWar
+        ? synButton('Заключить мир', 'ghost', async () => {
+          await send('/api/war/peace', { targetId: player.commanderId });
+          await refresh();
+        })
+        : synConfirm('Объявить войну', 'Точно объявить?', 'ghost', async () => {
+          await send('/api/war/declare', { targetId: player.commanderId });
+          await refresh();
+        }));
+      row.append(info, actions);
+      card.appendChild(row);
     }
+    el.diplomacy.appendChild(card);
   }
 
-  /** Войны синдикатов: объявлять и мириться могут лидер и офицеры. */
   function renderSyndicateDiplomacy(mine) {
+    const data = war.data;
     const canDeclare = Boolean(mine.canDeclare);
+    const others = data.otherSyndicates || [];
+    const pacts = data.pacts || [];
+    const wars = data.syndicateWars || [];
+    const nameOf = (id) => {
+      const other = others.find((item) => item.id === id);
+      return other ? `[${other.tag}] ${other.name}` : 'синдикат';
+    };
+    const act = (path, body) => async () => {
+      await send(path, body);
+      await loadWar();
+    };
 
-    const header = document.createElement('div');
-    header.className = 'queue-item';
-    header.innerHTML =
-      `<b>Синдикат [${mine.tag}] ${mine.name}</b>` +
-      `<span>${canDeclare
-        ? 'ты можешь объявлять войну и заключать мир от лица синдиката'
-        : 'войну и мир от лица синдиката объявляют ранги с правом дипломатии'}</span>`;
-    el.diplomacy.appendChild(header);
+    const head = synCard('Дипломатия синдиката');
+    head.appendChild(synEl('div', 'hub-storage', `[${mine.tag}] ${mine.name} · твой ранг: ${mine.rankName}`));
+    head.appendChild(synEl('div', 'hub-storage', canDeclare
+      ? 'Ты можешь объявлять войну, мириться и заключать пакты от лица синдиката.'
+      : 'Войну, мир и пакты от лица синдиката ведут ранги с правом дипломатии.'));
+    el.diplomacy.appendChild(head);
 
-    const others = (war.data.otherSyndicates || []);
-    if (!others.length) {
-      const empty = document.createElement('div');
-      empty.className = 'queue-item';
-      empty.textContent = 'Других синдикатов в галактике пока нет';
-      el.diplomacy.appendChild(empty);
-      return;
+    const warsCard = synCard(`Войны · ${wars.length}`);
+    if (!wars.length) {
+      warsCard.appendChild(synEl('div', 'hub-storage',
+        'Синдикат ни с кем не воюет. Атака на участника или налет на Кіш объявляет войну сама.'));
     }
-
-    const pacts = war.data.pacts || [];
-    const PACT_KINDS = [['NON_AGGRESSION', 'Ненападение'], ['ALLIANCE', 'Союз'], ['TRADE', 'Торговое соглашение']];
-    for (const other of others) {
-      const row = document.createElement('div');
-      row.className = 'queue-item war-item';
-      const withThem = pacts.filter((pact) => pact.syndicateId === other.id);
-      // Ненападение и союз не дают объявить войну, пока пакт в силе.
-      const peaceBound = withThem.some((pact) => pact.status === 'ACTIVE' && pact.type !== 'TRADE');
-
-      const info = document.createElement('div');
-      const title = document.createElement('b');
-      title.textContent = `[${other.tag}] ${other.name}`;
-      const status = document.createElement('div');
-      status.className = other.atWar ? 'status-war' : 'status-peace';
-      status.textContent = other.atWar ? 'война синдикатов' : 'мир';
-      info.append(title, status);
-      for (const pact of withThem) {
-        const line = document.createElement('div');
-        line.className = 'muted';
-        line.textContent = pact.status === 'PROPOSED'
-          ? `${pact.label}: ${pact.proposedByUs ? 'предложен нами, ждет ответа' : 'предложен нам'}`
-          : `${pact.label}: действует${pact.endsAt ? ` до ${synDateTime(pact.endsAt)} (расторгнут)` : ''}`;
-        info.appendChild(line);
-      }
-
-      const actions = document.createElement('div');
-      actions.className = 'row';
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = other.atWar ? 'ghost' : 'primary';
-      button.textContent = other.atWar ? 'Заключить мир' : 'Объявить войну';
-      button.disabled = !canDeclare || (!other.atWar && peaceBound);
-      if (!other.atWar && peaceBound) button.title = 'Действует пакт о ненападении';
-      button.addEventListener('click', async () => {
-        await send(`/api/war/syndicate/${other.atWar ? 'peace' : 'declare'}`, {
-          targetSyndicateId: other.syndicateId || other.id,
-        });
-        await loadWar();
-      });
-      actions.appendChild(button);
-
+    for (const item of wars) {
+      const row = synEl('div', 'syn-member');
+      const info = synEl('div', 'syn-member-info');
+      const name = synEl('div', 'syn-member-name');
+      name.append(synEl('span', null, `[${item.tag}] ${item.name}`), synEl('span', 'chip war', 'война'));
+      info.append(name, synEl('div', 'syn-member-meta',
+        `${item.declaredByUs ? 'объявили мы' : 'объявили нам'} · с ${synDateTime(item.declaredAt)}`));
+      row.appendChild(info);
       if (canDeclare) {
-        const pactAction = (path, body) => async () => {
-          await send(`/api/war/syndicate/pact/${path}`, body);
-          await loadWar();
-        };
-        for (const pact of withThem) {
-          if (pact.status === 'PROPOSED' && !pact.proposedByUs) {
-            actions.appendChild(synButton(`Принять: ${pact.label}`, 'primary', pactAction('respond', { pactId: pact.id, accept: true })));
-            actions.appendChild(synButton('Отклонить', 'ghost', pactAction('respond', { pactId: pact.id, accept: false })));
-          } else if (pact.status === 'PROPOSED') {
-            actions.appendChild(synButton(`Отозвать: ${pact.label}`, 'ghost', pactAction('cancel', { pactId: pact.id })));
-          } else if (!pact.endsAt) {
-            actions.appendChild(synConfirm(`Расторгнуть: ${pact.label}`, 'Точно расторгнуть?', 'ghost', pactAction('cancel', { pactId: pact.id })));
-          }
+        const actions = synEl('div', 'member-actions');
+        actions.appendChild(synButton('Заключить мир', 'ghost', act('/api/war/syndicate/peace', { targetSyndicateId: item.syndicateId })));
+        row.appendChild(actions);
+      }
+      warsCard.appendChild(row);
+    }
+    el.diplomacy.appendChild(warsCard);
+
+    const pactCard = synCard(`Пакты · ${pacts.length}`);
+    if (!pacts.length) {
+      pactCard.appendChild(synEl('div', 'hub-storage',
+        'Пактов нет. Ненападение и союз запрещают атаки между синдикатами, союз еще делится Брамами и Дозором, ' +
+        'торговое соглашение вдвое снижает комиссию биржи. Расторгнутый пакт действует еще сутки.'));
+    }
+    for (const pact of pacts) {
+      const row = synEl('div', 'syn-member');
+      const info = synEl('div', 'syn-member-info');
+      const name = synEl('div', 'syn-member-name');
+      name.append(synEl('span', null, nameOf(pact.syndicateId)), synEl('span', `chip${pact.status === 'ACTIVE' ? ' leader' : ''}`, pact.label));
+      info.append(name, synEl('div', 'syn-member-meta', pact.status === 'PROPOSED'
+        ? (pact.proposedByUs ? 'предложен нами, ждет ответа' : 'предложен нам')
+        : pact.endsAt ? `расторгнут · действует до ${synDateTime(pact.endsAt)}` : 'действует'));
+      row.appendChild(info);
+      if (canDeclare) {
+        const actions = synEl('div', 'member-actions');
+        if (pact.status === 'PROPOSED' && !pact.proposedByUs) {
+          actions.append(
+            synButton('Принять', 'primary', act('/api/war/syndicate/pact/respond', { pactId: pact.id, accept: true })),
+            synButton('Отклонить', 'ghost', act('/api/war/syndicate/pact/respond', { pactId: pact.id, accept: false })),
+          );
+        } else if (pact.status === 'PROPOSED') {
+          actions.appendChild(synButton('Отозвать', 'ghost', act('/api/war/syndicate/pact/cancel', { pactId: pact.id })));
+        } else if (!pact.endsAt) {
+          actions.appendChild(synConfirm('Расторгнуть', 'Точно расторгнуть?', 'ghost', act('/api/war/syndicate/pact/cancel', { pactId: pact.id })));
         }
+        if (actions.children.length) row.appendChild(actions);
+      }
+      pactCard.appendChild(row);
+    }
+    el.diplomacy.appendChild(pactCard);
+
+    const PACT_KINDS = [['NON_AGGRESSION', 'Ненападение'], ['ALLIANCE', 'Союз'], ['TRADE', 'Торговое соглашение']];
+    const listCard = synCard('Синдикаты галактики');
+    if (!others.length) listCard.appendChild(synEl('div', 'hub-storage', 'Других синдикатов пока нет.'));
+    for (const other of others) {
+      const withThem = pacts.filter((pact) => pact.syndicateId === other.id);
+      const peaceBound = withThem.some((pact) => pact.status === 'ACTIVE' && pact.type !== 'TRADE');
+      const row = synEl('div', 'syn-member');
+      const info = synEl('div', 'syn-member-info');
+      const name = synEl('div', 'syn-member-name');
+      name.appendChild(synEl('span', null, `[${other.tag}] ${other.name}`));
+      if (other.atWar) name.appendChild(synEl('span', 'chip war', 'война'));
+      for (const pact of withThem.filter((item) => item.status === 'ACTIVE')) name.appendChild(synEl('span', 'chip leader', pact.label));
+      if (!other.atWar && !withThem.some((item) => item.status === 'ACTIVE')) name.appendChild(synEl('span', 'chip muted', 'нейтралитет'));
+      info.appendChild(name);
+      row.appendChild(info);
+      if (canDeclare && !other.atWar) {
+        const actions = synEl('div', 'member-actions');
         const available = PACT_KINDS.filter(([kind]) => !withThem.some((pact) => pact.type === kind));
         if (available.length) {
-          const select = document.createElement('select');
+          const select = synEl('select');
           for (const [kind, label] of available) {
-            const option = document.createElement('option');
+            const option = synEl('option', null, label);
             option.value = kind;
-            option.textContent = label;
             select.appendChild(option);
           }
-          actions.appendChild(select);
-          actions.appendChild(synButton('Предложить пакт', 'ghost', async () => {
+          actions.append(select, synButton('Предложить пакт', 'ghost', async () => {
             await send('/api/war/syndicate/pact/propose', { targetSyndicateId: other.id, type: select.value });
             await loadWar();
           }));
         }
+        const declare = synConfirm('Объявить войну', 'Точно объявить войну?', 'ghost',
+          act('/api/war/syndicate/declare', { targetSyndicateId: other.id }));
+        declare.disabled = peaceBound;
+        if (peaceBound) declare.title = 'Действует пакт о ненападении';
+        actions.appendChild(declare);
+        row.appendChild(actions);
       }
-
-      row.append(info, actions);
-      el.diplomacy.appendChild(row);
+      listCard.appendChild(row);
     }
+    el.diplomacy.appendChild(listCard);
   }
 
-  function renderBattles() {
-    el.battles.innerHTML = '';
-    const battles = (war.data && war.data.battles) || [];
+  /*
+   * Сводка раздела: кто я в войне. Счетчики — ответы на вопросы, с которыми
+   * сюда заходят: как идут бои, с кем война, свободны ли слоты экспедиций.
+   */
+  function renderWarSummary() {
+    const profile = auth.profile;
+    if (!profile) return;
+    const data = war.data;
+    const node = el.commanderProfile;
+    node.innerHTML = '';
 
-    if (!battles.length) {
-      const empty = document.createElement('div');
-      empty.className = 'queue-item';
-      empty.textContent = 'Боев еще не было';
-      el.battles.appendChild(empty);
+    const avatar = auth.avatars.find((item) => item.id === profile.avatarId);
+    const head = synEl('div', 'war-hero-head');
+    const who = synEl('div', 'war-who');
+    who.append(
+      synEl('div', 'war-name', profile.nickname),
+      synEl('div', 'muted', `родная колония ${profile.homePlanet || '—'} · в строю с ${new Date(profile.createdAt).toLocaleDateString('ru-RU')}`),
+    );
+    head.append(synEl('div', 'war-avatar', avatar ? avatar.glyph : '✦'), who);
+    node.appendChild(head);
+
+    const total = profile.battlesWon + profile.battlesLost;
+    const wars = data ? (data.syndicate ? (data.syndicateWars || []).length : (data.players || []).filter((item) => item.atWar).length) : null;
+    const slots = data && data.expeditionSlots;
+    const achievements = profile.achievements || [];
+    const kpis = synEl('div', 'war-kpis');
+    const kpi = (label, value, hint, tone) => {
+      const cell = synEl('div', `war-kpi${tone ? ` ${tone}` : ''}`);
+      cell.append(synEl('span', 'war-kpi-label', label), synEl('b', null, value));
+      if (hint) cell.appendChild(synEl('span', 'war-kpi-hint', hint));
+      kpis.appendChild(cell);
+    };
+    kpi('Победы', fmt(profile.battlesWon), total ? `${Math.round((profile.battlesWon / total) * 100)}% боев` : 'боев не было', 'win');
+    kpi('Поражения', fmt(profile.battlesLost), null, profile.battlesLost ? 'loss' : '');
+    kpi('Войны', wars === null ? '—' : fmt(wars), data && data.syndicate ? 'войны синдиката' : 'личные войны', wars ? 'loss' : '');
+    kpi('Экспедиции', slots ? `${slots.used} из ${slots.total}` : '—', slots && slots.total ? 'слотов занято' : 'нужна «Астрофизика»');
+    kpi('Достижения', `${achievements.filter((item) => item.unlockedAt).length} из ${achievements.length}`, null);
+    node.appendChild(kpis);
+  }
+
+  const WAR_TABS = [['battles', 'Бои'], ['expeditions', 'Экспедиции'], ['diplomacy', 'Дипломатия'], ['achievements', 'Достижения']];
+  const BATTLE_FILTERS = [['ALL', 'Все'], ['WIN', 'Победы'], ['LOSS', 'Поражения'], ['ATTACKER', 'Мои атаки'], ['DEFENDER', 'Оборона']];
+
+  /** Состояние вкладок раздела живет в `war`, а не отдельной переменной: рендер может прийти раньше объявления. */
+  function warUi() {
+    return war.ui || (war.ui = { tab: 'battles', filter: 'ALL', expanded: new Set() });
+  }
+
+  function renderWarTabs() {
+    const ui = warUi();
+    const data = war.data;
+    const profile = auth.profile;
+    const counts = {
+      battles: data ? (data.battles || []).length : 0,
+      expeditions: data ? (data.expeditions || []).length : 0,
+      diplomacy: data
+        ? (data.syndicate ? (data.syndicateWars || []).length + (data.pacts || []).length : (data.players || []).filter((item) => item.atWar).length)
+        : 0,
+      achievements: profile ? (profile.achievements || []).filter((item) => item.unlockedAt).length : 0,
+    };
+    el.warTabs.innerHTML = '';
+    for (const [key, label] of WAR_TABS) {
+      const button = synButton(counts[key] ? `${label} · ${counts[key]}` : label, 'ghost', () => {
+        ui.tab = key;
+        renderWarTabs();
+      });
+      button.classList.toggle('active', ui.tab === key);
+      button.setAttribute('role', 'tab');
+      button.setAttribute('aria-selected', String(ui.tab === key));
+      el.warTabs.appendChild(button);
+    }
+    for (const pane of document.querySelectorAll('[data-war-pane]')) pane.hidden = pane.dataset.warPane !== ui.tab;
+  }
+
+  /*
+   * Бои: короткие строки — исход, где, когда, добыча и потери, — а полный
+   * отчет раскрывается по нажатию тем же компонентом, что в письме и
+   * симуляторе. Длинный текстовый отчет на каждый бой делал список нечитаемым.
+   */
+  function renderBattles() {
+    const ui = warUi();
+    const battles = (war.data && war.data.battles) || [];
+    el.battleFilter.innerHTML = '';
+    for (const [key, label] of BATTLE_FILTERS) {
+      const button = synButton(label, 'ghost', () => {
+        ui.filter = key;
+        renderBattles();
+      });
+      button.classList.toggle('active', ui.filter === key);
+      el.battleFilter.appendChild(button);
+    }
+
+    el.battles.innerHTML = '';
+    const shown = battles.filter((battle) =>
+      ui.filter === 'ALL' || (ui.filter === 'WIN' && battle.victory) || (ui.filter === 'LOSS' && !battle.victory) || battle.role === ui.filter);
+    if (!shown.length) {
+      el.battles.appendChild(synEl('div', 'hub-card war-empty', battles.length
+        ? 'Под этот фильтр боев нет.'
+        : 'Боев еще не было. Атака объявляет войну сама — цель выбирают на карте системы.'));
       return;
     }
 
-    for (const battle of battles) {
-      const card = document.createElement('article');
-      card.className = `battle ${battle.victory ? 'win' : 'loss'}`;
-
-      const header = document.createElement('header');
-      const title = document.createElement('h4');
-      title.textContent = `${battle.attackerName} → ${battle.defenderName} · ${battle.planetName}`;
-      const verdict = document.createElement('span');
-      verdict.className = 'verdict';
-      verdict.textContent = battle.victory
-        ? (battle.role === 'ATTACKER' ? 'победа: атака удалась' : 'победа: атака отбита')
-        : (battle.role === 'ATTACKER' ? 'поражение: флот разбит' : 'поражение: оборона пала');
-      header.append(title, verdict);
-
-      const powers = document.createElement('div');
-      powers.className = 'line';
-      powers.innerHTML =
-        `роль: <b>${battle.role === 'ATTACKER' ? 'атакующий' : 'защитник'}</b> · ` +
-        `огневая мощь <b>${fmt(battle.attackerPower)}</b> против <b>${fmt(battle.defenderPower)}</b>`;
-
-      const losses = document.createElement('div');
-      losses.className = 'line';
-      losses.innerHTML =
-        `мои потери: <b>${describeLosses(battle.myLosses)}</b><br>` +
-        `потери противника: <b>${describeLosses(battle.enemyLosses)}</b>`;
-
-      const plunder = document.createElement('div');
-      plunder.className = 'line';
-      const looted = battle.plunder.ore + battle.plunder.polymers + battle.plunder.plasma > 0;
-      plunder.innerHTML = looted
-        ? 'награблено: ' +
-          [
-            [battle.plunder.ore, 'ore'],
-            [battle.plunder.polymers, 'polymers'],
-            [battle.plunder.plasma, 'plasma'],
-          ]
-            .filter(([amount]) => amount > 0)
-            .map(([amount, res]) => `${icon(res, 'sm')} <b>${fmt(amount)}</b>`)
-            .join(' · ') +
-          `${battle.role === 'DEFENDER' ? ' (вывезено с нашего склада)' : ''}`
-        : 'ресурсы не вывозились';
-
-      // Почему увезли именно столько: сколько спрятало хранилище защитника.
-      const safe = battle.victory && battle.role === 'ATTACKER' ? battle.storageDefense : null;
-
-      // Обломки образуют обе стороны, поэтому строка одинакова для всех.
-      const debris = document.createElement('div');
-      debris.className = 'line';
-      const debrisTotal = battle.debris ? battle.debris.ore + battle.debris.polymers : 0;
-      debris.innerHTML =
-        debrisTotal > 0
-          ? `на орбите осело обломков: ${icon('ore', 'sm')} <b>${fmt(battle.debris.ore)}</b> · ` +
-            `${icon('polymers', 'sm')} <b>${fmt(battle.debris.polymers)}</b> — их можно собрать переработчиком`
-          : 'обломков не осталось';
-
-      const when = document.createElement('div');
-      when.className = 'line';
-      when.textContent = new Date(battle.createdAt).toLocaleString('ru-RU');
-
-      card.append(header, powers, losses);
-
-      // Куда ушел урон — главный ответ на вопрос «почему я проиграл».
-      for (const [report, title] of [
-        [battle.myDamage, 'мой урон'],
-        [battle.enemyDamage, 'урон противника'],
-      ]) {
-        if (!report) continue;
-        const line = document.createElement('div');
-        line.className = 'line';
-        const mix = (report.damageMix || []).map((d) => d.label).join(', ') || 'без оружия';
-        line.innerHTML =
-          `${title} (${mix}): щиты поглотили <b>${fmt(report.shield)}</b>, ` +
-          `броня <b>${fmt(report.armor)}</b>, по корпусу прошло <b>${fmt(report.hull)}</b>`;
-        card.appendChild(line);
-      }
-
-      card.append(plunder, debris);
-
-      if (safe) {
-        const line = document.createElement('div');
-        line.className = 'line';
-        const reason = safe.cargoLimited
-          ? 'остальное не влезло в трюмы уцелевших'
-          : 'больше из хранилища не достать';
-        line.innerHTML =
-          `хранилище врага (ур. вместимости <b>${fmt(safe.capacity)}</b>): на складе лежало ` +
-          `<b>${fmt(safe.stored)}</b>, из них защищено <b>${fmt(safe.protectedAmount)}</b>, ` +
-          `уязвимый излишек <b>${fmt(safe.surplus)}</b> — ${reason}`;
-        card.appendChild(line);
-      }
-
-      card.append(when);
-      el.battles.appendChild(card);
+    for (const battle of shown) {
+      const item = synEl('article', `war-row ${battle.victory ? 'win' : 'loss'}`);
+      const summary = synEl('button', 'war-row-head');
+      summary.type = 'button';
+      const main = synEl('span', 'war-row-main');
+      main.append(
+        synEl('b', null, battle.role === 'ATTACKER' ? `Атака на ${battle.defenderName}` : `Оборона от ${battle.attackerName}`),
+        synEl('span', 'muted', `${battle.planetName} · ${synDateTime(battle.createdAt)}`),
+      );
+      const result = synEl('span', 'war-row-result');
+      const loot = [['ore', battle.plunder.ore], ['polymers', battle.plunder.polymers], ['plasma', battle.plunder.plasma]]
+        .filter(([, value]) => value > 0);
+      const lost = (battle.myLosses || []).reduce((sum, row) => sum + (row.lost || 0), 0);
+      const sign = battle.role === 'ATTACKER' ? '+' : '−';
+      result.innerHTML =
+        (loot.length
+          ? `<span class="${battle.role === 'ATTACKER' ? 'gain' : 'lost'}">${loot.map(([key, value]) => `${sign}${fmtCompact(value)} ${icon(key, 'sm')}`).join(' ')}</span>`
+          : '<span class="muted">без добычи</span>') +
+        `<span class="muted">потери: ${lost ? `${fmt(lost)} ед.` : 'нет'}</span>`;
+      summary.append(synEl('span', `war-chip ${battle.victory ? 'win' : 'loss'}`, battle.victory ? 'Победа' : 'Поражение'), main, result);
+      const expanded = ui.expanded.has(battle.id);
+      summary.setAttribute('aria-expanded', String(expanded));
+      summary.addEventListener('click', () => {
+        if (ui.expanded.has(battle.id)) ui.expanded.delete(battle.id);
+        else ui.expanded.add(battle.id);
+        renderBattles();
+      });
+      item.appendChild(summary);
+      if (expanded) item.appendChild(renderBattleReport(battleReportFromWar(battle)));
+      el.battles.appendChild(item);
     }
+  }
+
+  /** Бой из раздела войн → тот же отчет, что в письме и симуляторе. */
+  function battleReportFromWar(battle) {
+    const mineIsAttacker = battle.role === 'ATTACKER';
+    const damage = [[battle.myDamage, 'Мой урон'], [battle.enemyDamage, 'Урон противника']]
+      .filter(([report]) => report)
+      .map(([report, label]) =>
+        `${label}: щиты поглотили <b>${fmt(report.shield)}</b>, броня <b>${fmt(report.armor)}</b>, по корпусу прошло <b>${fmt(report.hull)}</b>.`)
+      .join('<br>');
+    const safe = battle.storageDefense && battle.victory && mineIsAttacker
+      ? `Хранилище врага укрыло <b>${fmt(battle.storageDefense.protectedAmount)}</b>` +
+        (battle.storageDefense.cargoLimited ? ', остальное не влезло в трюмы.' : '.')
+      : '';
+    return {
+      title: mineIsAttacker ? `Атака на ${battle.defenderName}` : `Оборона от ${battle.attackerName}`,
+      place: battle.planetName,
+      date: battle.createdAt,
+      role: battle.role,
+      result: battle.winner,
+      attacker: { name: battle.attackerName, losses: mineIsAttacker ? battle.myLosses : battle.enemyLosses },
+      defender: { name: battle.defenderName, losses: mineIsAttacker ? battle.enemyLosses : battle.myLosses },
+      debris: battle.debris,
+      plunder: battle.plunder,
+      plunderLabel: mineIsAttacker ? 'Награблено' : 'Вывезено со склада',
+      footer: [`Огневая мощь: <b>${fmt(battle.attackerPower)}</b> против <b>${fmt(battle.defenderPower)}</b>.`, damage, safe]
+        .filter(Boolean).join('<br>'),
+    };
   }
 
   function describeLosses(losses) {
@@ -5765,71 +5853,82 @@
     PIRATES_LOST: 'Флот потерян',
   };
 
+  /*
+   * Экспедиции: слоты полосой, флоты в полете с временем прибытия или возврата
+   * и отчеты карточками. Отправка — одной кнопкой: карта открывается уже
+   * с глубоким космосом целью и экспедицией миссией.
+   */
   function renderExpeditions() {
     const data = war.data;
     if (!data) return;
-
     const slots = data.expeditionSlots || { total: 0, used: 0 };
-    el.expeditionSlots.innerHTML = slots.total > 0
-      ? `<div class="hub-storage">Экспедиционных слотов: <b>${slots.used}</b> из <b>${slots.total}</b><br>` +
-        'Лимит задает уровень «Астрофизики»: 1 → 1, 4 → 2, 9 → 3.<br>' +
-        'Точка выхода — глубокий космос (16-я позиция) любой системы на карте.</div>'
-      : '<div class="hub-storage">Экспедиции недоступны: изучи технологию <b>«Астрофизика»</b>.</div>';
+    const card = el.expeditionSlots;
+    card.innerHTML = '';
+    card.appendChild(synEl('h3', 'section-title', 'Экспедиции в глубокий космос'));
+
+    if (slots.total > 0) {
+      card.appendChild(synEl('div', 'war-slots-label', `Занято слотов: ${slots.used} из ${slots.total}`));
+      const bar = synEl('div', 'war-slots');
+      for (let index = 0; index < slots.total; index += 1) bar.appendChild(synEl('i', index < slots.used ? 'used' : ''));
+      card.appendChild(bar);
+      card.appendChild(synEl('div', 'hub-storage',
+        'Слоты дает «Астрофизика»: 1 уровень — один, 4 — два, 9 — три. Флот летит в глубокий космос любой системы, ' +
+        'а там его ждут тишина, брошенный груз или пираты.'));
+      const full = slots.used >= slots.total;
+      card.appendChild(synButton(full ? 'Все слоты заняты' : 'Отправить экспедицию', 'primary', () => void openExpeditionDispatch(), full));
+    } else {
+      card.appendChild(synEl('div', 'hub-storage', 'Экспедиции откроются с технологией «Астрофизика».'));
+      card.appendChild(synButton('К исследованиям', 'ghost', () => showPanel('research')));
+    }
+
+    const flying = (state.fleets || []).filter((fleet) => fleet.mission === 'EXPEDITION');
+    if (flying.length) {
+      card.appendChild(synEl('h4', 'syn-subtitle', 'В полете'));
+      for (const fleet of flying) {
+        const ships = Object.values(fleet.ships || {}).reduce((sum, count) => sum + (count || 0), 0);
+        card.appendChild(synEl('div', 'war-flight',
+          `${fleet.targetName} · ${fmt(ships)} кораблей · ` +
+          (fleet.status === 'OUTBOUND' ? `у цели ${synDateTime(fleet.arrivesAt)}` : `дома ${synDateTime(fleet.returnsAt)}`)));
+      }
+    }
 
     el.expeditions.innerHTML = '';
     const reports = data.expeditions || [];
-
     if (!reports.length) {
-      const empty = document.createElement('div');
-      empty.className = 'queue-item';
-      empty.textContent = 'Отчетов об экспедициях еще нет';
-      el.expeditions.appendChild(empty);
+      el.expeditions.appendChild(synEl('div', 'hub-card war-empty', 'Отчетов об экспедициях еще нет.'));
       return;
     }
-
     for (const report of reports) {
       const tone = EXPEDITION_TONE[report.outcome] || 'neutral';
-      const card = document.createElement('article');
-      card.className = `battle ${tone === 'win' ? 'win' : tone === 'loss' ? 'loss' : ''}`;
-
-      const header = document.createElement('header');
-      const title = document.createElement('h4');
-      title.textContent = `${EXPEDITION_TITLE[report.outcome] || report.outcome} · ${report.systemName}`;
-      const when = document.createElement('span');
-      when.className = 'verdict';
-      when.textContent = new Date(report.createdAt).toLocaleString('ru-RU');
-      header.append(title, when);
-
-      const summary = document.createElement('div');
-      summary.className = 'line';
-      summary.textContent = report.summary;
-
-      card.append(header, summary);
-
-      const loot = report.loot.ore + report.loot.polymers + report.loot.antimatter;
-      if (loot > 0) {
-        const line = document.createElement('div');
-        line.className = 'line';
-        const parts = [];
-        if (report.loot.ore) parts.push(`${icon('ore', 'sm')} ${fmt(report.loot.ore)}`);
-        if (report.loot.polymers) parts.push(`${icon('polymers', 'sm')} ${fmt(report.loot.polymers)}`);
-        if (report.loot.antimatter) parts.push(`${icon('antimatter', 'sm')} ${fmtAmount(report.loot.antimatter)}`);
-        line.innerHTML = `добыча: <b>${parts.join(', ')}</b>`;
-        card.appendChild(line);
-      }
-
+      const item = synEl('article', `war-row ${tone}`);
+      const head = synEl('div', 'war-row-head static');
+      const main = synEl('span', 'war-row-main');
+      main.append(synEl('b', null, report.systemName), synEl('span', 'muted', synDateTime(report.createdAt)));
+      const result = synEl('span', 'war-row-result');
+      const loot = [['ore', report.loot.ore], ['polymers', report.loot.polymers], ['antimatter', report.loot.antimatter]]
+        .filter(([, value]) => value > 0);
+      result.innerHTML = loot.length
+        ? `<span class="gain">${loot.map(([key, value]) => `+${key === 'antimatter' ? fmtAmount(value) : fmtCompact(value)} ${icon(key, 'sm')}`).join(' ')}</span>`
+        : '<span class="muted">без добычи</span>';
+      head.append(synEl('span', `war-chip ${tone}`, EXPEDITION_TITLE[report.outcome] || report.outcome), main, result);
+      item.appendChild(head);
+      item.appendChild(synEl('p', 'war-row-text', report.summary));
       if (report.losses.length) {
-        const line = document.createElement('div');
-        line.className = 'line';
-        line.innerHTML =
-          'потери: <b>' + report.losses.map((l) => `${l.label} −${l.lost} из ${l.before}`).join(', ') + '</b>';
-        card.appendChild(line);
+        item.appendChild(synEl('p', 'war-row-text lost',
+          'Потери: ' + report.losses.map((loss) => `${loss.label} −${loss.lost} из ${loss.before}`).join(', ')));
       }
-
-      el.expeditions.appendChild(card);
+      el.expeditions.appendChild(item);
     }
   }
 
+  async function openExpeditionDispatch() {
+    showPanel('map');
+    await loadMap(mapSystemId());
+    selectDeepSpace();
+    map.mission = 'EXPEDITION';
+    syncMissionOptions();
+    schedulePlan();
+  }
 
   /* ---------- Синдикаты ---------- */
 
