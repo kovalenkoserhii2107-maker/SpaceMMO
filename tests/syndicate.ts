@@ -7,6 +7,10 @@
  */
 import {
   BUFF_TENURE_MS,
+  PROJECTION_DEPTH,
+  bramaUpgradeCost as bramaCostForProjection,
+  syndicateModuleProjection,
+  syndicateTechProjection,
   DESCRIPTION_MAX_LENGTH,
   normalizeDescription,
   treasuryFlow,
@@ -103,7 +107,8 @@ console.log('\n=== 1в. Академия и технологии ===');
 
 console.log('\n=== 1г. Брама и перенос Коша ===');
 {
-  check('первый уровень Брамы — по 500 тысяч, дальше вдвое', bramaUpgradeCost(1).ore === 500_000 && bramaUpgradeCost(3).credits === 2_000_000);
+  check('первый уровень Брамы — 5 млн гривны и по 2 млн ресурсов, дальше вдвое',
+    bramaUpgradeCost(1).credits === 5_000_000 && bramaUpgradeCost(1).ore === 2_000_000 && bramaUpgradeCost(1).polymers === 2_000_000 && bramaUpgradeCost(3).credits === 20_000_000);
   check('пропускная способность — 200 кораблей в час за уровень', bramaThroughput(1) === 200 && bramaThroughput(4) === 800);
   check('перенос Коша — 500 антиматерии за единицу расстояния', kishMoveCost(4.5) === 2250 && kishMoveCost(0) === 1);
   check('перенос не чаще раза в сутки', kishMoveAvailableAt(1000) === 1000 + KISH_MOVE_COOLDOWN_MS && kishMoveAvailableAt(null) === 0);
@@ -220,6 +225,18 @@ console.log('\n=== 7. Описание и журнал казны ===');
   check('выдача, вывоз, стройка и налет — расходы',
     ['PAYOUT', 'RESOURCE_PICKUP', 'KISH_UPGRADE', 'KISH_RAIDED'].every((kind) => treasuryFlow(kind) === 'OUT'));
   check('основание не поступление и не расход', treasuryFlow('FOUNDING') === 'NEUTRAL');
+}
+
+console.log('\n=== 8. Подробности модулей и технологий ===');
+{
+  const brama = syndicateModuleProjection('BRAMA', 2);
+  check('таблица модуля: текущий уровень и десять вперед', brama.rows.length === PROJECTION_DEPTH + 1 && brama.rows[0]!.current && brama.rows[0]!.cost === null);
+  check('цена в таблице совпадает с ценой улучшения', JSON.stringify(brama.rows[1]!.cost) === JSON.stringify(bramaCostForProjection(3)));
+  check('эффект Брамы растет с уровнем', brama.rows[0]!.effect === '400 кораблей' && brama.rows[1]!.effect === '600 кораблей', brama.rows[1]!.effect);
+  const counter = syndicateTechProjection('COUNTERINTEL', 2, 1);
+  check('контрразведка дает +1 на третьем уровне', counter.rows[1]!.effect === '+1 к «Шпионажу»', counter.rows[1]!.effect);
+  check('уровень выше Академии помечен', counter.rows[1]!.note === 'нужна Академия ур. 3' && counter.rows[0]!.note === null);
+  check('у технологии есть срок изучения, у текущего уровня — нет', counter.rows[1]!.seconds! > 0 && counter.rows[0]!.seconds === null);
 }
 
 const passed = results.filter((r) => r.passed).length;

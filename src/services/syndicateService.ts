@@ -15,6 +15,10 @@ import { getLeaderboard } from './scoreService.js';
 import { galaxyDistance } from '../game/fleets.js';
 import { DEFENSE_TYPES, defenseCost, defenseLabel, type DefenseType } from '../game/defenses.js';
 import {
+  syndicateModuleProjection,
+  syndicateTechProjection,
+  type SyndicateModule,
+  type SyndicateProjection,
   DESCRIPTION_MAX_LENGTH,
   treasuryFlow,
   type TreasuryFlow,
@@ -1168,6 +1172,44 @@ export async function updateRules(
     data: { recruitment: rules.recruitment, minScore: rules.minScore, entryFee: rules.entryFee },
   });
   return { ok: true, message: 'Правила набора обновлены' };
+}
+
+/**
+ * Подробности модуля Коша или технологии синдиката: уровни вперед по формулам
+ * казны. Смотреть может любой участник — решать могут не все, а знать, сколько
+ * копить, нужно всем.
+ */
+export async function getSyndicateProjection(
+  commanderId: string,
+  target: { module: SyndicateModule; systemId: string | null } | { tech: SyndicateTech },
+): Promise<{ ok: true; projection: SyndicateProjection } | { ok: false; error: string; status: number }> {
+  const access = await membershipOf(commanderId);
+  if (!access.ok) return access;
+  const syndicate = await prisma.syndicate.findUnique({ where: { id: access.syndicateId } });
+  if (!syndicate) return { ok: false, error: 'Синдикат не найден', status: 404 };
+
+  if ('tech' in target) {
+    const techState = await syndicateTechState(access.syndicateId);
+    return { ok: true, projection: syndicateTechProjection(target.tech, techState.levels[target.tech], syndicate.academyLevel) };
+  }
+  const levels: Record<Exclude<SyndicateModule, 'BRAMA'>, number> = {
+    KISH: syndicate.kishLevel,
+    SKARBNYTSIA: syndicate.treasuryLevel,
+    AKADEMIIA: syndicate.academyLevel,
+    DOZOR: syndicate.watchLevel,
+  };
+  let level = 0;
+  if (target.module === 'BRAMA') {
+    const gate = target.systemId
+      ? await prisma.syndicateGate.findUnique({
+          where: { syndicateId_systemId: { syndicateId: access.syndicateId, systemId: target.systemId } },
+        })
+      : null;
+    level = gate?.level ?? 0;
+  } else {
+    level = levels[target.module];
+  }
+  return { ok: true, projection: syndicateModuleProjection(target.module, level) };
 }
 
 /** Описание синдиката пишет тот же ранг, что и правила набора: оба текста — лицо синдиката для кандидатов. */

@@ -1229,6 +1229,10 @@
     el.baseSwitchName.textContent = base.baseName;
     el.baseSwitchCoords.textContent = baseCoords(base);
     el.baseSwitch.classList.toggle('single', state.bases.length + (syndicate.data && syndicate.data.mine ? 1 : 0) < 2);
+    // Шапку Коша ставим сразу после шапки колонии, а не только в конце:
+    // если перерисовка ниже упадет на данных колонии, шапка не должна
+    // остаться колониальной, пока разделы уже показывают Кіш.
+    if (state.kishMode) renderKishHeader();
 
     el.baseName.textContent = base.baseName;
     el.planetMeta.textContent =
@@ -6632,6 +6636,51 @@
     el.kishAway.appendChild(row);
   }
 
+  /**
+   * Подробности модуля Коша или технологии синдиката — та же панель, что
+   * у построек колонии: описание, арт и уровни вперед. Таблица своя: вместо
+   * добычи и энергии — эффект уровня, цена из казны с гривной, у технологий
+   * еще срок и уровень Академии, без которого уровень не взять.
+   */
+  async function openKishDetail(url, artType, kind) {
+    openDetailShell();
+    el.detailTitle.textContent = '';
+    el.detailLevel.textContent = '';
+    el.detailDesc.textContent = '';
+    el.detailArt.innerHTML = '';
+    el.detailBody.innerHTML = '<p class="detail-note">Считаю…</p>';
+    el.detailClose.focus();
+
+    const { ok, data } = await api(url);
+    if (el.detailScrim.hidden) return;
+    if (!ok) {
+      el.detailBody.innerHTML = `<p class="detail-note">${escapeHtml(data.error || 'Не удалось загрузить')}</p>`;
+      return;
+    }
+    el.detailTitle.textContent = data.label;
+    el.detailLevel.textContent = data.level > 0
+      ? `Сейчас уровень ${data.level}`
+      : kind === 'tech' ? 'Еще не изучено' : 'Еще не построено';
+    el.detailDesc.textContent = data.description;
+    el.detailArt.appendChild(artNode(artType, data.label, kind));
+
+    const withTime = data.rows.some((row) => row.seconds !== null);
+    const head = `<tr><th>Уровень</th><th>${escapeHtml(data.effectLabel)}</th><th>цена</th>${withTime ? '<th>время</th>' : ''}</tr>`;
+    const body = data.rows.map((row) => {
+      const cost = row.cost
+        ? [['credits', row.cost.credits], ['ore', row.cost.ore], ['polymers', row.cost.polymers]]
+          .filter(([, value]) => value > 0)
+          .map(([key, value]) => `${icon(key, 'sm')} ${fmt(value)}`)
+          .join(' ') || '—'
+        : '—';
+      const note = row.note ? `<br><span class="muted">${escapeHtml(row.note)}</span>` : '';
+      return `<tr class="${row.current ? 'current' : ''}"><td>${row.level}</td>` +
+        `<td>${escapeHtml(row.effect)}${note}</td><td>${cost}</td>` +
+        (withTime ? `<td>${row.seconds === null ? '—' : fmtTime(row.seconds)}</td>` : '') + '</tr>';
+    }).join('');
+    el.detailBody.innerHTML = `<table class="detail-table"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+  }
+
   function treasuryCovers(mine, cost) {
     return mine.bank >= (cost.credits || 0) && mine.treasury.ore >= (cost.ore || 0) &&
       mine.treasury.polymers >= (cost.polymers || 0) && mine.treasury.plasma >= (cost.plasma || 0);
@@ -6661,6 +6710,9 @@
    */
   function kishModuleCard(container, options) {
     const card = createActionCard(container, options.title, options.description, options.onClick, options.type, options.kind || 'building');
+    if (options.detailUrl) {
+      makeDetailed(card, options.title, () => openKishDetail(options.detailUrl, options.type, options.kind || 'building'));
+    }
     card.level.textContent = options.level;
     card.combat.textContent = options.effect;
     fillTreasuryCost(card, options.cost, options.mine);
@@ -6681,7 +6733,7 @@
     const denyKish = 'Нужно право развития Коша';
 
     kishModuleCard(node, {
-      mine, type: 'KISH', kind: 'planet', title: 'Кіш',
+      mine, type: 'KISH', kind: 'planet', title: 'Кіш', detailUrl: '/api/syndicates/projection/module/KISH',
       description: 'Хаб синдиката. Каждый уровень добавляет одно место в составе.',
       level: `Ур. ${kish.level} → ${kish.level + 1}`,
       effect: `мест в составе: ${kish.memberCap}`,
@@ -6689,7 +6741,7 @@
       label: 'Улучшить', onClick: () => syndicateAction('/api/syndicates/kish/upgrade'),
     });
     kishModuleCard(node, {
-      mine, type: 'SKARBNYTSIA', title: 'Скарбниця',
+      mine, type: 'SKARBNYTSIA', title: 'Скарбниця', detailUrl: '/api/syndicates/projection/module/SKARBNYTSIA',
       description: 'Бережет часть ресурсной казны при налете на Кіш. Гривну не грабят вовсе.',
       level: `Ур. ${kish.treasuryLevel} → ${kish.treasuryLevel + 1}`,
       effect: `несгораемо ${Math.round(kish.protectedShare * 100)}% ресурсов казны`,
@@ -6697,7 +6749,7 @@
       label: kish.treasuryLevel > 0 ? 'Улучшить' : 'Построить', onClick: () => syndicateAction('/api/syndicates/treasury/upgrade'),
     });
     kishModuleCard(node, {
-      mine, type: 'AKADEMIIA', title: 'Академия',
+      mine, type: 'AKADEMIIA', title: 'Академия', detailUrl: '/api/syndicates/projection/module/AKADEMIIA',
       description: 'Открывает технологии синдиката. Ее уровень — потолок уровня любой технологии.',
       level: `Ур. ${mine.academy.level} → ${mine.academy.level + 1}`,
       effect: mine.academy.level > 0 ? `технологии до ур. ${mine.academy.level}` : 'технологии синдиката закрыты',
@@ -6705,7 +6757,7 @@
       label: mine.academy.level > 0 ? 'Улучшить' : 'Построить', onClick: () => syndicateAction('/api/syndicates/academy/upgrade'),
     });
     kishModuleCard(node, {
-      mine, type: 'DOZOR', title: 'Дозор',
+      mine, type: 'DOZOR', title: 'Дозор', detailUrl: '/api/syndicates/projection/module/DOZOR',
       description: 'Показывает всем участникам вражеские атаки на колонии в радиусе от Коша.',
       level: `Ур. ${mine.watch.level} → ${mine.watch.level + 1}`,
       effect: mine.watch.level <= 0 ? 'атаки на колонии не видны'
@@ -6718,6 +6770,7 @@
     for (const gate of mine.gates.list) {
       kishModuleCard(node, {
         mine, type: 'BRAMA', title: `Брама · ${gate.systemName}`, description: gateDescription,
+        detailUrl: `/api/syndicates/projection/module/BRAMA?systemId=${encodeURIComponent(gate.systemId)}`,
         level: `Ур. ${gate.level} → ${gate.level + 1}`,
         effect: `за час ${fmt(gate.windowShips)} из ${fmt(gate.throughput)} кораблей`,
         cost: gate.nextLevelCost, allowed: can('KISH'), deniedHint: denyKish,
@@ -6734,7 +6787,7 @@
       }
       select.addEventListener('change', () => { kishForm.gate = select.value; });
       kishModuleCard(node, {
-        mine, type: 'BRAMA', title: 'Новая Брама', description: 'Строится в системе, где есть колония хотя бы одного участника.',
+        mine, type: 'BRAMA', title: 'Новая Брама', detailUrl: '/api/syndicates/projection/module/BRAMA', description: 'Строится в системе, где есть колония хотя бы одного участника.',
         level: 'Ур. 0 → 1', effect: gateDescription, extra: synField('Система', select),
         cost: mine.gates.firstLevelCost, allowed: can('KISH'), deniedHint: denyKish, built: false,
         label: 'Построить', onClick: () => syndicateAction('/api/syndicates/gates', { systemId: select.value }),
@@ -6753,6 +6806,8 @@
     for (const tech of academy.techs) {
       const card = createActionCard(node, tech.label, tech.effect,
         () => syndicateAction('/api/syndicates/research', { tech: tech.tech }), `SYNDICATE_${tech.tech}`, 'tech');
+      makeDetailed(card, tech.label, () =>
+        openKishDetail(`/api/syndicates/projection/tech/${tech.tech}`, `SYNDICATE_${tech.tech}`, 'tech'));
       card.level.textContent = `Ур. ${tech.level} → ${tech.level + 1}`;
       fillTreasuryCost(card, tech.nextCost, mine);
       card.time.textContent = fmtTime(tech.seconds);

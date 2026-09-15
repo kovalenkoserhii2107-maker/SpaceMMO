@@ -246,9 +246,10 @@ export function syndicateBuffs(levels: SyndicateTechLevels, joinedAt: number | n
 /*
  * Брама — самая дорогая постройка синдиката: услуга, на которую копят.
  * Дешевые врата заменили бы гипердвигатель каждому, а дорогие остаются
- * решением синдиката, где их ставить.
+ * решением синдиката, где их ставить. Гривна вдвое с половиной тяжелее
+ * ресурсов: ресурсы синдикат добывает сам, а гривну только копит.
  */
-export const BRAMA_BASE = { credits: 500_000, ore: 500_000, polymers: 500_000 } as const;
+export const BRAMA_BASE = { credits: 5_000_000, ore: 2_000_000, polymers: 2_000_000 } as const;
 export const BRAMA_THROUGHPUT_PER_LEVEL = 200;
 export const GATE_ANTIMATTER_SHARE = 0.3;
 export const GATE_JUMP_SECONDS = 120;
@@ -536,4 +537,133 @@ export function pactInForce(pact: { status: string; endsAt: number | null }, now
 /** Союз включает ненападение: союзники друг друга не атакуют. */
 export function pactsForbidAttack(kinds: readonly PactKind[]): boolean {
   return kinds.includes('NON_AGGRESSION') || kinds.includes('ALLIANCE');
+}
+
+/* ------------------------- Подробности модулей и технологий ------------------------- */
+
+/*
+ * Карточка модуля Коша или технологии синдиката раскрывается таблицей
+ * уровней вперед — как постройка колонии: эффект, цена и срок. Считается
+ * здесь, на тех же формулах, по которым списывается казна, иначе таблица
+ * разошлась бы с ценой на кнопке при первой правке баланса.
+ */
+export const SYNDICATE_MODULES = ['KISH', 'SKARBNYTSIA', 'AKADEMIIA', 'DOZOR', 'BRAMA'] as const;
+export type SyndicateModule = (typeof SYNDICATE_MODULES)[number];
+
+export function isSyndicateModule(value: unknown): value is SyndicateModule {
+  return typeof value === 'string' && (SYNDICATE_MODULES as readonly string[]).includes(value);
+}
+
+export const PROJECTION_DEPTH = 10;
+
+export interface SyndicateProjectionRow {
+  level: number;
+  /** Текущий уровень идет первой строкой: у него нет цены, он уже оплачен. */
+  current: boolean;
+  cost: TreasuryCost | null;
+  /** Срок есть только у технологий: модули ставятся сразу. */
+  seconds: number | null;
+  effect: string;
+  /** Чего не хватает, чтобы этот уровень взять, — например, уровня Академии. */
+  note: string | null;
+}
+
+export interface SyndicateProjection {
+  key: string;
+  label: string;
+  description: string;
+  level: number;
+  effectLabel: string;
+  rows: SyndicateProjectionRow[];
+}
+
+const MODULE_INFO: Record<SyndicateModule, {
+  label: string;
+  description: string;
+  effectLabel: string;
+  effect: (level: number) => string;
+  cost: (targetLevel: number) => TreasuryCost;
+}> = {
+  KISH: {
+    label: 'Кіш',
+    description: 'Хаб синдиката. Каждый уровень добавляет одно место в составе.',
+    effectLabel: 'мест в составе',
+    effect: (level) => `${memberCap(Math.max(1, level))}`,
+    cost: (target) => ({ credits: kishUpgradeCost(target), ore: 0, polymers: 0 }),
+  },
+  SKARBNYTSIA: {
+    label: 'Скарбниця',
+    description: 'Бережет часть ресурсной казны при налете на Кіш. Гривну не грабят вовсе.',
+    effectLabel: 'несгораемо',
+    effect: (level) => `${Math.round(treasuryProtectedShare(level) * 100)}% казны`,
+    cost: treasuryUpgradeCost,
+  },
+  AKADEMIIA: {
+    label: 'Академия',
+    description: 'Открывает технологии синдиката. Ее уровень — потолок уровня любой технологии, а лишние уровни ускоряют изучение.',
+    effectLabel: 'технологии',
+    effect: (level) => (level > 0 ? `до ур. ${level}` : 'закрыты'),
+    cost: academyUpgradeCost,
+  },
+  DOZOR: {
+    label: 'Дозор',
+    description: 'Показывает всем участникам вражеские атаки на колонии в радиусе от Коша.',
+    effectLabel: 'наблюдение',
+    effect: (level) => (level <= 0 ? 'нет' : watchRadius(level) === 0 ? 'система Коша' : `радиус ${watchRadius(level)}`),
+    cost: (target) => ({ credits: watchUpgradeCost(target), ore: 0, polymers: 0 }),
+  },
+  BRAMA: {
+    label: 'Брама',
+    description: 'Прыжок между системами со своими Брамами без «Гипердвигателя» и за треть антиматерии.',
+    effectLabel: 'пропускает в час',
+    effect: (level) => `${bramaThroughput(level)} кораблей`,
+    cost: bramaUpgradeCost,
+  },
+};
+
+export function syndicateModuleProjection(module: SyndicateModule, level: number): SyndicateProjection {
+  const info = MODULE_INFO[module];
+  const current = Math.max(0, Math.floor(level));
+  const rows: SyndicateProjectionRow[] = [{ level: current, current: true, cost: null, seconds: null, effect: info.effect(current), note: null }];
+  for (let target = current + 1; target <= current + PROJECTION_DEPTH; target += 1) {
+    rows.push({ level: target, current: false, cost: info.cost(target), seconds: null, effect: info.effect(target), note: null });
+  }
+  return { key: module, label: info.label, description: info.description, level: current, effectLabel: info.effectLabel, rows };
+}
+
+export function syndicateTechEffect(tech: SyndicateTech, level: number): string {
+  const percent = Math.round(SYNDICATE_TECH_STEP * Math.max(0, level) * 100);
+  switch (tech) {
+    case 'MINING': return `+${percent}% добычи`;
+    case 'CONSTRUCTION': return `+${percent}% к скорости стройки`;
+    case 'CARGO': return `+${percent}% трюмов`;
+    case 'TRADE': return `−${percent}% комиссии`;
+    case 'VAULT': return `+${percent}% несгораемой доли`;
+    case 'COUNTERINTEL': return `+${Math.floor(Math.max(0, level) / 3)} к «Шпионажу»`;
+  }
+}
+
+export function syndicateTechProjection(tech: SyndicateTech, level: number, academyLevel: number): SyndicateProjection {
+  const current = Math.max(0, Math.floor(level));
+  const rows: SyndicateProjectionRow[] = [{
+    level: current, current: true, cost: null, seconds: null, effect: syndicateTechEffect(tech, current), note: null,
+  }];
+  for (let target = current + 1; target <= current + PROJECTION_DEPTH; target += 1) {
+    rows.push({
+      level: target,
+      current: false,
+      cost: syndicateTechCost(target),
+      seconds: syndicateResearchSeconds(target, academyLevel),
+      effect: syndicateTechEffect(tech, target),
+      note: academyLevel < target ? `нужна Академия ур. ${target}` : null,
+    });
+  }
+  return {
+    key: tech,
+    label: SYNDICATE_TECH_LABELS[tech],
+    description: SYNDICATE_TECH_EFFECTS[tech],
+    level: current,
+    effectLabel: 'эффект',
+    rows,
+  };
 }

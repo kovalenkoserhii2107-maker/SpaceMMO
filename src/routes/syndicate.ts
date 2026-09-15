@@ -29,6 +29,7 @@ import {
   upgradeWatch,
   upgradeTreasury,
   updateDescription,
+  getSyndicateProjection,
   buyKishDefense,
   buildGate,
   moveKish,
@@ -38,11 +39,15 @@ import {
   type SyndicateOverview,
   type SyndicateResult,
 } from '../services/syndicateService.js';
-import { DESCRIPTION_MAX_LENGTH, normalizeDescription,
+import {
+  isSyndicateModule,
+  isSyndicateTech,
+  type SyndicateProjection,
+  DESCRIPTION_MAX_LENGTH,
+  normalizeDescription,
   CODEX_MAX_LENGTH,
   MAX_TAX_RATE,
   isSyndicatePermission,
-  isSyndicateTech,
   normalizeCodex,
   normalizeRankName,
 } from '../game/syndicate.js';
@@ -204,6 +209,37 @@ syndicateRouter.post('/rules', async (req, res: Response<ActionResponse | ErrorR
     return;
   }
   send(res, await updateRules(currentCommander(req).id, { recruitment: body.recruitment, minScore, entryFee }));
+});
+
+/** Уровни вперед у модуля Коша; у Брамы — по системе, где она стоит или встанет. */
+syndicateRouter.get('/projection/module/:module', async (req, res: Response<SyndicateProjection | ErrorResponse>) => {
+  const module = req.params.module;
+  if (!isSyndicateModule(module)) {
+    res.status(400).json({ error: 'Неизвестный модуль Коша' });
+    return;
+  }
+  const systemId = typeof req.query['systemId'] === 'string' ? req.query['systemId'] : null;
+  const result = await getSyndicateProjection(currentCommander(req).id, { module, systemId });
+  if (!result.ok) {
+    res.status(result.status).json({ error: result.error });
+    return;
+  }
+  res.json(result.projection);
+});
+
+/** Уровни вперед у технологии синдиката. */
+syndicateRouter.get('/projection/tech/:tech', async (req, res: Response<SyndicateProjection | ErrorResponse>) => {
+  const tech = req.params.tech;
+  if (!isSyndicateTech(tech)) {
+    res.status(400).json({ error: 'Неизвестная технология синдиката' });
+    return;
+  }
+  const result = await getSyndicateProjection(currentCommander(req).id, { tech });
+  if (!result.ok) {
+    res.status(result.status).json({ error: result.error });
+    return;
+  }
+  res.json(result.projection);
 });
 
 /** Описание синдиката под названием. */
