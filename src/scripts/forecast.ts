@@ -47,6 +47,7 @@
  * фермы работают здесь ровно так же. Стакан сводится по правилам `market.ts`:
  * встречные заявки по средней цене на меньший объем, комиссия с обеих сторон.
  */
+import { readFileSync } from 'node:fs';
 import {
   decide,
   emptyBotSnapshot,
@@ -223,6 +224,11 @@ class Exchange {
 
   get orders(): ReadonlyArray<Order> {
     return this.book;
+  }
+
+  /** Сделки живого мира, от свежих к старым: по ним стартовая цена. В счет сделок не идут. */
+  seed(rows: ReadonlyArray<{ resource: TradeResource; pricePerUnit: number; quantity: number }>): void {
+    this.log.push(...rows.slice(0, 400));
   }
 
   private record(resource: TradeResource, price: number, quantity: number): void {
@@ -576,10 +582,27 @@ function tick(bot: Bot): void {
   bot.defenseJobs = bot.defenseJobs.filter((job) => job.left > 0);
 }
 
-function run(days: number): { bots: Bot[]; log: Snapshot[] } {
-  const bots = ROSTER.map(freshBot);
+/**
+ * Старт с живого мира вместо новой расстановки.
+ *
+ * Прогон с нуля не видит ловушек, в которые боты попадают через неделю
+ * живой игры: склады, уровни и цены там другие, и правка, безвредная для
+ * первой недели, может ничего не менять для застрявшего бота — или наоборот.
+ * Дамп пишет `npm run bot:diag -- --dump <файл>` по копии базы; цены берутся
+ * из последних сделок, чужих заявок живых игроков в прогоне нет.
+ */
+interface StartFile {
+  bots: Array<Omit<Bot, 'mined' | 'earned' | 'rentPaid' | 'rushed'>>;
+  trades: Array<{ resource: TradeResource; pricePerUnit: number; quantity: number }>;
+}
+
+function run(days: number, start: StartFile | null): { bots: Bot[]; log: Snapshot[] } {
+  const bots: Bot[] = start
+    ? start.bots.map((row) => ({ ...row, mined: 0, earned: 0, rentPaid: 0, rushed: 0 }))
+    : ROSTER.map(freshBot);
   const byName = new Map(bots.map((bot) => [bot.name, bot]));
   const exchange = new Exchange();
+  if (start) exchange.seed(start.trades);
   const log: Snapshot[] = [];
 
   let sinceDecide = 0;
@@ -619,10 +642,13 @@ function run(days: number): { bots: Bot[]; log: Snapshot[] } {
 /* ------------------------- Отчет ------------------------- */
 
 const days = Math.max(1, Math.min(60, Number(process.argv[2] ?? 7) || 7));
-const { bots, log } = run(days);
+const fromAt = process.argv.indexOf('--from');
+const startPath = fromAt > 0 ? process.argv[fromAt + 1] : undefined;
+const start = startPath ? (JSON.parse(readFileSync(startPath, 'utf8')) as StartFile) : null;
+const { bots, log } = run(days, start);
 const money = (value: number): string => Math.round(value).toLocaleString('ru-RU');
 
-console.log(`=== Прогон ${days} сут, ${bots.length} ботов ===\n`);
+console.log(`=== Прогон ${days} сут, ${bots.length} ботов${start ? `, старт с ${startPath}` : ''} ===\n`);
 /** Короткие ярлыки технологий: полные названия в строку прогона не помещаются. */
 const TECH_SHORT: Record<TechnologyType, string> = {
   ENERGY_TECH: 'энерг',
