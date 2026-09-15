@@ -15,6 +15,9 @@ import { getLeaderboard } from './scoreService.js';
 import { galaxyDistance } from '../game/fleets.js';
 import { DEFENSE_TYPES, defenseCost, defenseLabel, type DefenseType } from '../game/defenses.js';
 import {
+  DESCRIPTION_MAX_LENGTH,
+  treasuryFlow,
+  type TreasuryFlow,
   CODEX_MAX_LENGTH,
   DEFAULT_RANKS,
   LEAVE_COOLDOWN_MS,
@@ -73,6 +76,7 @@ export interface SyndicateSummary {
   id: string;
   name: string;
   tag: string;
+  description: string;
   leader: string;
   members: number;
   memberCap: number;
@@ -117,6 +121,12 @@ export interface SyndicateView {
   id: string;
   name: string;
   tag: string;
+  description: string;
+  /** Вклад участников за все время и движение казны за неделю. */
+  stats: {
+    contributions: Array<{ commanderId: string; nickname: string; merit: number; credits: number; tax: number; resources: number }>;
+    week: { creditsIn: number; creditsOut: number; resourcesIn: number; resourcesOut: number };
+  };
   createdAt: number;
   leaderId: string;
   me: {
@@ -204,7 +214,9 @@ export interface SyndicateView {
     ore: number;
     polymers: number;
     plasma: number;
+    antimatter: number;
     comment: string | null;
+    flow: TreasuryFlow;
     createdAt: number;
   }>;
   wars: Array<{ syndicateId: string; name: string; tag: string; declaredByUs: boolean; declaredAt: number }>;
@@ -233,7 +245,7 @@ export interface SyndicateOverview {
   myApplication: { syndicateId: string; name: string } | null;
   /** До какого момента нельзя вступить после добровольного выхода. */
   cooldownUntil: number | null;
-  limits: { maxRanks: number; codexMaxLength: number; maxTaxRate: number; maxEntryFee: number };
+  limits: { maxRanks: number; codexMaxLength: number; descriptionMaxLength: number; maxTaxRate: number; maxEntryFee: number };
   /** Каталог прав с подписями: форма рангов строится по нему, а не по списку в клиенте. */
   permissionCatalog: Array<{ key: SyndicatePermission; label: string }>;
 }
@@ -289,6 +301,7 @@ export async function getOverview(commanderId: string): Promise<SyndicateOvervie
       id: syndicate.id,
       name: syndicate.name,
       tag: syndicate.tag,
+      description: syndicate.description,
       leader: syndicate.leader.nickname,
       members: syndicate._count.members,
       memberCap: memberCap(syndicate.kishLevel),
@@ -308,7 +321,7 @@ export async function getOverview(commanderId: string): Promise<SyndicateOvervie
     cooldownUntil: cooldownUntil && cooldownUntil > now ? cooldownUntil : null,
     limits: {
       maxRanks: MAX_RANKS,
-      codexMaxLength: CODEX_MAX_LENGTH,
+      codexMaxLength: CODEX_MAX_LENGTH, descriptionMaxLength: DESCRIPTION_MAX_LENGTH,
       maxTaxRate: MAX_TAX_RATE,
       maxEntryFee: MAX_ENTRY_FEE,
     },
@@ -348,7 +361,7 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
         transactions: {
           include: { commander: { select: { nickname: true } }, actor: { select: { nickname: true } } },
           orderBy: { createdAt: 'desc' },
-          take: 30,
+          take: 50,
         },
         warsStarted: { include: { target: true } },
         warsAgainst: { include: { aggressor: true } },
@@ -362,6 +375,53 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
 
   const taxByMember = new Map(taxRows.map((row) => [row.commanderId, row.amount]));
   const now = Date.now();
+
+  /*
+   * Статистика казны считается агрегатами базы, а не по странице журнала:
+   * журнал показывает последние полсотни строк, а вклад — за все время.
+   * Налог в журнал не пишется построчно, его источник — дневная книга налога.
+   */
+  const weekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+  const [contributionRows, taxTotals, weekRows, weekTax] = await Promise.all([
+    prisma.syndicateTransaction.groupBy({
+      by: ['commanderId', 'kind'],
+      where: { syndicateId, kind: { in: ['DONATION', 'ENTRY_FEE', 'RESOURCE_DELIVERY'] } },
+      _sum: { amount: true, ore: true, polymers: true, plasma: true, antimatter: true },
+    }),
+    prisma.syndicateTaxLedger.groupBy({ by: ['commanderId'], where: { syndicateId }, _sum: { amount: true } }),
+    prisma.syndicateTransaction.groupBy({
+      by: ['kind'],
+      where: { syndicateId, createdAt: { gte: weekAgo } },
+      _sum: { amount: true, ore: true, polymers: true, plasma: true, antimatter: true },
+    }),
+    prisma.syndicateTaxLedger.aggregate({ where: { syndicateId, day: { gte: utcDay(weekAgo) } }, _sum: { amount: true } }),
+  ]);
+  const unitsOf = (sum: { ore: number | null; polymers: number | null; plasma: number | null; antimatter: number | null }) =>
+    (sum.ore ?? 0) + (sum.polymers ?? 0) + (sum.plasma ?? 0) + (sum.antimatter ?? 0);
+  // У ресурсных операций `amount` — сумма единиц для лимита выдачи, а не гривна.
+  const resourceKinds = new Set(['RESOURCE_DELIVERY', 'RESOURCE_PICKUP']);
+  const week = { creditsIn: weekTax._sum.amount ?? 0, creditsOut: 0, resourcesIn: 0, resourcesOut: 0 };
+  for (const row of weekRows) {
+    const flow = treasuryFlow(row.kind);
+    if (flow === 'NEUTRAL' || row.kind === 'TAX') continue;
+    const credits = resourceKinds.has(row.kind) ? 0 : row._sum.amount ?? 0;
+    const units = unitsOf(row._sum);
+    if (flow === 'IN') {
+      week.creditsIn += credits;
+      week.resourcesIn += units;
+    } else {
+      week.creditsOut += credits;
+      week.resourcesOut += units;
+    }
+  }
+  const contributionOf = (commanderId: string) => {
+    const rows = contributionRows.filter((row) => row.commanderId === commanderId);
+    return {
+      credits: Math.round(rows.filter((row) => row.kind !== 'RESOURCE_DELIVERY').reduce((sum, row) => sum + (row._sum.amount ?? 0), 0)),
+      resources: Math.floor(rows.filter((row) => row.kind === 'RESOURCE_DELIVERY').reduce((sum, row) => sum + unitsOf(row._sum), 0)),
+      tax: Math.round(taxTotals.find((row) => row.commanderId === commanderId)?._sum.amount ?? 0),
+    };
+  };
   const incoming = await watchIncoming(syndicateId, syndicate.watchLevel, syndicate.kishSystem);
   const [gateRows, colonySystems, kishDefenses, guards, raidsInbound] = await Promise.all([
     prisma.syndicateGate.findMany({
@@ -388,6 +448,23 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
     id: syndicate.id,
     name: syndicate.name,
     tag: syndicate.tag,
+    description: syndicate.description,
+    stats: {
+      contributions: [...syndicate.members]
+        .sort((a, b) => b.syndicateMerit - a.syndicateMerit)
+        .map((member) => ({
+          commanderId: member.id,
+          nickname: member.nickname,
+          merit: Math.floor(member.syndicateMerit),
+          ...contributionOf(member.id),
+        })),
+      week: {
+        creditsIn: Math.round(week.creditsIn),
+        creditsOut: Math.round(week.creditsOut),
+        resourcesIn: Math.floor(week.resourcesIn),
+        resourcesOut: Math.floor(week.resourcesOut),
+      },
+    },
     createdAt: syndicate.createdAt.getTime(),
     leaderId: syndicate.leaderId,
     me: {
@@ -552,7 +629,9 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
       ore: Math.floor(tx.ore),
       polymers: Math.floor(tx.polymers),
       plasma: Math.floor(tx.plasma),
+      antimatter: Math.floor(tx.antimatter),
       comment: tx.comment,
+      flow: treasuryFlow(tx.kind),
       createdAt: tx.createdAt.getTime(),
     })),
     wars: [
@@ -1089,6 +1168,14 @@ export async function updateRules(
     data: { recruitment: rules.recruitment, minScore: rules.minScore, entryFee: rules.entryFee },
   });
   return { ok: true, message: 'Правила набора обновлены' };
+}
+
+/** Описание синдиката пишет тот же ранг, что и правила набора: оба текста — лицо синдиката для кандидатов. */
+export async function updateDescription(commanderId: string, text: string): Promise<SyndicateResult> {
+  const access = await requirePermission(commanderId, 'RULES');
+  if (!access.ok) return access;
+  await prisma.syndicate.update({ where: { id: access.syndicateId }, data: { description: text } });
+  return { ok: true, message: text ? 'Описание обновлено' : 'Описание снято' };
 }
 
 /**

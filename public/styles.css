@@ -3414,3 +3414,99 @@ button.tiny { padding: 4px 10px; font-size: 11px; flex: none; }
 .kish-summary { margin-bottom: 16px; }
 .cards > .hub-card { grid-column: 1 / -1; }
 .cost-credits.lack { color: var(--err); }
+
+/*
+ * Раздел синдиката: один ритм отступов на все блоки. Карточки идут сеткой
+ * с общим зазором, поэтому соседние блоки больше не слипаются и не расходятся
+ * на разные расстояния в зависимости от того, в сетке они или сами по себе.
+ */
+.syndicate-stack { display: grid; gap: 16px; }
+.syndicate-stack > *, .syndicate-stack .syndicate-grid { margin: 0; }
+.syndicate-stack .syndicate-grid { align-items: start; }
+
+.syn-hero { display: flex; gap: 20px; align-items: center; }
+.syn-hero > .art { width: 128px; height: 128px; flex: none; }
+.syn-hero > .art img { width: 100%; height: 100%; object-fit: contain; }
+.syn-hero-body { display: grid; gap: 10px; min-width: 0; flex: 1; }
+.syn-hero-body > button { justify-self: start; }
+.syn-name { margin: 0; font-size: 26px; line-height: 1.15; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.syn-tag { font-size: 13px; padding: 3px 8px; border-radius: 8px; border: 1px solid var(--accent); color: var(--accent); letter-spacing: 1px; }
+.syn-desc { margin: 0; font-size: 15px; line-height: 1.5; color: var(--text); }
+.syn-desc.muted { color: var(--muted); font-size: 13px; }
+.syn-desc-small { font-size: 13px; color: var(--text); margin: 4px 0; }
+.syn-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line); font-size: 12px; color: var(--text); }
+.chip.leader { border-color: var(--accent); color: var(--accent); }
+.chip.muted { color: var(--muted); }
+.syn-subtitle { margin: 14px 0 6px; font-size: 13px; color: var(--muted); }
+.syn-subtitle:first-of-type { margin-top: 0; }
+.syn-big { font-size: 28px; font-weight: 700; margin-bottom: 6px; }
+.syndicate-textarea.short { min-height: 72px; }
+.syn-form-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; margin-top: 10px; }
+.syn-form-row .field { flex: 1 1 140px; }
+
+.syn-flow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0 4px; }
+.syn-flow > div { padding: 10px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--line); display: grid; gap: 2px; font-size: 12px; color: var(--muted); }
+.syn-flow b { font-size: 17px; color: var(--text); }
+.syn-flow .in b { color: var(--ok); }
+.syn-flow .out b { color: var(--err); }
+
+.syn-table { display: grid; gap: 6px; }
+.syn-row { display: grid; grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(0, 1fr)); gap: 8px; align-items: center; padding: 8px 10px; border-radius: 10px; background: var(--panel-2); font-size: 13px; }
+.syn-row.head { background: none; padding: 0 10px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; }
+.syn-row > span:not(:first-child) { text-align: right; font-variant-numeric: tabular-nums; }
+.syn-who { display: grid; min-width: 0; }
+.syn-who b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.syn-bar { display: block; height: 4px; border-radius: 2px; background: var(--line); margin-top: 5px; overflow: hidden; }
+.syn-bar > i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+
+.syn-seg { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+.syn-seg button { padding: 5px 12px; font-size: 12px; }
+.syn-seg button.active { border-color: var(--accent); color: var(--accent); }
+.syn-log .syn-row { grid-template-columns: 104px minmax(0, 1fr) auto; }
+.syn-log .syn-row > span:not(:first-child) { text-align: left; }
+.syn-log .syn-row > .syn-amount { text-align: right; }
+.syn-when { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.syn-what { display: grid; gap: 2px; min-width: 0; }
+.syn-what .muted { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.syn-amount { font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.syn-row.in .syn-amount { color: var(--ok); }
+.syn-row.out .syn-amount { color: var(--err); }
+
+.syn-member { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.syn-member:last-child { border-bottom: 0; }
+.syn-member-info { display: grid; gap: 4px; min-width: 0; }
+.syn-member-name { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 15px; font-weight: 600; }
+.syn-member-meta { font-size: 12px; color: var(--muted); }
+.member-actions { flex-wrap: wrap; }
+.rank-block { display: grid; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.rank-block:last-child { border-bottom: 0; }
+.rank-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.rank-head b { font-size: 15px; }
+.rank-head span { font-size: 12px; color: var(--muted); }
+
+@media (max-width: 600px) {
+  .syn-hero { flex-direction: column; align-items: stretch; }
+  .syn-hero > .art { width: 104px; height: 104px; }
+  .syn-name { font-size: 22px; }
+  .syn-hero-body > button { justify-self: stretch; }
+  .syn-row { grid-template-columns: minmax(0, 1fr) repeat(3, auto); font-size: 12px; }
+  .syn-log .syn-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .syn-log .syn-when { grid-column: 1 / -1; }
+  .syn-member { flex-direction: column; align-items: stretch; }
+}
+
+/* Пункты, которые к Кошу не относятся (карты, биржа), в его режиме не показываются вовсе. */
+.kish-mode [data-kish-hidden] { display: none !important; }
+
+/* Поля устава в палитре игры: без фона браузер рисовал их белыми. */
+.syndicate-textarea {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  line-height: 1.5;
+}
+.syndicate-textarea:focus { outline: none; border-color: var(--accent); }
+.rank-block .rank-editor { padding-top: 0; border-bottom: 0; }

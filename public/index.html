@@ -312,23 +312,24 @@
       <aside class="sidebar" id="sidebar">
         <nav class="nav" id="tabs">
           <div class="nav-group">
-            <h2 class="nav-title">Обзор</h2>
-            <button type="button" class="tab active" data-tab="overview"><svg class="ico" aria-hidden="true"><use href="#ico-nav-overview"/></svg><span>Центр управления</span></button>
+            <h2 class="nav-title" data-kish-title="Кіш">Обзор</h2>
+            <button type="button" class="tab active" data-tab="overview" data-kish-label="Мостик"><svg class="ico" aria-hidden="true"><use href="#ico-nav-overview"/></svg><span>Центр управления</span></button>
           </div>
 
           <div class="nav-group">
-            <h2 class="nav-title">Развитие</h2>
-            <button type="button" class="tab" data-tab="buildings"><svg class="ico" aria-hidden="true"><use href="#ico-nav-buildings"/></svg><span>Инфраструктура</span></button>
-            <button type="button" class="tab" data-tab="research"><svg class="ico" aria-hidden="true"><use href="#ico-nav-research"/></svg><span>Исследования</span></button>
+            <h2 class="nav-title" data-kish-title="Развитие Коша">Развитие</h2>
+            <button type="button" class="tab" data-tab="buildings" data-kish-label="Отсеки"><svg class="ico" aria-hidden="true"><use href="#ico-nav-buildings"/></svg><span>Инфраструктура</span></button>
+            <button type="button" class="tab" data-tab="research" data-kish-label="Академія"><svg class="ico" aria-hidden="true"><use href="#ico-nav-research"/></svg><span>Исследования</span></button>
           </div>
 
           <div class="nav-group">
-            <h2 class="nav-title">Армия</h2>
-            <button type="button" class="tab" data-tab="shipyard"><svg class="ico" aria-hidden="true"><use href="#ico-nav-shipyard"/></svg><span>Верфь</span></button>
-            <button type="button" class="tab" data-tab="defense"><svg class="ico" aria-hidden="true"><use href="#ico-nav-defense"/></svg><span>Оборона</span></button>
+            <h2 class="nav-title" data-kish-title="Защита Коша">Армия</h2>
+            <button type="button" class="tab" data-tab="shipyard" data-kish-label="Флотилия"><svg class="ico" aria-hidden="true"><use href="#ico-nav-shipyard"/></svg><span>Верфь</span></button>
+            <button type="button" class="tab" data-tab="defense" data-kish-label="Бастион"><svg class="ico" aria-hidden="true"><use href="#ico-nav-defense"/></svg><span>Оборона</span></button>
           </div>
 
-          <div class="nav-group">
+          <!-- Карты и биржа к Кошу не относятся: в режиме Коша их пунктов нет вовсе. -->
+          <div class="nav-group" data-kish-hidden>
             <h2 class="nav-title">Командование</h2>
             <button type="button" class="tab" data-tab="map"><svg class="ico" aria-hidden="true"><use href="#ico-nav-system"/></svg><span>Карта системы</span></button>
             <button type="button" class="tab" data-tab="galaxy"><svg class="ico" aria-hidden="true"><use href="#ico-nav-galaxy"/></svg><span>Карта галактики</span></button>
@@ -336,7 +337,7 @@
 
           <div class="nav-group">
             <h2 class="nav-title">Операции</h2>
-            <button type="button" class="tab" data-tab="market"><svg class="ico" aria-hidden="true"><use href="#ico-nav-market"/></svg><span>Хаб и биржа</span></button>
+            <button type="button" class="tab" data-tab="market" data-kish-hidden><svg class="ico" aria-hidden="true"><use href="#ico-nav-market"/></svg><span>Хаб и биржа</span></button>
             <button type="button" class="tab" data-tab="syndicate"><svg class="ico" aria-hidden="true"><use href="#ico-nav-syndicate"/></svg><span>Синдикат</span></button>
             <button type="button" class="tab" data-tab="war"><svg class="ico" aria-hidden="true"><use href="#ico-nav-war"/></svg><span>Экспедиции и войны</span></button>
             <button type="button" class="tab" data-tab="rating"><svg class="ico" aria-hidden="true"><use href="#ico-nav-rating"/></svg><span>Рейтинг</span></button>
@@ -478,25 +479,30 @@
           Верфь, биржа и карты к Кошу не относятся — для них отдельная заглушка.
         -->
         <section data-panel="kish-overview" hidden>
-          <h3 class="panel-title">Центр управления Коша</h3>
+          <h3 class="panel-title">Мостик</h3>
           <div id="kish-overview"></div>
         </section>
 
         <section data-panel="kish-modules" hidden>
-          <h3 class="panel-title">Модули Коша</h3>
+          <h3 class="panel-title">Отсеки Коша</h3>
           <div id="kish-modules" class="cards"></div>
         </section>
 
         <section data-panel="kish-research" hidden>
-          <h3 class="panel-title">Технологии синдиката</h3>
+          <h3 class="panel-title">Академія · технологии синдиката</h3>
           <div id="kish-research-job" class="job-banner" hidden></div>
           <div id="kish-techs" class="cards"></div>
         </section>
 
         <section data-panel="kish-defense" hidden>
-          <h3 class="panel-title">Оборона Коша</h3>
+          <h3 class="panel-title">Бастион</h3>
           <div id="kish-defense-summary" class="hub-card kish-summary"></div>
           <div id="kish-defenses" class="cards"></div>
+        </section>
+
+        <section data-panel="kish-fleet" hidden>
+          <h3 class="panel-title">Флотилия</h3>
+          <div id="kish-fleet"></div>
         </section>
 
         <section data-panel="kish-away" hidden>

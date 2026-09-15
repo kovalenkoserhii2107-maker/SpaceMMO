@@ -174,6 +174,7 @@
     kishDefenseSummary: $('kish-defense-summary'),
     kishDefenses: $('kish-defenses'),
     kishAway: $('kish-away'),
+    kishFleet: $('kish-fleet'),
     kishAwayTitle: $('kish-away-title'),
     cargoInputs: $('cargo-inputs'),
     adminSearch: $('admin-search'),
@@ -1083,7 +1084,6 @@
     baseListSignature = signature;
 
     el.baseList.innerHTML = '';
-    appendKishSwitchItem();
     for (const base of state.bases) {
       const li = document.createElement('li');
       const button = document.createElement('button');
@@ -1106,6 +1106,9 @@
       li.appendChild(button);
       el.baseList.appendChild(li);
     }
+
+    // Кіш — под колониями, отдельной строкой: сверху его путали с колонией.
+    appendKishSwitchItem();
 
     // Предел расширения виден там же, где список колоний: иначе о нем узнают
     // только отказом на вылете колонизатора, уже построив его за десять тысяч.
@@ -5856,6 +5859,7 @@
     const data = syndicate.data;
     if (!data) return;
     el.syndicatePanel.innerHTML = '';
+    el.syndicatePanel.classList.add('syndicate-stack');
     if (data.mine) renderMySyndicate(data);
     else renderSyndicateList(data);
   }
@@ -5974,6 +5978,7 @@
       const row = synEl('div', 'queue-item member-row syndicate-row');
       const info = synEl('div');
       info.appendChild(synEl('b', null, `[${item.tag}] ${item.name}`));
+      if (item.description) info.appendChild(synEl('div', 'syn-desc-small', item.description));
       info.appendChild(synEl('div', 'role',
         `главарь: ${item.leader} · участников ${item.members}/${item.memberCap} · Кіш ур. ${item.kishLevel} · ` +
         `набор ${RECRUITMENT_LABELS[item.recruitment] || item.recruitment} · налог ${item.taxRate}%` +
@@ -6028,67 +6033,104 @@
   }
 
   /* --- свой синдикат --- */
+
+  /*
+   * Раздел собран по вопросам, а не по таблицам базы: кто мы (шапка),
+   * сколько у нас и кто вносит (казна, вклад, журнал), по каким правилам
+   * живем (налог, набор, устав) и кто мы поименно (состав, ранги).
+   * Казна показана один раз: гривна и ресурсы — в одной карточке.
+   * Модули Коша живут в самом Коше, сюда из них ведет только кнопка.
+   */
   function renderMySyndicate(data) {
     const mine = data.mine;
     const me = mine.me;
     const can = (permission) => me.permissions.includes(permission);
     const myRank = mine.ranks.find((rank) => rank.id === me.rankId);
     const myPosition = me.isLeader ? 0 : (myRank ? myRank.position : 99);
+    const panel = el.syndicatePanel;
 
-    const header = synEl('div', 'syndicate-header');
-    const title = synEl('div');
-    const h3 = synEl('h3');
-    h3.append(synEl('span', 'tag', `[${mine.tag}] `), document.createTextNode(mine.name));
-    title.append(h3, synEl('div', 'role',
-      `твой ранг: ${me.rankName} · участников ${mine.members.length}/${mine.kish.memberCap} · ` +
-      `основан ${new Date(mine.createdAt).toLocaleDateString('ru-RU')}`));
-    const bankBox = synEl('div', 'bank');
-    bankBox.innerHTML =
-      `казна синдиката<b>${fmt(mine.bank)} ${icon('credits', 'sm')}</b>` +
-      `личный счет: ${fmt(data.credits)} ${icon('credits', 'sm')}`;
-    header.append(title, bankBox);
-    el.syndicatePanel.appendChild(header);
+    panel.appendChild(renderSyndicateHero(mine));
 
-    /* Кіш и казна */
-    const top = synEl('div', 'syndicate-grid');
+    const money = synEl('div', 'syndicate-grid');
+    money.append(renderSyndicateTreasury(mine, data, can), renderContributions(mine));
+    panel.appendChild(money);
+    panel.appendChild(renderTreasuryLog(mine));
 
-    // Кіш управляется как колония: модули, технологии и оборона — в его разделах.
-    const kish = synCard('Кіш');
-    kish.appendChild(synEl('div', 'hub-storage',
-      `Уровень ${mine.kish.level} · система ${mine.kish.systemName || 'не определена'} · ` +
-      `мест занято ${mine.members.length} из ${mine.kish.memberCap}`));
-    const threats = mine.watch.incoming.length;
-    if (threats) {
-      kish.appendChild(synEl('div', 'hub-storage warn', `Вражеских флотов в пути: ${threats} — подробности в центре управления Коша.`));
+    const rules = synEl('div', 'syndicate-grid');
+    rules.append(renderTaxCard(mine, can), renderRecruitmentCard(mine, data, can));
+    panel.appendChild(rules);
+    panel.appendChild(renderCharterCard(mine, data, can));
+
+    const people = synEl('div', 'syndicate-grid');
+    people.append(renderMembersCard(mine, can, myPosition), renderRanksCard(mine, data));
+    panel.appendChild(people);
+
+    if (can('APPLICATIONS')) panel.appendChild(renderApplicationsCard(mine));
+    panel.appendChild(renderLeaveCard(me));
+  }
+
+  function renderSyndicateHero(mine) {
+    const hero = synEl('section', 'hub-card syn-hero');
+    hero.appendChild(artNode('KISH', 'Кіш', 'planet'));
+    const body = synEl('div', 'syn-hero-body');
+    const title = synEl('h2', 'syn-name');
+    title.append(synEl('span', 'syn-tag', mine.tag), synEl('span', null, mine.name));
+    body.appendChild(title);
+    body.appendChild(synEl('p', mine.description ? 'syn-desc' : 'syn-desc muted',
+      mine.description || 'Описание не задано. Его пишет ранг с правом правил набора в карточке «Устав».'));
+    const chips = synEl('div', 'syn-chips');
+    for (const text of [
+      `твой ранг: ${mine.me.rankName}`,
+      `состав ${mine.members.length} из ${mine.kish.memberCap}`,
+      `Кіш ур. ${mine.kish.level} · ${mine.kish.systemName || 'система не определена'}`,
+      `налог ${mine.tax.rate}%`,
+      `основан ${new Date(mine.createdAt).toLocaleDateString('ru-RU')}`,
+    ]) {
+      chips.appendChild(synEl('span', 'chip', text));
     }
-    kish.appendChild(synEl('div', 'hub-storage',
-      'Модули, технологии синдиката и оборона Коша открываются так же, как у колонии: выбери Кіш в переключателе колоний.'));
-    kish.appendChild(synButton('Открыть Кіш', 'primary', () => enterKish('overview')));
+    body.appendChild(chips);
+    if (mine.watch.incoming.length) {
+      body.appendChild(synEl('div', 'hub-storage warn',
+        `Вражеских флотов в пути: ${mine.watch.incoming.length} — подробности в центре управления Коша.`));
+    }
+    body.appendChild(synButton('Открыть Кіш', 'primary', () => enterKish('overview')));
+    hero.appendChild(body);
+    return hero;
+  }
 
-    const treasury = synCard('Казна');
-    // Той же сеткой, что и в центре управления Коша: строкой значения рвались по одному.
-    const stock = synEl('div', 'kish-treasury');
-    for (const key of ['ore', 'polymers', 'plasma', 'antimatter']) {
+  function renderSyndicateTreasury(mine, data, can) {
+    const card = synCard('Казна');
+    const grid = synEl('div', 'kish-treasury');
+    for (const [key, value] of [['credits', mine.bank], ['ore', mine.treasury.ore], ['polymers', mine.treasury.polymers],
+      ['plasma', mine.treasury.plasma], ['antimatter', mine.treasury.antimatter]]) {
       const cell = synEl('div', 'kish-res');
-      cell.innerHTML = `${icon(key)} <b>${fmt(mine.treasury[key])}</b>`;
-      stock.appendChild(cell);
+      cell.innerHTML = `${icon(key)} <b>${fmt(value)}</b>`;
+      grid.appendChild(cell);
     }
-    treasury.appendChild(stock);
-    treasury.appendChild(synEl('div', 'hub-storage',
-      'Ресурсы привозят и вывозят флотом с колонии — рейсами в Кіш. ' +
-      'Вывоз и выдача гривны идут в один дневной лимит ранга.'));
-    const donateForm = synEl('div', 'donate-form');
+    card.appendChild(grid);
+
+    const week = mine.stats.week;
+    const flow = synEl('div', 'syn-flow');
+    for (const [label, credits, resources, className, sign] of [
+      ['Поступило за 7 дней', week.creditsIn, week.resourcesIn, 'in', '+'],
+      ['Потрачено за 7 дней', week.creditsOut, week.resourcesOut, 'out', '−'],
+    ]) {
+      const cell = synEl('div', className);
+      cell.appendChild(synEl('span', null, label));
+      const value = synEl('b');
+      value.innerHTML = `${sign}${fmt(credits)} ${icon('credits', 'sm')}`;
+      cell.append(value, synEl('span', null, `ресурсов ${sign}${fmt(resources)}`));
+      flow.appendChild(cell);
+    }
+    card.appendChild(flow);
+
+    const donate = synEl('div', 'row syn-form-row');
     const amount = synNumber(100, 1);
-    donateForm.append(amount, synButton('Внести', 'primary',
-      () => syndicateAction('/api/syndicates/donate', { amount: synInt(amount) })));
-    treasury.appendChild(donateForm);
+    donate.append(synField(`Внести с личного счета (${fmt(data.credits)} ₴)`, amount),
+      synButton('Внести', 'primary', () => syndicateAction('/api/syndicates/donate', { amount: synInt(amount) })));
+    card.appendChild(donate);
 
     if (can('WITHDRAW')) {
-      const payoutForm = synEl('div', 'syndicate-form');
-      payoutForm.appendChild(synEl('div', 'hub-storage',
-        me.withdrawLeft === null
-          ? 'Выдача из казны: без предела'
-          : `Выдача из казны: осталось ${fmt(me.withdrawLeft)} ₴ на сутки`));
       const whom = synEl('select');
       for (const member of mine.members) {
         const option = synEl('option', null, member.nickname);
@@ -6096,68 +6138,120 @@
         whom.appendChild(option);
       }
       const sum = synNumber(100, 1);
-      const line = synEl('div', 'row');
-      line.append(whom, sum, synButton('Выдать', 'ghost',
-        () => syndicateAction(`/api/syndicates/members/${whom.value}/payout`, { amount: synInt(sum) })));
-      payoutForm.appendChild(line);
-      treasury.appendChild(payoutForm);
+      const payout = synEl('div', 'row syn-form-row');
+      payout.append(
+        synField(mine.me.withdrawLeft === null ? 'Выдать участнику (без предела)' : `Выдать участнику (осталось ${fmt(mine.me.withdrawLeft)} ₴ на сутки)`, whom),
+        synField('Сумма, ₴', sum),
+        synButton('Выдать', 'ghost', () => syndicateAction(`/api/syndicates/members/${whom.value}/payout`, { amount: synInt(sum) })),
+      );
+      card.appendChild(payout);
     }
+    card.appendChild(synEl('div', 'hub-storage',
+      'Ресурсы в казну привозят и вывозят флотом с колонии. Вывоз и выдача гривны идут в один дневной лимит ранга.'));
+    return card;
+  }
 
-    const log = synEl('div', 'queue');
-    for (const tx of mine.transactions) {
-      const row = synEl('div', 'queue-item');
-      const head = synEl('b');
-      head.append(document.createTextNode(`${tx.nickname || tx.actor || 'система'} — `));
-      if (tx.kind === 'RESOURCE_DELIVERY' || tx.kind === 'RESOURCE_PICKUP') {
-        head.insertAdjacentHTML('beforeend',
-          ['ore', 'polymers', 'plasma', 'antimatter'].filter((key) => tx[key] > 0)
-            .map((key) => `${icon(key, 'sm')} ${fmt(tx[key])}`).join(' · '));
-      } else {
-        head.append(document.createTextNode(`${fmt(tx.amount)} `));
-        head.insertAdjacentHTML('beforeend', icon('credits', 'sm'));
-        // Академія и наука платятся и гривной, и ресурсами — показываем все.
-        const extra = ['ore', 'polymers', 'plasma', 'antimatter'].filter((key) => tx[key] > 0);
-        if (extra.length) {
-          head.insertAdjacentHTML('beforeend',
-            ' · ' + extra.map((key) => `${icon(key, 'sm')} ${fmt(tx[key])}`).join(' · '));
+  function renderContributions(mine) {
+    const card = synCard('Вклад участников');
+    const rows = mine.stats.contributions;
+    const top = Math.max(1, ...rows.map((row) => row.merit));
+    const table = synEl('div', 'syn-table');
+    const head = synEl('div', 'syn-row head');
+    for (const label of ['Участник', 'Взносы ₴', 'Налог ₴', 'Ресурсы']) head.appendChild(synEl('span', null, label));
+    table.appendChild(head);
+    for (const row of rows) {
+      const line = synEl('div', 'syn-row');
+      const who = synEl('span', 'syn-who');
+      who.appendChild(synEl('b', null, row.nickname));
+      const bar = synEl('span', 'syn-bar');
+      const fill = synEl('i');
+      fill.style.width = `${Math.round((row.merit / top) * 100)}%`;
+      bar.appendChild(fill);
+      who.appendChild(bar);
+      line.append(who, synEl('span', null, fmt(row.credits)), synEl('span', null, fmt(row.tax)), synEl('span', null, fmt(row.resources)));
+      table.appendChild(line);
+    }
+    card.appendChild(table);
+    card.appendChild(synEl('div', 'hub-storage',
+      'Полоса — заслуги: гривна и ресурсы, внесенные в казну, единица за единицу. Счет за все время в синдикате.'));
+    return card;
+  }
+
+  function renderTreasuryLog(mine) {
+    const card = synCard('Журнал казны');
+    const modes = [['ALL', 'Все'], ['IN', 'Поступления'], ['OUT', 'Расходы']];
+    const filter = synEl('div', 'syn-seg');
+    const list = synEl('div', 'syn-table syn-log');
+    const draw = () => {
+      const mode = syndicate.logFilter || 'ALL';
+      for (const button of filter.children) button.classList.toggle('active', button.dataset.mode === mode);
+      list.innerHTML = '';
+      const rows = mine.transactions.filter((tx) => mode === 'ALL' || tx.flow === mode);
+      if (!rows.length) list.appendChild(synEl('div', 'hub-storage', 'Операций нет'));
+      for (const tx of rows) {
+        const row = synEl('div', `syn-row ${tx.flow.toLowerCase()}`);
+        row.appendChild(synEl('span', 'syn-when', synDateTime(tx.createdAt)));
+        const what = synEl('span', 'syn-what');
+        what.appendChild(synEl('b', null, TX_LABELS[tx.kind] || tx.kind));
+        const who = [tx.nickname, tx.kind === 'PAYOUT' && tx.actor ? `выдал ${tx.actor}` : null, tx.comment]
+          .filter(Boolean).join(' · ');
+        if (who) what.appendChild(synEl('span', 'muted', who));
+        row.appendChild(what);
+        const sign = tx.flow === 'IN' ? '+' : tx.flow === 'OUT' ? '−' : '';
+        const parts = [];
+        const credits = tx.kind === 'RESOURCE_DELIVERY' || tx.kind === 'RESOURCE_PICKUP' ? 0 : tx.amount;
+        if (credits > 0) parts.push(`${sign}${fmt(credits)} ${icon('credits', 'sm')}`);
+        for (const key of ['ore', 'polymers', 'plasma', 'antimatter']) {
+          if (tx[key] > 0) parts.push(`${sign}${fmt(tx[key])} ${icon(key, 'sm')}`);
         }
+        const amount = synEl('span', 'syn-amount');
+        amount.innerHTML = parts.join('<br>') || '—';
+        row.appendChild(amount);
+        list.appendChild(row);
       }
-      const meta = [TX_LABELS[tx.kind] || tx.kind];
-      if (tx.kind === 'PAYOUT' && tx.actor) meta.push(`выдал ${tx.actor}`);
-      if (tx.comment) meta.push(tx.comment);
-      meta.push(new Date(tx.createdAt).toLocaleString('ru-RU'));
-      row.append(head, synEl('span', null, meta.join(' · ')));
-      log.appendChild(row);
+    };
+    for (const [mode, label] of modes) {
+      const button = synButton(label, 'ghost', () => {
+        syndicate.logFilter = mode;
+        draw();
+      });
+      button.dataset.mode = mode;
+      filter.appendChild(button);
     }
-    if (!mine.transactions.length) log.appendChild(synEl('div', 'queue-item', 'Операций пока не было'));
-    treasury.appendChild(log);
+    card.append(filter, list);
+    draw();
+    return card;
+  }
 
-    top.append(kish, treasury);
-    el.syndicatePanel.appendChild(top);
-
-    /* Налог и правила набора */
-    const middle = synEl('div', 'syndicate-grid');
-
+  function renderTaxCard(mine, can) {
     const tax = synCard('Налог с крипто-фермы');
-    tax.appendChild(synEl('div', 'hub-storage', `Сейчас ${mine.tax.rate}%`));
+    tax.appendChild(synEl('div', 'syn-big', `${mine.tax.rate}%`));
     if (mine.tax.pendingRate !== null && mine.tax.effectiveAt) {
-      tax.appendChild(synEl('div', 'hub-storage warn',
-        `С ${synDateTime(mine.tax.effectiveAt)} — ${mine.tax.pendingRate}%`));
+      tax.appendChild(synEl('div', 'hub-storage warn', `С ${synDateTime(mine.tax.effectiveAt)} — ${mine.tax.pendingRate}%`));
     }
     tax.appendChild(synEl('div', 'hub-storage',
-      'Налог удерживается с дохода крипто-фермы и уходит в казну. Повышение вступает в силу через сутки, снижение — сразу.'));
+      'Удерживается с дохода крипто-фермы и уходит в казну. Повышение вступает в силу через сутки, снижение — сразу.'));
     if (can('TAX')) {
       const rate = synNumber(mine.tax.pendingRate ?? mine.tax.rate, 0, mine.tax.maxRate);
-      const line = synEl('div', 'syndicate-form');
+      const line = synEl('div', 'row syn-form-row');
       line.append(synField(`Ставка, % (0–${mine.tax.maxRate})`, rate),
         synButton('Установить', 'ghost', () => syndicateAction('/api/syndicates/tax', { rate: synInt(rate) })));
       tax.appendChild(line);
     }
+    return tax;
+  }
 
+  function renderRecruitmentCard(mine, data, can) {
     const rules = synCard('Правила набора');
-    rules.appendChild(synEl('div', 'hub-storage',
-      `Набор ${RECRUITMENT_LABELS[mine.rules.recruitment]} · взнос ${fmt(mine.rules.entryFee)} ₴ · ` +
-      `рейтинг кандидата от ${fmt(mine.rules.minScore)}`));
+    const chips = synEl('div', 'syn-chips');
+    for (const text of [
+      `набор ${RECRUITMENT_LABELS[mine.rules.recruitment]}`,
+      `взнос ${fmt(mine.rules.entryFee)} ₴`,
+      `рейтинг от ${fmt(mine.rules.minScore)}`,
+    ]) {
+      chips.appendChild(synEl('span', 'chip', text));
+    }
+    rules.appendChild(chips);
     if (can('RULES')) {
       const mode = synEl('select');
       for (const [value, label] of Object.entries(RECRUITMENT_LABELS)) {
@@ -6181,18 +6275,34 @@
       );
       rules.appendChild(form);
     }
+    return rules;
+  }
 
-    middle.append(tax, rules);
-    el.syndicatePanel.appendChild(middle);
+  /** Устав: описание — лицо синдиката для кандидатов, кодекс — правила для своих. */
+  function renderCharterCard(mine, data, can) {
+    const card = synCard('Устав');
+    card.appendChild(synEl('h4', 'syn-subtitle', 'Описание'));
+    if (can('RULES')) {
+      const input = synEl('textarea', 'syndicate-textarea short');
+      input.maxLength = data.limits.descriptionMaxLength;
+      input.value = mine.description;
+      const counter = synEl('div', 'hub-storage');
+      const sync = () => { counter.textContent = `${input.value.length} / ${data.limits.descriptionMaxLength}`; };
+      input.addEventListener('input', sync);
+      sync();
+      card.append(input, counter, synButton('Сохранить описание', 'ghost',
+        () => syndicateAction('/api/syndicates/description', { text: input.value })));
+    } else {
+      card.appendChild(synEl('div', 'hub-storage', mine.description || 'Описания нет.'));
+    }
 
-    /* Кодекс */
-    const codex = synCard('Кодекс');
+    card.appendChild(synEl('h4', 'syn-subtitle', 'Кодекс'));
     if (mine.codex) {
-      codex.appendChild(synEl('pre', 'codex-text', mine.codex.text));
-      codex.appendChild(synEl('div', 'hub-storage',
+      card.appendChild(synEl('pre', 'codex-text', mine.codex.text));
+      card.appendChild(synEl('div', 'hub-storage',
         `редакция от ${synDateTime(mine.codex.updatedAt)}${mine.codex.author ? ` · ${mine.codex.author}` : ''}`));
     } else {
-      codex.appendChild(synEl('div', 'hub-storage', 'Кодекса пока нет: кандидаты вступают без него.'));
+      card.appendChild(synEl('div', 'hub-storage', 'Кодекса пока нет: кандидаты вступают без него.'));
     }
     if (can('CODEX')) {
       const area = synEl('textarea', 'syndicate-textarea');
@@ -6202,24 +6312,27 @@
       const sync = () => { counter.textContent = `${area.value.length} / ${data.limits.codexMaxLength}`; };
       area.addEventListener('input', sync);
       sync();
-      codex.append(area, counter, synButton('Сохранить редакцию', 'ghost',
+      card.append(area, counter, synButton('Сохранить редакцию', 'ghost',
         () => syndicateAction('/api/syndicates/codex', { text: area.value })));
-      codex.appendChild(synEl('div', 'hub-storage', 'Участники получат новую редакцию письмом. Пустой текст снимает кодекс.'));
+      card.appendChild(synEl('div', 'hub-storage', 'Участники получат новую редакцию письмом. Пустой текст снимает кодекс.'));
     }
-    el.syndicatePanel.appendChild(codex);
+    return card;
+  }
 
-    /* Состав и ранги */
-    const bottom = synEl('div', 'syndicate-grid');
-
-    const roster = synCard('Состав');
+  function renderMembersCard(mine, can, myPosition) {
+    const roster = synCard(`Состав · ${mine.members.length} из ${mine.kish.memberCap}`);
+    const me = mine.me;
     const assignable = mine.ranks.filter((rank) => rank.position !== 0 && (me.isLeader || rank.position > myPosition));
     for (const member of mine.members) {
-      const row = synEl('div', 'queue-item member-row');
-      const info = synEl('div');
-      info.appendChild(synEl('b', null, member.nickname));
-      info.appendChild(synEl('div', `role${member.isLeader ? ' LEADER' : ''}`,
-        `${member.rankName} · заслуги ${fmt(member.merit)} · налог сегодня ${fmt(member.taxToday)} ₴ · ` +
-        `боев ${member.battlesWon}/${member.battlesLost}`));
+      const row = synEl('div', 'syn-member');
+      const info = synEl('div', 'syn-member-info');
+      const name = synEl('div', 'syn-member-name');
+      name.append(synEl('span', null, member.nickname), synEl('span', `chip${member.isLeader ? ' leader' : ''}`, member.rankName));
+      info.appendChild(name);
+      info.appendChild(synEl('div', 'syn-member-meta',
+        `заслуги ${fmt(member.merit)} · налог сегодня ${fmt(member.taxToday)} ₴ · бои ${member.battlesWon}/${member.battlesLost}` +
+        (member.joinedAt ? ` · с ${new Date(member.joinedAt).toLocaleDateString('ru-RU')}` : '')));
+      row.appendChild(info);
 
       const actions = synEl('div', 'member-actions');
       if (member.outrankedByMe && can('PROMOTE') && assignable.length) {
@@ -6242,55 +6355,67 @@
         actions.appendChild(synConfirm('Сделать главарем', 'Передать лидерство?', 'ghost',
           () => syndicateAction(`/api/syndicates/members/${member.commanderId}/leader`)));
       }
-      row.append(info, actions);
+      if (actions.children.length) row.appendChild(actions);
       roster.appendChild(row);
     }
+    return roster;
+  }
 
+  /** Ранги: название и число людей строкой, права — ярлыками, а не сплошным текстом. */
+  function renderRanksCard(mine, data) {
     const ranks = synCard('Ранги');
     const labelOf = new Map(data.permissionCatalog.map((item) => [item.key, item.label]));
     for (const rank of mine.ranks) {
-      if (!me.isLeader) {
-        const row = synEl('div', 'queue-item');
-        row.appendChild(synEl('b', null, `${rank.name} · участников ${rank.members}`));
-        const rights = rank.position === 0
-          ? 'все права'
-          : (rank.permissions.map((key) => labelOf.get(key) || key).join(', ') || 'без прав');
-        row.appendChild(synEl('span', null,
-          rights + (rank.permissions.includes('WITHDRAW') ? ` · выдача до ${fmt(rank.dailyWithdrawLimit)} ₴ в сутки` : '')));
-        ranks.appendChild(row);
+      if (mine.me.isLeader) {
+        // У редактора свой заголовок: без него название ранга терялось среди полей.
+        const block = synEl('div', 'rank-block');
+        const head = synEl('div', 'rank-head');
+        head.append(synEl('b', null, rank.name), synEl('span', null, `участников: ${rank.members}`));
+        block.append(head, rankEditor(rank, data, labelOf));
+        ranks.appendChild(block);
         continue;
       }
-      ranks.appendChild(rankEditor(rank, data, labelOf));
+      const block = synEl('div', 'rank-block');
+      const head = synEl('div', 'rank-head');
+      head.append(synEl('b', null, rank.name), synEl('span', null, `участников: ${rank.members}`));
+      block.appendChild(head);
+      const perms = synEl('div', 'syn-chips');
+      if (rank.position === 0) perms.appendChild(synEl('span', 'chip leader', 'все права'));
+      else if (!rank.permissions.length) perms.appendChild(synEl('span', 'chip muted', 'без прав'));
+      for (const key of rank.position === 0 ? [] : rank.permissions) perms.appendChild(synEl('span', 'chip', labelOf.get(key) || key));
+      block.appendChild(perms);
+      if (rank.position !== 0 && rank.permissions.includes('WITHDRAW')) {
+        block.appendChild(synEl('div', 'syn-member-meta', `выдача из казны до ${fmt(rank.dailyWithdrawLimit)} ₴ в сутки`));
+      }
+      ranks.appendChild(block);
     }
-    if (me.isLeader && mine.ranks.length < data.limits.maxRanks) {
-      ranks.appendChild(synEl('h4', 'rank-new-title', 'Новый ранг'));
+    if (mine.me.isLeader && mine.ranks.length < data.limits.maxRanks) {
+      ranks.appendChild(synEl('h4', 'syn-subtitle', 'Новый ранг'));
       ranks.appendChild(rankEditor(null, data, labelOf));
     }
+    return ranks;
+  }
 
-    bottom.append(roster, ranks);
-    el.syndicatePanel.appendChild(bottom);
-
-    /* Заявки */
-    if (can('APPLICATIONS')) {
-      const applications = synCard('Заявки на вступление');
-      if (!mine.applications.length) applications.appendChild(synEl('div', 'hub-storage', 'Новых заявок нет'));
-      for (const application of mine.applications) {
-        const row = synEl('div', 'queue-item member-row');
-        const info = synEl('div');
-        info.append(synEl('b', null, application.nickname),
-          synEl('div', 'role', `подана ${new Date(application.createdAt).toLocaleString('ru-RU')}`));
-        const actions = synEl('div', 'member-actions');
-        actions.append(
-          synButton('Принять', 'primary', () => syndicateAction(`/api/syndicates/applications/${application.id}/approve`)),
-          synButton('Отклонить', 'ghost', () => syndicateAction(`/api/syndicates/applications/${application.id}/reject`)),
-        );
-        row.append(info, actions);
-        applications.appendChild(row);
-      }
-      el.syndicatePanel.appendChild(applications);
+  function renderApplicationsCard(mine) {
+    const applications = synCard('Заявки на вступление');
+    if (!mine.applications.length) applications.appendChild(synEl('div', 'hub-storage', 'Новых заявок нет'));
+    for (const application of mine.applications) {
+      const row = synEl('div', 'syn-member');
+      const info = synEl('div', 'syn-member-info');
+      info.append(synEl('div', 'syn-member-name', application.nickname),
+        synEl('div', 'syn-member-meta', `подана ${synDateTime(application.createdAt)}`));
+      const actions = synEl('div', 'member-actions');
+      actions.append(
+        synButton('Принять', 'primary', () => syndicateAction(`/api/syndicates/applications/${application.id}/approve`)),
+        synButton('Отклонить', 'ghost', () => syndicateAction(`/api/syndicates/applications/${application.id}/reject`)),
+      );
+      row.append(info, actions);
+      applications.appendChild(row);
     }
+    return applications;
+  }
 
-    /* Выход и роспуск */
+  function renderLeaveCard(me) {
     const footer = synEl('div', 'hub-card');
     if (me.isLeader) {
       footer.appendChild(synEl('div', 'hub-storage', 'Роспуск сожжет казну синдиката целиком — она никому не вернется.'));
@@ -6301,7 +6426,7 @@
       footer.appendChild(synConfirm('Покинуть синдикат', 'Точно выйти?', 'ghost',
         () => syndicateAction('/api/syndicates/leave')));
     }
-    el.syndicatePanel.appendChild(footer);
+    return footer;
   }
 
   /* ---------- Кіш как колония ---------- */
@@ -6312,8 +6437,30 @@
    * биржа и карты к Кошу не относятся — там объяснение и путь назад к колонии.
    * Колонии в это время не трогаются: тик рисует их в скрытые панели.
    */
-  const KISH_PANELS = { overview: 'kish-overview', buildings: 'kish-modules', research: 'kish-research', defense: 'kish-defense' };
-  const KISH_AWAY_LABELS = { shipyard: 'Верфь', market: 'Хаб и биржа', map: 'Карта системы', galaxy: 'Карта галактики' };
+  const KISH_PANELS = {
+    overview: 'kish-overview',
+    buildings: 'kish-modules',
+    research: 'kish-research',
+    shipyard: 'kish-fleet',
+    defense: 'kish-defense',
+  };
+  // Пунктов карт и биржи в режиме Коша нет, но ссылка из письма может туда вести.
+  const KISH_AWAY_LABELS = { market: 'Хаб и биржа', map: 'Карта системы', galaxy: 'Карта галактики' };
+
+  /**
+   * Меню Коша говорит своими словами: мостик, отсеки, академія, флотилия,
+   * бастион. Одинаковые с колонией названия путали, где ты сейчас.
+   * Исходная подпись запоминается при первой подмене и возвращается при выходе.
+   */
+  function syncKishNav() {
+    for (const node of document.querySelectorAll('[data-kish-label] span, [data-kish-title]')) {
+      const host = node.matches('[data-kish-title]') ? node : node.closest('[data-kish-label]');
+      if (!node.dataset.baseLabel) node.dataset.baseLabel = node.textContent;
+      node.textContent = state.kishMode
+        ? (host.dataset.kishLabel || host.dataset.kishTitle)
+        : node.dataset.baseLabel;
+    }
+  }
   /** Выбор в списках и полях Коша переживает пересборку карточек. */
   const kishForm = {};
   let kishRenderKey = '';
@@ -6357,6 +6504,7 @@
     if (!syndicate.data || !syndicate.data.mine) return;
     state.kishMode = true;
     document.body.classList.add('kish-mode');
+    syncKishNav();
     renderBaseList();
     renderActiveBase();
     renderKishPanels();
@@ -6366,6 +6514,7 @@
   function leaveKish() {
     state.kishMode = false;
     document.body.classList.remove('kish-mode');
+    syncKishNav();
     el.resCredits.textContent = fmt(state.credits);
     renderBaseList();
     renderActiveBase();
@@ -6406,7 +6555,7 @@
     const mine = syndicate.data && syndicate.data.mine;
     if (!mine) {
       kishRenderKey = '';
-      for (const node of [el.kishOverview, el.kishModules, el.kishTechs, el.kishDefenseSummary, el.kishDefenses]) {
+      for (const node of [el.kishOverview, el.kishModules, el.kishTechs, el.kishDefenseSummary, el.kishDefenses, el.kishFleet]) {
         node.innerHTML = '';
       }
       return;
@@ -6431,6 +6580,7 @@
     renderKishModules(mine, can);
     renderKishResearch(mine, can);
     renderKishDefenses(mine, can);
+    renderKishFleet(mine);
   }
 
   function renderKishAway(label) {
@@ -6438,7 +6588,7 @@
     el.kishAway.innerHTML = '';
     el.kishAway.appendChild(synEl('div', 'hub-storage',
       `Выбран Кіш. «${label}» относится к колониям: Кіш не строит корабли, не торгует и не отправляет флоты. ` +
-      'Флоты в Кіш — доставку, вывоз и удержание — отправляют с колонии.'));
+      'Флоты к Кошу — доставку, вывоз и караул — отправляют с колонии, а видны они во «Флотилии».'));
     const row = synEl('div', 'row');
     for (const base of state.bases) {
       row.appendChild(synButton(`К колонии ${base.baseName}`, 'ghost', () => {
@@ -6565,7 +6715,7 @@
     node.innerHTML = '';
     if (academy.level <= 0) {
       node.appendChild(synEl('div', 'hub-card',
-        'Академія не построена: технологии синдиката откроются после ее постройки в разделе «Инфраструктура» Коша.'));
+        'Академія не построена: технологии синдиката откроются после ее постройки в разделе «Отсеки».'));
     }
     for (const tech of academy.techs) {
       const card = createActionCard(node, tech.label, tech.effect,
@@ -6598,16 +6748,10 @@
     summary.appendChild(synEl('div', 'hub-storage', standing.length
       ? 'На позиции: ' + standing.map((item) => `${item.label} ×${fmt(item.count)}`).join(' · ')
       : 'Кіш не укреплен. Оборона ставится из ресурсной казны и сразу встает на позицию.'));
-    summary.appendChild(synEl('div', 'hub-storage', kish.guards.length
-      ? 'Флоты на удержании: ' + kish.guards.map((guard) => `${guard.nickname} (${fmt(guard.ships)})`).join(' · ')
-      : 'Флотов на удержании нет: участники ставят их миссией «Удержание Коша» с карты системы.'));
+    summary.appendChild(synEl('div', 'hub-storage',
+      `В бою рядом с установками встает караул флотилии: ${kish.guards.length ? `${kish.guards.length} флот(а) на удержании` : 'сейчас его нет'}.`));
     summary.appendChild(synEl('div', 'hub-storage',
       `Скарбниця бережет ${Math.round(kish.protectedShare * 100)}% ресурсов казны при налете; гривну не грабят.`));
-    if (kish.debris.ore + kish.debris.polymers > 0) {
-      summary.appendChild(synEl('div', 'hub-storage',
-        `Осколки у Коша: ${fmt(kish.debris.ore)} руды, ${fmt(kish.debris.polymers)} полимеров — их собирает переработчик.`));
-    }
-
     const node = el.kishDefenses;
     node.innerHTML = '';
     for (const item of kish.defenses) {
@@ -6675,7 +6819,7 @@
     const status = synCard('Состояние');
     status.appendChild(synEl('div', 'hub-storage', mine.academy.research
       ? `Изучается: ${mine.academy.research.label} → ур. ${mine.academy.research.targetLevel}`
-      : mine.academy.level > 0 ? 'Академія свободна — изучение ставится в разделе «Исследования» Коша.' : 'Академія не построена.'));
+      : mine.academy.level > 0 ? 'Академія свободна — изучение ставится в разделе «Академія».' : 'Академія не построена.'));
     status.appendChild(synEl('div', 'hub-storage', kish.guards.length
       ? `На удержании у Коша: ${kish.guards.map((guard) => `${guard.nickname} (${fmt(guard.ships)})`).join(' · ')}`
       : 'Флотов на удержании у Коша нет.'));
@@ -6690,6 +6834,51 @@
     const second = synEl('div', 'syndicate-grid');
     second.append(status, renderKishMove(mine, can));
     node.append(first, second);
+  }
+
+  /**
+   * Флотилия — корабли вокруг Коша, а не верфь: своих кораблей Кіш не строит.
+   * Караул на удержании, враги в пути к Кошу и осколки после боев.
+   */
+  function renderKishFleet(mine) {
+    const node = el.kishFleet;
+    node.innerHTML = '';
+    const kish = mine.kish;
+    const grid = synEl('div', 'syndicate-grid');
+
+    const guard = synCard(`Караул · ${kish.guards.length}`);
+    if (!kish.guards.length) {
+      guard.appendChild(synEl('div', 'hub-storage', 'На удержании у Коша никого нет.'));
+    }
+    for (const fleet of kish.guards) {
+      const row = synEl('div', 'syn-member');
+      const info = synEl('div', 'syn-member-info');
+      info.append(synEl('div', 'syn-member-name', fleet.nickname),
+        synEl('div', 'syn-member-meta', `${fmt(fleet.ships)} корпусов${fleet.until ? ` · до ${synDateTime(fleet.until)}` : ''}`));
+      row.appendChild(info);
+      guard.appendChild(row);
+    }
+    guard.appendChild(synEl('div', 'hub-storage',
+      'Караул ставят с колонии миссией «Удержание Коша» на 1, 4, 8 или 24 часа. В бою он встает рядом с Бастионом.'));
+
+    const threats = synCard('К Кошу летят');
+    const raids = mine.watch.incoming.filter((fleet) => !fleet.systemName);
+    if (!raids.length) threats.appendChild(synEl('div', 'hub-storage', 'Вражеских налетов на Кіш не видно.'));
+    for (const fleet of raids) {
+      const row = synEl('div', 'queue-item watch-alert');
+      row.appendChild(synEl('b', null, `${fleet.attackerTag ? `[${fleet.attackerTag}] ` : ''}${fleet.attacker}`));
+      row.appendChild(synEl('span', null,
+        `${fmt(fleet.ships)} корпусов · прибытие ${synDateTime(Date.now() + fleet.arrivesInSeconds * 1000)}`));
+      threats.appendChild(row);
+    }
+    if (kish.debris.ore + kish.debris.polymers > 0) {
+      threats.appendChild(synEl('h4', 'syn-subtitle', 'Осколки у Коша'));
+      threats.appendChild(synEl('div', 'hub-storage',
+        `${fmt(kish.debris.ore)} руды, ${fmt(kish.debris.polymers)} полимеров — их собирает переработчик рейсом «Сбор осколков».`));
+    }
+
+    grid.append(guard, threats);
+    node.appendChild(grid);
   }
 
   /** Перенос Коша живет рядом с его адресом: это решение о том, где Кіш стоит. */

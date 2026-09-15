@@ -28,6 +28,7 @@ import {
   upgradeKish,
   upgradeWatch,
   upgradeTreasury,
+  updateDescription,
   buyKishDefense,
   buildGate,
   moveKish,
@@ -37,7 +38,7 @@ import {
   type SyndicateOverview,
   type SyndicateResult,
 } from '../services/syndicateService.js';
-import {
+import { DESCRIPTION_MAX_LENGTH, normalizeDescription,
   CODEX_MAX_LENGTH,
   MAX_TAX_RATE,
   isSyndicatePermission,
@@ -203,6 +204,16 @@ syndicateRouter.post('/rules', async (req, res: Response<ActionResponse | ErrorR
     return;
   }
   send(res, await updateRules(currentCommander(req).id, { recruitment: body.recruitment, minScore, entryFee }));
+});
+
+/** Описание синдиката под названием. */
+syndicateRouter.post('/description', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const text = normalizeDescription((req.body as { text?: unknown } | undefined)?.text);
+  if (text === null) {
+    res.status(400).json({ error: `Описание: текст до ${DESCRIPTION_MAX_LENGTH} знаков` });
+    return;
+  }
+  send(res, await updateDescription(currentCommander(req).id, text));
 });
 
 /** Ставка налога с крипто-фермы. */

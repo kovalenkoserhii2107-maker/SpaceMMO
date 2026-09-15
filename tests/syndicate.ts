@@ -7,6 +7,9 @@
  */
 import {
   BUFF_TENURE_MS,
+  DESCRIPTION_MAX_LENGTH,
+  normalizeDescription,
+  treasuryFlow,
   PACT_NOTICE_MS,
   isPactKind,
   pactInForce,
@@ -204,6 +207,19 @@ console.log('\n=== 6. Пакты ===');
   check('ненападение и союз запрещают атаку, торговое соглашение — нет',
     pactsForbidAttack(['NON_AGGRESSION']) && pactsForbidAttack(['ALLIANCE']) && !pactsForbidAttack(['TRADE']) && !pactsForbidAttack([]));
   check('вид пакта проверяется по списку', isPactKind('ALLIANCE') && !isPactKind('WAR') && !isPactKind(1));
+}
+
+console.log('\n=== 7. Описание и журнал казны ===');
+{
+  check('описание сворачивается в одну строку', normalizeDescription('  Пираты\n\nищут  пилотов\t ') === 'Пираты ищут пилотов');
+  check('пустое описание снимает его', normalizeDescription('   ') === '');
+  check('слишком длинное описание отклоняется', normalizeDescription('я'.repeat(DESCRIPTION_MAX_LENGTH + 1)) === null);
+  check('не строка — не описание', normalizeDescription(42) === null);
+  check('взносы, налог и доставка — поступления',
+    ['DONATION', 'TAX', 'ENTRY_FEE', 'RESOURCE_DELIVERY'].every((kind) => treasuryFlow(kind) === 'IN'));
+  check('выдача, вывоз, стройка и налет — расходы',
+    ['PAYOUT', 'RESOURCE_PICKUP', 'KISH_UPGRADE', 'KISH_RAIDED'].every((kind) => treasuryFlow(kind) === 'OUT'));
+  check('основание не поступление и не расход', treasuryFlow('FOUNDING') === 'NEUTRAL');
 }
 
 const passed = results.filter((r) => r.passed).length;

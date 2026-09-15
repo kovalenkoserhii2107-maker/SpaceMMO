@@ -164,6 +164,8 @@ model Syndicate {
   /// Короткий тег для отображения рядом с позывным.
   tag      String @unique
   leaderId String @unique
+  /// Короткое описание под названием: кто мы и кого ищем. Видно и кандидатам.
+  description String @default("")
 
   createdAt DateTime @default(now())
 

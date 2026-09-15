@@ -466,6 +466,31 @@ export function normalizeCodex(raw: unknown): string | null {
   return text;
 }
 
+/** Описание синдиката — одна-две фразы под названием, видны и кандидатам. */
+export const DESCRIPTION_MAX_LENGTH = 280;
+
+/** Описание в одну строку: переводы строк и управляющие символы сворачиваются в пробел. */
+export function normalizeDescription(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  // eslint-disable-next-line no-control-regex
+  const text = raw.replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim();
+  return text.length > DESCRIPTION_MAX_LENGTH ? null : text;
+}
+
+/** Направление операции казны — для журнала и сводки поступлений и расходов. */
+export type TreasuryFlow = 'IN' | 'OUT' | 'NEUTRAL';
+
+const INCOMING_TREASURY_KINDS: readonly string[] = ['DONATION', 'TAX', 'ENTRY_FEE', 'RESOURCE_DELIVERY'];
+
+/**
+ * Основание — не поступление и не расход: цена основания сгорает, в казну
+ * она не ложится. Налет на Кіш — расход: казна уменьшилась, хоть и не по воле синдиката.
+ */
+export function treasuryFlow(kind: string): TreasuryFlow {
+  if (INCOMING_TREASURY_KINDS.includes(kind)) return 'IN';
+  return kind === 'FOUNDING' ? 'NEUTRAL' : 'OUT';
+}
+
 export function normalizeRankName(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
   const name = raw.trim().replace(/\s+/g, ' ');
