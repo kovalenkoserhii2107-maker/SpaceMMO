@@ -3606,3 +3606,14 @@ button.tiny { padding: 4px 10px; font-size: 11px; flex: none; }
   .syn-table .syn-row { grid-template-columns: minmax(0, 1fr) 64px 52px 64px; gap: 6px; }
   .syn-log .syn-row { grid-template-columns: minmax(0, 1fr) auto; }
 }
+
+/*
+ * Форма заявки на телефоне: переключатель стороны занимает всю строку.
+ * В половине строки две кнопки «Покупаю / Продаю» не помещались, и выбор
+ * ресурса наезжал на «Продаю» — пока колонка содержимого не была ограничена
+ * экраном, форма просто растягивалась шире него и этого не было видно.
+ */
+.mk-side button { flex: 1 1 0; min-width: 0; justify-content: center; }
+@media (max-width: 600px) {
+  .mk-form > .mk-field:first-child { grid-column: 1 / -1; }
+}
