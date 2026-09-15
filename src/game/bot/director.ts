@@ -92,7 +92,7 @@ function ratio(demand: number, supply: number): number | null {
  * Заглядывать в чужие базы напрямую бот не должен, иначе он играет с картами
  * на столе, а живой игрок — вслепую.
  */
-async function buildSnapshot(
+export async function buildSnapshot(
   commander: CommanderRuntimeState,
   character: BotCharacter,
   /** Память бота: в ней лежит лучший флот, какой у него был. */
@@ -473,6 +473,35 @@ async function execute(
  * за двадцать минут, и Крамар с 2.36 млн ₴ не мог купить ни единицы руды,
  * которой ему не хватало на постройку.
  */
+/**
+ * Грузовики ровно под груз, а не весь транспортный флот.
+ *
+ * Топливо платится за каждый корабль в рейсе, груз он везет или нет. Бот
+ * посылал за товаром все, что стояло в ангаре, и это съедало плазму целиком:
+ * живой Крамар гонял 659 транспортов за пятью тысячами руды, которые
+ * помещаются в три малых, а Беркут делал так 129 рейсов за сутки. Плазма
+ * держалась у нуля при реакторе, дающем 23 тысячи в час, — и дальше правило
+ * «ресурс, которого хронически нет, идут добывать» ставило первым пунктом
+ * плана реактор за полмиллиона руды, на который бот копил сутками.
+ *
+ * Большие берутся первыми: у них на единицу трюма вдвое меньше расхода.
+ * Трюмы считаются без бонуса синдиката — с ним места только больше.
+ */
+function cargoShipsFor(amount: number, available: { LARGE_CARGO: number; SMALL_CARGO: number }): ShipCounts {
+  const ships = emptyShipCounts();
+  const large = fleetCapacity({ ...emptyShipCounts(), LARGE_CARGO: 1 });
+  const small = fleetCapacity({ ...emptyShipCounts(), SMALL_CARGO: 1 });
+
+  let left = Math.max(0, amount);
+  ships.LARGE_CARGO = Math.min(available.LARGE_CARGO, Math.floor(left / large));
+  left -= ships.LARGE_CARGO * large;
+  ships.SMALL_CARGO = Math.min(available.SMALL_CARGO, Math.ceil(left / small));
+  left -= ships.SMALL_CARGO * small;
+  // Малых не хватило на остаток — докрываем большим, если он еще есть.
+  if (left > 0 && ships.LARGE_CARGO < available.LARGE_CARGO) ships.LARGE_CARGO += 1;
+  return ships;
+}
+
 async function pickupFromHub(
   commanderId: string,
   baseId: string,
@@ -491,10 +520,11 @@ async function pickupFromHub(
   });
   if (!base) return { ok: false, error: 'База не найдена' };
 
-  const ships = emptyShipCounts();
+  const hangar = { LARGE_CARGO: 0, SMALL_CARGO: 0 };
   for (const row of base.ships) {
-    if (row.type === 'LARGE_CARGO' || row.type === 'SMALL_CARGO') ships[row.type] = row.count;
+    if (row.type === 'LARGE_CARGO' || row.type === 'SMALL_CARGO') hangar[row.type] = row.count;
   }
+  const ships = cargoShipsFor(ore + polymers, hangar);
 
   return gameLoop.sendFleet(
     commanderId,
@@ -582,7 +612,8 @@ async function deliverToHub(
     base.id,
     { hubId },
     'HUB_DELIVERY',
-    ships,
+    // Трюмы всего флота нужны были только для обрезки груза; летят те, кто везет.
+    cargoShipsFor(ore + polymers, ships),
     { ore, polymers, plasma: 0 },
   );
   return result.ok ? `отвез в хаб ${ore + polymers}` : null;

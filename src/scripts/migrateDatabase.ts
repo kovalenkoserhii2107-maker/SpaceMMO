@@ -31,10 +31,12 @@ import { PrismaClient } from '../generated/prisma/client.js';
 const MODELS = [
   'achievement', 'solarSystem', 'planet', 'tradeHub',
   'user', 'commander', 'bot', 'syndicate', 'syndicateBank',
-  'syndicateTransaction', 'syndicateApplication', 'syndicateWar',
-  'commanderAchievement', 'base', 'buildJob', 'research', 'researchJob',
+  'syndicateTransaction', 'syndicateRank', 'syndicateCodexVersion', 'syndicateTaxLedger',
+  'syndicateApplication', 'syndicateWar', 'syndicateTechnology', 'syndicateResearch',
+  'syndicateGate', 'syndicateDefense', 'syndicatePact', 'syndicateConstruction',
+  'commanderAchievement', 'base', 'buildJob', 'research', 'researchJob', 'researchHelper',
   'ship', 'defense', 'defenseJob', 'shipJob', 'fleet', 'fleetTemplate',
-  'planetScan', 'hubStorage', 'marketOrder', 'barterOffer', 'trade',
+  'planetScan', 'hubAccount', 'hubStorage', 'marketOrder', 'barterOffer', 'trade',
   'battleReport', 'expeditionReport', 'warDeclaration', 'message',
 ] as const;
 

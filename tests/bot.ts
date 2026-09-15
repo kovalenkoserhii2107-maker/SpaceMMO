@@ -795,6 +795,29 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
 }
 
 {
+  /*
+   * Цель за горизонтом накопления не запирает слот стройки.
+   *
+   * Живой стенд: шестеро из семи ботов копили на плазменный реактор 14–17
+   * уровня — плазма держалась у нуля, потому что за товаром на хаб летел весь
+   * грузовой флот, — и ни один не строил ничего. Купцю до реактора было
+   * тридцать часов добычи, а энергостанция, которая ему по карману, ждала.
+   */
+  const levels = {
+    ...emptyLevels(), ORE_MINE: 9, POLYMER_PLANT: 10, PLASMA_REACTOR: 15, POWER_PLANT: 10,
+    SCIENCE_CENTER: 5, SHIPYARD: 5, CRYPTO_FARM: 7, ORE_STORAGE: 13, POLYMER_STORAGE: 12, PLASMA_STORAGE: 10,
+  };
+  const base = testBase('home', { levels, resources: { ore: 74_792, polymers: 48_151, plasma: 6_308 } });
+  const plan = buildingPlan(base, emptyTechLevels(), 'TRADER');
+  const build = decide(snapshotWith({ character: 'TRADER', bases: [base] })).find((i) => i.kind === 'BUILD');
+  check(
+    'первый пункт за горизонтом — бот строит посильное, а не ждет',
+    build?.kind === 'BUILD' && build.building !== plan[0],
+    `план ${plan.slice(0, 3).join(' → ')}, строит ${build?.kind === 'BUILD' ? build.building : 'ничего'}`,
+  );
+}
+
+{
   // Ровный запас правило не трогает: мало всего сразу — это старт игры,
   // а не перекос.
   const even = testBase('home', {

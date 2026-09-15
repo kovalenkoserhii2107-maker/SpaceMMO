@@ -309,6 +309,12 @@ export type BotIntent =
  */
 const TRADED = ['ORE', 'POLYMERS'] as const;
 
+/**
+ * Сколько часов собственной добычи бот готов копить на один пункт плана,
+ * не трогая слот стройки. Дальше цель не ждут, а строят посильное из плана.
+ */
+const SAVING_HORIZON_HOURS = 6;
+
 /* ------------------------- Кошельки ------------------------- */
 
 /**
@@ -1265,11 +1271,48 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
        */
       const wasting = STORED_RESOURCES.some((resource) => stock[resource] >= caps[resource] * 0.9);
 
+      /*
+       * Копить на первый пункт стоит, пока он в пределах видимости.
+       *
+       * Правило «не разменивайся на дешевое» верно для цели, до которой
+       * несколько часов добычи. Для цели в сутки и дальше оно превращается
+       * в простой: слот стройки пустует все это время, а дешевые пункты,
+       * которые растят ту же добычу, ждут вместе с ним. Живой стенд встал так
+       * целиком — шестеро из семи копили на плазменный реактор 14–17 уровня
+       * за 130–570 тысяч руды, у Купця это тридцать часов добычи, и ни один
+       * не строил ничего. Хуже того: недостающее на такую цель уходило
+       * в дефицит, и бот спускал весь доход фермы на руду по любой цене.
+       *
+       * Горизонт считается по собственной добыче базы и по каждому ресурсу
+       * отдельно: запирает всегда один.
+       */
+      const rate = productionPerSecond(
+        base.levels,
+        base.richness,
+        economyBonuses(snapshot.techs),
+        0,
+        systemModifiers(base.anomaly),
+        timeCompressionDrain(snapshot.techs),
+      );
+      const hoursAway = (type: BuildingType): number => {
+        const cost = upgradeCost(type, base.levels[type] + 1);
+        let hours = 0;
+        for (const resource of STORED_RESOURCES) {
+          const gap = cost[resource] - Math.max(0, stock[resource]);
+          if (gap <= 0) continue;
+          hours = Math.max(hours, rate[resource] > 0 ? gap / (rate[resource] * 3600) : Infinity);
+        }
+        return hours;
+      };
+      const distant = plan[0] !== undefined && !affordable(plan[0]) && hoursAway(plan[0]) > SAVING_HORIZON_HOURS;
+      /** На что копим: первый пункт, а если он за горизонтом — первый в его пределах. */
+      const goal = distant ? (plan.find((type) => hoursAway(type) <= SAVING_HORIZON_HOURS) ?? plan[0]) : plan[0];
+
       let building = pressure
         ? plan.find(affordable)
         : plan[0] && affordable(plan[0])
           ? plan[0]
-          : wasting
+          : wasting || distant
             ? plan.find(affordable)
             : undefined;
       /** Почему ферма вышла вперед плана: порогов два, и они про разное. */
@@ -1349,11 +1392,13 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
             farmReason ??
             (pressure
               ? 'склад полон, копить некуда'
-              : building !== plan[0]
-                ? 'склад у потолка — копить дальше некуда'
-                : 'развитие базы'),
+              : building === plan[0]
+                ? 'развитие базы'
+                : wasting
+                  ? 'склад у потолка — копить дальше некуда'
+                  : `${plan[0]} за горизонтом накопления — строим посильное`),
         });
-      } else if (plan[0]) {
+      } else if (goal) {
         /*
          * Копим на здание — значит не тратим то, чего для него не хватает.
          *
@@ -1370,7 +1415,7 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
          * Резерв снимается сам, как только на постройку хватило: это не запрет
          * на флот, а очередь — сначала то, что дороже и ждет дольше.
          */
-        const cost = upgradeCost(plan[0], base.levels[plan[0]] + 1);
+        const cost = upgradeCost(goal, base.levels[goal] + 1);
         for (const resource of STORED_RESOURCES) {
           if (cost[resource] > 0 && stock[resource] < cost[resource]) {
             reserved.add(resource);
