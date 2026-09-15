@@ -12,7 +12,7 @@ import { writeFileSync } from 'node:fs';
 import { prisma } from '../db/prisma.js';
 import { gameLoop } from '../game/gameLoop.js';
 import { buildSnapshot } from '../game/bot/director.js';
-import { buildingPlan, decide } from '../game/bot/decide.js';
+import { buildingPlan, decide, syndicateGoal } from '../game/bot/decide.js';
 import { isBotCharacter } from '../game/bot/personality.js';
 import { readStoredPlan, withPlan } from '../game/bot/plan.js';
 import { creditOutput, productionPerSecond, storageCapacities, systemModifiers, upgradeCost } from '../game/rules.js';
@@ -123,6 +123,17 @@ for (const bot of bots) {
   }
   console.log(`  рынок ${snapshot.market.map((m) => `${m.resource} ${m.reference} skew ${m.skew}`).join('; ')}`);
   console.log(`  хаб   руда ${round(snapshot.hubStorage.ore)} пол ${round(snapshot.hubStorage.polymers)} свободно ${round(snapshot.hubStorage.free)}`);
+  const own = snapshot.syndicate;
+  if (own) {
+    const goal = syndicateGoal(own, profile.syndicateFocus);
+    console.log(
+      `  синд  [${own.tag}] ${own.members}/${own.memberCap} казна ₴${round(own.bank.credits)} р ${round(own.bank.ore)} п ${round(own.bank.polymers)}` +
+        ` | Академия ${own.academyLevel} | заявок ${own.applications.length} | цель ${goal ? `${goal.key} (₴${round(goal.cost.credits)} р ${round(goal.cost.ore)} п ${round(goal.cost.polymers)})` : '—'}`,
+    );
+  }
+  console.log(
+    `  синдикаты ${snapshot.syndicates.map((item) => `[${item.tag}] ${item.members}/${item.memberCap}${item.sameSystem ? ' рядом' : ''}`).join(', ') || '—'}`,
+  );
 
   for (const intent of decide(snapshot, profile)) {
     const detail =

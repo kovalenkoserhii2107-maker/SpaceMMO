@@ -58,6 +58,24 @@ import {
 } from './personality.js';
 import { askReply, askStrategy, llmEnabled, type BotBrief } from './mind.js';
 import { hopeless, type BotDirective } from './directives.js';
+import {
+  applyToSyndicate,
+  createSyndicate,
+  donate,
+  getCodex,
+  leaveSyndicate,
+  normalizeName,
+  normalizeTag,
+  reviewApplication,
+  startSyndicateResearch,
+  upgradeAcademy,
+  upgradeKish,
+  upgradeTreasury,
+  upgradeWatch,
+} from '../../services/syndicateService.js';
+import { membershipOf, syndicateTechState } from '../../services/syndicateAccess.js';
+import { LEAVE_COOLDOWN_MS, hasPermission, memberCap } from '../syndicate.js';
+import type { BotSyndicate, BotSyndicateListing } from './decide.js';
 import { declarePeace } from '../../services/warService.js';
 import { PLAN_TTL_MS, readStoredPlan, withPlan, type BotPlan } from './plan.js';
 
@@ -343,6 +361,134 @@ export async function buildSnapshot(
       nextRentPerHour: hubRent(stockUsage.level + 1) * 3600,
     },
     colonizing: commander.fleets.some((fleet) => fleet.mission === 'COLONIZE'),
+    ...(await syndicateView(commander, home.systemId)),
+  };
+}
+
+/** Пауза между взносами гривной: не чаще раза в час, иначе казна копится россыпью. */
+const DONATION_PAUSE_MS = 3600_000;
+
+/**
+ * Синдикаты глазами бота: свой и все прочие.
+ *
+ * Все это видит и живой игрок в разделе синдикатов: список с числом мест,
+ * главарем и набором, а свой — с казной, модулями и заявками. Состав
+ * по живым и ботам виден по рейтингу, отдельного знания тут нет.
+ */
+async function syndicateView(
+  commander: CommanderRuntimeState,
+  systemId: string,
+): Promise<Pick<BotSnapshot, 'syndicate' | 'syndicates' | 'syndicateCooldown'>> {
+  const commanderId = commander.commanderId;
+  const [me, rows, applied] = await Promise.all([
+    prisma.commander.findUnique({ where: { id: commanderId }, select: { syndicateId: true, syndicateLeftAt: true } }),
+    prisma.syndicate.findMany({
+      select: {
+        id: true,
+        name: true,
+        tag: true,
+        recruitment: true,
+        entryFee: true,
+        minScore: true,
+        kishLevel: true,
+        kishSystemId: true,
+        leader: { select: { nickname: true } },
+        members: { select: { user: { select: { role: true } } } },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: 20,
+    }),
+    prisma.syndicateApplication.findFirst({ where: { commanderId, status: 'PENDING' }, select: { syndicateId: true } }),
+  ]);
+
+  const syndicates: BotSyndicateListing[] = await Promise.all(
+    rows.map(async (row) => ({
+      id: row.id,
+      name: row.name,
+      tag: row.tag,
+      leader: row.leader.nickname,
+      members: row.members.length,
+      memberCap: memberCap(row.kishLevel),
+      recruitment: row.recruitment,
+      entryFee: row.entryFee,
+      minScore: row.minScore,
+      humans: row.members.filter((member) => member.user.role !== 'BOT').length,
+      bots: row.members.filter((member) => member.user.role === 'BOT').length,
+      sameSystem: row.kishSystemId === systemId,
+      codexId: (await getCodex(row.id))?.id ?? null,
+      applied: applied?.syndicateId === row.id,
+    })),
+  );
+
+  let syndicate: BotSyndicate | null = null;
+  const access = me?.syndicateId ? await membershipOf(commanderId) : null;
+  if (access?.ok) {
+    const id = access.syndicateId;
+    const [row, bank, construction, techs, applications, donation] = await Promise.all([
+      prisma.syndicate.findUnique({
+        where: { id },
+        select: {
+          name: true,
+          tag: true,
+          kishLevel: true,
+          treasuryLevel: true,
+          academyLevel: true,
+          watchLevel: true,
+          kishSystemId: true,
+          _count: { select: { members: true } },
+        },
+      }),
+      prisma.syndicateBank.findUnique({ where: { syndicateId: id }, select: { credits: true, ore: true, polymers: true } }),
+      prisma.syndicateConstruction.findUnique({ where: { syndicateId: id }, select: { id: true } }),
+      syndicateTechState(id),
+      prisma.syndicateApplication.findMany({
+        where: { syndicateId: id, status: 'PENDING' },
+        select: { id: true, commanderId: true, commander: { select: { nickname: true, user: { select: { role: true } } } } },
+        orderBy: { createdAt: 'asc' },
+        take: 10,
+      }),
+      prisma.syndicateTransaction.findFirst({
+        where: { syndicateId: id, commanderId, kind: 'DONATION', createdAt: { gte: new Date(Date.now() - DONATION_PAUSE_MS) } },
+        select: { id: true },
+      }),
+    ]);
+    if (row) {
+      syndicate = {
+        id,
+        name: row.name,
+        tag: row.tag,
+        isLeader: access.isLeader,
+        canBuild: hasPermission(access, 'KISH'),
+        canResearch: hasPermission(access, 'ACADEMY'),
+        canReview: hasPermission(access, 'APPLICATIONS'),
+        members: row._count.members,
+        memberCap: memberCap(row.kishLevel),
+        kishLevel: row.kishLevel,
+        treasuryLevel: row.treasuryLevel,
+        academyLevel: row.academyLevel,
+        watchLevel: row.watchLevel,
+        techs: techs.levels,
+        bank: { credits: bank?.credits ?? 0, ore: bank?.ore ?? 0, polymers: bank?.polymers ?? 0 },
+        construction: construction !== null,
+        research: techs.research !== null,
+        kishInMySystem: row.kishSystemId === systemId,
+        deliveringToKish: commander.fleets.some((fleet) => fleet.mission === 'KISH_DELIVERY'),
+        donatedRecently: donation !== null,
+        applications: applications.map((item) => ({
+          id: item.id,
+          commanderId: item.commanderId,
+          nickname: item.commander.nickname,
+          isBot: item.commander.user.role === 'BOT',
+        })),
+      };
+    }
+  }
+
+  return {
+    syndicate,
+    syndicates,
+    syndicateCooldown:
+      !me?.syndicateId && !!me?.syndicateLeftAt && Date.now() - me.syndicateLeftAt.getTime() < LEAVE_COOLDOWN_MS,
   };
 }
 
@@ -434,6 +580,30 @@ async function execute(
       const result = await cancelOrder(commanderId, intent.orderId);
       return result;
     }
+
+    case 'DONATE':
+      return donate(commanderId, intent.amount);
+
+    case 'KISH_DELIVERY':
+      return deliverToKish(commanderId, intent.baseId, intent.ore, intent.polymers);
+
+    case 'SYNDICATE_BUILD':
+      switch (intent.module) {
+        case 'KISH':
+          return upgradeKish(commanderId);
+        case 'SKARBNYTSIA':
+          return upgradeTreasury(commanderId);
+        case 'AKADEMIIA':
+          return upgradeAcademy(commanderId);
+        case 'DOZOR':
+          return upgradeWatch(commanderId);
+        default:
+          // Браму ставят в конкретной системе — это не пункт порядка развития.
+          return { ok: false, error: 'Браму бот не строит' };
+      }
+
+    case 'SYNDICATE_RESEARCH':
+      return startSyndicateResearch(commanderId, intent.tech);
 
     case 'ORDER': {
       const result = await placeOrder(commanderId, {
@@ -534,6 +704,39 @@ async function pickupFromHub(
     ships,
     { ore: 0, polymers: 0, plasma: 0 },
     { ore, polymers },
+  );
+}
+
+/**
+ * Рейс с грузом в казну Коша своего синдиката.
+ *
+ * Грузовики — ровно под груз, тем же правилом, что и рейсы на хаб: топливо
+ * платится за каждый корабль. Цель рейс берет из членства — Кіш у бота один.
+ */
+async function deliverToKish(
+  commanderId: string,
+  baseId: string,
+  ore: number,
+  polymers: number,
+): Promise<ActionResult> {
+  const base = await prisma.base.findUnique({
+    where: { id: baseId },
+    select: { ships: { select: { type: true, count: true } } },
+  });
+  if (!base) return { ok: false, error: 'База не найдена' };
+
+  const hangar = { LARGE_CARGO: 0, SMALL_CARGO: 0 };
+  for (const row of base.ships) {
+    if (row.type === 'LARGE_CARGO' || row.type === 'SMALL_CARGO') hangar[row.type] = row.count;
+  }
+
+  return gameLoop.sendFleet(
+    commanderId,
+    baseId,
+    {},
+    'KISH_DELIVERY',
+    cargoShipsFor(ore + polymers, hangar),
+    { ore, polymers, plasma: 0 },
   );
 }
 
@@ -748,6 +951,9 @@ async function buildBrief(
     battles: await battleBrief(commander.commanderId),
     events: await recentEvents(commander.commanderId),
     journal: readJournal(memory),
+    syndicate: snapshot.syndicate,
+    syndicates: snapshot.syndicates,
+    syndicateCooldown: snapshot.syndicateCooldown,
   };
 }
 
@@ -1429,6 +1635,27 @@ async function recentShock(commanderId: string, since: number): Promise<Shock | 
     };
   }
 
+  /*
+   * Заявка в синдикат ждет решения, и принять ее может только модель.
+   * Будит она только того, кто вправе разбирать заявки: остальным решать
+   * нечего. Ключ по самой заявке — одна заявка будит один раз.
+   */
+  const access = await membershipOf(commanderId);
+  if (access.ok && hasPermission(access, 'APPLICATIONS')) {
+    const application = await prisma.syndicateApplication.findFirst({
+      where: { syndicateId: access.syndicateId, status: 'PENDING' },
+      select: { id: true, commander: { select: { nickname: true } } },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (application) {
+      return {
+        text: `«${application.commander.nickname}» просится в наш синдикат`,
+        key: `syndicate-application:${application.id}`,
+        ttl: SHOCK_TTL_MS,
+      };
+    }
+  }
+
   return null;
 }
 
@@ -1665,6 +1892,31 @@ async function applyDirective(
         pricePerUnit: directive.price,
       });
       return note(result.ok ? `заявка выставлена — ${directive.why}` : result.error);
+    }
+
+    case 'FOUND_SYNDICATE': {
+      const name = normalizeName(directive.name);
+      const tag = normalizeTag(directive.tag);
+      if (!name || !tag) return note('название или тег не подходят');
+      const result = await createSyndicate(commanderId, name, tag);
+      return note(result.ok ? `синдикат [${tag}] основан — ${directive.why}` : result.error);
+    }
+
+    case 'JOIN_SYNDICATE': {
+      // Кодекс принимается в той версии, что действует сейчас: ее бот и видел.
+      const codex = await getCodex(directive.syndicateId);
+      const result = await applyToSyndicate(commanderId, directive.syndicateId, codex?.id ?? null);
+      return note(result.ok ? `${result.message} — ${directive.why}` : result.error);
+    }
+
+    case 'REVIEW_APPLICATION': {
+      const result = await reviewApplication(commanderId, directive.applicationId, directive.accept);
+      return note(result.ok ? `${result.message} — ${directive.why}` : result.error);
+    }
+
+    case 'LEAVE_SYNDICATE': {
+      const result = await leaveSyndicate(commanderId);
+      return note(result.ok ? `вышел из синдиката — ${directive.why}` : result.error);
     }
 
     case 'MESSAGE': {

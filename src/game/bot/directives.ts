@@ -69,6 +69,18 @@ export type BotDirective =
    * серьезное: помогающий остается без флота, которым сам мог бы обороняться.
    */
   | { kind: 'REINFORCE'; commanderId: string; why: string }
+  /**
+   * Синдикат: основать, вступить, разобрать заявку, выйти.
+   *
+   * Это решения о союзниках, а не арифметика, поэтому они за моделью. Вклад
+   * и стройку в Коше ведет код по доле бюджета и порядку развития из плана.
+   * Распустить синдикат модель не может вовсе: роспуск сжигает казну,
+   * собранную всеми участниками, и одному боту такое решать нельзя.
+   */
+  | { kind: 'FOUND_SYNDICATE'; name: string; tag: string; why: string }
+  | { kind: 'JOIN_SYNDICATE'; syndicateId: string; why: string }
+  | { kind: 'REVIEW_APPLICATION'; applicationId: string; accept: boolean; why: string }
+  | { kind: 'LEAVE_SYNDICATE'; why: string }
   /** Письмо живому игроку по собственному почину. */
   | { kind: 'MESSAGE'; commanderId: string; subject: string; body: string; why: string };
 
@@ -182,6 +194,33 @@ export function parseDirectives(raw: unknown, snapshot: BotSnapshot): BotDirecti
         // Объем режется по самой заявке: больше, чем в ней лежит, не взять.
         const amount = Math.min(positive(row['amount'], 10_000_000) || Math.floor(available), Math.floor(available));
         if (amount > 0) out.push({ kind: 'FILL', orderId, amount, why });
+        break;
+      }
+      case 'FOUND_SYNDICATE': {
+        // Название и тег проверяет сервис синдиката теми же правилами, что и у игрока.
+        const name = text(row['name'], 32);
+        const tag = text(row['tag'], 5);
+        if (!snapshot.syndicate && name && tag) out.push({ kind: 'FOUND_SYNDICATE', name, tag, why });
+        break;
+      }
+      case 'JOIN_SYNDICATE': {
+        const syndicateId = text(row['syndicateId'], 64);
+        if (!snapshot.syndicate && snapshot.syndicates.some((item) => item.id === syndicateId)) {
+          out.push({ kind: 'JOIN_SYNDICATE', syndicateId, why });
+        }
+        break;
+      }
+      case 'REVIEW_APPLICATION': {
+        const applicationId = text(row['applicationId'], 64);
+        const accept = row['accept'];
+        const own = snapshot.syndicate;
+        if (own?.canReview && typeof accept === 'boolean' && own.applications.some((item) => item.id === applicationId)) {
+          out.push({ kind: 'REVIEW_APPLICATION', applicationId, accept, why });
+        }
+        break;
+      }
+      case 'LEAVE_SYNDICATE': {
+        if (snapshot.syndicate) out.push({ kind: 'LEAVE_SYNDICATE', why });
         break;
       }
       case 'MESSAGE': {

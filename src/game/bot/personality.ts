@@ -13,6 +13,7 @@ import type { BuildingType } from '../rules.js';
 import type { DefenseType } from '../defenses.js';
 import type { ShipType } from '../ships.js';
 import type { TechnologyType } from '../techTree.js';
+import type { SyndicateModule, SyndicateTech } from '../syndicate.js';
 
 export const BOT_CHARACTERS = ['AGGRESSOR', 'TRADER'] as const;
 export type BotCharacter = (typeof BOT_CHARACTERS)[number];
@@ -35,6 +36,12 @@ export interface BotPersonality {
     research: number;
     fleet: number;
     defense: number;
+    /**
+     * Доля дохода в казну синдиката. Снимается сверху и только у участника:
+     * вне синдиката четыре доли выше остаются как есть, и бот без синдиката
+     * играет ровно так же, как до синдикатов. Нет поля — ноль.
+     */
+    syndicate?: number;
   };
 
   /**
@@ -46,6 +53,12 @@ export interface BotPersonality {
 
   /** Какие здания бот тянет выше прочих сверх общей экономической базы. */
   buildingFocus: BuildingType[];
+
+  /**
+   * Порядок развития синдиката: модули Коша и технологии синдиката.
+   * Код берет первое, что сейчас можно начать, — под него участники и копят.
+   */
+  syndicateFocus: Array<SyndicateModule | SyndicateTech>;
 
   /**
    * Состав ударного кулака: доли по классам. Бот строит недостающее
@@ -120,7 +133,7 @@ export const BOT_PERSONALITIES: Record<BotCharacter, BotPersonality> = {
      * который не на что восстановить, и база, которую нечем прикрыть, — это
      * не агрессия, а разгон до первого встречного.
      */
-    budget: { economy: 0.42, research: 0.2, fleet: 0.28, defense: 0.1 },
+    budget: { economy: 0.42, research: 0.2, fleet: 0.28, defense: 0.1, syndicate: 0.08 },
     // Ворота под корабли и под слоты колоний: без астрофизики экспансия встанет,
     // без двигателей и оружия флот не полетит и не выстрелит.
     researchOrder: [
@@ -140,6 +153,9 @@ export const BOT_PERSONALITIES: Record<BotCharacter, BotPersonality> = {
       'MINING_TECH',
     ],
     buildingFocus: ['SHIPYARD', 'SCIENCE_CENTER'],
+    // Агрессору синдикат нужен ради добычи и трюмов под нее; Дозор — чтобы
+    // видеть, кто летит к союзникам.
+    syndicateFocus: ['AKADEMIIA', 'MINING', 'CARGO', 'KISH', 'DOZOR', 'CONSTRUCTION', 'SKARBNYTSIA', 'VAULT'],
     fleetMix: {
       LIGHT_FIGHTER: 0.3,
       HEAVY_FIGHTER: 0.2,
@@ -162,7 +178,7 @@ export const BOT_PERSONALITIES: Record<BotCharacter, BotPersonality> = {
     description:
       'Цель — капитал и неприступность. Держит обе стороны стакана, тянет добычу ' +
       'и склад, строит плотную оборону и сдерживающий флот. Первым не нападает.',
-    budget: { economy: 0.45, research: 0.2, fleet: 0.15, defense: 0.2 },
+    budget: { economy: 0.45, research: 0.2, fleet: 0.15, defense: 0.2, syndicate: 0.12 },
     // Экономические ветки вперед: у торговца доход и есть основное оружие.
     researchOrder: [
       'ENERGY_TECH',
@@ -190,6 +206,8 @@ export const BOT_PERSONALITIES: Record<BotCharacter, BotPersonality> = {
      * бюджета, составе обороны и запрете нападать первым.
      */
     buildingFocus: ['SCIENCE_CENTER', 'SHIPYARD'],
+    // Торговцу — комиссия биржи и сохранность казны.
+    syndicateFocus: ['AKADEMIIA', 'TRADE', 'MINING', 'KISH', 'SKARBNYTSIA', 'VAULT', 'CONSTRUCTION', 'DOZOR'],
     fleetMix: {
       LARGE_CARGO: 0.3,
       SMALL_CARGO: 0.1,

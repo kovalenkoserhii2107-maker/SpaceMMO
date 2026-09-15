@@ -70,6 +70,15 @@ import {
   type BotCharacter,
   type BotPersonality,
 } from './personality.js';
+import {
+  isSyndicateTech,
+  syndicateModuleCost,
+  syndicateTechCost,
+  type SyndicateModule,
+  type SyndicateTech,
+  type SyndicateTechLevels,
+  type TreasuryCost,
+} from '../syndicate.js';
 
 /* ------------------------- Снимок мира ------------------------- */
 
@@ -211,6 +220,62 @@ export interface BotDebrisField {
   distance: number;
 }
 
+/** Синдикат, в котором состоит бот: то, от чего зависит его вклад и стройка. */
+export interface BotSyndicate {
+  id: string;
+  name: string;
+  tag: string;
+  isLeader: boolean;
+  /** Права ранга: строить модули Коша, вести Академию, разбирать заявки. */
+  canBuild: boolean;
+  canResearch: boolean;
+  canReview: boolean;
+  members: number;
+  memberCap: number;
+  kishLevel: number;
+  treasuryLevel: number;
+  academyLevel: number;
+  watchLevel: number;
+  techs: SyndicateTechLevels;
+  bank: { credits: number; ore: number; polymers: number };
+  /** Занята ли стройка в Коше и Академия: вторые в очередь не встанут. */
+  construction: boolean;
+  research: boolean;
+  /**
+   * Стоит ли Кіш в системе бота. Ресурсы в казну возят только рейсом,
+   * а в чужую систему нужен гиперпрыжок с антиматерией, которой у ботов нет.
+   */
+  kishInMySystem: boolean;
+  /** Рейс с грузом в Кіш уже в пути: второй под ту же цель не нужен. */
+  deliveringToKish: boolean;
+  /** Вносил ли бот гривну за последний час: взнос раз в заход был бы россыпью. */
+  donatedRecently: boolean;
+  /** Заявки к нам. Решает по ним модель, а видит их только ранг с правом. */
+  applications: Array<{ id: string; commanderId: string; nickname: string; isBot: boolean }>;
+}
+
+/** Синдикат сервера глазами кандидата: куда можно вступить. */
+export interface BotSyndicateListing {
+  id: string;
+  name: string;
+  tag: string;
+  leader: string;
+  members: number;
+  memberCap: number;
+  recruitment: 'OPEN' | 'APPLICATION' | 'CLOSED';
+  entryFee: number;
+  minScore: number;
+  /** Сколько в составе живых игроков и ботов. */
+  humans: number;
+  bots: number;
+  /** Кіш в системе бота: только такой синдикат получает от него ресурсы. */
+  sameSystem: boolean;
+  /** Действующий кодекс: заявка принимает ровно эту версию. */
+  codexId: string | null;
+  /** Заявка туда уже подана. */
+  applied: boolean;
+}
+
 export interface BotSnapshot {
   character: BotCharacter;
   credits: number;
@@ -269,6 +334,12 @@ export interface BotSnapshot {
   };
   /** Уже отправлен ли колониальный рейс: два на одну планету не нужны. */
   colonizing: boolean;
+  /** Свой синдикат. null — бот одиночка. */
+  syndicate: BotSyndicate | null;
+  /** Все синдикаты сервера: из них модель выбирает, куда вступить. */
+  syndicates: BotSyndicateListing[];
+  /** Сутки после выхода вступать никуда нельзя. */
+  syndicateCooldown: boolean;
 }
 
 /* ------------------------- Намерения ------------------------- */
@@ -291,6 +362,14 @@ export type BotIntent =
   | { kind: 'HUB_UPGRADE'; why: string }
   /** Доделать стройку немедленно за криптогривну. */
   | { kind: 'RUSH'; baseId: string; why: string }
+  /** Взнос гривной в казну синдиката. */
+  | { kind: 'DONATE'; amount: number; why: string }
+  /** Рейс с рудой и полимерами в казну Коша. */
+  | { kind: 'KISH_DELIVERY'; baseId: string; ore: number; polymers: number; why: string }
+  /** Стройка модуля Коша из казны. */
+  | { kind: 'SYNDICATE_BUILD'; module: SyndicateModule; why: string }
+  /** Изучение технологии синдиката из казны. */
+  | { kind: 'SYNDICATE_RESEARCH'; tech: SyndicateTech; why: string }
   /** Призыв к соседям: против серийного агрессора в одиночку не выстоять. */
   | { kind: 'RALLY'; commanderId: string; nickname: string; raids: number; why: string }
   | {
@@ -1142,6 +1221,29 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
     };
   }
 
+  /*
+   * Доля синдиката снимается сверху и только у участника.
+   *
+   * Четыре доли ниже делят остаток, поэтому одиночка играет ровно так же,
+   * как до синдикатов, — и прогон экономики, где синдикатов нет, эту правку
+   * не замечает вовсе. Снимается после мобилизации: война важнее казны,
+   * но и в войну синдикат не остается без вклада.
+   */
+  const syndicateShare = snapshot.syndicate ? Math.min(0.3, Math.max(0, profile.budget.syndicate ?? 0)) : 0;
+  if (syndicateShare > 0) {
+    const keep = 1 - syndicateShare;
+    profile = {
+      ...profile,
+      budget: {
+        ...profile.budget,
+        economy: profile.budget.economy * keep,
+        research: profile.budget.research * keep,
+        fleet: profile.budget.fleet * keep,
+        defense: profile.budget.defense * keep,
+      },
+    };
+  }
+
   const held = portfolio(snapshot);
   /** Добрало ли направление свою долю портфеля. */
   const saturated = (direction: Direction): boolean =>
@@ -1962,6 +2064,8 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
     }
   }
 
+  intents.push(...syndicateIntents(snapshot, profile, syndicateShare, shortfall));
+
   return intents;
 }
 
@@ -2236,6 +2340,125 @@ function tradeIntents(
   return intents;
 }
 
+/* ------------------------- Синдикат ------------------------- */
+
+export type SyndicateFocus = SyndicateModule | SyndicateTech;
+
+export interface SyndicateGoal {
+  kind: 'module' | 'tech';
+  key: SyndicateFocus;
+  cost: TreasuryCost;
+}
+
+/**
+ * Ближайшая цель синдиката: первое по порядку плана, что можно начать.
+ *
+ * Цель одна на весь синдикат, а не на бота, и не зависит от прав смотрящего:
+ * рядовой участник копит под то же, что строит главарь, иначе каждый возил бы
+ * в казну под свое, и не набиралось бы ни на что.
+ *
+ * Два пункта сами по себе не заканчиваются, поэтому у них свои условия.
+ * Кіш — это места в составе, и тянуть его стоит, только когда тесно: состав
+ * вместе с заявками уперся в предел. Академия — потолок уровня технологий,
+ * и тянуть ее стоит, только когда потолок достигнут хотя бы одной
+ * технологией из плана; иначе она съедала бы казну раньше самих технологий.
+ */
+export function syndicateGoal(syndicate: BotSyndicate, focus: readonly SyndicateFocus[]): SyndicateGoal | null {
+  const moduleLevel: Record<Exclude<SyndicateModule, 'BRAMA'>, number> = {
+    KISH: syndicate.kishLevel,
+    SKARBNYTSIA: syndicate.treasuryLevel,
+    AKADEMIIA: syndicate.academyLevel,
+    DOZOR: syndicate.watchLevel,
+  };
+  const ceiling = focus.some((key) => isSyndicateTech(key) && syndicate.techs[key] >= syndicate.academyLevel);
+
+  for (const key of focus) {
+    if (isSyndicateTech(key)) {
+      if (syndicate.research) continue;
+      const target = syndicate.techs[key] + 1;
+      if (syndicate.academyLevel < target) continue;
+      return { kind: 'tech', key, cost: syndicateTechCost(target) };
+    }
+    if (key === 'BRAMA' || syndicate.construction) continue;
+    if (key === 'KISH' && syndicate.members + syndicate.applications.length < syndicate.memberCap) continue;
+    if (key === 'AKADEMIIA' && !ceiling) continue;
+    return { kind: 'module', key, cost: syndicateModuleCost(key, moduleLevel[key] + 1) };
+  }
+  return null;
+}
+
+/** Мельче этого взнос и рейс в Кіш не делаются: россыпь по сотне ничего не строит. */
+const MIN_DONATION = 1000;
+const MIN_KISH_LOAD = 1000;
+
+/**
+ * Вклад и развитие синдиката.
+ *
+ * Хватает казны на цель — бот с правом ее начинает. Не хватает — каждый
+ * участник докладывает недостающее в пределах своей доли: гривну взносом,
+ * руду и полимеры рейсом. Под цель, а не впрок: казна без цели — это деньги,
+ * снятые с базы ради ничего, и при роспуске они сгорают.
+ *
+ * Ресурс, которого самому боту не хватает на стройку, в казну не уходит:
+ * синдикат силен участниками, и разорять базу ради модуля незачем.
+ */
+function syndicateIntents(
+  snapshot: BotSnapshot,
+  profile: BotPersonality,
+  share: number,
+  shortfall: ReadonlySet<StoredResource>,
+): BotIntent[] {
+  const syndicate = snapshot.syndicate;
+  if (!syndicate) return [];
+  const goal = syndicateGoal(syndicate, profile.syndicateFocus ?? []);
+  if (!goal) return [];
+
+  const intents: BotIntent[] = [];
+  const bank = syndicate.bank;
+  const covered = bank.credits >= goal.cost.credits && bank.ore >= goal.cost.ore && bank.polymers >= goal.cost.polymers;
+
+  if (covered) {
+    if (goal.kind === 'tech' && syndicate.canResearch && isSyndicateTech(goal.key)) {
+      intents.push({ kind: 'SYNDICATE_RESEARCH', tech: goal.key, why: 'казны хватает на технологию' });
+    } else if (goal.kind === 'module' && !isSyndicateTech(goal.key)) {
+      const allowed = goal.key === 'AKADEMIIA' ? syndicate.canResearch : syndicate.canBuild;
+      if (allowed) intents.push({ kind: 'SYNDICATE_BUILD', module: goal.key, why: 'казны хватает на модуль' });
+    }
+    return intents;
+  }
+  if (share <= 0) return intents;
+
+  const creditGap = goal.cost.credits - bank.credits;
+  if (creditGap > 0 && !syndicate.donatedRecently) {
+    const amount = Math.floor(Math.min(creditGap, snapshot.credits * share));
+    if (amount >= MIN_DONATION) intents.push({ kind: 'DONATE', amount, why: `в казну под ${goal.key}` });
+  }
+
+  const capital = snapshot.bases[0];
+  if (capital && syndicate.kishInMySystem && !syndicate.deliveringToKish) {
+    const give = (resource: 'ore' | 'polymers'): number =>
+      shortfall.has(resource)
+        ? 0
+        : Math.max(0, Math.floor(Math.min(goal.cost[resource] - bank[resource], Math.max(0, capital.resources[resource]) * share)));
+    let ore = give('ore');
+    let polymers = give('polymers');
+    const hold = fleetCapacity({
+      ...emptyShipCounts(),
+      LARGE_CARGO: capital.ships.LARGE_CARGO,
+      SMALL_CARGO: capital.ships.SMALL_CARGO,
+    });
+    if (ore + polymers > hold) {
+      const scale = hold / (ore + polymers);
+      ore = Math.floor(ore * scale);
+      polymers = Math.floor(polymers * scale);
+    }
+    if (ore + polymers >= MIN_KISH_LOAD) {
+      intents.push({ kind: 'KISH_DELIVERY', baseId: capital.id, ore, polymers, why: `в казну под ${goal.key}` });
+    }
+  }
+  return intents;
+}
+
 /* ------------------------- Утилиты для тестов ------------------------- */
 
 /** Пустой снимок: тесты собирают из него нужную ситуацию точечно. */
@@ -2257,6 +2480,9 @@ export function emptyBotSnapshot(character: BotCharacter): BotSnapshot {
     orderBook: [],
     hubStorage: { ore: 0, polymers: 0, free: 0, level: 1, upgradeCost: storageUpgradeCost(2), nextRentPerHour: hubRent(2) * 3600 },
     colonizing: false,
+    syndicate: null,
+    syndicates: [],
+    syndicateCooldown: false,
   };
 }
 

@@ -23,6 +23,8 @@ import {
 import { NEWBIE_SHIELD_DAYS, BOT_PERSONALITIES, personality } from '../src/game/bot/personality.js';
 import { parsePlan, withPlan } from '../src/game/bot/plan.js';
 import { hopeless, parseDirectives } from '../src/game/bot/directives.js';
+import { syndicateGoal, type BotSyndicate } from '../src/game/bot/decide.js';
+import { emptySyndicateTechLevels } from '../src/game/syndicate.js';
 import {
   battleShock, markShock, marketShock, readShocks,
   MARKET_SHOCK_TTL_MS, SHOCK_TTL_MS,
@@ -2292,6 +2294,196 @@ console.log('\n=== 7б. Инструменты не входят в состав
 }
 
 /* ------------------------- 8. Директивы модели ------------------------- */
+
+console.log('\n=== 7в. Синдикат: вклад под цель, стройка по праву ===');
+
+function syndicateWith(overrides: Partial<BotSyndicate> = {}): BotSyndicate {
+  return {
+    id: 'синд',
+    name: 'Проба',
+    tag: 'PRB',
+    isLeader: false,
+    canBuild: false,
+    canResearch: false,
+    canReview: false,
+    members: 2,
+    memberCap: 3,
+    kishLevel: 1,
+    treasuryLevel: 0,
+    academyLevel: 0,
+    watchLevel: 0,
+    techs: emptySyndicateTechLevels(),
+    bank: { credits: 0, ore: 0, polymers: 0 },
+    construction: false,
+    research: false,
+    kishInMySystem: true,
+    deliveringToKish: false,
+    donatedRecently: false,
+    applications: [],
+    ...overrides,
+  };
+}
+
+{
+  // Академия — потолок технологий: тянем ее, только когда потолок достигнут.
+  const focus = ['AKADEMIIA', 'TRADE'] as const;
+  check('без Академии цель синдиката — Академия', syndicateGoal(syndicateWith(), focus)?.key === 'AKADEMIIA');
+  check(
+    'Академия есть, технология ниже потолка — цель технология',
+    syndicateGoal(syndicateWith({ academyLevel: 2, techs: { ...emptySyndicateTechLevels(), TRADE: 1 } }), focus)?.key === 'TRADE',
+  );
+  check(
+    'технология уперлась в Академию — снова Академия',
+    syndicateGoal(syndicateWith({ academyLevel: 1, techs: { ...emptySyndicateTechLevels(), TRADE: 1 } }), focus)?.key === 'AKADEMIIA',
+  );
+  check(
+    'пока идет изучение, технология не цель',
+    syndicateGoal(syndicateWith({ academyLevel: 2, research: true }), ['TRADE'])?.key === undefined,
+  );
+}
+
+{
+  // Места в Коше тянут, только когда тесно: состав вместе с заявками уперся в предел.
+  const focus = ['KISH', 'DOZOR'] as const;
+  check('свободные места — Кіш не цель', syndicateGoal(syndicateWith({ members: 2 }), focus)?.key === 'DOZOR');
+  check('тесно — цель Кіш', syndicateGoal(syndicateWith({ members: 3 }), focus)?.key === 'KISH');
+  const applicant = { id: 'заявка', commanderId: 'кандидат', nickname: 'Кандидат', isBot: false };
+  check(
+    'заявка сверх свободного места тоже делает тесно',
+    syndicateGoal(syndicateWith({ members: 2, applications: [applicant] }), focus)?.key === 'KISH',
+  );
+}
+
+{
+  /*
+   * Участник докладывает недостающее под цель в пределах доли: гривну взносом,
+   * руду и полимеры рейсом. Академия стоит 300 тысяч гривны и по 200 тысяч
+   * ресурсов, доля торговца 0.12.
+   */
+  const member = (syndicate: BotSyndicate) =>
+    snapshotWith({
+      character: 'TRADER',
+      credits: 100_000,
+      bases: [
+        testBase('home', {
+          resources: { ore: 50_000, polymers: 50_000, plasma: 50_000 },
+          ships: { ...emptyShipCounts(), LARGE_CARGO: 5 },
+        }),
+      ],
+      syndicate,
+    });
+
+  const intents = decide(member(syndicateWith()));
+  const donation = intents.find((i) => i.kind === 'DONATE');
+  check(
+    'участник вносит долю гривны под цель',
+    donation?.kind === 'DONATE' && donation.amount === 12_000,
+    donation?.kind === 'DONATE' ? `${donation.amount}` : 'не вносит',
+  );
+  const delivery = intents.find((i) => i.kind === 'KISH_DELIVERY');
+  check(
+    'и везет в Кіш долю руды и полимеров',
+    delivery?.kind === 'KISH_DELIVERY' && delivery.ore === 6000 && delivery.polymers === 6000,
+    delivery?.kind === 'KISH_DELIVERY' ? `${delivery.ore} / ${delivery.polymers}` : 'не везет',
+  );
+  check(
+    'взнос не чаще раза в час',
+    !decide(member(syndicateWith({ donatedRecently: true }))).some((i) => i.kind === 'DONATE'),
+  );
+  check(
+    'в Кіш в чужой системе ресурсы не возят',
+    !decide(member(syndicateWith({ kishInMySystem: false }))).some((i) => i.kind === 'KISH_DELIVERY'),
+  );
+  check(
+    'второй рейс в Кіш, пока первый в пути, не уходит',
+    !decide(member(syndicateWith({ deliveringToKish: true }))).some((i) => i.kind === 'KISH_DELIVERY'),
+  );
+
+  const rich = { credits: 1_000_000, ore: 1_000_000, polymers: 1_000_000 };
+  check(
+    'казны хватает, права нет — бот не строит и не докладывает',
+    !decide(member(syndicateWith({ bank: rich }))).some(
+      (i) => i.kind === 'SYNDICATE_BUILD' || i.kind === 'DONATE' || i.kind === 'KISH_DELIVERY',
+    ),
+  );
+  const build = decide(member(syndicateWith({ bank: rich, canResearch: true }))).find((i) => i.kind === 'SYNDICATE_BUILD');
+  check(
+    'казны хватает и право есть — бот ставит модуль',
+    build?.kind === 'SYNDICATE_BUILD' && build.module === 'AKADEMIIA',
+  );
+
+  check(
+    'одиночка в казну не платит',
+    !decide(member(syndicateWith())).some((i) => i.kind === 'DONATE') === false &&
+      !decide(snapshotWith({ character: 'TRADER', credits: 100_000 })).some((i) => i.kind === 'DONATE'),
+  );
+}
+
+{
+  // Доля синдиката — недоверенные данные наравне с остальным планом.
+  const greedy = parsePlan({ budget: { syndicate: 0.9 }, syndicateFocus: ['BRAMA', 'ВЫДУМКА', 'TRADE'] }, 'TRADER');
+  check('доля синдиката не выше 0.3', greedy?.budget.syndicate === 0.3, `${greedy?.budget.syndicate}`);
+  check(
+    'Брама и выдумки в порядок развития не попадают',
+    greedy?.syndicateFocus.length === 1 && greedy.syndicateFocus[0] === 'TRADE',
+    greedy?.syndicateFocus.join(', '),
+  );
+  const silent = parsePlan({}, 'TRADER');
+  check('без доли в ответе остается доля характера', silent?.budget.syndicate === 0.12, `${silent?.budget.syndicate}`);
+}
+
+{
+  // Синдикатные поручения сверяются со сводкой, как любые другие.
+  const listing = {
+    id: 'есть',
+    name: 'Есть',
+    tag: 'EST',
+    leader: 'Главарь',
+    members: 1,
+    memberCap: 3,
+    recruitment: 'APPLICATION' as const,
+    entryFee: 0,
+    minScore: 0,
+    humans: 1,
+    bots: 0,
+    sameSystem: true,
+    codexId: null,
+    applied: false,
+  };
+  const loner = snapshotWith({ syndicates: [listing] });
+  const lonerOrders = parseDirectives(
+    [
+      { kind: 'JOIN_SYNDICATE', syndicateId: 'выдумка', why: 'хочу' },
+      { kind: 'JOIN_SYNDICATE', syndicateId: 'есть', why: 'соседи' },
+      { kind: 'LEAVE_SYNDICATE', why: 'не в чем состоять' },
+      { kind: 'FOUND_SYNDICATE', name: 'Новые', tag: 'NEW', why: 'свой' },
+    ],
+    loner,
+  );
+  check(
+    'одиночка вступает только в показанный синдикат и выйти ему неоткуда',
+    lonerOrders.map((d) => d.kind).join(',') === 'JOIN_SYNDICATE,FOUND_SYNDICATE' &&
+      lonerOrders[0]?.kind === 'JOIN_SYNDICATE' && lonerOrders[0].syndicateId === 'есть',
+    lonerOrders.map((d) => d.kind).join(', '),
+  );
+
+  const application = { id: 'заявка-1', commanderId: 'кандидат', nickname: 'Кандидат', isBot: false };
+  const rank = (canReview: boolean) =>
+    parseDirectives(
+      [
+        { kind: 'REVIEW_APPLICATION', applicationId: 'заявка-1', accept: true, why: 'сосед' },
+        { kind: 'REVIEW_APPLICATION', applicationId: 'чужая', accept: true, why: 'выдумка' },
+        { kind: 'JOIN_SYNDICATE', syndicateId: 'есть', why: 'уже состою' },
+        { kind: 'FOUND_SYNDICATE', name: 'Второй', tag: 'TWO', why: 'уже состою' },
+      ],
+      snapshotWith({ syndicates: [listing], syndicate: syndicateWith({ canReview, applications: [application] }) }),
+    );
+  check(
+    'участник разбирает только заявки к себе и только с правом',
+    rank(true).length === 1 && rank(true)[0]?.kind === 'REVIEW_APPLICATION' && rank(false).length === 0,
+    `с правом ${rank(true).length}, без права ${rank(false).length}`,
+  );
+}
 
 console.log('\n=== 8. Поручения модели проверяются по сводке ===');
 

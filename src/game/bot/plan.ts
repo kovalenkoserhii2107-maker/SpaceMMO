@@ -17,6 +17,16 @@ import { DEFENSE_TYPES, type DefenseType } from '../defenses.js';
 import { SQUADRON_TYPES, type ShipType } from '../ships.js';
 import { TECHNOLOGY_TYPES, type TechnologyType } from '../techTree.js';
 import { personality, type BotCharacter, type BotPersonality } from './personality.js';
+import { SYNDICATE_MODULES, SYNDICATE_TECHS, type SyndicateModule, type SyndicateTech } from '../syndicate.js';
+
+/**
+ * Что можно назвать в порядке развития синдиката. Брамы здесь нет: ее ставят
+ * в конкретной системе, и выбирать систему — уже не порядок, а поступок.
+ */
+const SYNDICATE_FOCUS: Array<SyndicateModule | SyndicateTech> = [
+  ...SYNDICATE_MODULES.filter((module) => module !== 'BRAMA'),
+  ...SYNDICATE_TECHS,
+];
 
 /** Что модели позволено менять. Остальное в профиле характера неприкосновенно. */
 export interface BotPlan {
@@ -31,6 +41,8 @@ export interface BotPlan {
    * и не могла сделать с ними ничего.
    */
   buildingFocus: BuildingType[];
+  /** Порядок развития синдиката: модули Коша и технологии. */
+  syndicateFocus: Array<SyndicateModule | SyndicateTech>;
   fleetMix: Partial<Record<ShipType, number>>;
   defenseMix: Partial<Record<DefenseType, number>>;
   colonyAmbition: number;
@@ -112,14 +124,22 @@ function normalizeBudget(raw: unknown, fallback: BotPersonality['budget']): BotP
     defense: clamp(source['defense'], 0, 0.4, fallback.defense),
   };
 
+  /*
+   * Доля синдиката в нормировку не входит: она снимается сверху и только
+   * у участника, а четыре доли выше делят остаток. Потолок — треть от трети:
+   * больше казна заберет у базы, которая эту казну и кормит.
+   */
+  const syndicate = clamp(source['syndicate'], 0, 0.3, fallback.syndicate ?? 0);
+
   const total = budget.economy + budget.research + budget.fleet + budget.defense;
-  if (total <= 0) return fallback;
+  if (total <= 0) return { ...fallback, syndicate };
 
   return {
     economy: budget.economy / total,
     research: budget.research / total,
     fleet: budget.fleet / total,
     defense: budget.defense / total,
+    syndicate,
   };
 }
 
@@ -173,6 +193,7 @@ export function parsePlan(raw: unknown, character: BotCharacter): BotPlan | null
     budget: normalizeBudget(source['budget'], base.budget),
     researchOrder: knownList(source['researchOrder'], TECHNOLOGY_TYPES, base.researchOrder),
     buildingFocus: knownList(source['buildingFocus'], BUILDING_TYPES, base.buildingFocus),
+    syndicateFocus: knownList(source['syndicateFocus'], SYNDICATE_FOCUS, base.syndicateFocus),
     // Только боевые классы: зонды, переработчики и колонизаторы заказываются
     // под задачу, а не держатся долей постоянного состава.
     fleetMix: knownMix(source['fleetMix'], SQUADRON_TYPES, base.fleetMix),
@@ -226,6 +247,11 @@ export function withPlan(character: BotCharacter, plan: BotPlan | null): BotPers
     budget: plan.budget,
     researchOrder: research,
     buildingFocus: focus,
+    // Сводится так же, как здания: названное моделью — вперед, остальное остается.
+    syndicateFocus: [
+      ...plan.syndicateFocus,
+      ...base.syndicateFocus.filter((key) => !plan.syndicateFocus.includes(key)),
+    ],
     fleetMix: plan.fleetMix,
     defenseMix: plan.defenseMix,
     colonyAmbition: plan.colonyAmbition,
