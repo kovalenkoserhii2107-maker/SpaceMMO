@@ -17,6 +17,7 @@ import { mailRouter } from './routes/mail.js';
 import { adminRouter } from './routes/admin.js';
 import { verifyToken } from './services/authService.js';
 import { ensureAchievements } from './services/achievementService.js';
+import { settleSyndicateBuilds } from './services/syndicateService.js';
 import { warnIfInsecureSecret } from './config/auth.js';
 import type { HealthResponse } from './types/api.js';
 import type {
@@ -123,6 +124,15 @@ httpServer.listen(env.port, () => {
     console.error('[achievements] не удалось синхронизировать каталог:', error),
   );
   gameLoop.start(io);
+  /*
+   * Стройки в Коше закрываются по сроку и без открытого Коша: уровень модуля
+   * решает предел состава, защиту казны и пропуск Брамы. Таймер живет здесь,
+   * а не в игровом цикле: сервис синдиката сам импортирует цикл, и обратный
+   * импорт замкнул бы модули в кольцо.
+   */
+  setInterval(() => {
+    settleSyndicateBuilds().catch((error: unknown) => console.error('[syndicate] стройки в Коше', error));
+  }, 30_000);
   // Планировщик ботов идет следом за тиком: он ходит его же методами,
   // и без запущенного тика ему не с чем работать.
   botDirector.start();

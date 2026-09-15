@@ -15,6 +15,10 @@ import { getLeaderboard } from './scoreService.js';
 import { galaxyDistance } from '../game/fleets.js';
 import { DEFENSE_TYPES, defenseCost, defenseLabel, type DefenseType } from '../game/defenses.js';
 import {
+  syndicateBuildSeconds,
+  syndicateModuleCost,
+  syndicateModuleLabel,
+  modulePermission,
   syndicateModuleProjection,
   syndicateTechProjection,
   type SyndicateModule,
@@ -130,6 +134,16 @@ export interface SyndicateView {
   name: string;
   tag: string;
   description: string;
+  /** Идущая стройка в Коше — одна на синдикат. */
+  construction: {
+    module: SyndicateModule;
+    label: string;
+    systemId: string | null;
+    systemName: string | null;
+    targetLevel: number;
+    remainingSeconds: number;
+    totalSeconds: number;
+  } | null;
   /** Вклад участников за все время и движение казны за неделю. */
   stats: {
     contributions: Array<{ commanderId: string; nickname: string; merit: number; credits: number; tax: number; resources: number }>;
@@ -158,10 +172,12 @@ export interface SyndicateView {
       /** Сколько кораблей прошло в текущем часовом окне. */
       windowShips: number;
       nextLevelCost: TreasuryCost;
+      nextLevelSeconds: number;
     }>;
     /** Системы с колониями участников, где Брамы еще нет. */
     candidates: Array<{ systemId: string; systemName: string }>;
     firstLevelCost: TreasuryCost;
+    firstLevelSeconds: number;
   };
   kish: {
     level: number;
@@ -169,6 +185,7 @@ export interface SyndicateView {
     systemName: string | null;
     memberCap: number;
     nextLevelCost: number;
+    nextLevelSeconds: number;
     /** Когда Кіш снова можно перенести; `null` — хоть сейчас. */
     nextMoveAt: number | null;
     /** К Кошу летит налет: пока он в пути, переносить Кіш нельзя. */
@@ -177,6 +194,7 @@ export interface SyndicateView {
     /** Несгораемая доля казны при налете. */
     protectedShare: number;
     nextTreasuryCost: TreasuryCost;
+    nextTreasurySeconds: number;
     defenses: Array<{ type: DefenseType; label: string; count: number; cost: { ore: number; polymers: number; plasma: number } }>;
     debris: { ore: number; polymers: number };
     /** Флоты участников на удержании у Коша. */
@@ -187,6 +205,7 @@ export interface SyndicateView {
   academy: {
     level: number;
     nextLevelCost: TreasuryCost;
+    nextLevelSeconds: number;
     techs: Array<{
       tech: SyndicateTech;
       label: string;
@@ -204,6 +223,7 @@ export interface SyndicateView {
     /** Радиус наблюдения от Коша в единицах карты; −1 — Дозор не построен. */
     radius: number;
     nextLevelCost: number;
+    nextLevelSeconds: number;
     incoming: WatchedFleet[];
   };
   rules: { recruitment: SyndicateRecruitment; minScore: number; entryFee: number };
@@ -349,6 +369,7 @@ export async function getCodex(
 async function getSyndicateView(syndicateId: string, viewerId: string): Promise<SyndicateView | null> {
   await ensureSyndicateSetup(syndicateId);
   await settleSyndicateResearch(syndicateId);
+  await settleSyndicateBuilds(syndicateId);
   const access = await membershipOf(viewerId);
   if (!access.ok || access.syndicateId !== syndicateId) return null;
 
@@ -373,6 +394,7 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
         },
         warsStarted: { include: { target: true } },
         warsAgainst: { include: { aggressor: true } },
+        construction: true,
       },
     }),
     latestCodex(syndicateId, true),
@@ -449,6 +471,7 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
     prisma.fleet.count({ where: { targetSyndicateId: syndicateId, mission: 'KISH_RAID', status: 'OUTBOUND' } }),
   ]);
   const techState = await syndicateTechState(syndicateId);
+  const engineering = techState.levels.ENGINEERING;
   const schedule = commitSchedule(syndicate);
   const allowance = withdrawAllowance(access, access.dailyWithdrawLimit, spentToday);
 
@@ -457,6 +480,21 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
     name: syndicate.name,
     tag: syndicate.tag,
     description: syndicate.description,
+    construction: syndicate.construction
+      ? {
+          module: syndicate.construction.module,
+          label: syndicateModuleLabel(syndicate.construction.module),
+          systemId: syndicate.construction.systemId,
+          systemName: syndicate.construction.systemId
+            ? (colonySystems.find((row) => row.planet.system.id === syndicate.construction!.systemId)?.planet.system.name
+              ?? gateRows.find((gate) => gate.systemId === syndicate.construction!.systemId)?.system.name
+              ?? null)
+            : null,
+          targetLevel: syndicate.construction.targetLevel,
+          remainingSeconds: Math.max(0, Math.ceil((syndicate.construction.finishesAt.getTime() - now) / 1000)),
+          totalSeconds: Math.max(1, Math.round((syndicate.construction.finishesAt.getTime() - syndicate.construction.startedAt.getTime()) / 1000)),
+        }
+      : null,
     stats: {
       contributions: [...syndicate.members]
         .sort((a, b) => b.syndicateMerit - a.syndicateMerit)
@@ -497,6 +535,7 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
         throughput: bramaThroughput(gate.level),
         windowShips: now - gate.windowStartedAt.getTime() < 3_600_000 ? gate.windowShips : 0,
         nextLevelCost: bramaUpgradeCost(gate.level + 1),
+        nextLevelSeconds: syndicateBuildSeconds('BRAMA', gate.level + 1, engineering),
       })),
       candidates: [
         ...new Map(
@@ -507,6 +546,7 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
         ).values(),
       ],
       firstLevelCost: bramaUpgradeCost(1),
+      firstLevelSeconds: syndicateBuildSeconds('BRAMA', 1, engineering),
     },
     kish: {
       level: syndicate.kishLevel,
@@ -514,6 +554,7 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
       systemName: syndicate.kishSystem?.name ?? null,
       memberCap: memberCap(syndicate.kishLevel),
       nextLevelCost: kishUpgradeCost(syndicate.kishLevel + 1),
+      nextLevelSeconds: syndicateBuildSeconds('KISH', syndicate.kishLevel + 1, engineering),
       nextMoveAt: kishMoveAvailableAt(syndicate.kishMovedAt?.getTime() ?? null) > now
         ? kishMoveAvailableAt(syndicate.kishMovedAt?.getTime() ?? null)
         : null,
@@ -521,6 +562,7 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
       treasuryLevel: syndicate.treasuryLevel,
       protectedShare: treasuryProtectedShare(syndicate.treasuryLevel),
       nextTreasuryCost: treasuryUpgradeCost(syndicate.treasuryLevel + 1),
+      nextTreasurySeconds: syndicateBuildSeconds('SKARBNYTSIA', syndicate.treasuryLevel + 1, engineering),
       defenses: DEFENSE_TYPES.map((type) => ({
         type,
         label: defenseLabel(type),
@@ -545,6 +587,7 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
     academy: {
       level: syndicate.academyLevel,
       nextLevelCost: academyUpgradeCost(syndicate.academyLevel + 1),
+      nextLevelSeconds: syndicateBuildSeconds('AKADEMIIA', syndicate.academyLevel + 1, engineering),
       techs: SYNDICATE_TECHS.map((tech) => {
         const level = techState.levels[tech];
         return {
@@ -553,7 +596,7 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
           effect: SYNDICATE_TECH_EFFECTS[tech],
           level,
           nextCost: syndicateTechCost(level + 1),
-          seconds: syndicateResearchSeconds(level + 1, syndicate.academyLevel),
+          seconds: syndicateResearchSeconds(level + 1, syndicate.academyLevel, engineering),
           available: !techState.research && syndicate.academyLevel >= level + 1,
         };
       }),
@@ -563,7 +606,7 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
             label: SYNDICATE_TECH_LABELS[techState.research.tech],
             targetLevel: techState.research.targetLevel,
             remainingSeconds: Math.max(0, Math.ceil((techState.research.finishesAt - now) / 1000)),
-            totalSeconds: syndicateResearchSeconds(techState.research.targetLevel, syndicate.academyLevel),
+            totalSeconds: syndicateResearchSeconds(techState.research.targetLevel, syndicate.academyLevel, engineering),
           }
         : null,
     },
@@ -571,6 +614,7 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
       level: syndicate.watchLevel,
       radius: watchRadius(syndicate.watchLevel),
       nextLevelCost: watchUpgradeCost(syndicate.watchLevel + 1),
+      nextLevelSeconds: syndicateBuildSeconds('DOZOR', syndicate.watchLevel + 1, engineering),
       incoming,
     },
     rules: { recruitment: syndicate.recruitment, minScore: syndicate.minScore, entryFee: syndicate.entryFee },
@@ -1189,12 +1233,17 @@ export async function getSyndicateProjection(
 ): Promise<{ ok: true; projection: SyndicateProjection } | { ok: false; error: string; status: number }> {
   const access = await membershipOf(commanderId);
   if (!access.ok) return access;
+  await settleSyndicateBuilds(access.syndicateId);
   const syndicate = await prisma.syndicate.findUnique({ where: { id: access.syndicateId } });
   if (!syndicate) return { ok: false, error: 'Синдикат не найден', status: 404 };
+  const techState = await syndicateTechState(access.syndicateId);
+  const engineering = techState.levels.ENGINEERING;
 
   if ('tech' in target) {
-    const techState = await syndicateTechState(access.syndicateId);
-    return { ok: true, projection: syndicateTechProjection(target.tech, techState.levels[target.tech], syndicate.academyLevel) };
+    return {
+      ok: true,
+      projection: syndicateTechProjection(target.tech, techState.levels[target.tech], syndicate.academyLevel, engineering),
+    };
   }
   const levels: Record<Exclude<SyndicateModule, 'BRAMA'>, number> = {
     KISH: syndicate.kishLevel,
@@ -1213,7 +1262,7 @@ export async function getSyndicateProjection(
   } else {
     level = levels[target.module];
   }
-  return { ok: true, projection: syndicateModuleProjection(target.module, level) };
+  return { ok: true, projection: syndicateModuleProjection(target.module, level, engineering) };
 }
 
 /** Описание синдиката пишет тот же ранг, что и правила набора: оба текста — лицо синдиката для кандидатов. */
@@ -1291,40 +1340,7 @@ export async function updateCodex(commanderId: string, text: string): Promise<Sy
 
 /** Повышение Коша из казны. Условный UPDATE по уровню защищает от двойного платежа. */
 export async function upgradeKish(commanderId: string): Promise<SyndicateResult> {
-  const access = await requirePermission(commanderId, 'KISH');
-  if (!access.ok) return access;
-
-  const syndicate = await prisma.syndicate.findUnique({ where: { id: access.syndicateId } });
-  if (!syndicate) return { ok: false, error: 'Синдикат не найден', status: 404 };
-  const target = syndicate.kishLevel + 1;
-  const cost = kishUpgradeCost(target);
-
-  try {
-    await prisma.$transaction(async (tx) => {
-      const paid = await tx.syndicateBank.updateMany({
-        where: { syndicateId: access.syndicateId, credits: { gte: cost } },
-        data: { credits: { decrement: cost } },
-      });
-      if (paid.count === 0) throw new SyndicateError(`В казне нужно ${cost} ₴`, 409);
-      const raised = await tx.syndicate.updateMany({
-        where: { id: access.syndicateId, kishLevel: syndicate.kishLevel },
-        data: { kishLevel: target, investedValue: { increment: cost } },
-      });
-      if (raised.count === 0) throw new SyndicateError('Кіш уже повысили', 409);
-      await tx.syndicateTransaction.create({
-        data: {
-          syndicateId: access.syndicateId,
-          actorId: commanderId,
-          kind: 'KISH_UPGRADE',
-          amount: cost,
-          comment: `Кіш → ур. ${target}`,
-        },
-      });
-    });
-  } catch (error) {
-    return toError(error, 'Не удалось повысить Кіш');
-  }
-  return { ok: true, message: `Кіш теперь ${target} уровня: мест ${memberCap(target)}` };
+  return startConstruction(commanderId, 'KISH', null);
 }
 
 /* ------------------------- Брама и перенос Коша ------------------------- */
@@ -1335,55 +1351,7 @@ export async function upgradeKish(commanderId: string): Promise<SyndicateResult>
  * ради одного лишь переноса Коша.
  */
 export async function buildGate(commanderId: string, systemId: string): Promise<SyndicateResult> {
-  const access = await requirePermission(commanderId, 'KISH');
-  if (!access.ok) return access;
-
-  const [system, colony, existing] = await Promise.all([
-    prisma.solarSystem.findUnique({ where: { id: systemId }, select: { name: true } }),
-    prisma.base.findFirst({ where: { planet: { systemId }, commander: { syndicateId: access.syndicateId } }, select: { id: true } }),
-    prisma.syndicateGate.findUnique({ where: { syndicateId_systemId: { syndicateId: access.syndicateId, systemId } } }),
-  ]);
-  if (!system) return { ok: false, error: 'Система не найдена', status: 404 };
-  if (!colony) return { ok: false, error: 'Брама ставится только в системе, где есть колония участника', status: 409 };
-
-  const target = (existing?.level ?? 0) + 1;
-  const cost = bramaUpgradeCost(target);
-  try {
-    await prisma.$transaction(async (tx) => {
-      await payFromTreasury(tx, access.syndicateId, cost);
-      if (existing) {
-        const raised = await tx.syndicateGate.updateMany({
-          where: { id: existing.id, level: existing.level },
-          data: { level: target },
-        });
-        if (raised.count === 0) throw new SyndicateError('Браму уже повысили', 409);
-      } else {
-        await tx.syndicateGate.create({ data: { syndicateId: access.syndicateId, systemId } });
-      }
-      await tx.syndicate.update({
-        where: { id: access.syndicateId },
-        data: { investedValue: { increment: costUnits(cost) } },
-      });
-      await tx.syndicateTransaction.create({
-        data: {
-          syndicateId: access.syndicateId,
-          actorId: commanderId,
-          kind: 'GATE_BUILD',
-          amount: cost.credits,
-          ore: cost.ore,
-          polymers: cost.polymers,
-          comment: `Брама ${system.name} → ур. ${target}`,
-        },
-      });
-    });
-  } catch (error) {
-    if (isUniqueViolation(error)) return { ok: false, error: 'Браму в этой системе уже построили', status: 409 };
-    return toError(error, 'Не удалось построить Браму');
-  }
-  return {
-    ok: true,
-    message: target === 1 ? `Брама построена в системе ${system.name}` : `Брама ${system.name}: ур. ${target}`,
-  };
+  return startConstruction(commanderId, 'BRAMA', systemId);
 }
 
 /**
@@ -1462,39 +1430,7 @@ export async function moveKish(commanderId: string, systemId: string): Promise<S
 
 /** Повышение Скарбниці: больше казны не унести налетом. */
 export async function upgradeTreasury(commanderId: string): Promise<SyndicateResult> {
-  const access = await requirePermission(commanderId, 'KISH');
-  if (!access.ok) return access;
-  const syndicate = await prisma.syndicate.findUnique({ where: { id: access.syndicateId } });
-  if (!syndicate) return { ok: false, error: 'Синдикат не найден', status: 404 };
-  const target = syndicate.treasuryLevel + 1;
-  const cost = treasuryUpgradeCost(target);
-  try {
-    await prisma.$transaction(async (tx) => {
-      await payFromTreasury(tx, access.syndicateId, cost);
-      const raised = await tx.syndicate.updateMany({
-        where: { id: access.syndicateId, treasuryLevel: syndicate.treasuryLevel },
-        data: { treasuryLevel: target, investedValue: { increment: costUnits(cost) } },
-      });
-      if (raised.count === 0) throw new SyndicateError('Скарбницю уже повысили', 409);
-      await tx.syndicateTransaction.create({
-        data: {
-          syndicateId: access.syndicateId,
-          actorId: commanderId,
-          kind: 'TREASURY_UPGRADE',
-          amount: cost.credits,
-          ore: cost.ore,
-          polymers: cost.polymers,
-          comment: `Скарбниця → ур. ${target}`,
-        },
-      });
-    });
-  } catch (error) {
-    return toError(error, 'Не удалось повысить Скарбницю');
-  }
-  return {
-    ok: true,
-    message: `Скарбниця ${target} уровня: несгораемо ${Math.round(treasuryProtectedShare(target) * 100)}% казны`,
-  };
+  return startConstruction(commanderId, 'SKARBNYTSIA', null);
 }
 
 export const MAX_KISH_DEFENSE_ORDER = 100;
@@ -1587,6 +1523,206 @@ function costUnits(cost: TreasuryCost): number {
   return cost.credits + cost.ore + cost.polymers;
 }
 
+/* ------------------------- Стройка в Коше ------------------------- */
+
+const MODULE_TX_KIND = {
+  KISH: 'KISH_UPGRADE',
+  SKARBNYTSIA: 'TREASURY_UPGRADE',
+  AKADEMIIA: 'ACADEMY_UPGRADE',
+  DOZOR: 'WATCH_UPGRADE',
+  BRAMA: 'GATE_BUILD',
+} as const satisfies Record<SyndicateModule, string>;
+
+function durationText(seconds: number): string {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.ceil((seconds % 3600) / 60);
+  if (hours && minutes) return `${hours} ч ${minutes} мин`;
+  return hours ? `${hours} ч` : `${minutes} мин`;
+}
+
+/**
+ * Запуск стройки модуля Коша.
+ *
+ * Модули строятся по времени, как постройки колонии, и стройка в Коше одна
+ * на синдикат: цена списывается сразу и хранится в самой стройке, чтобы
+ * отмена вернула ее целиком. Уровень меняется только по завершении — до
+ * этого Кіш работает на прежнем уровне. Брама строится лишь там, где есть
+ * колония участника: иначе врата росли бы в пустых секторах.
+ */
+async function startConstruction(commanderId: string, module: SyndicateModule, systemId: string | null): Promise<SyndicateResult> {
+  const access = await requirePermission(commanderId, modulePermission(module));
+  if (!access.ok) return access;
+  await settleSyndicateBuilds(access.syndicateId);
+
+  const syndicate = await prisma.syndicate.findUnique({ where: { id: access.syndicateId }, include: { construction: true } });
+  if (!syndicate) return { ok: false, error: 'Синдикат не найден', status: 404 };
+  if (syndicate.construction) {
+    return {
+      ok: false,
+      error: `В Коше уже идет стройка: ${syndicateModuleLabel(syndicate.construction.module)} → ур. ${syndicate.construction.targetLevel}`,
+      status: 409,
+    };
+  }
+
+  let current: number;
+  let place = '';
+  if (module === 'BRAMA') {
+    if (!systemId) return { ok: false, error: 'Не указана система Брамы', status: 400 };
+    const [system, colony, gate] = await Promise.all([
+      prisma.solarSystem.findUnique({ where: { id: systemId }, select: { name: true } }),
+      prisma.base.findFirst({ where: { planet: { systemId }, commander: { syndicateId: access.syndicateId } }, select: { id: true } }),
+      prisma.syndicateGate.findUnique({ where: { syndicateId_systemId: { syndicateId: access.syndicateId, systemId } } }),
+    ]);
+    if (!system) return { ok: false, error: 'Система не найдена', status: 404 };
+    if (!colony) return { ok: false, error: 'Брама ставится только в системе, где есть колония участника', status: 409 };
+    current = gate?.level ?? 0;
+    place = ` · ${system.name}`;
+  } else {
+    current = { KISH: syndicate.kishLevel, SKARBNYTSIA: syndicate.treasuryLevel, AKADEMIIA: syndicate.academyLevel, DOZOR: syndicate.watchLevel }[module];
+  }
+
+  const target = current + 1;
+  const cost = syndicateModuleCost(module, target);
+  const techState = await syndicateTechState(access.syndicateId);
+  const seconds = syndicateBuildSeconds(module, target, techState.levels.ENGINEERING);
+  const label = syndicateModuleLabel(module);
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      await payFromTreasury(tx, access.syndicateId, cost);
+      await tx.syndicateConstruction.create({
+        data: {
+          syndicateId: access.syndicateId,
+          module,
+          systemId: module === 'BRAMA' ? systemId : null,
+          targetLevel: target,
+          finishesAt: new Date(Date.now() + seconds * 1000),
+          credits: cost.credits,
+          ore: cost.ore,
+          polymers: cost.polymers,
+          actorId: commanderId,
+        },
+      });
+      await tx.syndicate.update({
+        where: { id: access.syndicateId },
+        data: { investedValue: { increment: costUnits(cost) } },
+      });
+      await tx.syndicateTransaction.create({
+        data: {
+          syndicateId: access.syndicateId,
+          actorId: commanderId,
+          kind: MODULE_TX_KIND[module],
+          amount: cost.credits,
+          ore: cost.ore,
+          polymers: cost.polymers,
+          comment: `${label}${place} → ур. ${target}`,
+        },
+      });
+    });
+  } catch (error) {
+    if (isUniqueViolation(error)) return { ok: false, error: 'В Коше уже идет стройка', status: 409 };
+    return toError(error, 'Не удалось начать стройку');
+  }
+  return { ok: true, message: `Стройка начата: ${label}${place} → ур. ${target}, готово через ${durationText(seconds)}` };
+}
+
+/**
+ * Завершение строек по сроку. Зовется таймером сервера по всем синдикатам
+ * и лениво — перед чтением синдиката: уровень модуля решает предел состава,
+ * защиту казны и пропуск Брамы, и ждать, пока кто-то откроет Кіш, нельзя.
+ * Удаление стройки условное, поэтому два вызова одну стройку не закроют дважды.
+ */
+export async function settleSyndicateBuilds(syndicateId?: string): Promise<number> {
+  const due = await prisma.syndicateConstruction.findMany({
+    where: { finishesAt: { lte: new Date() }, ...(syndicateId ? { syndicateId } : {}) },
+  });
+  let done = 0;
+  for (const job of due) {
+    const finished = await prisma.$transaction(async (tx) => {
+      const removed = await tx.syndicateConstruction.deleteMany({ where: { id: job.id } });
+      if (removed.count === 0) return false;
+      const level = job.targetLevel;
+      switch (job.module) {
+        case 'KISH':
+          await tx.syndicate.update({ where: { id: job.syndicateId }, data: { kishLevel: level } });
+          break;
+        case 'SKARBNYTSIA':
+          await tx.syndicate.update({ where: { id: job.syndicateId }, data: { treasuryLevel: level } });
+          break;
+        case 'AKADEMIIA':
+          await tx.syndicate.update({ where: { id: job.syndicateId }, data: { academyLevel: level } });
+          break;
+        case 'DOZOR':
+          await tx.syndicate.update({ where: { id: job.syndicateId }, data: { watchLevel: level } });
+          break;
+        case 'BRAMA':
+          if (job.systemId) {
+            await tx.syndicateGate.upsert({
+              where: { syndicateId_systemId: { syndicateId: job.syndicateId, systemId: job.systemId } },
+              create: { syndicateId: job.syndicateId, systemId: job.systemId, level },
+              update: { level },
+            });
+          }
+          break;
+      }
+      return true;
+    });
+    if (!finished) continue;
+    done += 1;
+    try {
+      await notifyMembers(job.syndicateId, 'Стройка в Коше завершена',
+        `${syndicateModuleLabel(job.module)} теперь ${job.targetLevel} уровня.`);
+    } catch (error) {
+      console.error('[syndicate] письмо о стройке не ушло', error);
+    }
+  }
+  return done;
+}
+
+/** Отмена стройки: казна получает назад ровно то, что за нее заплатила. */
+export async function cancelConstruction(commanderId: string): Promise<SyndicateResult> {
+  const access = await membershipOf(commanderId);
+  if (!access.ok) return access;
+  const job = await prisma.syndicateConstruction.findUnique({ where: { syndicateId: access.syndicateId } });
+  if (!job) return { ok: false, error: 'В Коше ничего не строится', status: 404 };
+  if (!hasPermission(access, modulePermission(job.module))) {
+    return { ok: false, error: 'Недостаточно прав в синдикате', status: 403 };
+  }
+  if (job.finishesAt.getTime() <= Date.now()) {
+    await settleSyndicateBuilds(access.syndicateId);
+    return { ok: false, error: 'Стройка уже завершена', status: 409 };
+  }
+  const label = syndicateModuleLabel(job.module);
+  try {
+    await prisma.$transaction(async (tx) => {
+      const removed = await tx.syndicateConstruction.deleteMany({ where: { id: job.id } });
+      if (removed.count === 0) throw new SyndicateError('Стройку уже отменили или завершили', 409);
+      await tx.syndicateBank.update({
+        where: { syndicateId: access.syndicateId },
+        data: { credits: { increment: job.credits }, ore: { increment: job.ore }, polymers: { increment: job.polymers } },
+      });
+      await tx.syndicate.update({
+        where: { id: access.syndicateId },
+        data: { investedValue: { decrement: job.credits + job.ore + job.polymers } },
+      });
+      await tx.syndicateTransaction.create({
+        data: {
+          syndicateId: access.syndicateId,
+          actorId: commanderId,
+          kind: 'BUILD_REFUND',
+          amount: job.credits,
+          ore: job.ore,
+          polymers: job.polymers,
+          comment: `Отмена: ${label} → ур. ${job.targetLevel}`,
+        },
+      });
+    });
+  } catch (error) {
+    return toError(error, 'Не удалось отменить стройку');
+  }
+  return { ok: true, message: `Стройка отменена: ${label}, казне возвращено все` };
+}
+
 /**
  * Завершение изучения по сроку.
  *
@@ -1610,41 +1746,7 @@ async function settleSyndicateResearch(syndicateId: string): Promise<void> {
 
 /** Постройка и повышение Академии из казны: гривна, руда и полимеры. */
 export async function upgradeAcademy(commanderId: string): Promise<SyndicateResult> {
-  const access = await requirePermission(commanderId, 'ACADEMY');
-  if (!access.ok) return access;
-
-  const syndicate = await prisma.syndicate.findUnique({ where: { id: access.syndicateId } });
-  if (!syndicate) return { ok: false, error: 'Синдикат не найден', status: 404 };
-  const target = syndicate.academyLevel + 1;
-  const cost = academyUpgradeCost(target);
-
-  try {
-    await prisma.$transaction(async (tx) => {
-      await payFromTreasury(tx, access.syndicateId, cost);
-      const raised = await tx.syndicate.updateMany({
-        where: { id: access.syndicateId, academyLevel: syndicate.academyLevel },
-        data: { academyLevel: target, investedValue: { increment: costUnits(cost) } },
-      });
-      if (raised.count === 0) throw new SyndicateError('Академию уже повысили', 409);
-      await tx.syndicateTransaction.create({
-        data: {
-          syndicateId: access.syndicateId,
-          actorId: commanderId,
-          kind: 'ACADEMY_UPGRADE',
-          amount: cost.credits,
-          ore: cost.ore,
-          polymers: cost.polymers,
-          comment: `Академия → ур. ${target}`,
-        },
-      });
-    });
-  } catch (error) {
-    return toError(error, 'Не удалось повысить Академию');
-  }
-  return {
-    ok: true,
-    message: target === 1 ? 'Академия построена: открыты технологии первого уровня' : `Академия ${target} уровня`,
-  };
+  return startConstruction(commanderId, 'AKADEMIIA', null);
 }
 
 /**
@@ -1668,7 +1770,7 @@ export async function startSyndicateResearch(commanderId: string, tech: Syndicat
     return { ok: false, error: `Для ${target} уровня нужна Академия ${target} уровня`, status: 409 };
   }
   const cost = syndicateTechCost(target);
-  const seconds = syndicateResearchSeconds(target, syndicate.academyLevel);
+  const seconds = syndicateResearchSeconds(target, syndicate.academyLevel, state.levels.ENGINEERING);
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -1709,46 +1811,7 @@ export async function startSyndicateResearch(commanderId: string, tech: Syndicat
 
 /** Постройка и повышение Дозора из казны — то же право, что развитие Коша. */
 export async function upgradeWatch(commanderId: string): Promise<SyndicateResult> {
-  const access = await requirePermission(commanderId, 'KISH');
-  if (!access.ok) return access;
-
-  const syndicate = await prisma.syndicate.findUnique({ where: { id: access.syndicateId } });
-  if (!syndicate) return { ok: false, error: 'Синдикат не найден', status: 404 };
-  const target = syndicate.watchLevel + 1;
-  const cost = watchUpgradeCost(target);
-
-  try {
-    await prisma.$transaction(async (tx) => {
-      const paid = await tx.syndicateBank.updateMany({
-        where: { syndicateId: access.syndicateId, credits: { gte: cost } },
-        data: { credits: { decrement: cost } },
-      });
-      if (paid.count === 0) throw new SyndicateError(`В казне нужно ${cost} ₴`, 409);
-      const raised = await tx.syndicate.updateMany({
-        where: { id: access.syndicateId, watchLevel: syndicate.watchLevel },
-        data: { watchLevel: target, investedValue: { increment: cost } },
-      });
-      if (raised.count === 0) throw new SyndicateError('Дозор уже повысили', 409);
-      await tx.syndicateTransaction.create({
-        data: {
-          syndicateId: access.syndicateId,
-          actorId: commanderId,
-          kind: 'WATCH_UPGRADE',
-          amount: cost,
-          comment: `Дозор → ур. ${target}`,
-        },
-      });
-    });
-  } catch (error) {
-    return toError(error, 'Не удалось повысить Дозор');
-  }
-  const radius = watchRadius(target);
-  return {
-    ok: true,
-    message: radius === 0
-      ? 'Дозор построен: видно атаки на участников в системе Коша'
-      : `Дозор ${target} уровня: видно атаки на участников в радиусе ${radius} от Коша`,
-  };
+  return startConstruction(commanderId, 'DOZOR', null);
 }
 
 /**

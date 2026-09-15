@@ -100,7 +100,7 @@ export function watchUpgradeCost(targetLevel: number): number {
 
 /* ------------------------- Академия и технологии ------------------------- */
 
-export const SYNDICATE_TECHS = ['MINING', 'CONSTRUCTION', 'CARGO', 'TRADE', 'VAULT', 'COUNTERINTEL'] as const;
+export const SYNDICATE_TECHS = ['MINING', 'CONSTRUCTION', 'CARGO', 'TRADE', 'VAULT', 'COUNTERINTEL', 'ENGINEERING'] as const;
 export type SyndicateTech = (typeof SYNDICATE_TECHS)[number];
 export type SyndicateTechLevels = Record<SyndicateTech, number>;
 
@@ -111,6 +111,7 @@ export const SYNDICATE_TECH_LABELS: Record<SyndicateTech, string> = {
   TRADE: 'Торговые связи',
   VAULT: 'Тайники',
   COUNTERINTEL: 'Контрразведка',
+  ENGINEERING: 'Инженерный корпус',
 };
 
 export const SYNDICATE_TECH_EFFECTS: Record<SyndicateTech, string> = {
@@ -120,6 +121,7 @@ export const SYNDICATE_TECH_EFFECTS: Record<SyndicateTech, string> = {
   TRADE: 'комиссия биржи на 3% ниже за уровень',
   VAULT: 'несгораемая доля склада +3% за уровень',
   COUNTERINTEL: '+1 к «Шпионажу» в обороне за каждые 3 уровня',
+  ENGINEERING: 'стройка в Коше и изучение технологий синдиката на 10% быстрее за уровень',
 };
 
 export function isSyndicateTech(value: unknown): value is SyndicateTech {
@@ -127,7 +129,7 @@ export function isSyndicateTech(value: unknown): value is SyndicateTech {
 }
 
 export function emptySyndicateTechLevels(): SyndicateTechLevels {
-  return { MINING: 0, CONSTRUCTION: 0, CARGO: 0, TRADE: 0, VAULT: 0, COUNTERINTEL: 0 };
+  return { MINING: 0, CONSTRUCTION: 0, CARGO: 0, TRADE: 0, VAULT: 0, COUNTERINTEL: 0, ENGINEERING: 0 };
 }
 
 /*
@@ -173,10 +175,21 @@ export function academyUpgradeCost(targetLevel: number): TreasuryCost {
 
 export const SYNDICATE_RESEARCH_BASE_SECONDS = 3600;
 
-export function syndicateResearchSeconds(targetLevel: number, academyLevel: number): number {
+/*
+ * «Инженерный корпус» ускоряет все работы самого Коша — стройку модулей
+ * и изучение технологий, — по десять процентов за уровень. На бонусы
+ * участников он не влияет: это наука о Коше, а не о колониях.
+ */
+export const ENGINEERING_STEP = 0.1;
+
+export function kishSpeedup(engineeringLevel: number): number {
+  return 1 + ENGINEERING_STEP * Math.max(0, Math.floor(engineeringLevel));
+}
+
+export function syndicateResearchSeconds(targetLevel: number, academyLevel: number, engineeringLevel = 0): number {
   const raw = SYNDICATE_RESEARCH_BASE_SECONDS * Math.pow(2, Math.max(0, targetLevel - 1));
   const surplus = Math.max(0, academyLevel - targetLevel);
-  return Math.max(60, Math.round(raw / (1 + surplus * 0.25)));
+  return Math.max(60, Math.round(raw / (1 + surplus * 0.25) / kishSpeedup(engineeringLevel)));
 }
 
 /** Изучение, чей срок прошел, уже действует — даже если его еще никто не записал. */
@@ -481,7 +494,7 @@ export function normalizeDescription(raw: unknown): string | null {
 /** Направление операции казны — для журнала и сводки поступлений и расходов. */
 export type TreasuryFlow = 'IN' | 'OUT' | 'NEUTRAL';
 
-const INCOMING_TREASURY_KINDS: readonly string[] = ['DONATION', 'TAX', 'ENTRY_FEE', 'RESOURCE_DELIVERY'];
+const INCOMING_TREASURY_KINDS: readonly string[] = ['DONATION', 'TAX', 'ENTRY_FEE', 'RESOURCE_DELIVERY', 'BUILD_REFUND'];
 
 /**
  * Основание — не поступление и не расход: цена основания сгорает, в казну
@@ -556,6 +569,38 @@ export function isSyndicateModule(value: unknown): value is SyndicateModule {
 
 export const PROJECTION_DEPTH = 10;
 
+/*
+ * Модули Коша строятся по времени, как постройки колонии. Одна стройка
+ * на синдикат: Кіш — общая мастерская, и очередь в ней общая. Срок удваивается
+ * с уровнем; Брама и Академия строятся дольше остальных — это самые
+ * сильные постройки. «Инженерный корпус» делит срок так же, как изучение.
+ */
+export const SYNDICATE_BUILD_BASE_SECONDS: Record<SyndicateModule, number> = {
+  KISH: 1800,
+  SKARBNYTSIA: 1800,
+  AKADEMIIA: 3600,
+  DOZOR: 1800,
+  BRAMA: 7200,
+};
+
+export function syndicateBuildSeconds(module: SyndicateModule, targetLevel: number, engineeringLevel = 0): number {
+  const raw = SYNDICATE_BUILD_BASE_SECONDS[module] * Math.pow(2, Math.max(0, targetLevel - 1));
+  return Math.max(60, Math.round(raw / kishSpeedup(engineeringLevel)));
+}
+
+/** Какое право нужно, чтобы строить или отменять стройку модуля. */
+export function modulePermission(module: SyndicateModule): SyndicatePermission {
+  return module === 'AKADEMIIA' ? 'ACADEMY' : 'KISH';
+}
+
+export function syndicateModuleCost(module: SyndicateModule, targetLevel: number): TreasuryCost {
+  return MODULE_INFO[module].cost(targetLevel);
+}
+
+export function syndicateModuleLabel(module: SyndicateModule): string {
+  return MODULE_INFO[module].label;
+}
+
 export interface SyndicateProjectionRow {
   level: number;
   /** Текущий уровень идет первой строкой: у него нет цены, он уже оплачен. */
@@ -621,12 +666,19 @@ const MODULE_INFO: Record<SyndicateModule, {
   },
 };
 
-export function syndicateModuleProjection(module: SyndicateModule, level: number): SyndicateProjection {
+export function syndicateModuleProjection(module: SyndicateModule, level: number, engineeringLevel = 0): SyndicateProjection {
   const info = MODULE_INFO[module];
   const current = Math.max(0, Math.floor(level));
   const rows: SyndicateProjectionRow[] = [{ level: current, current: true, cost: null, seconds: null, effect: info.effect(current), note: null }];
   for (let target = current + 1; target <= current + PROJECTION_DEPTH; target += 1) {
-    rows.push({ level: target, current: false, cost: info.cost(target), seconds: null, effect: info.effect(target), note: null });
+    rows.push({
+      level: target,
+      current: false,
+      cost: info.cost(target),
+      seconds: syndicateBuildSeconds(module, target, engineeringLevel),
+      effect: info.effect(target),
+      note: null,
+    });
   }
   return { key: module, label: info.label, description: info.description, level: current, effectLabel: info.effectLabel, rows };
 }
@@ -640,10 +692,11 @@ export function syndicateTechEffect(tech: SyndicateTech, level: number): string 
     case 'TRADE': return `−${percent}% комиссии`;
     case 'VAULT': return `+${percent}% несгораемой доли`;
     case 'COUNTERINTEL': return `+${Math.floor(Math.max(0, level) / 3)} к «Шпионажу»`;
+    case 'ENGINEERING': return `+${Math.round(ENGINEERING_STEP * Math.max(0, level) * 100)}% скорости работ Коша`;
   }
 }
 
-export function syndicateTechProjection(tech: SyndicateTech, level: number, academyLevel: number): SyndicateProjection {
+export function syndicateTechProjection(tech: SyndicateTech, level: number, academyLevel: number, engineeringLevel = 0): SyndicateProjection {
   const current = Math.max(0, Math.floor(level));
   const rows: SyndicateProjectionRow[] = [{
     level: current, current: true, cost: null, seconds: null, effect: syndicateTechEffect(tech, current), note: null,
@@ -653,7 +706,7 @@ export function syndicateTechProjection(tech: SyndicateTech, level: number, acad
       level: target,
       current: false,
       cost: syndicateTechCost(target),
-      seconds: syndicateResearchSeconds(target, academyLevel),
+      seconds: syndicateResearchSeconds(target, academyLevel, engineeringLevel),
       effect: syndicateTechEffect(tech, target),
       note: academyLevel < target ? `нужна Академия ур. ${target}` : null,
     });

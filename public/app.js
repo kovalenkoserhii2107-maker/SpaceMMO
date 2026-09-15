@@ -175,6 +175,7 @@
     kishDefenses: $('kish-defenses'),
     kishAway: $('kish-away'),
     kishFleet: $('kish-fleet'),
+    kishBuildJob: $('kish-build-job'),
     dispatchOriginRow: $('dispatch-origin-row'),
     dispatchOrigin: $('dispatch-origin'),
     kishAwayTitle: $('kish-away-title'),
@@ -2088,11 +2089,11 @@
       // Оболочка карточки прячет строку по умолчанию: она есть только
       // у построек, у кораблей и техники своего расхода нет.
       card.energyRow.hidden = false;
-      card.energy.innerHTML =
-        nextUsage <= 0
-          ? '<span class="muted">нет</span>'
-          : `<span>${fmtEnergy(usage)} → ${fmtEnergy(nextUsage)}</span>` +
-            (grow > 0 ? ` <span class="grow">+${fmtEnergy(grow)}</span>` : '');
+      // Только прирост: сколько сейчас и сколько станет — в подробностях карточки,
+      // а на самой карточке решает одно число — на сколько вырастет расход.
+      card.energy.innerHTML = grow > 0
+        ? `<span class="grow">+${fmtEnergy(grow)}</span>`
+        : '<span class="muted">не растет</span>';
     }
     fillCost(card, building.cost, base.resources);
     card.time.textContent = fmtTime(building.seconds);
@@ -5850,6 +5851,7 @@
     TREASURY_UPGRADE: 'Скарбниця',
     KISH_DEFENSE: 'оборона Коша',
     KISH_RAIDED: 'налет на Кіш',
+    BUILD_REFUND: 'возврат за стройку',
   };
   const RECRUITMENT_LABELS = { OPEN: 'открыт', APPLICATION: 'по заявке', CLOSED: 'закрыт' };
 
@@ -6612,17 +6614,30 @@
     renderKishResearchBanner();
   }
 
-  /** Полоса изучения тикает между загрузками сама — от момента последнего ответа. */
+  /**
+   * Полосы изучения и стройки тикают между загрузками сами — от момента
+   * последнего ответа сервера. Отменить стройку может ранг с тем же правом,
+   * что и строить: Академию — право Академии, остальное — развитие Коша.
+   */
   function renderKishResearchBanner() {
     const mine = syndicate.data && syndicate.data.mine;
-    const research = mine && mine.academy.research;
     const elapsed = syndicate.loadedAt ? (Date.now() - syndicate.loadedAt) / 1000 : 0;
+    const research = mine && mine.academy.research;
     renderJobBanner(el.kishResearchJob, research && {
       title: `${research.label} → ур. ${research.targetLevel}`,
       remainingSeconds: Math.max(0, Math.round(research.remainingSeconds - elapsed)),
       totalSeconds: research.totalSeconds,
     });
+    const build = mine && mine.construction;
+    const canCancel = Boolean(build) && mine.me.permissions.includes(build.module === 'AKADEMIIA' ? 'ACADEMY' : 'KISH');
+    renderJobBanner(el.kishBuildJob, build && {
+      title: `${build.label}${build.systemName ? ` · ${build.systemName}` : ''} → ур. ${build.targetLevel}`,
+      remainingSeconds: Math.max(0, Math.round(build.remainingSeconds - elapsed)),
+      totalSeconds: build.totalSeconds,
+      onCancel: canCancel ? () => syndicateAction('/api/syndicates/construction/cancel') : undefined,
+    });
   }
+
 
   function renderKishPanels() {
     const mine = syndicate.data && syndicate.data.mine;
@@ -6641,6 +6656,7 @@
       members: mine.members.length,
       academy: { ...mine.academy, research: mine.academy.research && [mine.academy.research.tech, mine.academy.research.targetLevel] },
       watch: { ...mine.watch, incoming: mine.watch.incoming.map((fleet) => fleet.fleetId) },
+      construction: mine.construction && [mine.construction.module, mine.construction.systemId, mine.construction.targetLevel],
       me: mine.me.permissions,
     });
     if (key === kishRenderKey) {
@@ -6752,13 +6768,24 @@
     card.level.textContent = options.level;
     card.combat.textContent = options.effect;
     fillTreasuryCost(card, options.cost, options.mine);
-    card.time.parentNode.hidden = true;
+    // Модули строятся по времени: срок стоит в той же строке, что у построек колонии.
+    if (typeof options.seconds === 'number') card.time.textContent = fmtTime(options.seconds);
+    else card.time.parentNode.hidden = true;
     if (options.extra) card.article.insertBefore(options.extra, card.button);
     const affordable = treasuryCovers(options.mine, options.cost);
+    const construction = options.mine.construction;
+    const constructionKey = construction
+      ? (construction.module === 'BRAMA' && construction.targetLevel === 1 && !options.mine.gates.list.some((gate) => gate.systemId === construction.systemId)
+        ? 'BRAMA:new'
+        : `${construction.module}:${construction.systemId || ''}`)
+      : null;
+    const buildingThis = constructionKey !== null && constructionKey === options.buildKey;
     card.article.classList.toggle('built', options.built !== false);
-    card.button.textContent = options.label;
-    card.button.disabled = !options.allowed || !affordable;
-    card.button.title = !options.allowed ? options.deniedHint : !affordable ? 'В казне не хватает на это' : '';
+    card.button.textContent = buildingThis ? 'Идет стройка' : options.label;
+    card.button.disabled = !options.allowed || !affordable || Boolean(construction);
+    card.button.title = !options.allowed ? options.deniedHint
+      : construction && !buildingThis ? 'В Коше уже идет стройка — стройка одна на синдикат'
+      : !affordable ? 'В казне не хватает на это' : '';
     return card;
   }
 
@@ -6773,7 +6800,7 @@
       description: 'Хаб синдиката. Каждый уровень добавляет одно место в составе.',
       level: `Ур. ${kish.level} → ${kish.level + 1}`,
       effect: `мест в составе: ${kish.memberCap}`,
-      cost: { credits: kish.nextLevelCost }, allowed: can('KISH'), deniedHint: denyKish,
+      cost: { credits: kish.nextLevelCost }, seconds: kish.nextLevelSeconds, buildKey: 'KISH:', allowed: can('KISH'), deniedHint: denyKish,
       label: 'Улучшить', onClick: () => syndicateAction('/api/syndicates/kish/upgrade'),
     });
     kishModuleCard(node, {
@@ -6781,7 +6808,7 @@
       description: 'Бережет часть ресурсной казны при налете на Кіш. Гривну не грабят вовсе.',
       level: `Ур. ${kish.treasuryLevel} → ${kish.treasuryLevel + 1}`,
       effect: `несгораемо ${Math.round(kish.protectedShare * 100)}% ресурсов казны`,
-      cost: kish.nextTreasuryCost, allowed: can('KISH'), deniedHint: denyKish, built: kish.treasuryLevel > 0,
+      cost: kish.nextTreasuryCost, seconds: kish.nextTreasurySeconds, buildKey: 'SKARBNYTSIA:', allowed: can('KISH'), deniedHint: denyKish, built: kish.treasuryLevel > 0,
       label: kish.treasuryLevel > 0 ? 'Улучшить' : 'Построить', onClick: () => syndicateAction('/api/syndicates/treasury/upgrade'),
     });
     kishModuleCard(node, {
@@ -6789,7 +6816,7 @@
       description: 'Открывает технологии синдиката. Ее уровень — потолок уровня любой технологии.',
       level: `Ур. ${mine.academy.level} → ${mine.academy.level + 1}`,
       effect: mine.academy.level > 0 ? `технологии до ур. ${mine.academy.level}` : 'технологии синдиката закрыты',
-      cost: mine.academy.nextLevelCost, allowed: can('ACADEMY'), deniedHint: 'Нужно право Академии', built: mine.academy.level > 0,
+      cost: mine.academy.nextLevelCost, seconds: mine.academy.nextLevelSeconds, buildKey: 'AKADEMIIA:', allowed: can('ACADEMY'), deniedHint: 'Нужно право Академии', built: mine.academy.level > 0,
       label: mine.academy.level > 0 ? 'Улучшить' : 'Построить', onClick: () => syndicateAction('/api/syndicates/academy/upgrade'),
     });
     kishModuleCard(node, {
@@ -6798,7 +6825,7 @@
       level: `Ур. ${mine.watch.level} → ${mine.watch.level + 1}`,
       effect: mine.watch.level <= 0 ? 'атаки на колонии не видны'
         : mine.watch.radius === 0 ? 'наблюдает систему Коша' : `радиус ${mine.watch.radius} от Коша`,
-      cost: { credits: mine.watch.nextLevelCost }, allowed: can('KISH'), deniedHint: denyKish, built: mine.watch.level > 0,
+      cost: { credits: mine.watch.nextLevelCost }, seconds: mine.watch.nextLevelSeconds, buildKey: 'DOZOR:', allowed: can('KISH'), deniedHint: denyKish, built: mine.watch.level > 0,
       label: mine.watch.level > 0 ? 'Улучшить' : 'Построить', onClick: () => syndicateAction('/api/syndicates/watch/upgrade'),
     });
 
@@ -6809,7 +6836,7 @@
         detailUrl: `/api/syndicates/projection/module/BRAMA?systemId=${encodeURIComponent(gate.systemId)}`,
         level: `Ур. ${gate.level} → ${gate.level + 1}`,
         effect: `за час ${fmt(gate.windowShips)} из ${fmt(gate.throughput)} кораблей`,
-        cost: gate.nextLevelCost, allowed: can('KISH'), deniedHint: denyKish,
+        cost: gate.nextLevelCost, seconds: gate.nextLevelSeconds, buildKey: `BRAMA:${gate.systemId}`, allowed: can('KISH'), deniedHint: denyKish,
         label: 'Улучшить', onClick: () => syndicateAction('/api/syndicates/gates', { systemId: gate.systemId }),
       });
     }
@@ -6825,7 +6852,7 @@
       kishModuleCard(node, {
         mine, type: 'BRAMA', title: 'Новая Брама', detailUrl: '/api/syndicates/projection/module/BRAMA', description: 'Строится в системе, где есть колония хотя бы одного участника.',
         level: 'Ур. 0 → 1', effect: gateDescription, extra: synField('Система', select),
-        cost: mine.gates.firstLevelCost, allowed: can('KISH'), deniedHint: denyKish, built: false,
+        cost: mine.gates.firstLevelCost, seconds: mine.gates.firstLevelSeconds, buildKey: 'BRAMA:new', allowed: can('KISH'), deniedHint: denyKish, built: false,
         label: 'Построить', onClick: () => syndicateAction('/api/syndicates/gates', { systemId: select.value }),
       });
     }
@@ -6944,6 +6971,12 @@
     status.appendChild(synEl('div', 'hub-storage', mine.academy.research
       ? `Изучается: ${mine.academy.research.label} → ур. ${mine.academy.research.targetLevel}`
       : mine.academy.level > 0 ? 'Академия свободна — изучение ставится в разделе «Академия».' : 'Академия не построена.'));
+    if (mine.construction) {
+      const build = mine.construction;
+      status.appendChild(synEl('div', 'hub-storage warn',
+        `Стройка: ${build.label}${build.systemName ? ` · ${build.systemName}` : ''} → ур. ${build.targetLevel}, ` +
+        `готово ${synDateTime(Date.now() + build.remainingSeconds * 1000)}`));
+    }
     status.appendChild(synEl('div', 'hub-storage', kish.guards.length
       ? `На удержании у Коша: ${kish.guards.map((guard) => `${guard.nickname} (${fmt(guard.ships)})`).join(' · ')}`
       : 'Флотов на удержании у Коша нет.'));

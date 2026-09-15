@@ -225,6 +225,7 @@ model Syndicate {
   warsStarted  SyndicateWar[]          @relation("SyndicateWarAggressor")
   warsAgainst  SyndicateWar[]          @relation("SyndicateWarTarget")
   pactsFirst   SyndicatePact[]         @relation("PactFirst")
+  construction SyndicateConstruction?
   pactsSecond  SyndicatePact[]         @relation("PactSecond")
 
   @@map("syndicates")
@@ -390,6 +391,8 @@ enum SyndicateTxKind {
   TREASURY_UPGRADE
   KISH_DEFENSE
   KISH_RAIDED
+  /// Возврат казны за отмененную стройку в Коше.
+  BUILD_REFUND
 }
 
 enum SyndicatePermission {
@@ -1201,6 +1204,8 @@ enum SyndicateTechType {
   TRADE
   VAULT
   COUNTERINTEL
+  /// Ускоряет стройку модулей Коша и изучение технологий синдиката.
+  ENGINEERING
 }
 
 model SyndicateTechnology {
@@ -1315,4 +1320,35 @@ model SyndicatePact {
   @@unique([firstSyndicateId, secondSyndicateId, type])
   @@index([secondSyndicateId])
   @@map("syndicate_pacts")
+}
+
+/// Модули Коша, которые строятся по времени.
+enum SyndicateModuleKind {
+  KISH
+  SKARBNYTSIA
+  AKADEMIIA
+  DOZOR
+  BRAMA
+}
+
+/// Стройка в Коше: одна на синдикат. Цена списана при запуске и хранится
+/// здесь же — ее полностью возвращает отмена.
+model SyndicateConstruction {
+  id          String              @id @default(cuid())
+  syndicateId String              @unique
+  module      SyndicateModuleKind
+  /// Система Брамы; у остальных модулей пусто.
+  systemId    String?
+  targetLevel Int
+  startedAt   DateTime            @default(now())
+  finishesAt  DateTime
+  credits     Int                 @default(0)
+  ore         Int                 @default(0)
+  polymers    Int                 @default(0)
+  actorId     String?
+
+  syndicate Syndicate @relation(fields: [syndicateId], references: [id], onDelete: Cascade)
+
+  @@index([finishesAt])
+  @@map("syndicate_constructions")
 }

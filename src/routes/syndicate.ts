@@ -31,6 +31,7 @@ import {
   upgradeTreasury,
   updateDescription,
   getSyndicateProjection,
+  cancelConstruction,
   buyKishDefense,
   buildGate,
   moveKish,
@@ -210,6 +211,11 @@ syndicateRouter.post('/rules', async (req, res: Response<ActionResponse | ErrorR
     return;
   }
   send(res, await updateRules(currentCommander(req).id, { recruitment: body.recruitment, minScore, entryFee }));
+});
+
+/** Отменить стройку в Коше: казна получает назад всю цену. */
+syndicateRouter.post('/construction/cancel', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  send(res, await cancelConstruction(currentCommander(req).id));
 });
 
 /** Уровни вперед у модуля Коша; у Брамы — по системе, где она стоит или встанет. */

@@ -7,6 +7,9 @@
  */
 import {
   BUFF_TENURE_MS,
+  kishSpeedup,
+  syndicateBuildSeconds,
+  modulePermission,
   PROJECTION_DEPTH,
   bramaUpgradeCost as bramaCostForProjection,
   syndicateModuleProjection,
@@ -237,6 +240,18 @@ console.log('\n=== 8. Подробности модулей и технолог�
   check('контрразведка дает +1 на третьем уровне', counter.rows[1]!.effect === '+1 к «Шпионажу»', counter.rows[1]!.effect);
   check('уровень выше Академии помечен', counter.rows[1]!.note === 'нужна Академия ур. 3' && counter.rows[0]!.note === null);
   check('у технологии есть срок изучения, у текущего уровня — нет', counter.rows[1]!.seconds! > 0 && counter.rows[0]!.seconds === null);
+}
+
+console.log('\n=== 9. Стройка в Коше и «Инженерный корпус» ===');
+{
+  check('Брама строится дольше Дозора', syndicateBuildSeconds('BRAMA', 1) > syndicateBuildSeconds('DOZOR', 1));
+  check('срок стройки удваивается с уровнем', syndicateBuildSeconds('SKARBNYTSIA', 3) === 2 * syndicateBuildSeconds('SKARBNYTSIA', 2));
+  check('«Инженерный корпус» ускоряет стройку на 10% за уровень',
+    syndicateBuildSeconds('BRAMA', 2, 5) === Math.round(syndicateBuildSeconds('BRAMA', 2) / 1.5) && kishSpeedup(5) === 1.5);
+  check('«Инженерный корпус» ускоряет и изучение', syndicateResearchSeconds(4, 4, 10) < syndicateResearchSeconds(4, 4, 0));
+  check('Академию строит право Академии, остальное — право развития Коша',
+    modulePermission('AKADEMIIA') === 'ACADEMY' && modulePermission('BRAMA') === 'KISH');
+  check('у модулей в таблице уровней есть срок стройки', syndicateModuleProjection('DOZOR', 1).rows[1]!.seconds === syndicateBuildSeconds('DOZOR', 2));
 }
 
 const passed = results.filter((r) => r.passed).length;
