@@ -3398,3 +3398,19 @@ button.tiny { padding: 4px 10px; font-size: 11px; flex: none; }
 
 /* Своя Брама и Кіш над системой на карте галактики. */
 .system-label.gate-badge { fill: var(--accent); font-weight: 600; }
+
+/*
+ * Кіш как колония. В шапке вместо ресурсов базы стоит казна, а служебные
+ * энергия и КПД шахт к Кошу не относятся — их прячем, а не показываем нулями.
+ */
+.kish-mode .res-aux { display: none; }
+.base-list-kish button { border-left: 3px solid var(--accent); }
+.kish-head { display: flex; gap: 16px; align-items: center; margin-bottom: 16px; }
+.kish-head h2 { margin: 0 0 4px; font-size: 20px; }
+.kish-head .art { width: 96px; height: 96px; flex: none; }
+.kish-head .art img { width: 100%; height: 100%; object-fit: contain; }
+.kish-treasury { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; margin: 8px 0; }
+.kish-res { display: flex; align-items: center; gap: 6px; }
+.kish-summary { margin-bottom: 16px; }
+.cards > .hub-card { grid-column: 1 / -1; }
+.cost-credits.lack { color: var(--err); }

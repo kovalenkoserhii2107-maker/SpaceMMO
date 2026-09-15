@@ -472,6 +472,38 @@
           <div id="defenses" class="cards"></div>
         </section>
 
+        <!--
+          Кіш синдиката выбирается в переключателе колоний, и разделы колонии
+          ведут сюда: центр управления, модули, технологии и оборона Коша.
+          Верфь, биржа и карты к Кошу не относятся — для них отдельная заглушка.
+        -->
+        <section data-panel="kish-overview" hidden>
+          <h3 class="panel-title">Центр управления Коша</h3>
+          <div id="kish-overview"></div>
+        </section>
+
+        <section data-panel="kish-modules" hidden>
+          <h3 class="panel-title">Модули Коша</h3>
+          <div id="kish-modules" class="cards"></div>
+        </section>
+
+        <section data-panel="kish-research" hidden>
+          <h3 class="panel-title">Технологии синдиката</h3>
+          <div id="kish-research-job" class="job-banner" hidden></div>
+          <div id="kish-techs" class="cards"></div>
+        </section>
+
+        <section data-panel="kish-defense" hidden>
+          <h3 class="panel-title">Оборона Коша</h3>
+          <div id="kish-defense-summary" class="hub-card kish-summary"></div>
+          <div id="kish-defenses" class="cards"></div>
+        </section>
+
+        <section data-panel="kish-away" hidden>
+          <h3 class="panel-title" id="kish-away-title">Недоступно для Коша</h3>
+          <div id="kish-away" class="hub-card"></div>
+        </section>
+
         <section data-panel="map" hidden>
           <div class="map-modes">
             <button type="button" class="mode" data-mode="system">Система</button>
