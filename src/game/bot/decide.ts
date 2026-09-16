@@ -359,6 +359,16 @@ export interface BotSnapshot {
    * и чем кончилась. `decide` остается чистой и просто не выбирает эти цели.
    */
   scoutBlocked: string[];
+  /**
+   * Разведка не удается вовсе: зонды гибнут один за другим.
+   *
+   * Закрывать цели по одной мало — бот просто берет следующую и перебирает
+   * соседей подряд. Живые Яструб и Беркут с «Шпионажем» 4 при шестерке
+   * и восьмерке у соседей потеряли так восемь зондов за семь минут, меняя
+   * цель каждый раз. Отстающему нужна не другая планета, а уровень
+   * технологии: пока его нет, любой зонд — подарок чужой контрразведке.
+   */
+  scoutHopeless: boolean;
   /** Свой синдикат. null — бот одиночка. */
   syndicate: BotSyndicate | null;
   /** Все синдикаты сервера: из них модель выбирает, куда вступить. */
@@ -2281,7 +2291,11 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
             undefined,
           )
       : undefined;
-    const blind = blindThreat ?? (blindPrey ? { planetId: blindPrey.planetId, why: 'цель не разведана' } : null);
+    // Пока «Шпионаж» не подтянут, зонд не долетает ни до кого: смены цели
+    // тут не помогают, помогает только технология.
+    const blind = snapshot.scoutHopeless
+      ? null
+      : blindThreat ?? (blindPrey ? { planetId: blindPrey.planetId, why: 'цель не разведана' } : null);
 
     const scout = snapshot.bases.find((base) => base.ships.PROBE > 0);
     if (blind && scout) {
@@ -2325,7 +2339,13 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
      * отчет о бое показывает приведенный флот целиком.
      */
     const yard = snapshot.bases.find((base) => base.levels.SHIPYARD > 0 && base.shipQueue < 3);
-    if (blindPrey && !scout && yard && missingShipRequirements('PROBE', yard.levels, snapshot.techs).length === 0) {
+    if (
+      blindPrey &&
+      !scout &&
+      !snapshot.scoutHopeless &&
+      yard &&
+      missingShipRequirements('PROBE', yard.levels, snapshot.techs).length === 0
+    ) {
       // Пара штук: зонд одноразовый, но заказывать их десятками незачем —
       // разведывают по одной цели за раз.
       intents.push({
@@ -2948,6 +2968,7 @@ export function emptyBotSnapshot(character: BotCharacter): BotSnapshot {
     },
     colonizing: false,
     scoutBlocked: [],
+    scoutHopeless: false,
     syndicate: null,
     syndicates: [],
     syndicateCooldown: false,

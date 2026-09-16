@@ -2552,6 +2552,18 @@ console.log('\n=== 7г. Сбитый зонд закрывает цель на �
     ).some((i) => i.kind === 'SHIPS' && i.ship === 'PROBE'),
   );
 
+  /*
+   * Закрывать цели по одной мало: бот берет следующую и перебирает соседей.
+   * Три потери подряд означают, что дело не в цели, а в уровне «Шпионажа».
+   */
+  const hopeless = snapshotWith({
+    character: 'AGGRESSOR',
+    bases: [testBase('home', { ships: { ...emptyShipCounts(), PROBE: 3 }, resources: { ore: 9000, polymers: 9000, plasma: 9000 } })],
+    raidTargets: [blind, target({ planetId: 'сосед', knownStrength: null, knownStock: null, orbit: 6 })],
+    scoutHopeless: true,
+  });
+  check('при безнадежной разведке зонды не летят никуда', !decide(hopeless).some((i) => i.kind === 'SCAN'));
+
   // Поручение модели проходит ту же проверку, что и решение кода.
   const asked = parseDirectives(
     [{ kind: 'SCOUT', planetId: 'крепость', why: 'хочу посмотреть' }],

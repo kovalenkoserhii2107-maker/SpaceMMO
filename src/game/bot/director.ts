@@ -108,6 +108,16 @@ function jitteredNext(now: number): Date {
 const SCOUT_RETRY_MS = 3600_000;
 const SCOUT_LONG_RETRY_MS = 12 * 3600_000;
 
+/*
+ * Сколько потерь подряд означают, что дело не в цели, а в уровне.
+ *
+ * Трех хватает: лестница шпионажа дает при отставании на два уровня один шанс
+ * из ста, и три потери подряд по разным целям — это не полоса невезения,
+ * а расклад. Живые Яструб и Беркут («Шпионаж» 4 против 6 и 8 у соседей)
+ * перебирали планету за планетой и теряли зонд на каждой.
+ */
+const SCOUT_STREAK_LIMIT = 3;
+
 interface ScoutAttempt {
   /** Когда слали зонд в последний раз. */
   at: number;
@@ -147,6 +157,31 @@ function blockedScouts(scouts: Record<string, ScoutAttempt>, espionage: number, 
     .map(([planetId]) => planetId);
 }
 
+/**
+ * Полоса неудач разведки: сколько зондов подряд не вернулось и при каком
+ * уровне «Шпионажа». Растет по разным целям — в этом и смысл.
+ */
+interface ScoutStreak {
+  fails: number;
+  espionage: number;
+}
+
+function readStreak(memory: unknown): ScoutStreak {
+  if (typeof memory !== 'object' || memory === null) return { fails: 0, espionage: 0 };
+  const raw = (memory as Record<string, unknown>)['scoutStreak'];
+  if (typeof raw !== 'object' || raw === null) return { fails: 0, espionage: 0 };
+  const row = raw as Record<string, unknown>;
+  return {
+    fails: typeof row['fails'] === 'number' ? row['fails'] : 0,
+    espionage: typeof row['espionage'] === 'number' ? row['espionage'] : 0,
+  };
+}
+
+/** Стоит ли вообще посылать зонды: при выросшем уровне полоса не в счет. */
+function hopelessScouting(streak: ScoutStreak, espionage: number): boolean {
+  return espionage <= streak.espionage && streak.fails >= SCOUT_STREAK_LIMIT;
+}
+
 /** Записать попытку: повтор по неразведанной цели — это неудача прошлой. */
 function markScout(
   scouts: Record<string, ScoutAttempt>,
@@ -161,7 +196,11 @@ function markScout(
 }
 
 /** Сохранить отметки разведки, не тронув остальную память (плана, расхода, пика). */
-async function saveScouts(botId: string, scouts: Record<string, ScoutAttempt>): Promise<void> {
+async function saveScouts(
+  botId: string,
+  scouts: Record<string, ScoutAttempt>,
+  streak: ScoutStreak,
+): Promise<void> {
   const bot = await prisma.bot.findUnique({ where: { id: botId }, select: { memory: true } });
   const memory = (typeof bot?.memory === 'object' && bot.memory !== null ? bot.memory : {}) as Record<
     string,
@@ -169,7 +208,13 @@ async function saveScouts(botId: string, scouts: Record<string, ScoutAttempt>): 
   >;
   await prisma.bot.update({
     where: { id: botId },
-    data: { memory: { ...memory, scouts: scouts as unknown as object } },
+    data: {
+      memory: {
+        ...memory,
+        scouts: scouts as unknown as object,
+        scoutStreak: streak as unknown as object,
+      },
+    },
   });
 }
 
@@ -461,6 +506,8 @@ export async function buildSnapshot(
     // Разведанное зондом, который не вернулся, — не разведано; но и слать
     // туда следующий сразу незачем.
     scoutBlocked: blockedScouts(readScouts(memory), commander.techs.ESPIONAGE ?? 0, Date.now()),
+    // Зонды гибнут один за другим по разным целям — значит дело не в цели.
+    scoutHopeless: hopelessScouting(readStreak(memory), commander.techs.ESPIONAGE ?? 0),
     ...(await syndicateView(commander, home.systemId)),
   };
 }
@@ -2221,6 +2268,7 @@ async function turn(botId: string): Promise<BotTurn | null> {
   // Отметки разведки живут весь заход: их правят и решения кода, и успех
   // прошлого зонда, а пишутся они одной записью в конце.
   let scouts = readScouts(bot.memory);
+  let streak = readStreak(bot.memory);
   let scoutsDirty = false;
 
   const profile = withPlan(bot.character, plan?.plan ?? null);
@@ -2257,7 +2305,16 @@ async function turn(botId: string): Promise<BotTurn | null> {
     if (result.ok && intent.kind === 'SCAN') {
       const stillBlind =
         snapshot.raidTargets.find((item) => item.planetId === intent.planetId)?.knownStrength === null;
-      scouts = markScout(scouts, intent.planetId, snapshot.techs.ESPIONAGE ?? 0, stillBlind);
+      const espionage = snapshot.techs.ESPIONAGE ?? 0;
+      scouts = markScout(scouts, intent.planetId, espionage, stillBlind);
+      /*
+       * Полоса считается по разным целям: смена планеты не меняет разницы
+       * уровней, а именно она решает, долетит ли дрон. Уровень запоминается
+       * вместе с полосой — подняв «Шпионаж», бот пробует снова.
+       */
+      if (stillBlind) {
+        streak = espionage > streak.espionage ? { fails: 1, espionage } : { fails: streak.fails + 1, espionage };
+      }
       scoutsDirty = true;
     }
   }
@@ -2266,10 +2323,12 @@ async function turn(botId: string): Promise<BotTurn | null> {
   for (const target of snapshot.raidTargets) {
     if (target.knownStrength !== null && scouts[target.planetId]) {
       delete scouts[target.planetId];
+      // Дрон вернулся — полоса кончилась: уровень позволяет смотреть.
+      streak = { fails: 0, espionage: snapshot.techs.ESPIONAGE ?? 0 };
       scoutsDirty = true;
     }
   }
-  if (scoutsDirty) await saveScouts(bot.id, scouts);
+  if (scoutsDirty) await saveScouts(bot.id, scouts, streak);
 
   // Дипломат: ответы на письма живых игроков.
   const mail = await answerMail(bot.commanderId, bot.character, spend, spentAll);
