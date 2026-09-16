@@ -33,12 +33,12 @@ import { hubRent, marketPrice } from '../market.js';
 import { deliver } from '../../services/mailService.js';
 import { COMBAT_TYPES, SHIP_TYPES, SQUADRON_TYPES, emptyShipCounts, type ShipCounts } from '../ships.js';
 import { fleetSize, fleetCapacity } from '../fleets.js';
-import { productionPerSecond, systemModifiers, storageCapacities } from '../rules.js';
+import { hasEnoughResources, productionPerSecond, systemModifiers, storageCapacities } from '../rules.js';
 import { economyBonuses, timeCompressionDrain } from '../techTree.js';
 import { storageUpgradeCost } from '../market.js';
 import { normalizeDefenses, normalizeShips } from '../fogOfWar.js';
 import { spentOnDefense, spentOnFleet } from '../score.js';
-import type { CommanderRuntimeState } from '../baseState.js';
+import { researchJoinCheck, type CommanderRuntimeState } from '../baseState.js';
 import {
   decide,
   raidValue,
@@ -78,6 +78,7 @@ import { LEAVE_COOLDOWN_MS, hasPermission, memberCap } from '../syndicate.js';
 import type { BotSyndicate, BotSyndicateListing } from './decide.js';
 import { declarePeace } from '../../services/warService.js';
 import { PLAN_TTL_MS, readStoredPlan, withPlan, type BotPlan } from './plan.js';
+import { expeditionSlots } from '../expeditions.js';
 
 /** Сколько ботов планировщик обрабатывает за один заход. */
 const BATCH = 5;
@@ -159,6 +160,8 @@ export async function buildSnapshot(
       where: { OR: [{ debrisOre: { gt: 0 } }, { debrisPolymers: { gt: 0 } }] },
       select: {
         id: true,
+        systemId: true,
+        position: true,
         debrisOre: true,
         debrisPolymers: true,
         system: { select: { galaxyX: true, galaxyY: true } },
@@ -303,6 +306,16 @@ export async function buildSnapshot(
       defenseQueue: base.defenseJobs.length,
     })),
     fleetsInFlight: commander.fleets.length,
+    expeditionsInFlight: commander.fleets.filter((fleet) => fleet.mission === 'EXPEDITION').length,
+    expeditionSlots: expeditionSlots(commander.techs),
+    joinableResearchBases: commander.research
+      ? bases
+          .filter((base) => {
+            const check = researchJoinCheck(commander, base, Date.now());
+            return check.kind === 'ready' && hasEnoughResources(base.resources, check.quote.price);
+          })
+          .map((base) => base.id)
+      : [],
     freePlanets,
     raidTargets,
     // Цену назначает рынок: она средневзвешенная по последним сделкам,
@@ -338,6 +351,8 @@ export async function buildSnapshot(
     warsAgainstMe: warsOnMe,
     debrisFields: debrisRows.map((row) => ({
       planetId: row.id,
+      systemId: row.systemId,
+      orbit: row.position,
       ore: row.debrisOre,
       polymers: row.debrisPolymers,
       distance: distance(homeGalaxy, row.system),
@@ -358,6 +373,7 @@ export async function buildSnapshot(
       free: stockUsage.free,
       level: stockUsage.level,
       upgradeCost: storageUpgradeCost(stockUsage.level + 1),
+      currentRentPerHour: hubRent(stockUsage.level) * 3600,
       nextRentPerHour: hubRent(stockUsage.level + 1) * 3600,
     },
     colonizing: commander.fleets.some((fleet) => fleet.mission === 'COLONIZE'),
@@ -516,6 +532,9 @@ async function execute(
     case 'RESEARCH':
       return gameLoop.startResearch(commanderId, intent.baseId, intent.tech);
 
+    case 'JOIN_RESEARCH':
+      return gameLoop.joinResearch(commanderId, intent.baseId);
+
     case 'SHIPS':
       return gameLoop.orderShips(commanderId, intent.baseId, intent.ship, intent.count);
 
@@ -534,6 +553,26 @@ async function execute(
         { ore: 0, polymers: 0, plasma: 0 },
       );
     }
+
+    case 'EXPEDITION':
+      return gameLoop.sendFleet(
+        commanderId,
+        intent.baseId,
+        {},
+        'EXPEDITION',
+        intent.ships,
+        { ore: 0, polymers: 0, plasma: 0 },
+      );
+
+    case 'HARVEST':
+      return gameLoop.sendFleet(
+        commanderId,
+        intent.baseId,
+        { planetId: intent.planetId },
+        'HARVEST',
+        intent.ships,
+        { ore: 0, polymers: 0, plasma: 0 },
+      );
 
     case 'SCAN': {
       const ships = emptyShipCounts();
@@ -896,6 +935,7 @@ async function buildBrief(
               { orbit: capital.orbit, systemId: capital.systemId },
               { galaxyX: 0, galaxyY: 0 },
               { galaxyX: target.distance, galaxyY: 0 },
+              snapshot.bases.some((base) => base.ships.RECYCLER > 0),
             )
           : null;
       return {

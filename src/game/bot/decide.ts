@@ -82,6 +82,7 @@ import {
   type SyndicateTechLevels,
   type TreasuryCost,
 } from '../syndicate.js';
+import { BOT_MILESTONE_LABELS, type BotMilestone } from './milestones.js';
 
 /* ------------------------- Снимок мира ------------------------- */
 
@@ -218,6 +219,8 @@ export interface BotMarketOrder {
 /** Поле обломков над планетой: их видно всем и туманом войны не скрывается. */
 export interface BotDebrisField {
   planetId: string;
+  systemId: string;
+  orbit: number;
   ore: number;
   polymers: number;
   distance: number;
@@ -288,6 +291,11 @@ export interface BotSnapshot {
   bases: BotBaseSnapshot[];
   /** Сколько кораблей бота уже в полете — по ним видно занятость. */
   fleetsInFlight: number;
+  /** Экспедиции занимают отдельные слоты, которые дает астрофизика. */
+  expeditionsInFlight: number;
+  expeditionSlots: number;
+  /** Вторичные лаборатории, которые прямо сейчас могут помочь исследованию. */
+  joinableResearchBases: string[];
   freePlanets: BotFreePlanet[];
   raidTargets: BotRaidTarget[];
   market: BotMarketRef[];
@@ -325,6 +333,8 @@ export interface BotSnapshot {
     /** Уровень склада и цена следующего: расширение платится криптогривной. */
     level: number;
     upgradeCost: number;
+    /** Текущая часовая аренда — часть денег нельзя считать свободной. */
+    currentRentPerHour: number;
     /**
      * Во что обойдется следующий уровень в час — навсегда.
      *
@@ -353,6 +363,9 @@ export type BotIntent =
   | { kind: 'SHIPS'; baseId: string; ship: ShipType; count: number; why: string }
   | { kind: 'DEFENSE'; baseId: string; defense: DefenseType; count: number; why: string }
   | { kind: 'COLONIZE'; baseId: string; planetId: string; why: string }
+  | { kind: 'EXPEDITION'; baseId: string; ships: ShipCounts; why: string }
+  | { kind: 'HARVEST'; baseId: string; planetId: string; ships: ShipCounts; why: string }
+  | { kind: 'JOIN_RESEARCH'; baseId: string; why: string }
   | { kind: 'RAID'; baseId: string; planetId: string; ships: ShipCounts; why: string }
   | { kind: 'SCAN'; baseId: string; planetId: string; why: string }
   /** Исполнить чужую заявку — сделка происходит сразу, а не когда-нибудь. */
@@ -408,6 +421,139 @@ const SAVING_HORIZON_HOURS = 6;
  */
 type Direction = 'economy' | 'research' | 'fleet' | 'defense';
 
+export type BotMilestoneStep =
+  | { kind: 'BUILD'; building: BuildingType; targetLevel: number; milestone: BotMilestone }
+  | { kind: 'RESEARCH'; tech: TechnologyType; targetLevel: number; milestone: BotMilestone }
+  | { kind: 'SHIPS'; ship: ShipType; targetCount: number; milestone: BotMilestone }
+  | { kind: 'DEFENSE'; defense: DefenseType; targetCount: number; milestone: BotMilestone };
+
+type BareMilestoneStep =
+  | { kind: 'BUILD'; building: BuildingType; targetLevel: number }
+  | { kind: 'RESEARCH'; tech: TechnologyType; targetLevel: number }
+  | { kind: 'SHIPS'; ship: ShipType; targetCount: number }
+  | { kind: 'DEFENSE'; defense: DefenseType; targetCount: number };
+
+function buildingMilestoneStep(
+  building: BuildingType,
+  targetLevel: number,
+  levels: BuildingLevels,
+): BareMilestoneStep | null {
+  if (levels[building] >= targetLevel) return null;
+  const prerequisite = missingBuildingRequirements(building, levels)[0];
+  if (prerequisite) return buildingMilestoneStep(prerequisite.building, prerequisite.level, levels);
+  return { kind: 'BUILD', building, targetLevel };
+}
+
+function researchMilestoneStep(
+  tech: TechnologyType,
+  targetLevel: number,
+  levels: BuildingLevels,
+  techs: TechLevels,
+): BareMilestoneStep | null {
+  if (techs[tech] >= targetLevel) return null;
+  const prerequisite = missingTechRequirements(tech, levels, techs)[0];
+  if (prerequisite?.kind === 'building') {
+    return buildingMilestoneStep(prerequisite.key as BuildingType, prerequisite.level, levels);
+  }
+  if (prerequisite?.kind === 'tech') {
+    return researchMilestoneStep(prerequisite.key as TechnologyType, prerequisite.level, levels, techs);
+  }
+  return { kind: 'RESEARCH', tech, targetLevel };
+}
+
+function shipMilestoneStep(
+  ship: ShipType,
+  targetCount: number,
+  base: BotBaseSnapshot,
+  techs: TechLevels,
+): BareMilestoneStep | null {
+  if (base.ships[ship] >= targetCount) return null;
+  const prerequisite = missingShipRequirements(ship, base.levels, techs)[0];
+  if (prerequisite?.kind === 'building') {
+    return buildingMilestoneStep(prerequisite.key as BuildingType, prerequisite.level, base.levels);
+  }
+  if (prerequisite?.kind === 'tech') {
+    return researchMilestoneStep(prerequisite.key as TechnologyType, prerequisite.level, base.levels, techs);
+  }
+  return { kind: 'SHIPS', ship, targetCount };
+}
+
+function defenseMilestoneStep(
+  defense: DefenseType,
+  targetCount: number,
+  base: BotBaseSnapshot,
+  techs: TechLevels,
+): BareMilestoneStep | null {
+  if (base.defenses[defense] >= targetCount) return null;
+  const prerequisite = missingDefenseRequirements(defense, base.levels, techs)[0];
+  if (prerequisite?.kind === 'building') {
+    return buildingMilestoneStep(prerequisite.key as BuildingType, prerequisite.level, base.levels);
+  }
+  if (prerequisite?.kind === 'tech') {
+    return researchMilestoneStep(prerequisite.key as TechnologyType, prerequisite.level, base.levels, techs);
+  }
+  return { kind: 'DEFENSE', defense, targetCount };
+}
+
+/**
+ * Первый незавершенный шаг долгого курса.
+ *
+ * Требования раскрываются рекурсивно теми же функциями правил, что обслуживают
+ * игрока. Здесь нет второй копии дерева технологий: если ворота изменятся,
+ * бот на следующем решении увидит новые требования автоматически.
+ */
+export function nextMilestoneStep(snapshot: BotSnapshot, profile: BotPersonality): BotMilestoneStep | null {
+  const base = snapshot.bases[0];
+  if (!base) return null;
+
+  const stepFor = (milestone: BotMilestone): BareMilestoneStep | null => {
+    switch (milestone) {
+      case 'EXPEDITION_PROGRAM':
+        return (
+          researchMilestoneStep('ASTROPHYSICS', 1, base.levels, snapshot.techs) ??
+          shipMilestoneStep('SMALL_CARGO', 1, base, snapshot.techs) ??
+          shipMilestoneStep('LIGHT_FIGHTER', 2, base, snapshot.techs)
+        );
+      case 'INTERSTELLAR_REACH':
+        return (
+          researchMilestoneStep('HYPERDRIVE', 1, base.levels, snapshot.techs) ??
+          buildingMilestoneStep('ANTIMATTER_FACTORY', 1, base.levels)
+        );
+      case 'RECYCLING_CORPS':
+        return shipMilestoneStep('RECYCLER', 1, base, snapshot.techs);
+      case 'SECOND_COLONY':
+      case 'THIRD_COLONY': {
+        const target = milestone === 'SECOND_COLONY' ? 2 : 3;
+        if (snapshot.bases.length >= target || snapshot.colonizing) return null;
+        return shipMilestoneStep('COLONY_SHIP', 1, base, snapshot.techs);
+      }
+      case 'CRUISER_CORE':
+        return shipMilestoneStep('CRUISER', 4, base, snapshot.techs);
+      case 'FRIGATE_SCREEN':
+        return shipMilestoneStep('FRIGATE', 4, base, snapshot.techs);
+      case 'BOMBER_WING':
+        return shipMilestoneStep('BOMBER', 2, base, snapshot.techs);
+      case 'BATTLESHIP_LINE':
+        return shipMilestoneStep('BATTLESHIP', 2, base, snapshot.techs);
+      case 'CARRIER_GROUP':
+        return shipMilestoneStep('CARRIER', 1, base, snapshot.techs);
+      case 'FORTIFIED_CAPITAL':
+        return defenseMilestoneStep('GAUSS', 8, base, snapshot.techs);
+      // Эти две цели исполняются общими правилами синдиката и Брам, а не
+      // личной очередью столицы. Они остаются в курсе и видны модели.
+      case 'SYNDICATE_BUILDER':
+      case 'GATE_NETWORK':
+        return null;
+    }
+  };
+
+  for (const milestone of profile.milestones) {
+    const step = stepFor(milestone);
+    if (step) return { ...step, milestone } as BotMilestoneStep;
+  }
+  return null;
+}
+
 function wallet(stock: ResourceAmounts, share: number): ResourceAmounts {
   return {
     ore: stock.ore * share,
@@ -448,7 +594,23 @@ function canAfford(
   capacity: StorageCapacities,
   share: number,
   cost: ResourceAmounts,
+  /**
+   * Направление выиграло очередь и платит полную цену.
+   *
+   * Доля делит доход, но до этой правки она делила и сам склад: «сорок
+   * процентов на экономику» означало «стройка видит сорок процентов того,
+   * что лежит», и копить приходилось не цену здания, а цену, деленную
+   * на долю. Живой стенд встал на этом целиком: у Купця 62 800 руды
+   * и 78 085 полимеров при цене энергостанции 43 200 и 33 300 — ресурсов
+   * вдвое больше нужного, а стройка запрещена, потому что в долю влезало
+   * 25 000. Ноль строек у семерых при сотнях тысяч на складах.
+   *
+   * Теперь доля решает, чья сейчас очередь, а не сколько стоит покупка:
+   * самое отставшее от своей доли направление платит полную цену из склада.
+   */
+  full = false,
 ): boolean {
+  if (full && hasEnoughResources(stock, cost)) return true;
   if (hasEnoughResources(wallet(stock, share), cost)) return true;
   const beyondShare = STORED_RESOURCES.some((resource) => cost[resource] > capacity[resource] * share);
   return beyondShare && hasEnoughResources(stock, cost);
@@ -487,9 +649,31 @@ function portfolio(snapshot: BotSnapshot): Portfolio {
   return { economy, research, fleet, defense, total: economy + research + fleet + defense };
 }
 
-/** Требует ли покупка ресурс, отложенный под стройку. */
-function needsReserved(cost: ResourceAmounts, reserved: Set<StoredResource>): boolean {
-  return STORED_RESOURCES.some((resource) => reserved.has(resource) && cost[resource] > 0);
+/**
+ * Сколько ресурсов отложено под стройку — числами, а не списком имен.
+ *
+ * Раньше резерв был множеством ресурсов, и не хватающие пять тысяч полимеров
+ * запрещали верфи и обороне вообще все, что стоит полимеров, даже когда
+ * на складе лежали сотни тысяч. Очередь стройки и верфь встают вместе
+ * по причине, которая касается только одной из них.
+ *
+ * Откладывается накопленная часть цели, а не вся ее цена: то, чего еще нет,
+ * отложить нельзя, а то, что уже собрано, тратить на корпуса незачем —
+ * иначе накопление не сдвинется никогда.
+ */
+type ReservedAmounts = ResourceAmounts;
+
+function emptyReserve(): ReservedAmounts {
+  return { ore: 0, polymers: 0, plasma: 0 };
+}
+
+/** Что остается очередям после того, как отложено накопленное под стройку. */
+function availableAfterReserve(stock: ResourceAmounts, reserved: ReservedAmounts): ResourceAmounts {
+  return {
+    ore: Math.max(0, stock.ore - reserved.ore),
+    polymers: Math.max(0, stock.polymers - reserved.polymers),
+    plasma: Math.max(0, stock.plasma - reserved.plasma),
+  };
 }
 
 /* ------------------------- Экономика ------------------------- */
@@ -862,9 +1046,12 @@ function laggingShip(
   levels: BuildingLevels,
   techs: TechLevels,
   stock: ResourceAmounts,
-  budget: { capacity: StorageCapacities; share: number; reserved: Set<StoredResource> },
+  budget: { capacity: StorageCapacities; share: number; reserved: ReservedAmounts; full?: boolean },
 ): { ship: ShipType; count: number } | null {
-  const purse = wallet(stock, budget.share);
+  // Из склада вычтено отложенное под стройку: очередям достается остаток,
+  // а не запрет на весь ресурс.
+  const free = availableAfterReserve(stock, budget.reserved);
+  const purse = budget.full ? free : wallet(free, budget.share);
   const totalValue = spentOnFleet(ships);
   let worst: ShipType | null = null;
   let worstGap = 0;
@@ -873,8 +1060,7 @@ function laggingShip(
     const share = mix[type];
     if (!share) continue;
     if (missingShipRequirements(type, levels, techs).length > 0) continue;
-    if (needsReserved(shipCost(type), budget.reserved)) continue;
-    if (!canAfford(stock, budget.capacity, budget.share, shipCost(type))) continue;
+    if (!canAfford(free, budget.capacity, budget.share, shipCost(type), budget.full)) continue;
 
     const have = ships[type] * costUnits(shipCost(type));
     const want = Math.max(totalValue, 1) * share;
@@ -899,7 +1085,7 @@ function laggingShip(
       const share = mix[type];
       if (!share || share <= heaviest) continue;
       if (missingShipRequirements(type, levels, techs).length > 0) continue;
-      if (!canAfford(stock, budget.capacity, budget.share, shipCost(type))) continue;
+      if (!canAfford(free, budget.capacity, budget.share, shipCost(type), budget.full)) continue;
       heaviest = share;
       worst = type;
     }
@@ -926,9 +1112,10 @@ function laggingDefense(
   levels: BuildingLevels,
   techs: TechLevels,
   stock: ResourceAmounts,
-  budget: { capacity: StorageCapacities; share: number; reserved: Set<StoredResource> },
+  budget: { capacity: StorageCapacities; share: number; reserved: ReservedAmounts; full?: boolean },
 ): { defense: DefenseType; count: number } | null {
-  const purse = wallet(stock, budget.share);
+  const free = availableAfterReserve(stock, budget.reserved);
+  const purse = budget.full ? free : wallet(free, budget.share);
   const totalValue = spentOnDefense(defenses);
   let worst: DefenseType | null = null;
   let worstGap = 0;
@@ -937,8 +1124,7 @@ function laggingDefense(
     const share = mix[type];
     if (!share) continue;
     if (missingDefenseRequirements(type, levels, techs).length > 0) continue;
-    if (needsReserved(defenseCost(type), budget.reserved)) continue;
-    if (!canAfford(stock, budget.capacity, budget.share, defenseCost(type))) continue;
+    if (!canAfford(free, budget.capacity, budget.share, defenseCost(type), budget.full)) continue;
 
     const have = defenses[type] * costUnits(defenseCost(type));
     const want = Math.max(totalValue, 1) * share;
@@ -957,7 +1143,7 @@ function laggingDefense(
       const share = mix[type];
       if (!share || share <= heaviest) continue;
       if (missingDefenseRequirements(type, levels, techs).length > 0) continue;
-      if (!canAfford(stock, budget.capacity, budget.share, defenseCost(type))) continue;
+      if (!canAfford(free, budget.capacity, budget.share, defenseCost(type), budget.full)) continue;
       heaviest = share;
       worst = type;
     }
@@ -1083,6 +1269,8 @@ export function raidValue(
   /** Своя система по координатам — по ним видно, нужен ли прыжок. */
   home: GalaxyPoint,
   there: GalaxyPoint,
+  /** Обломки имеют цену только тогда, когда их есть чем забрать. */
+  collectDebris = true,
 ): RaidValue {
   const plan = planFlight(
     strike,
@@ -1092,7 +1280,7 @@ export function raidValue(
   );
 
   const loot = Math.min(plan.capacity, Math.max(0, target.knownStock ?? 0) * LOOT_SHARE);
-  const debris = Math.max(0, target.knownFleetValue ?? 0) * DEBRIS_SHARE;
+  const debris = collectDebris ? Math.max(0, target.knownFleetValue ?? 0) * DEBRIS_SHARE : 0;
   // Антиматерия дороже плазмы по добыче на порядки, но в единицах ресурсов
   // считается так же — как и везде, где ресурсы складываются.
   const fuel = plan.fuel + plan.antimatter;
@@ -1123,6 +1311,7 @@ export function pickRaidTarget(
     home: GalaxyPoint;
     systemOf: (target: BotRaidTarget) => GalaxyPoint;
     hourlyOutput: number;
+    collectDebris?: boolean;
   },
 ): BotRaidTarget | null {
   const profile = override ?? personality(character);
@@ -1149,7 +1338,15 @@ export function pickRaidTarget(
   const worth = candidates
     .map((target) => ({
       target,
-      value: raidValue(target, economy.strike, economy.techs, economy.from, economy.home, economy.systemOf(target)),
+      value: raidValue(
+        target,
+        economy.strike,
+        economy.techs,
+        economy.from,
+        economy.home,
+        economy.systemOf(target),
+        economy.collectDebris ?? true,
+      ),
     }))
     .filter((row) => row.value.net > 0 && row.value.net >= economy.hourlyOutput);
 
@@ -1178,6 +1375,10 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
   if (snapshot.bases.length === 0) return intents;
 
   const capital = snapshot.bases[0]!;
+  const strategicStep = nextMilestoneStep(snapshot, profile);
+  const strategicWhy = strategicStep
+    ? `этап курса: ${BOT_MILESTONE_LABELS[strategicStep.milestone]}`
+    : null;
   /*
    * Мобилизация против серийного агрессора.
    *
@@ -1253,6 +1454,26 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
     held.total > 0 && held[direction] >= held.total * profile.budget[direction];
 
   /*
+   * Чья сейчас очередь тратить полной ценой.
+   *
+   * Доля — правило дележа дохода, и делить она должна очередь, а не склад.
+   * Самое отставшее от своей доли направление получает право заплатить
+   * полную цену из запаса; остальные тратят свою долю, как раньше. Так
+   * доли по-прежнему держат пропорции портфеля — их считает `portfolio`, —
+   * но перестают требовать «накопи цену, деленную на долю».
+   *
+   * Отставание меряется разницей долей, а не отношением: при пустом портфеле
+   * отношение делить не на что, а разница честно показывает, кому не досталось.
+   */
+  const DIRECTIONS: Direction[] = ['economy', 'research', 'fleet', 'defense'];
+  const lagging = DIRECTIONS.reduce((worst, direction) => {
+    const gap = (d: Direction) => profile.budget[d] - (held.total > 0 ? held[d] / held.total : 0);
+    return gap(direction) > gap(worst) ? direction : worst;
+  }, 'economy' as Direction);
+  /** Платит ли это направление полную цену в текущем заходе. */
+  const fullPrice = (direction: Direction): boolean => direction === lagging;
+
+  /*
    * Чего боту не хватает на его же ближайшие цели.
    *
    * Это то, ради чего он идет на рынок. Ситуация обычная: полимеров вдоволь,
@@ -1262,16 +1483,34 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
    */
   const shortfall = new Set<StoredResource>();
 
+  const rememberShortfall = (stock: ResourceAmounts, cost: ResourceAmounts): void => {
+    for (const resource of STORED_RESOURCES) {
+      if (cost[resource] > stock[resource]) shortfall.add(resource);
+    }
+  };
+
   /* --- Наука: одна на командира, поэтому считается от столицы --- */
   if (!snapshot.researching) {
-    const purse = wallet(capital.resources, profile.budget.research);
-    const tech = nextResearch(snapshot.techs, capital.levels, snapshot.character, purse, profile);
+    const strategicTech = strategicStep?.kind === 'RESEARCH' ? strategicStep.tech : null;
+    const strategicCost = strategicTech
+      ? researchCost(strategicTech, snapshot.techs[strategicTech] + 1)
+      : null;
+    // Очередь науки — значит полная цена из запаса, а не доля от склада.
+    const purse = fullPrice('research')
+      ? capital.resources
+      : wallet(capital.resources, profile.budget.research);
+    const tech =
+      strategicTech && strategicCost
+        ? hasEnoughResources(capital.resources, strategicCost)
+          ? strategicTech
+          : null
+        : nextResearch(snapshot.techs, capital.levels, snapshot.character, purse, profile);
     if (tech) {
       intents.push({
         kind: 'RESEARCH',
         baseId: capital.id,
         tech,
-        why: `по плану характера «${profile.label}»`,
+        why: tech === strategicTech ? strategicWhy! : `по плану характера «${profile.label}»`,
       });
     } else {
       /*
@@ -1287,6 +1526,9 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
         }
         break;
       }
+    }
+    if (strategicCost && !hasEnoughResources(capital.resources, strategicCost)) {
+      rememberShortfall(capital.resources, strategicCost);
     }
   }
 
@@ -1314,13 +1556,18 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
      */
     const pressure = STORED_RESOURCES.every((resource) => stock[resource] >= caps[resource] * 0.9);
 
-    /** Ресурсы, которые база копит на постройку и потому не тратит на флот. */
-    const reserved = new Set<StoredResource>();
+    /** Сколько уже накоплено под ближайшую постройку: это верфи не достается. */
+    const reserved = emptyReserve();
     const share = (direction: Direction) => (pressure ? 1 : profile.budget[direction]);
 
     /* --- Стройка --- */
     if (!base.building) {
-      const plan = buildingPlan(base, snapshot.techs, snapshot.character, profile);
+      const ordinaryPlan = buildingPlan(base, snapshot.techs, snapshot.character, profile);
+      const strategicBuilding =
+        base.id === capital.id && strategicStep?.kind === 'BUILD' ? strategicStep.building : null;
+      const plan = strategicBuilding
+        ? [strategicBuilding, ...ordinaryPlan.filter((building) => building !== strategicBuilding)]
+        : ordinaryPlan;
 
       /** Склад ресурса, добыча которого уже остановлена потолком. */
       const blocked = new Set(
@@ -1339,8 +1586,8 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
          * тут нечего. Живой бот стоял с полным складом полимеров, имея на руках
          * достаточно руды на расширение: в долю она просто не влезала.
          */
-        if (blocked.has(type)) return hasEnoughResources(stock, cost);
-        return canAfford(stock, capacity, share('economy'), cost);
+        if (blocked.has(type) || type === strategicBuilding) return hasEnoughResources(stock, cost);
+        return canAfford(stock, capacity, share('economy'), cost, fullPrice('economy'));
       };
 
       /*
@@ -1494,6 +1741,7 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
           baseId: base.id,
           building,
           why:
+            (building === strategicBuilding ? strategicWhy : null) ??
             farmReason ??
             (pressure
               ? 'склад полон, копить некуда'
@@ -1523,7 +1771,12 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
         const cost = upgradeCost(goal, base.levels[goal] + 1);
         for (const resource of STORED_RESOURCES) {
           if (cost[resource] > 0 && stock[resource] < cost[resource]) {
-            reserved.add(resource);
+            /*
+             * Откладываем накопленное под цель, а не весь ресурс: верфи
+             * достается излишек сверх этой суммы. Отложить больше, чем есть,
+             * нельзя — недостающее еще предстоит добыть или купить.
+             */
+            reserved[resource] = Math.min(cost[resource], Math.max(0, stock[resource]));
             // То же самое, но на весь снимок: за недостающим бот пойдет на рынок.
             shortfall.add(resource);
           }
@@ -1550,7 +1803,33 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
       SMALL_CARGO: base.ships.SMALL_CARGO,
     });
     const strandedAtHub = snapshot.hubStorage.ore + snapshot.hubStorage.polymers;
+    const strategicShip =
+      base.id === capital.id && strategicStep?.kind === 'SHIPS' ? strategicStep : null;
+    const affordableShips = (type: ShipType): number => {
+      const unit = shipCost(type);
+      return Math.min(
+        Math.floor(stock.ore / Math.max(1, unit.ore)),
+        Math.floor(stock.polymers / Math.max(1, unit.polymers)),
+        unit.plasma > 0 ? Math.floor(stock.plasma / unit.plasma) : Number.MAX_SAFE_INTEGER,
+      );
+    };
     if (
+      strategicShip &&
+      base.shipQueue === 0 &&
+      missingShipRequirements(strategicShip.ship, base.levels, snapshot.techs).length === 0 &&
+      affordableShips(strategicShip.ship) > 0
+    ) {
+      intents.push({
+        kind: 'SHIPS',
+        baseId: base.id,
+        ship: strategicShip.ship,
+        count: Math.max(
+          1,
+          Math.min(10, affordableShips(strategicShip.ship), strategicShip.targetCount - base.ships[strategicShip.ship]),
+        ),
+        why: strategicWhy!,
+      });
+    } else if (
       base.shipQueue < 3 &&
       base.levels.SHIPYARD > 0 &&
       hold <= 0 &&
@@ -1577,6 +1856,7 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
         capacity,
         share: share('fleet'),
         reserved,
+        full: fullPrice('fleet'),
       });
       if (order) {
         intents.push({
@@ -1613,11 +1893,42 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
     }
 
     /* --- Оборона --- */
-    if (base.defenseQueue < 3 && base.levels.SHIPYARD > 0 && !saturated('defense')) {
+    const strategicDefense =
+      base.id === capital.id && strategicStep?.kind === 'DEFENSE' ? strategicStep : null;
+    const affordableDefenses = (type: DefenseType): number => {
+      const unit = defenseCost(type);
+      return Math.min(
+        Math.floor(stock.ore / Math.max(1, unit.ore)),
+        Math.floor(stock.polymers / Math.max(1, unit.polymers)),
+        unit.plasma > 0 ? Math.floor(stock.plasma / unit.plasma) : Number.MAX_SAFE_INTEGER,
+      );
+    };
+    if (
+      strategicDefense &&
+      base.defenseQueue === 0 &&
+      missingDefenseRequirements(strategicDefense.defense, base.levels, snapshot.techs).length === 0 &&
+      affordableDefenses(strategicDefense.defense) > 0
+    ) {
+      intents.push({
+        kind: 'DEFENSE',
+        baseId: base.id,
+        defense: strategicDefense.defense,
+        count: Math.max(
+          1,
+          Math.min(
+            10,
+            affordableDefenses(strategicDefense.defense),
+            strategicDefense.targetCount - base.defenses[strategicDefense.defense],
+          ),
+        ),
+        why: strategicWhy!,
+      });
+    } else if (base.defenseQueue < 3 && base.levels.SHIPYARD > 0 && !saturated('defense')) {
       const order = laggingDefense(base.defenses, profile.defenseMix, base.levels, snapshot.techs, stock, {
         capacity,
         share: share('defense'),
         reserved,
+        full: fullPrice('defense'),
       });
       if (order) {
         intents.push({
@@ -1628,6 +1939,76 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
           why: 'позиция отстает от плана обороны',
         });
       }
+    }
+  }
+
+  /* --- Совместная наука колоний --- */
+  for (const baseId of snapshot.joinableResearchBases) {
+    intents.push({
+      kind: 'JOIN_RESEARCH',
+      baseId,
+      why: 'свободная лаборатория ускорит общее исследование',
+    });
+  }
+
+  /* --- Переработка обломков --- */
+  const harvestBase = snapshot.bases.find((base) => base.ships.RECYCLER > 0);
+  if (harvestBase && snapshot.debrisFields.length > 0) {
+    const oneRecycler = { ...emptyShipCounts(), RECYCLER: 1 };
+    const field = [...snapshot.debrisFields]
+      .filter((candidate) =>
+        reachable(candidate, oneRecycler, snapshot.techs, {
+          orbit: harvestBase.orbit,
+          antimatter: harvestBase.antimatter,
+        }),
+      )
+      .sort((a, b) => {
+        const valueA = a.ore + a.polymers;
+        const valueB = b.ore + b.polymers;
+        return valueB / Math.max(1, b.distance + 1) - valueA / Math.max(1, a.distance + 1);
+      })[0];
+    if (field) {
+      const capacity = fleetCapacity(oneRecycler);
+      const count = Math.max(
+        1,
+        Math.min(harvestBase.ships.RECYCLER, Math.ceil((field.ore + field.polymers) / Math.max(1, capacity))),
+      );
+      intents.push({
+        kind: 'HARVEST',
+        baseId: harvestBase.id,
+        planetId: field.planetId,
+        ships: { ...emptyShipCounts(), RECYCLER: count },
+        why: `поле обломков на ${Math.round(field.ore + field.polymers)} ресурсов`,
+      });
+    }
+  }
+
+  /* --- Экспедиции --- */
+  if (snapshot.expeditionsInFlight < snapshot.expeditionSlots) {
+    const explorer = snapshot.bases.find(
+      (base) =>
+        base.ships.SMALL_CARGO + base.ships.LARGE_CARGO > 0 &&
+        COMBAT_TYPES.some((type) => base.ships[type] > 0),
+    );
+    if (explorer) {
+      const ships = emptyShipCounts();
+      if (explorer.ships.LARGE_CARGO > 0) ships.LARGE_CARGO = 1;
+      else ships.SMALL_CARGO = 1;
+
+      // Эскорт — четверть одного сильнейшего доступного класса, минимум один.
+      // Экспедиция не оголяет базу и не отправляет всю армаду за случайной
+      // находкой, но и не дарит грузовик первой пиратской засаде.
+      for (const type of [...COMBAT_TYPES].reverse()) {
+        if (explorer.ships[type] <= 0) continue;
+        ships[type] = Math.max(1, Math.floor(explorer.ships[type] / 4));
+        break;
+      }
+      intents.push({
+        kind: 'EXPEDITION',
+        baseId: explorer.id,
+        ships,
+        why: `свободных экспедиционных слотов ${snapshot.expeditionSlots - snapshot.expeditionsInFlight}`,
+      });
     }
   }
 
@@ -1793,6 +2174,7 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
           home,
           systemOf,
           hourlyOutput,
+          collectDebris: snapshot.bases.some((base) => base.ships.RECYCLER > 0),
         });
   if (target) {
     if (spentOnFleet(strike) > 0) {
@@ -1804,7 +2186,15 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
         why: rally
           ? `${rally.nickname} бьет соседей: набегов за сутки ${rally.raids}`
           : `добыча окупает вылет: ${Math.round(
-              raidValue(target, strike, snapshot.techs, { orbit: striker.orbit, systemId: striker.systemId }, home, systemOf(target)).net,
+              raidValue(
+                target,
+                strike,
+                snapshot.techs,
+                { orbit: striker.orbit, systemId: striker.systemId },
+                home,
+                systemOf(target),
+                snapshot.bases.some((base) => base.ships.RECYCLER > 0),
+              ).net,
             )} чистыми`,
       });
     }
@@ -2216,6 +2606,26 @@ function tradeIntents(
     )
     .sort((a, b) => a.price - b.price);
 
+  /*
+   * Часть денег не свободна: место на хабе стоит каждую секунду.
+   *
+   * Бот начинал закупку с полного баланса и выгребал его до нуля, а потом
+   * не платил аренду, не расширял склад и не мог доделать стройку. На живом
+   * стенде это видно по счетам: пятеро с ₴1–5 тыс. при ферме в четверть
+   * миллиона в час. Сутки нынешней аренды — тот минимум, который нельзя
+   * унести на рынок.
+   */
+  /*
+   * Денежный резерв здесь пробовали и сняли.
+   *
+   * Казалось очевидным: оставить сутки аренды хаба, чтобы бот не выгребал
+   * счет до нуля. Прогон недели показал обратное — сделок 1 399 против
+   * 22 038, денежная масса ₴15.8 млн против ₴6.5 млн, сток спешки упал
+   * с ₴53 до ₴35 млн. Деньги, которые бот не потратил на рынке, не уходят
+   * никуда: они копятся, и масса растет. Это третий рыночный эксперимент
+   * подряд с одним исходом — рынок этой игры держится на мелких частых
+   * сделках, и любое их удержание бьет по стоку сильнее, чем помогает балансу.
+   */
   let purse = snapshot.credits;
   let room = hub.free;
   for (const order of cheapest) {
@@ -2494,6 +2904,9 @@ export function emptyBotSnapshot(character: BotCharacter): BotSnapshot {
     researching: false,
     bases: [],
     fleetsInFlight: 0,
+    expeditionsInFlight: 0,
+    expeditionSlots: 0,
+    joinableResearchBases: [],
     freePlanets: [],
     raidTargets: [],
     market: [],
@@ -2502,7 +2915,15 @@ export function emptyBotSnapshot(character: BotCharacter): BotSnapshot {
     fleetPeak: 0,
     warsAgainstMe: 0,
     orderBook: [],
-    hubStorage: { ore: 0, polymers: 0, free: 0, level: 1, upgradeCost: storageUpgradeCost(2), nextRentPerHour: hubRent(2) * 3600 },
+    hubStorage: {
+      ore: 0,
+      polymers: 0,
+      free: 0,
+      level: 1,
+      upgradeCost: storageUpgradeCost(2),
+      currentRentPerHour: hubRent(1) * 3600,
+      nextRentPerHour: hubRent(2) * 3600,
+    },
     colonizing: false,
     syndicate: null,
     syndicates: [],

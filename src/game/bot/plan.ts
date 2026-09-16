@@ -18,6 +18,7 @@ import { SQUADRON_TYPES, type ShipType } from '../ships.js';
 import { TECHNOLOGY_TYPES, type TechnologyType } from '../techTree.js';
 import { personality, type BotCharacter, type BotPersonality } from './personality.js';
 import { SYNDICATE_MODULES, SYNDICATE_TECHS, type SyndicateModule, type SyndicateTech } from '../syndicate.js';
+import { BOT_MILESTONES, type BotMilestone } from './milestones.js';
 
 /**
  * Что можно назвать в порядке развития синдиката. Брамы здесь нет: ее ставят
@@ -43,6 +44,8 @@ export interface BotPlan {
   buildingFocus: BuildingType[];
   /** Порядок развития синдиката: модули Коша и технологии. */
   syndicateFocus: Array<SyndicateModule | SyndicateTech>;
+  /** Долгие цели, которые локальный планировщик доводит до результата. */
+  milestones: BotMilestone[];
   fleetMix: Partial<Record<ShipType, number>>;
   defenseMix: Partial<Record<DefenseType, number>>;
   colonyAmbition: number;
@@ -194,6 +197,7 @@ export function parsePlan(raw: unknown, character: BotCharacter): BotPlan | null
     researchOrder: knownList(source['researchOrder'], TECHNOLOGY_TYPES, base.researchOrder),
     buildingFocus: knownList(source['buildingFocus'], BUILDING_TYPES, base.buildingFocus),
     syndicateFocus: knownList(source['syndicateFocus'], SYNDICATE_FOCUS, base.syndicateFocus),
+    milestones: knownList(source['milestones'], BOT_MILESTONES, base.milestones),
     // Только боевые классы: зонды, переработчики и колонизаторы заказываются
     // под задачу, а не держатся долей постоянного состава.
     fleetMix: knownMix(source['fleetMix'], SQUADRON_TYPES, base.fleetMix),
@@ -252,8 +256,14 @@ export function withPlan(character: BotCharacter, plan: BotPlan | null): BotPers
       ...plan.syndicateFocus,
       ...base.syndicateFocus.filter((key) => !plan.syndicateFocus.includes(key)),
     ],
-    fleetMix: plan.fleetMix,
-    defenseMix: plan.defenseMix,
+    milestones: [
+      ...plan.milestones,
+      ...base.milestones.filter((key) => !plan.milestones.includes(key)),
+    ],
+    // Модель расставляет акценты, но не может случайно удалить из доктрины
+    // все поздние классы, просто не перечислив их в коротком ответе.
+    fleetMix: { ...base.fleetMix, ...plan.fleetMix },
+    defenseMix: { ...base.defenseMix, ...plan.defenseMix },
     colonyAmbition: plan.colonyAmbition,
     raidAdvantage: plan.raidAdvantage,
     standGround: plan.standGround,

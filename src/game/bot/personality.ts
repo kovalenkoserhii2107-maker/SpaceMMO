@@ -14,6 +14,7 @@ import type { DefenseType } from '../defenses.js';
 import type { ShipType } from '../ships.js';
 import type { TechnologyType } from '../techTree.js';
 import type { SyndicateModule, SyndicateTech } from '../syndicate.js';
+import type { BotMilestone } from './milestones.js';
 
 export const BOT_CHARACTERS = ['AGGRESSOR', 'TRADER'] as const;
 export type BotCharacter = (typeof BOT_CHARACTERS)[number];
@@ -59,6 +60,12 @@ export interface BotPersonality {
    * Код берет первое, что сейчас можно начать, — под него участники и копят.
    */
   syndicateFocus: Array<SyndicateModule | SyndicateTech>;
+
+  /**
+   * Долгие проверяемые цели. В отличие от общего порядка науки каждая такая
+   * цель имеет состояние «готово» и цепочку конкретных ворот до результата.
+   */
+  milestones: BotMilestone[];
 
   /**
    * Состав ударного кулака: доли по классам. Бот строит недостающее
@@ -156,6 +163,21 @@ export const BOT_PERSONALITIES: Record<BotCharacter, BotPersonality> = {
     // Агрессору синдикат нужен ради добычи и трюмов под нее; Дозор — чтобы
     // видеть, кто летит к союзникам.
     syndicateFocus: ['AKADEMIIA', 'MINING', 'CARGO', 'KISH', 'DOZOR', 'CONSTRUCTION', 'SKARBNYTSIA', 'VAULT'],
+    milestones: [
+      'EXPEDITION_PROGRAM',
+      'SECOND_COLONY',
+      'INTERSTELLAR_REACH',
+      'CRUISER_CORE',
+      'RECYCLING_CORPS',
+      'THIRD_COLONY',
+      'FRIGATE_SCREEN',
+      'BOMBER_WING',
+      'BATTLESHIP_LINE',
+      'FORTIFIED_CAPITAL',
+      'SYNDICATE_BUILDER',
+      'CARRIER_GROUP',
+      'GATE_NETWORK',
+    ],
     fleetMix: {
       LIGHT_FIGHTER: 0.3,
       HEAVY_FIGHTER: 0.2,
@@ -208,6 +230,21 @@ export const BOT_PERSONALITIES: Record<BotCharacter, BotPersonality> = {
     buildingFocus: ['SCIENCE_CENTER', 'SHIPYARD'],
     // Торговцу — комиссия биржи и сохранность казны.
     syndicateFocus: ['AKADEMIIA', 'TRADE', 'MINING', 'KISH', 'SKARBNYTSIA', 'VAULT', 'CONSTRUCTION', 'DOZOR'],
+    milestones: [
+      'EXPEDITION_PROGRAM',
+      'RECYCLING_CORPS',
+      'SECOND_COLONY',
+      'INTERSTELLAR_REACH',
+      'FORTIFIED_CAPITAL',
+      'CRUISER_CORE',
+      'SYNDICATE_BUILDER',
+      'THIRD_COLONY',
+      'FRIGATE_SCREEN',
+      'GATE_NETWORK',
+      'BATTLESHIP_LINE',
+      'CARRIER_GROUP',
+      'BOMBER_WING',
+    ],
     fleetMix: {
       LARGE_CARGO: 0.3,
       SMALL_CARGO: 0.1,

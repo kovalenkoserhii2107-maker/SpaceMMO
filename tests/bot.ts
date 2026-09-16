@@ -888,7 +888,9 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
         testBase('home', {
           levels: { ...emptyLevels(), ORE_MINE: 8, POLYMER_PLANT: 7, POWER_PLANT: 9, SHIPYARD: 5, SCIENCE_CENTER: 4 },
           resources: { ore: 30_000, polymers: 20_000, plasma: 9_000 },
-          ships: { ...emptyShipCounts(), LIGHT_FIGHTER: 90, LARGE_CARGO: 10 },
+          // Переработчик в ангаре: обломки идут в расчет набега только тому,
+          // кому есть чем их собрать, — поле остается на орбите само по себе.
+          ships: { ...emptyShipCounts(), LIGHT_FIGHTER: 90, LARGE_CARGO: 10, RECYCLER: 1 },
         }),
       ],
       raidTargets: targets,
@@ -2521,7 +2523,9 @@ console.log('\n=== 8. Поручения модели проверяются п�
       { planetId: 'враг-1', commanderId: 'сосед-1', accountAgeDays: 30, knownStrength: 500, distance: 2 },
     ],
     freePlanets: [{ planetId: 'пустая-1', systemId: 's1', distance: 3 }],
-    debrisFields: [{ planetId: 'враг-1', ore: 5000, polymers: 3000, distance: 2 }],
+    debrisFields: [
+      { planetId: 'враг-1', systemId: 's1', orbit: 2, ore: 5000, polymers: 3000, distance: 2 },
+    ],
   });
 
   /*

@@ -399,6 +399,7 @@ function snapshotOf(bot: Bot, exchange: Exchange): BotSnapshot {
       free: Math.max(0, hubCapacity(bot.hub.level) - storageUsed(bot.hub)),
       level: bot.hub.level,
       upgradeCost: storageUpgradeCost(bot.hub.level + 1),
+      currentRentPerHour: hubRent(bot.hub.level) * 3600,
       nextRentPerHour: hubRent(bot.hub.level + 1) * 3600,
     },
   };
