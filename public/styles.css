@@ -1862,6 +1862,24 @@ button.tiny { padding: 4px 10px; font-size: 11px; flex: none; }
 }
 .link-button:hover { color: var(--accent); }
 
+/*
+ * Позывной, по которому пишут письмо. Подтверждение встает под именем
+ * прямо в списке: модальных окон в игре нет, а уводить в другой раздел
+ * по случайному касанию нельзя.
+ */
+.nick-wrap { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+button.nick {
+  background: none; border: 0; padding: 0; font: inherit; font-weight: 600;
+  color: inherit; text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer;
+}
+button.nick:hover { color: var(--accent); }
+.nick-ask {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  font-size: 12px; color: var(--muted);
+}
+.nick-ask button { padding: 2px 10px; font-size: 12px; }
+.syn-more { width: 100%; margin-top: 6px; }
+
 .divider { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 11px; }
 .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: var(--line); }
 

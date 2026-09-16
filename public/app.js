@@ -217,6 +217,7 @@
     mailComposeToggle: $('mail-compose-toggle'),
     mailSend: $('mail-send'),
     mailBroadcast: $('mail-broadcast'),
+    mailBroadcastToggle: $('mail-broadcast-toggle'),
     broadcastSubject: $('broadcast-subject'),
     broadcastBody: $('broadcast-body'),
     broadcastSend: $('broadcast-send'),
@@ -4126,7 +4127,7 @@
     const owner = target.isOwn
       ? '<span class="own">своя колония</span>'
       : target.owner
-        ? `владелец: ${escapeHtml(target.owner)}`
+        ? 'владелец: <span class="target-owner"></span>'
         : target.kind !== 'PLANET'
           ? ''
           : target.colonized === false
@@ -4135,6 +4136,10 @@
     el.dispatchTarget.innerHTML =
       `<b>${escapeHtml(target.name)}</b><span>${escapeHtml(target.place)}</span>` +
       (owner ? `<span>${owner}</span>` : '');
+    // Владелец чужой колонии — тот, с кем чаще всего и хотят договориться
+    // до вылета: по нему можно написать, не выходя с карты.
+    const ownerSlot = el.dispatchTarget.querySelector('.target-owner');
+    if (ownerSlot && target.owner) ownerSlot.appendChild(nickNode(target.owner));
   }
 
   async function refreshPlan() {
@@ -4377,6 +4382,14 @@
   el.mailComposeToggle.addEventListener('click', () => {
     el.mailCompose.hidden = !el.mailCompose.hidden;
     el.mailComposeToggle.classList.toggle('active', !el.mailCompose.hidden);
+  });
+
+  // Рассылка разворачивается своей кнопкой: адресат у нее не один, и путать
+  // ее с личным письмом нельзя — отменить ушедшее всему составу нечем.
+  el.mailBroadcastToggle.addEventListener('click', () => {
+    el.mailBroadcast.hidden = !el.mailBroadcast.hidden;
+    el.mailBroadcastToggle.classList.toggle('active', !el.mailBroadcast.hidden);
+    if (!el.mailBroadcast.hidden) el.broadcastSubject.focus();
   });
 
   el.presetToggle.addEventListener('click', () => {
@@ -5970,13 +5983,21 @@
   }
 
   /**
-   * Форма рассылки видна только тем, чей ранг дает право рассылки.
+   * Рассылка видна только тем, чей ранг дает право рассылки.
+   *
    * Право проверяет и сервер, но прятать заведомо запрещенную кнопку честнее,
-   * чем показывать ее и отвечать отказом.
+   * чем показывать ее и отвечать отказом. Прячется именно кнопка: сама форма
+   * открывается ею, как и форма личного письма, — ящик читают каждый заход,
+   * а пишут в него редко.
    */
   function syncBroadcastForm() {
     const mine = syndicate.data && syndicate.data.mine;
-    el.mailBroadcast.hidden = !mine || !mine.me.permissions.includes('BROADCAST');
+    const allowed = Boolean(mine && mine.me.permissions.includes('BROADCAST'));
+    el.mailBroadcastToggle.hidden = !allowed;
+    if (!allowed) {
+      el.mailBroadcast.hidden = true;
+      el.mailBroadcastToggle.classList.remove('active');
+    }
   }
 
   /** Отправка действия синдиката с последующим обновлением панели. */
@@ -6076,6 +6097,43 @@
       }, 4000);
     });
     return node;
+  }
+
+  /**
+   * Открыть новое письмо этому командиру.
+   *
+   * Списков с позывными в игре много — рейтинг, вклад в казну, состав
+   * синдиката, владелец планеты, — и из каждого игрок рано или поздно хочет
+   * написать. Путь «запомнить ник, уйти в центр связи, развернуть форму,
+   * набрать ник заново» этого не стоит.
+   */
+  function writeTo(nickname) {
+    showPanel('mail');
+    el.mailTo.value = nickname;
+    el.mailCompose.hidden = false;
+    el.mailComposeToggle.classList.add('active');
+    el.mailSubject.focus();
+  }
+
+  /**
+   * Позывной, по которому можно написать. Спрашивает подтверждение прямо
+   * на месте: модальные окна запрещены (правило 5), а уводить игрока
+   * в другой раздел по случайному касанию списка нельзя.
+   */
+  function nickNode(nickname, className) {
+    const wrap = synEl('span', 'nick-wrap');
+    const name = synButton(nickname, `nick ${className || ''}`.trim(), () => {
+      if (wrap.querySelector('.nick-ask')) return;
+      const ask = synEl('span', 'nick-ask');
+      ask.appendChild(synEl('span', null, `Написать ${nickname}?`));
+      ask.append(
+        synButton('Да', 'ghost', () => writeTo(nickname)),
+        synButton('Нет', 'ghost', () => ask.remove()),
+      );
+      wrap.appendChild(ask);
+    });
+    wrap.appendChild(name);
+    return wrap;
   }
 
   function synDateTime(ms) {
@@ -6302,7 +6360,7 @@
     for (const row of rows) {
       const line = synEl('div', 'syn-row');
       const who = synEl('span', 'syn-who');
-      who.appendChild(synEl('b', null, row.nickname));
+      who.appendChild(nickNode(row.nickname));
       const bar = synEl('span', 'syn-bar');
       const fill = synEl('i');
       fill.style.width = `${Math.round((row.merit / top) * 100)}%`;
@@ -6318,6 +6376,10 @@
     return card;
   }
 
+  /** Сколько строк журнала видно сразу и на сколько раскрывается дальше. */
+  const JOURNAL_HEAD = 3;
+  const JOURNAL_STEP = 10;
+
   function renderTreasuryLog(mine) {
     const card = synCard('Журнал казны');
     const modes = [['ALL', 'Все'], ['IN', 'Поступления'], ['OUT', 'Расходы']];
@@ -6329,7 +6391,13 @@
       list.innerHTML = '';
       const rows = mine.transactions.filter((tx) => mode === 'ALL' || tx.flow === mode);
       if (!rows.length) list.appendChild(synEl('div', 'hub-storage', 'Операций нет'));
-      for (const tx of rows) {
+      /*
+       * Журнал открывается тремя последними записями, остальное — порциями
+       * по десять. Полсотни строк занимали экран целиком, а смотрят в журнал
+       * обычно за тем, что случилось только что.
+       */
+      const shown = Math.min(rows.length, syndicate.logShown || JOURNAL_HEAD);
+      for (const tx of rows.slice(0, shown)) {
         const row = synEl('div', `syn-row ${tx.flow.toLowerCase()}`);
         row.appendChild(synEl('span', 'syn-when', synDateTime(tx.createdAt)));
         const what = synEl('span', 'syn-what');
@@ -6350,10 +6418,19 @@
         row.appendChild(amount);
         list.appendChild(row);
       }
+      if (rows.length > shown) {
+        const rest = rows.length - shown;
+        list.appendChild(synButton(`Показать еще ${Math.min(JOURNAL_STEP, rest)} из ${rest}`, 'ghost syn-more', () => {
+          syndicate.logShown = shown + JOURNAL_STEP;
+          draw();
+        }));
+      }
     };
     for (const [mode, label] of modes) {
       const button = synButton(label, 'ghost', () => {
         syndicate.logFilter = mode;
+        // Другая сторона казны — другой список: раскрытие начинается заново.
+        syndicate.logShown = JOURNAL_HEAD;
         draw();
       });
       button.dataset.mode = mode;
@@ -6468,7 +6545,7 @@
       const row = synEl('div', 'syn-member');
       const info = synEl('div', 'syn-member-info');
       const name = synEl('div', 'syn-member-name');
-      name.append(synEl('span', null, member.nickname), synEl('span', `chip${member.isLeader ? ' leader' : ''}`, member.rankName));
+      name.append(nickNode(member.nickname), synEl('span', `chip${member.isLeader ? ' leader' : ''}`, member.rankName));
       info.appendChild(name);
       info.appendChild(synEl('div', 'syn-member-meta',
         `заслуги ${fmt(member.merit)} · налог сегодня ${fmt(member.taxToday)} ₴ · бои ${member.battlesWon}/${member.battlesLost}` +
@@ -8603,10 +8680,12 @@
       if (me && row.commanderId === me.commanderId) tr.className = 'rating-self';
       const tag = row.syndicate ? ` <span class="rating-tag">[${escapeHtml(row.syndicate.tag)}]</span>` : '';
       tr.innerHTML =
-        `<td>${row.rank}</td><td>${escapeHtml(row.nickname)}${tag}</td>` +
+        `<td>${row.rank}</td><td class="rating-name">${tag}</td>` +
         `<td><b>${fmt(row.score.total)}</b></td>` +
         SCORE_PARTS.map((part) => `<td>${fmt(row.score[part.key])}</td>`).join('') +
         `<td>${row.colonies}</td>`;
+      // Позывной — узел, а не строка: из рейтинга пишут письмо тому, кого увидели.
+      tr.querySelector('.rating-name').prepend(nickNode(row.nickname));
       el.ratingRows.appendChild(tr);
     }
 

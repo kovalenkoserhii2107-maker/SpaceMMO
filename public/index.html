@@ -807,6 +807,12 @@
               <div class="mail-filters" id="mail-filters"></div>
               <div class="sim-actions">
                 <button type="button" class="ghost" id="mail-compose-toggle">Написать письмо</button>
+                <!--
+                  Рассылка — своя кнопка рядом: она есть не у всех, и прятать
+                  ее внутри формы личного письма значило бы, что тот, кому
+                  она доступна, о ней не узнает.
+                -->
+                <button type="button" class="ghost" id="mail-broadcast-toggle" hidden>Рассылка синдикату</button>
                 <button type="button" class="ghost" id="mail-read-all">Прочитать все</button>
                 <span class="storage-note" id="mail-summary"></span>
               </div>
@@ -824,14 +830,14 @@
               <label class="field"><span>Тема</span><input id="mail-subject" type="text" maxlength="120"></label>
               <label class="field"><span>Текст</span><textarea id="mail-body" rows="5" maxlength="4000"></textarea></label>
               <button type="button" class="primary" id="mail-send">Отправить</button>
+            </aside>
 
-              <div id="mail-broadcast" hidden>
-                <h3 class="section-title">Рассылка по синдикату</h3>
-                <p class="storage-note">Письмо уйдет всему составу. Доступно лидеру и офицерам.</p>
-                <label class="field"><span>Тема</span><input id="broadcast-subject" type="text" maxlength="120"></label>
-                <label class="field"><span>Текст</span><textarea id="broadcast-body" rows="4" maxlength="4000"></textarea></label>
-                <button type="button" class="ghost" id="broadcast-send">Разослать составу</button>
-              </div>
+            <aside class="hub-card mail-compose" id="mail-broadcast" hidden>
+              <h3 class="section-title">Рассылка по синдикату</h3>
+              <p class="storage-note">Письмо уйдет всему составу синдиката. Копия останется у тебя в ящике.</p>
+              <label class="field"><span>Тема</span><input id="broadcast-subject" type="text" maxlength="120"></label>
+              <label class="field"><span>Текст</span><textarea id="broadcast-body" rows="4" maxlength="4000"></textarea></label>
+              <button type="button" class="primary" id="broadcast-send">Разослать составу</button>
             </aside>
           </div>
         </section>
