@@ -161,9 +161,15 @@ export function parseDirectives(raw: unknown, snapshot: BotSnapshot): BotDirecti
 
       case 'SCOUT': {
         const planetId = text(row['planetId'], 64);
-        // Сверяем по списку показанных колоний: разведать можно только то,
-        // что боту вообще видно на карте.
-        if (scouted.has(planetId)) out.push({ kind: 'SCOUT', planetId, why });
+        /*
+         * Сверяем по списку показанных колоний: разведать можно только то,
+         * что боту вообще видно на карте. И только то, что не в блокировке:
+         * туда, где зонд уже гиб, поручение слать незачем — правила на модель
+         * распространяются так же, как на решения кода.
+         */
+        if (scouted.has(planetId) && !snapshot.scoutBlocked.includes(planetId)) {
+          out.push({ kind: 'SCOUT', planetId, why });
+        }
         break;
       }
 

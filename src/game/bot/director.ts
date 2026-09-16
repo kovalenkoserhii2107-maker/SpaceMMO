@@ -92,6 +92,87 @@ function jitteredNext(now: number): Date {
 
 /* ------------------------- Сбор снимка ------------------------- */
 
+/*
+ * Память о разведке: куда зонд уже летал и чем это кончилось.
+ *
+ * Сбитый дрон не оставляет записи, поэтому «цель не разведана» одинаково
+ * значит и «еще не смотрели», и «смотрели, но не вернулся». Без отметки бот
+ * шлет зонд к той же планете каждые сорок пять секунд: живой Хижак потерял
+ * так семнадцать зондов за три часа, Яструб — восемь.
+ *
+ * Час после первой неудачи, двенадцать после второй подряд: первая может быть
+ * и джокером в один процент, вторая — уже расклад по уровням. Выросший
+ * «Шпионаж» снимает блокировку сразу: лестница решает разницу уровней,
+ * и новый уровень — это новая попытка, а не то же самое.
+ */
+const SCOUT_RETRY_MS = 3600_000;
+const SCOUT_LONG_RETRY_MS = 12 * 3600_000;
+
+interface ScoutAttempt {
+  /** Когда слали зонд в последний раз. */
+  at: number;
+  /** Сколько раз подряд цель осталась неразведанной. */
+  fails: number;
+  /** С каким уровнем «Шпионажа» была попытка. */
+  espionage: number;
+}
+
+/** `Bot.memory` переживает изменения игры — читаем защищенно (правила 8 и 9). */
+function readScouts(memory: unknown): Record<string, ScoutAttempt> {
+  if (typeof memory !== 'object' || memory === null) return {};
+  const raw = (memory as Record<string, unknown>)['scouts'];
+  if (typeof raw !== 'object' || raw === null) return {};
+
+  const out: Record<string, ScoutAttempt> = {};
+  for (const [planetId, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value !== 'object' || value === null) continue;
+    const row = value as Record<string, unknown>;
+    const at = typeof row['at'] === 'number' ? row['at'] : 0;
+    const fails = typeof row['fails'] === 'number' ? row['fails'] : 0;
+    const espionage = typeof row['espionage'] === 'number' ? row['espionage'] : 0;
+    if (at > 0) out[planetId] = { at, fails, espionage };
+  }
+  return out;
+}
+
+/** Цели, к которым слать зонд сейчас незачем. */
+function blockedScouts(scouts: Record<string, ScoutAttempt>, espionage: number, now: number): string[] {
+  return Object.entries(scouts)
+    .filter(([, attempt]) => {
+      // Подтянули «Шпионаж» — прежний расклад больше не действует.
+      if (espionage > attempt.espionage) return false;
+      const pause = attempt.fails >= 2 ? SCOUT_LONG_RETRY_MS : SCOUT_RETRY_MS;
+      return now - attempt.at < pause;
+    })
+    .map(([planetId]) => planetId);
+}
+
+/** Записать попытку: повтор по неразведанной цели — это неудача прошлой. */
+function markScout(
+  scouts: Record<string, ScoutAttempt>,
+  planetId: string,
+  espionage: number,
+  stillBlind: boolean,
+  now = Date.now(),
+): Record<string, ScoutAttempt> {
+  const previous = scouts[planetId];
+  const fails = stillBlind && previous ? previous.fails + 1 : 1;
+  return { ...scouts, [planetId]: { at: now, fails, espionage } };
+}
+
+/** Сохранить отметки разведки, не тронув остальную память (плана, расхода, пика). */
+async function saveScouts(botId: string, scouts: Record<string, ScoutAttempt>): Promise<void> {
+  const bot = await prisma.bot.findUnique({ where: { id: botId }, select: { memory: true } });
+  const memory = (typeof bot?.memory === 'object' && bot.memory !== null ? bot.memory : {}) as Record<
+    string,
+    unknown
+  >;
+  await prisma.bot.update({
+    where: { id: botId },
+    data: { memory: { ...memory, scouts: scouts as unknown as object } },
+  });
+}
+
 /** Расстояние между системами на макро-карте. */
 function distance(a: { galaxyX: number; galaxyY: number }, b: { galaxyX: number; galaxyY: number }): number {
   return Math.hypot(a.galaxyX - b.galaxyX, a.galaxyY - b.galaxyY);
@@ -377,6 +458,9 @@ export async function buildSnapshot(
       nextRentPerHour: hubRent(stockUsage.level + 1) * 3600,
     },
     colonizing: commander.fleets.some((fleet) => fleet.mission === 'COLONIZE'),
+    // Разведанное зондом, который не вернулся, — не разведано; но и слать
+    // туда следующий сразу незачем.
+    scoutBlocked: blockedScouts(readScouts(memory), commander.techs.ESPIONAGE ?? 0, Date.now()),
     ...(await syndicateView(commander, home.systemId)),
   };
 }
@@ -2134,6 +2218,11 @@ async function turn(botId: string): Promise<BotTurn | null> {
     }
   }
 
+  // Отметки разведки живут весь заход: их правят и решения кода, и успех
+  // прошлого зонда, а пишутся они одной записью в конце.
+  let scouts = readScouts(bot.memory);
+  let scoutsDirty = false;
+
   const profile = withPlan(bot.character, plan?.plan ?? null);
   for (const intent of decide(snapshot, profile)) {
     /*
@@ -2159,7 +2248,28 @@ async function turn(botId: string): Promise<BotTurn | null> {
 
     const result = await execute(bot.commanderId, intent);
     if (result.ok) actions.push(`${intent.kind}: ${intent.why}`);
+
+    /*
+     * Зонд ушел — записываем попытку. Успех виден только на следующем заходе:
+     * вернувшийся дрон оставит снимок, и цель перестанет быть слепой, а
+     * сбитый не оставит ничего — тогда это неудача, и пауза удлиняется.
+     */
+    if (result.ok && intent.kind === 'SCAN') {
+      const stillBlind =
+        snapshot.raidTargets.find((item) => item.planetId === intent.planetId)?.knownStrength === null;
+      scouts = markScout(scouts, intent.planetId, snapshot.techs.ESPIONAGE ?? 0, stillBlind);
+      scoutsDirty = true;
+    }
   }
+
+  // Разведка попала в снимок — цель больше не слепая, отметка не нужна.
+  for (const target of snapshot.raidTargets) {
+    if (target.knownStrength !== null && scouts[target.planetId]) {
+      delete scouts[target.planetId];
+      scoutsDirty = true;
+    }
+  }
+  if (scoutsDirty) await saveScouts(bot.id, scouts);
 
   // Дипломат: ответы на письма живых игроков.
   const mail = await answerMail(bot.commanderId, bot.character, spend, spentAll);

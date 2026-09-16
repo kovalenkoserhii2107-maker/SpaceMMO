@@ -2515,6 +2515,55 @@ function syndicateWith(overrides: Partial<BotSyndicate> = {}): BotSyndicate {
   );
 }
 
+console.log('\n=== 7г. Сбитый зонд закрывает цель на время ===');
+
+{
+  /*
+   * Живой Хижак сжег семнадцать зондов за три часа об одну планету: сбитый
+   * дрон не оставляет записи, цель остается слепой, и следующий заход
+   * выбирает ее снова.
+   */
+  const blind = target({ planetId: 'крепость', knownStrength: null, knownStock: null });
+  const scout = (blocked: string[]) =>
+    snapshotWith({
+      character: 'AGGRESSOR',
+      bases: [testBase('home', { ships: { ...emptyShipCounts(), PROBE: 3 }, resources: { ore: 9000, polymers: 9000, plasma: 9000 } })],
+      raidTargets: [blind],
+      scoutBlocked: blocked,
+    });
+
+  check(
+    'неразведанную цель бот смотрит',
+    decide(scout([])).some((i) => i.kind === 'SCAN' && i.planetId === 'крепость'),
+  );
+  check(
+    'закрытую после потери зонда — не смотрит',
+    !decide(scout(['крепость'])).some((i) => i.kind === 'SCAN'),
+  );
+  check(
+    'и зондов под нее не заказывает',
+    !decide(
+      snapshotWith({
+        character: 'AGGRESSOR',
+        bases: [testBase('home', { levels: { ...emptyLevels(), SHIPYARD: 4, ORE_MINE: 6, POWER_PLANT: 6 }, resources: { ore: 9000, polymers: 9000, plasma: 9000 } })],
+        raidTargets: [blind],
+        scoutBlocked: ['крепость'],
+      }),
+    ).some((i) => i.kind === 'SHIPS' && i.ship === 'PROBE'),
+  );
+
+  // Поручение модели проходит ту же проверку, что и решение кода.
+  const asked = parseDirectives(
+    [{ kind: 'SCOUT', planetId: 'крепость', why: 'хочу посмотреть' }],
+    scout(['крепость']),
+  );
+  check('поручение разведать закрытую цель отбрасывается', asked.length === 0);
+  check(
+    'а открытую — проходит',
+    parseDirectives([{ kind: 'SCOUT', planetId: 'крепость', why: 'хочу' }], scout([])).length === 1,
+  );
+}
+
 console.log('\n=== 8. Поручения модели проверяются по сводке ===');
 
 {

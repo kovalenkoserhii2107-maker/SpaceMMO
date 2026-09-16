@@ -347,6 +347,18 @@ export interface BotSnapshot {
   };
   /** Уже отправлен ли колониальный рейс: два на одну планету не нужны. */
   colonizing: boolean;
+  /**
+   * Планеты, к которым разведка сейчас бессмысленна.
+   *
+   * Зонд, сбитый чужой контрразведкой, не оставляет записи: цель остается
+   * неразведанной, и следующий заход выбирает ее снова — та же ближайшая,
+   * тот же зонд, тот же итог. Живой Хижак сжег так семнадцать зондов за три
+   * часа об одну планету, Яструб — восемь, и оба продолжали.
+   *
+   * Список считает `director` по памяти бота: он знает, когда была попытка
+   * и чем кончилась. `decide` остается чистой и просто не выбирает эти цели.
+   */
+  scoutBlocked: string[];
   /** Свой синдикат. null — бот одиночка. */
   syndicate: BotSyndicate | null;
   /** Все синдикаты сервера: из них модель выбирает, куда вступить. */
@@ -2243,8 +2255,12 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
      * а под обычную добычу — по-прежнему только тот, кто вообще ходит
      * в набеги.
      */
+    const blocked = new Set(snapshot.scoutBlocked);
     const blindThreat =
-      threat && threat.knownStrength === null && canFly({ orbit: threat.planetOrbit, distance: threat.distance })
+      threat &&
+      threat.knownStrength === null &&
+      !blocked.has(threat.planetId) &&
+      canFly({ orbit: threat.planetOrbit, distance: threat.distance })
         ? { planetId: threat.planetId, why: `${threat.nickname} бьет соседей, а мы его не видели` }
         : null;
     /*
@@ -2253,7 +2269,13 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
      */
     const blindPrey = profile.raids
       ? snapshot.raidTargets
-          .filter((candidate) => candidate.knownStrength === null && !shielded(candidate) && canFly(candidate))
+          .filter(
+            (candidate) =>
+              candidate.knownStrength === null &&
+              !shielded(candidate) &&
+              !blocked.has(candidate.planetId) &&
+              canFly(candidate),
+          )
           .reduce<BotRaidTarget | undefined>(
             (best, candidate) => (best === undefined || candidate.distance < best.distance ? candidate : best),
             undefined,
@@ -2925,6 +2947,7 @@ export function emptyBotSnapshot(character: BotCharacter): BotSnapshot {
       nextRentPerHour: hubRent(2) * 3600,
     },
     colonizing: false,
+    scoutBlocked: [],
     syndicate: null,
     syndicates: [],
     syndicateCooldown: false,
