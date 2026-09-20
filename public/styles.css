@@ -439,14 +439,13 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
  * и не длиннее пары сотен пикселей — полоса на всю ширину панели заставляла
  * вести глазом от заголовка слева до числа справа через пустое поле.
  *
- * Адрес и недра равной ширины, гарнизон в полтора раза шире: ему запас нужен,
- * чтобы флот и оборона встали в строку каждый, а первым двум лишняя ширина
- * только удлиняет полосы склада и шкалы.
+ * Колонок две: адрес со складом и недра. Состав флота и обороны стоит ниже
+ * своим разбором — в паспорте он повторял бы его теми же числами.
  */
 .planet-card {
   padding: 14px 20px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.5fr);
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
   gap: 16px 20px;
   align-items: start;
 }
@@ -516,37 +515,6 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 
 /* ---------- Гарнизон базы ---------- */
 
-/*
- * Плашки по ширине содержимого, а не по единой сетке. Одной колонкой шесть
- * классов давали триста пикселей высоты — паспорт выходил выше ряда карточек
- * под ним. Ровная сетка тоже не годится: трек приходится мерить по самой
- * длинной подписи («Пушечные турели»), и либо она переносится в две строки,
- * либо «Зонды» получают вдвое больше места, чем им нужно.
- */
-.garrison { display: flex; flex-wrap: wrap; gap: 5px; }
-.garrison-unit {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 3px 11px 3px 3px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--panel-2);
-}
-.garrison-unit b { font-size: 13px; font-variant-numeric: tabular-nums; }
-.garrison-unit small { font-size: 11px; color: var(--muted); white-space: nowrap; }
-.garrison-empty { grid-column: 1 / -1; margin: 0; font-size: 12px; color: var(--muted); }
-
-/* Круглая миниатюра юнита: тот же арт, что на карточке постройки. */
-.art.art-chip {
-  flex: none;
-  width: 28px;
-  height: 28px;
-  aspect-ratio: 1 / 1;
-  border-radius: 50%;
-  border-width: 1px;
-}
-.art.art-chip.art-missing::after { font-size: 11px; }
 
 /* ---------- Хранилище: заполненность и остановка добычи ---------- */
 .storage { display: grid; gap: 6px; }
@@ -1957,7 +1925,8 @@ button.nick:hover { color: var(--accent); }
 .codex-accept { display: flex; gap: 8px; align-items: center; font-size: 13px; }
 .syndicate-form { display: grid; gap: 8px; margin-top: 10px; }
 .syndicate-form .row, .rank-editor .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; }
-.syndicate-textarea { width: 100%; min-height: 160px; resize: vertical; font: inherit; box-sizing: border-box; }
+/* Кодекс — длинный текст: пятнадцать тысяч знаков в поле высотой в абзац не правятся. */
+.syndicate-textarea { width: 100%; min-height: 260px; resize: vertical; font: inherit; box-sizing: border-box; }
 .rank-editor { display: grid; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .rank-editor .field { flex: 1 1 120px; }
 .rank-new-title { margin: 12px 0 0; font-size: 13px; }
@@ -2609,23 +2578,6 @@ button.nick:hover { color: var(--accent); }
   }
 }
 
-/*
- * Паспорт колонии складывается раньше всего: трем колонкам нужно около
- * девятисот пикселей, а с открытой правой сводкой их не остается уже
- * на ноутбуке. Вниз уходит гарнизон: на всю ширину он остается в две строки,
- * тогда как в узкой колонке распался бы на пять. Разделительная линия
- * становится верхней — иначе она висела бы сбоку у блока, стоящего снизу.
- */
-@media (max-width: 1320px) {
-  .planet-card { grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); }
-  .planet-card > .colony-col:last-child {
-    grid-column: 1 / -1;
-    padding: 14px 0 0;
-    border-left: none;
-    border-top: 1px solid var(--line);
-  }
-}
-
 @media (max-width: 900px) {
   .planet-card { grid-template-columns: minmax(0, 1fr); }
   .colony-col + .colony-col {
@@ -2633,7 +2585,6 @@ button.nick:hover { color: var(--accent); }
     border-left: none;
     border-top: 1px solid var(--line);
   }
-  .colony-garrison { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
 }
 
 /*

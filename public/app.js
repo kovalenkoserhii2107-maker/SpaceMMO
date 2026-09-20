@@ -75,10 +75,10 @@
     planetMeta: $('planet-meta'),
     richness: $('richness'),
     colonyArt: $('colony-art'),
-    garrisonFleet: $('garrison-fleet'),
-    garrisonFleetTotal: $('garrison-fleet-total'),
-    garrisonDefense: $('garrison-defense'),
-    garrisonDefenseTotal: $('garrison-defense-total'),
+    rosterFleet: $('roster-fleet'),
+    rosterFleetTitle: $('roster-fleet-title'),
+    rosterDefense: $('roster-defense'),
+    rosterDefenseTitle: $('roster-defense-title'),
     storage: $('storage'),
     storageRows: $('storage-rows'),
     storageNote: $('storage-note'),
@@ -87,7 +87,6 @@
     buildings: $('buildings'),
     researchJob: $('research-job'),
     technologies: $('technologies'),
-    fleet: $('fleet'),
     shipQueue: $('ship-queue'),
     ships: $('ships'),
     buildMessage: $('build-message'),
@@ -157,6 +156,7 @@
     cargoPolymersMax: $('cargo-polymers-max'),
     cargoPlasmaMax: $('cargo-plasma-max'),
     cargoPolymersLabel: $('cargo-polymers-label'),
+    cargoPlasmaLabel: $('cargo-plasma-label'),
     cargoPlasma: $('cargo-plasma'),
     cargoPlasmaField: $('cargo-plasma-field'),
     cargoAntimatter: $('cargo-antimatter'),
@@ -180,6 +180,8 @@
     dispatchOrigin: $('dispatch-origin'),
     kishAwayTitle: $('kish-away-title'),
     cargoInputs: $('cargo-inputs'),
+    cargoStepTitle: $('cargo-step-title'),
+    holdSummary: $('hold-summary'),
     adminSearch: $('admin-search'),
     ratingNote: $('rating-note'),
     ratingMine: $('rating-mine'),
@@ -245,7 +247,6 @@
     simResult: $('sim-result'),
     simFillMine: $('sim-fill-mine'),
     defenses: $('defenses'),
-    defenseSummary: $('defense-summary'),
     defenseQueue: $('defense-queue'),
     diplomacy: $('diplomacy'),
     battles: $('battles'),
@@ -1273,7 +1274,6 @@
 
     renderColonyArt(base);
     renderRichness(base);
-    renderGarrison(base);
     renderStorage(base);
     renderOverview(base);
 
@@ -1303,7 +1303,6 @@
     });
 
     renderCards(base);
-    renderFleet(base);
     renderQueue(base);
     renderDefenses(base);
     renderFleetList();
@@ -1380,48 +1379,6 @@
         `<span class="rich-tier">${tier.label}</span>`;
       el.richness.appendChild(item);
     }
-  }
-
-  /**
-   * Гарнизон базы: что стоит на орбите и что вкопано в грунт. Пустые классы
-   * не показываем — список из шести нулей ничего не сообщает, а место занимает.
-   */
-  function renderGarrison(base) {
-    const fleetTotal = fillGarrison(el.garrisonFleet, base.fleet, SHIP_LABELS, 'ship', 'Кораблей на орбите нет');
-    const defenseTotal = fillGarrison(el.garrisonDefense, base.defenses, DEFENSE_LABELS, 'defense', 'Планета не укреплена');
-    el.garrisonFleetTotal.textContent = fmt(fleetTotal);
-    el.garrisonDefenseTotal.textContent = fmt(defenseTotal);
-  }
-
-  function fillGarrison(node, counts, labels, kind, emptyText) {
-    node.innerHTML = '';
-    let total = 0;
-
-    for (const [type, label] of Object.entries(labels)) {
-      const count = Number(counts[type]) || 0;
-      total += count;
-      if (count === 0) continue;
-
-      const unit = document.createElement('div');
-      unit.className = 'garrison-unit';
-      unit.title = label;
-
-      const value = document.createElement('b');
-      value.textContent = fmt(count);
-      const name = document.createElement('small');
-      name.textContent = label;
-
-      unit.append(artNode(type, label, kind, 'art-chip'), value, name);
-      node.appendChild(unit);
-    }
-
-    if (total === 0) {
-      const empty = document.createElement('p');
-      empty.className = 'garrison-empty';
-      empty.textContent = emptyText;
-      node.appendChild(empty);
-    }
-    return total;
   }
 
   /** Три склада: у каждого ресурса свой лимит и своя полоса. */
@@ -1543,6 +1500,7 @@
   function renderOverview(base) {
     renderEnergyStats(base);
     renderQueueSummary(base);
+    renderOverviewRoster(base);
 
     const signature =
       base.baseId +
@@ -1568,6 +1526,48 @@
       (item) => item.tech,
       research ? research.tech : null,
       research ? research.targetLevel : null,
+    );
+  }
+
+  const rosterKeys = { fleet: { value: null }, defense: { value: null } };
+
+  /**
+   * Ангар и бастион. Прежде перечень имеющегося стоял в верфи и в обороне —
+   * то есть ровно там, где решают, что строить дальше, — и отодвигал карточки
+   * вниз на целый экран. Вопрос «что у меня есть» задают в центре управления,
+   * рядом со складом, энергией и очередями, и здесь же ему место.
+   *
+   * Разбор подробнее прежней ведомости в паспорте: у каждого класса профиль
+   * единицы, суммарные залп и живучесть, а у кораблей еще трюм всем классом,
+   * ход эскадры и расход плазмы — то, чем решается состав рейса.
+   */
+  function renderOverviewRoster(base) {
+    const hulls = Object.values(base.fleet).reduce((sum, n) => sum + (Number(n) || 0), 0);
+    const guns = Object.values(base.defenses).reduce((sum, n) => sum + (Number(n) || 0), 0);
+    el.rosterFleetTitle.textContent = hulls ? `Ангар · ${fmt(hulls)} корпусов` : 'Ангар';
+    el.rosterDefenseTitle.textContent = guns ? `Бастион · ${fmt(guns)} установок` : 'Бастион';
+
+    renderRoster(
+      el.rosterFleet,
+      base.ships.map((ship) => ({ ...ship, kind: 'ship' })),
+      base.fleet,
+      rosterKeys.fleet,
+      'В ангаре пусто. Корабли строятся в верфи.',
+      (card, count) => {
+        const flight = card.flight;
+        if (!flight) return '';
+        const cargo = flight.cargo > 0 ? ` · трюм <b>${fmt(flight.cargo * count)}</b>` : '';
+        return `${cargo} · ход <b>${fmt(flight.speed)}</b>` +
+          ` · плазма <b>${fmtAmount(Math.round(flight.fuelPerSecond * count * 100) / 100)}</b>/с`;
+      },
+    );
+
+    renderRoster(
+      el.rosterDefense,
+      base.defenseCards.map((item) => ({ ...item, kind: 'defense' })),
+      base.defenses,
+      rosterKeys.defense,
+      'Планета не укреплена. Турели строятся в разделе обороны.',
     );
   }
 
@@ -1969,6 +1969,7 @@
 
     const energy = document.createElement('dd');
     const energyRow = specRow(icon('energy', 'sm') + ' Расход', energy);
+    const energyLabel = energyRow.querySelector('dt');
     energyRow.hidden = true;
 
     const cost = document.createElement('dd');
@@ -1995,7 +1996,10 @@
     article.append(header, desc, combat, spec, reqs);
     container.appendChild(article);
 
-    return { article, cover: header, level, costOre, costPolymers, costPlasma, combat, energy, energyRow, time, reqs };
+    return {
+      article, cover: header, level, costOre, costPolymers, costPlasma,
+      combat, energy, energyRow, energyLabel, time, reqs,
+    };
   }
 
   function createActionCard(container, title, description, onClick, type, kind) {
@@ -2098,16 +2102,27 @@
      * должна быть видна до постройки, а не после того, как просел КПД.
      */
     if (card.energy) {
-      const { usage, nextUsage } = building.energy;
+      const { usage, nextUsage, output, nextOutput } = building.energy;
       const grow = nextUsage - usage;
+      const gain = (nextOutput || 0) - (output || 0);
       // Оболочка карточки прячет строку по умолчанию: она есть только
       // у построек, у кораблей и техники своего расхода нет.
       card.energyRow.hidden = false;
-      // Только прирост: сколько сейчас и сколько станет — в подробностях карточки,
-      // а на самой карточке решает одно число — на сколько вырастет расход.
-      card.energy.innerHTML = grow > 0
-        ? `<span class="grow">+${fmtEnergy(grow)}</span>`
-        : '<span class="muted">не растет</span>';
+      /*
+       * У станции в этой строке стоит не расход, а прирост выработки.
+       * Расход у нее нулевой по определению, и строка честно показывала
+       * «не растет» — то есть занимала место, ничего не сообщая, тогда как
+       * решает при ее улучшении ровно одно число: сколько энергии прибавится.
+       *
+       * Остальным постройкам строка нужна прежней: дефицит режет добычу
+       * на всех шахтах разом, и цену решения видно до нажатия кнопки.
+       */
+      card.energyLabel.innerHTML = icon('energy', 'sm') + (gain > 0 ? ' Выработка' : ' Расход');
+      card.energy.innerHTML = gain > 0
+        ? `<span class="grow">+${fmtEnergy(gain)}</span>`
+        : grow > 0
+          ? `<span class="grow">+${fmtEnergy(grow)}</span>`
+          : '<span class="muted">не растет</span>';
     }
     fillCost(card, building.cost, base.resources);
     card.time.textContent = fmtTime(building.seconds);
@@ -2177,7 +2192,7 @@
    * Перерисовывается только при изменении состава: пересобирать картинки
    * каждую секунду значит каждую секунду заново дергать их загрузку.
    */
-  function renderRoster(node, cards, counts, keyRef, emptyText) {
+  function renderRoster(node, cards, counts, keyRef, emptyText, detail) {
     const signature = cards.map((card) => `${card.type}:${counts[card.type] || 0}`).join('|');
     if (keyRef.value === signature) return;
     keyRef.value = signature;
@@ -2214,23 +2229,12 @@
         `<span><i>щит</i>${fmt(combat.shield)}</span>` +
         `<span><i>корпус</i>${fmt(combat.hull)}</span>` +
         '</span>' +
-        `<span class="roster-total">залп <b>${fmt(salvo)}</b> · живучесть <b>${fmt(endurance)}</b></span>` +
+        `<span class="roster-total">залп <b>${fmt(salvo)}</b> · живучесть <b>${fmt(endurance)}</b>` +
+        `${detail ? detail(card, count) : ''}</span>` +
         (combat.note ? `<span class="roster-note">${escapeHtml(combat.note)}</span>` : '');
       unit.appendChild(body);
       node.appendChild(unit);
     }
-  }
-
-  const rosterKeys = { fleet: { value: null }, defense: { value: null } };
-
-  function renderFleet(base) {
-    renderRoster(
-      el.fleet,
-      base.ships.map((ship) => ({ ...ship, kind: 'ship' })),
-      base.fleet,
-      rosterKeys.fleet,
-      'В ангаре пусто. Построй первый корабль ниже.',
-    );
   }
 
   /**
@@ -3585,6 +3589,14 @@
   }
 
   /** Список миссий зависит от того, что выбрано: планета или хаб. */
+  /*
+   * Рейсы, которые действительно что-то везут: груз или помощь, колонизация
+   * и работа с хабом и Кошем в обе стороны. Остальным трюмы не нужны.
+   */
+  const CARGO_MISSIONS = new Set([
+    'TRANSPORT', 'DEPLOY', 'COLONIZE', 'HUB_DELIVERY', 'HUB_PICKUP', 'KISH_DELIVERY', 'KISH_PICKUP',
+  ]);
+
   /**
    * Сколько груза вообще есть под рукой.
    *
@@ -3596,6 +3608,51 @@
    * эскадры вместе с топливом и вернет отказ с точной цифрой. Обещать
    * вместимость до выбора кораблей было бы враньем.
    */
+  /*
+   * Вместимость эскадры считается и на клиенте, теми же числами, что у сервера:
+   * трюм класса лежит в карточке корабля, множитель «Обозных трюмов» — в снимке
+   * базы. Раньше вместимость была известна только после расчета маршрута,
+   * и игрок набирал состав вслепую — а грузоподъемность решает состав рейса
+   * не меньше, чем наличие кораблей.
+   */
+  function compositionCapacity() {
+    const base = activeBase();
+    if (!base) return 0;
+    const ships = readComposition();
+    let total = 0;
+    for (const card of base.ships || []) {
+      const cargo = card.flight ? card.flight.cargo : 0;
+      total += (ships[card.type] || 0) * cargo;
+    }
+    return Math.floor(total * (base.cargoMultiplier || 1));
+  }
+
+  /*
+   * Расчет маршрута, если он про нынешний состав.
+   *
+   * Состав меняется мгновенно, а расчет приходит с сервера через четверть
+   * секунды, и все это время в `map.plan` лежит прошлый рейс. Сверяемся
+   * по вместимости: она считается на клиенте теми же числами, и разошлась
+   * она — значит план устарел, и топливо из него показывать нельзя.
+   */
+  function currentPlan(capacity) {
+    return map.plan && map.plan.capacity === capacity ? map.plan : null;
+  }
+
+  /** Что остается под груз: вместимость за вычетом топлива рейса. */
+  function usableHold() {
+    const capacity = compositionCapacity();
+    const plan = currentPlan(capacity);
+    return plan ? plan.usable : capacity;
+  }
+
+  /** Уже загружено, кроме одного поля: ресурсы делят один трюм. */
+  function cargoLoaded(except) {
+    return [el.cargoOre, el.cargoPolymers, el.cargoPlasma, el.cargoAntimatter]
+      .filter((input) => input !== except && !input.closest('label').hidden)
+      .reduce((total, input) => total + (Number(input.value) || 0), 0);
+  }
+
   function cargoAvailable() {
     const base = activeBase();
     if (map.mission === 'KISH_PICKUP') {
@@ -3625,6 +3682,12 @@
     };
   }
 
+  /*
+   * Остаток на складе и остаток трюмов — два разных предела, и «все» обязано
+   * смотреть на оба. Раньше кнопка набирала весь склад, флот такого груза
+   * не поднимал, и вылет кончался отказом сервера с точной цифрой — то есть
+   * игрок узнавал вместимость только после неудачи.
+   */
   function syncCargoLimits() {
     const available = cargoAvailable();
     const pickup = map.mission === 'HUB_PICKUP' || map.mission === 'KISH_PICKUP';
@@ -3637,15 +3700,57 @@
 
     for (const [resource, , label, input, max, caption] of fields) {
       const amount = available[resource];
+      // Предел поля: меньшее из того, что есть, и того, что еще влезает.
+      const limit = () => Math.min(amount, Math.max(0, usableHold() - cargoLoaded(input)));
       caption.innerHTML = `${icon(resource, 'sm')} ${label} <em class="field-have">${fmt(amount)}</em>`;
-      input.max = String(amount);
+      input.max = String(limit());
       max.disabled = amount <= 0;
       max.onclick = (event) => {
         event.preventDefault();
-        input.value = String(amount);
+        input.value = String(limit());
         schedulePlan();
       };
     }
+    syncHoldSummary();
+  }
+
+  /**
+   * Трюмы и топливо в шаге состава.
+   *
+   * Топливо едет в тех же трюмах, что и груз, поэтому одной вместимости мало:
+   * решает остаток после баков, и он тем меньше, чем больше кораблей в рейсе.
+   * Расход считает сервер по маршруту, поэтому до расчета показывается только
+   * вместимость — выдуманное число здесь хуже отсутствующего.
+   */
+  function syncHoldSummary() {
+    if (!el.holdSummary) return;
+    const capacity = compositionCapacity();
+    const ships = readComposition();
+    const picked = Object.values(ships).reduce((total, count) => total + count, 0);
+    if (picked <= 0) {
+      el.holdSummary.hidden = true;
+      return;
+    }
+    el.holdSummary.hidden = false;
+
+    if (capacity <= 0) {
+      el.holdSummary.innerHTML = 'Трюмов у этого состава нет — груз такой эскадрой не увезти.';
+      return;
+    }
+
+    const plan = currentPlan(capacity);
+    if (!plan) {
+      el.holdSummary.innerHTML =
+        `трюмы: <b>${fmt(capacity)}</b> · топливо считается по маршруту и займет часть трюмов`;
+      return;
+    }
+    const fuel = [];
+    if (plan.antimatter > 0) fuel.push(`${fmtAmount(plan.antimatter)} антиматерии`);
+    if (plan.fuel > 0) fuel.push(`${fmtAmount(plan.fuel)} плазмы`);
+    el.holdSummary.innerHTML =
+      `трюмы: <b>${fmt(plan.capacity)}</b> · топливо в трюмах: ` +
+      `<b>${fmt(Math.round(plan.fuelLoad))}</b>${fuel.length ? ` (${fuel.join(' + ')})` : ''} · ` +
+      `под груз: <b class="${plan.usable <= 0 ? 'bad' : ''}">${fmt(plan.usable)}</b>`;
   }
 
   function syncMissionOptions() {
@@ -3738,19 +3843,32 @@
     el.oneWayRow.hidden = !canChooseOneWay;
     if (!canChooseOneWay) el.oneWay.checked = false;
 
-    // Переработчики летят за обломками, а не с грузом: трюмы должны быть пусты.
-    // Разведке трюмы тоже ни к чему — зонд везет данные, а не ресурсы.
-    // Удержание тоже без груза: флот встает на орбиту защищать, а не везти.
     el.holdRow.hidden = map.mission !== 'HOLD';
     el.jointRow.hidden = map.mission !== 'ATTACK';
     if (map.mission === 'ATTACK') loadJointAttacks();
-    const harvest = map.mission === 'HARVEST' || map.mission === 'SCAN' || map.mission === 'HOLD' || map.mission === 'KISH_RAID';
-    el.cargoInputs.hidden = harvest;
-    if (harvest) {
+
+    /*
+     * Груз показывается только тем рейсам, которые что-то везут.
+     *
+     * Перечень не вкусовой, он повторяет сервер: у разведки, атаки, налета,
+     * удержания, переработки и экспедиции груз либо обнуляется при вылете,
+     * либо не имеет смысла — зонд везет данные, ударный флот идет за добычей,
+     * а переработчик за обломками. Три поля с кнопками «все» в такой форме
+     * предлагали заполнить то, что все равно уйдет в ноль.
+     *
+     * Вместе с полями меняется и заголовок шага: без груза в нем остается
+     * один запуск, иначе он обещал бы то, чего в шаге нет.
+     */
+    const carries = CARGO_MISSIONS.has(map.mission);
+    el.cargoInputs.hidden = !carries;
+    el.cargoStepTitle.textContent = carries ? 'Груз и запуск' : 'Запуск';
+    if (!carries) {
       el.cargoOre.value = '0';
       el.cargoPolymers.value = '0';
       el.cargoPlasma.value = '0';
+      el.cargoAntimatter.value = '0';
     }
+    syncHoldSummary();
   }
 
   function renderPlanetInfo() {
@@ -4155,6 +4273,7 @@
       map.plan = null;
       el.flightPlan.textContent = 'Выбери корабли, чтобы увидеть расчет.';
       showMissionWarning(null);
+      syncHoldSummary();
       return;
     }
 
@@ -4181,7 +4300,7 @@
         Number(el.cargoPolymers.value || 0) +
         Number(el.cargoPlasma.value || 0) +
         Number(el.cargoAntimatter.value || 0);
-      const overload = cargo > map.plan.capacity;
+      const overload = cargo > map.plan.usable;
       const jump = map.plan.kind === 'INTERSTELLAR';
 
       // Внутри системы жжем плазма, между системами — антиматерия.
@@ -4206,7 +4325,11 @@
         `топливо (${oneWay ? 'в один конец' : 'туда-обратно'}): ` +
         `<b class="${noFuel ? 'bad' : ''}">${fmtAmount(fuelAmount)}</b> ${fuelName} ` +
         `(на складе ${fmtAmount(fuelStock)})<br>` +
-        `трюмы: <b class="${overload ? 'bad' : ''}">${fmt(cargo)}</b> из ${fmt(map.plan.capacity)}`;
+        `трюмы: <b class="${overload ? 'bad' : ''}">${fmt(cargo)}</b> из ${fmt(map.plan.usable)}` +
+        (map.plan.fuelLoad > 0 ? ` (топливо занимает ${fmt(Math.round(map.plan.fuelLoad))} из ${fmt(map.plan.capacity)})` : '');
+      // Расчет пришел — вместимость и расход в шаге состава уже не оценка,
+      // а точные числа, и пределы полей груза считаются по ним же.
+      syncCargoLimits();
     } catch (error) {
       el.flightPlan.textContent = 'Не удалось рассчитать маршрут';
     }
@@ -4982,7 +5105,15 @@
     if (!market.data) return;
     const resource = el.orderResource.value;
     const quote = market.data.quotes?.[resource];
-    if (quote && !el.orderPrice.value) el.orderPrice.value = quote.reference.toFixed(2);
+    /*
+     * Пустое поле цены заполняется рыночной, но только пока игрок его не правит.
+     * Раньше подстановка шла при каждом пересчете подсказки — то есть и на
+     * `input`, — и стереть последнюю цифру было нельзя: поле тут же получало
+     * прежнюю цену обратно.
+     */
+    if (quote && !el.orderPrice.value && document.activeElement !== el.orderPrice) {
+      el.orderPrice.value = quote.reference.toFixed(2);
+    }
 
     const amount = parseAmount(el.orderQuantity.value);
     const price = parsePrice(el.orderPrice.value);
@@ -5520,13 +5651,6 @@
   }
 
   function renderDefenses(base) {
-    renderRoster(
-      el.defenseSummary,
-      base.defenseCards.map((item) => ({ ...item, kind: 'defense' })),
-      base.defenses,
-      rosterKeys.defense,
-      'Планета не укреплена. Турели строятся ниже.',
-    );
     renderUnitQueue(el.defenseQueue, base.defenseQueue, 'Очередь обороны пуста', (jobId) =>
       send(`/api/bases/${base.baseId}/defenses/cancel`, { jobId }));
   }
@@ -6257,7 +6381,8 @@
     const rules = synEl('div', 'syndicate-grid');
     rules.append(renderTaxCard(mine, can), renderRecruitmentCard(mine, data, can));
     panel.appendChild(rules);
-    panel.appendChild(renderCharterCard(mine, data, can));
+    panel.appendChild(renderDescriptionCard(mine, data, can));
+    panel.appendChild(renderCodexCard(mine, data, can));
 
     const people = synEl('div', 'syndicate-grid');
     people.append(renderMembersCard(mine, can, myPosition), renderRanksCard(mine, data));
@@ -6275,7 +6400,7 @@
     title.append(synEl('span', 'syn-tag', mine.tag), synEl('span', null, mine.name));
     body.appendChild(title);
     body.appendChild(synEl('p', mine.description ? 'syn-desc' : 'syn-desc muted',
-      mine.description || 'Описание не задано. Его пишет ранг с правом правил набора в карточке «Устав».'));
+      mine.description || 'Описание не задано. Его пишет ранг с правом правил набора в карточке «Описание».'));
     const chips = synEl('div', 'syn-chips');
     for (const text of [
       `твой ранг: ${mine.me.rankName}`,
@@ -6496,10 +6621,19 @@
     return rules;
   }
 
-  /** Устав: описание — лицо синдиката для кандидатов, кодекс — правила для своих. */
-  function renderCharterCard(mine, data, can) {
-    const card = synCard('Устав');
-    card.appendChild(synEl('h4', 'syn-subtitle', 'Описание'));
+  /*
+   * Описание и кодекс разведены по разным карточкам, и это не косметика.
+   * Под одним заголовком «Устав» первым полем шло описание, и главарь писал
+   * туда устав целиком — то есть в строку-визитку, которую видят кандидаты
+   * в списке синдикатов и которая стоит в шапке раздела.
+   */
+
+  /** Описание — визитка синдиката: ее видят кандидаты в списке и в шапке. */
+  function renderDescriptionCard(mine, data, can) {
+    const card = synCard('Описание');
+    card.appendChild(synEl('div', 'hub-storage',
+      'Короткая визитка синдиката: ее видно в шапке раздела и в списке синдикатов. ' +
+      'Правила и порядки — в кодексе ниже.'));
     if (can('RULES')) {
       const input = synEl('textarea', 'syndicate-textarea short');
       input.maxLength = data.limits.descriptionMaxLength;
@@ -6513,8 +6647,12 @@
     } else {
       card.appendChild(synEl('div', 'hub-storage', mine.description || 'Описания нет.'));
     }
+    return card;
+  }
 
-    card.appendChild(synEl('h4', 'syn-subtitle', 'Кодекс'));
+  /** Кодекс — устав синдиката: правила для своих, и его принимает кандидат. */
+  function renderCodexCard(mine, data, can) {
+    const card = synCard('Кодекс — устав синдиката');
     if (mine.codex) {
       card.appendChild(synEl('pre', 'codex-text', mine.codex.text));
       card.appendChild(synEl('div', 'hub-storage',

@@ -826,13 +826,26 @@ async function execute(
  *
  * Большие берутся первыми: у них на единицу трюма вдвое меньше расхода.
  * Трюмы считаются без бонуса синдиката — с ним места только больше.
+ *
+ * Запас в пятую часть — под топливо: оно едет в тех же трюмах, и рейс,
+ * набранный трюмо в трюмо, не прошел бы проверку вылета вовсе. Доля
+ * расхода к трюму у обоих грузовиков одна (0.0002 в секунду на единицу
+ * места), поэтому одного числа хватает на любой состав, а пятой части —
+ * на любой внутрисистемный перелет.
  */
+const CARGO_FUEL_MARGIN = 1.25;
+
+/** Под груз идет не весь трюм: топливо рейса едет в нем же. */
+function holdForCargo(ships: ShipCounts): number {
+  return Math.floor(fleetCapacity(ships) / CARGO_FUEL_MARGIN);
+}
+
 function cargoShipsFor(amount: number, available: { LARGE_CARGO: number; SMALL_CARGO: number }): ShipCounts {
   const ships = emptyShipCounts();
   const large = fleetCapacity({ ...emptyShipCounts(), LARGE_CARGO: 1 });
   const small = fleetCapacity({ ...emptyShipCounts(), SMALL_CARGO: 1 });
 
-  let left = Math.max(0, amount);
+  let left = Math.max(0, amount) * CARGO_FUEL_MARGIN;
   ships.LARGE_CARGO = Math.min(available.LARGE_CARGO, Math.floor(left / large));
   left -= ships.LARGE_CARGO * large;
   ships.SMALL_CARGO = Math.min(available.SMALL_CARGO, Math.ceil(left / small));
@@ -932,7 +945,7 @@ async function deliverToHub(
    * перекрывала вместимость одного транспорта, и sendFleet отвечал отказом.
    * Молча — потому что отказ здесь штатен, — и торговля бота не работала вовсе.
    */
-  const hold = fleetCapacity(ships);
+  const hold = holdForCargo(ships);
   if (hold <= 0) return null;
 
   /*
@@ -1954,7 +1967,7 @@ async function applyDirective(
         // Караван: грузовики и ровно то, что есть на складе.
         ships.SMALL_CARGO = home.ships.SMALL_CARGO;
         ships.LARGE_CARGO = home.ships.LARGE_CARGO;
-        const hold = fleetCapacity(ships);
+        const hold = holdForCargo(ships);
         const ore = Math.min(directive.ore, Math.floor(home.resources.ore));
         const polymers = Math.min(directive.polymers, Math.floor(home.resources.polymers));
         const total = ore + polymers;

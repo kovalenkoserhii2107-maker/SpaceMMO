@@ -402,7 +402,7 @@ export function splitTax(mined: number, ratePercent: number): { tax: number; kep
 
 export const MAX_RANKS = 8;
 export const RANK_NAME_MAX = 24;
-export const CODEX_MAX_LENGTH = 5000;
+export const CODEX_MAX_LENGTH = 15_000;
 /** Пауза после добровольного выхода: иначе перебегать за чужими бонусами ничего не стоит. */
 export const LEAVE_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
@@ -481,7 +481,7 @@ export function normalizeCodex(raw: unknown): string | null {
 }
 
 /** Описание синдиката — одна-две фразы под названием, видны и кандидатам. */
-export const DESCRIPTION_MAX_LENGTH = 280;
+export const DESCRIPTION_MAX_LENGTH = 600;
 
 /** Описание в одну строку: переводы строк и управляющие символы сворачиваются в пробел. */
 export function normalizeDescription(raw: unknown): string | null {

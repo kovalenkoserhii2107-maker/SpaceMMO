@@ -216,8 +216,29 @@ export interface FlightPlan {
   fuel: number;
   /** Расход антиматерии (межзвездный прыжок). */
   antimatter: number;
+  /** Сколько трюмов занимает само топливо рейса. */
+  fuelLoad: number;
+  /** Что остается под груз: вместимость за вычетом топлива. */
+  usable: number;
   /** Прыжок через Браму синдиката, а не гипердвигателем. */
   viaGate?: boolean;
+}
+
+/*
+ * Топливо едет в тех же трюмах, что и груз.
+ *
+ * Отдельных баков у флота нет: плазма и антиматерия — такой же товар,
+ * который возят кораблями, и место они занимают наравне с рудой. Отсюда
+ * следует то, ради чего правило и заведено: чем больше флот, тем больше
+ * топлива он берет с собой и тем меньше остается под груз, — и «взять
+ * побольше кораблей на всякий случай» перестает быть бесплатным.
+ *
+ * Считается по всему рейсу, включая обратный путь: топливо на возвращение
+ * грузится при вылете, а не появляется у цели.
+ */
+function withHold(plan: Omit<FlightPlan, 'fuelLoad' | 'usable'>): FlightPlan {
+  const fuelLoad = plan.fuel + plan.antimatter;
+  return { ...plan, fuelLoad, usable: Math.max(0, plan.capacity - fuelLoad) };
 }
 
 /**
@@ -243,7 +264,7 @@ export function planFlight(
   if (!interstellar) {
     const distance = orbitDistance(from.position, to.position);
     const seconds = flightSeconds(ships, techs, distance);
-    return {
+    return withHold({
       kind: 'INTRA',
       distance,
       speed: Math.round(fleetSpeed(ships, techs)),
@@ -251,7 +272,7 @@ export function planFlight(
       capacity: fleetCapacity(ships, options.cargoMultiplier),
       fuel: fuelCost(ships, seconds, trips),
       antimatter: 0,
-    };
+    });
   }
 
   const distance = galaxyDistance(from.system, to.system);
@@ -266,7 +287,7 @@ export function planFlight(
     const fromGate = flightSeconds(ships, techs, orbitDistance(GATE_POSITION, to.position));
     const seconds = toGate + GATE_JUMP_SECONDS + fromGate;
     const neutral = { ...techs, HYPERDRIVE: 0 };
-    return {
+    return withHold({
       kind: 'INTERSTELLAR',
       distance,
       speed: Math.round(fleetSpeed(ships, techs)),
@@ -275,11 +296,11 @@ export function planFlight(
       fuel: fuelCost(ships, toGate + fromGate, trips),
       antimatter: Math.max(1, Math.ceil(jumpAntimatterCost(ships, neutral, distance, trips) * GATE_ANTIMATTER_SHARE)),
       viaGate: true,
-    };
+    });
   }
 
   const seconds = jumpSeconds(ships, techs, distance);
-  return {
+  return withHold({
     kind: 'INTERSTELLAR',
     distance,
     speed: Math.round(fleetSpeed(ships, techs)),
@@ -287,7 +308,7 @@ export function planFlight(
     capacity: fleetCapacity(ships, options.cargoMultiplier),
     fuel: 0,
     antimatter: jumpAntimatterCost(ships, techs, distance, trips),
-  };
+  });
 }
 
 /** Время гиперпрыжка в одну сторону: расстояние по макро-карте и гипердвигатель. */
@@ -360,16 +381,24 @@ export function validateComposition(mission: FleetMission, ships: ShipCounts): s
  * Плазма возится наравне с рудой и полимерами — она и топливо, и товар,
  * поэтому колонии умеют перебрасывать ее между собой.
  */
-export function validateCargo(ships: ShipCounts, cargo: ResourceAmounts, cargoMultiplier = 1): string | null {
+export function validateCargo(
+  ships: ShipCounts,
+  cargo: ResourceAmounts,
+  cargoMultiplier = 1,
+  fuelLoad = 0,
+): string | null {
   if (cargo.ore < 0 || cargo.polymers < 0 || cargo.plasma < 0) {
     return 'Некорректный объем груза';
   }
   const total = cargo.ore + cargo.polymers + cargo.plasma;
   if (total <= 0) return null;
 
-  const capacity = fleetCapacity(ships, cargoMultiplier);
+  // Топливо рейса уже лежит в трюмах, поэтому грузу остается остаток.
+  const capacity = Math.max(0, fleetCapacity(ships, cargoMultiplier) - fuelLoad);
   if (total > capacity) {
-    return `Трюмы вмещают ${capacity}, а загружено ${Math.round(total)}`;
+    return fuelLoad > 0
+      ? `Трюмы вмещают ${capacity} (топливо занимает ${Math.round(fuelLoad)}), а загружено ${Math.round(total)}`
+      : `Трюмы вмещают ${capacity}, а загружено ${Math.round(total)}`;
   }
   return null;
 }

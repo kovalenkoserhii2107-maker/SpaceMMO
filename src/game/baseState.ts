@@ -423,6 +423,12 @@ export function toSnapshot(state: BaseRuntimeState, commander: CommanderRuntimeS
     defenseCards: DEFENSE_TYPES.map((type) => defenseCard(type, state, commander)),
     fleet: { ...state.ships },
     defenses: { ...state.defenses },
+    /*
+     * Множитель трюмов: форма отправки показывает вместимость эскадры сразу
+     * по выбору кораблей, до всякого расчета маршрута, и без бонуса
+     * «Обозных трюмов» она разошлась бы с ответом сервера.
+     */
+    cargoMultiplier: commanderSyndicateBuffs(commander, now).cargo,
     shipQueue: state.shipJobs.map((job) => ({
       id: job.id,
       type: job.type,
@@ -496,6 +502,12 @@ function buildingCard(
     energy: {
       usage: round(buildingEnergyUsage(type, state.levels[type])),
       nextUsage: round(buildingEnergyUsage(type, nextLevel)),
+      // Выработка считается по общей формуле: от уровня она зависит только
+      // у станции, у остальных построек разница выходит нулевой сама собой.
+      output: round(energyOutput(state.levels, state.richness, commanderEconomyBonuses(commander))),
+      nextOutput: round(
+        energyOutput({ ...state.levels, [type]: nextLevel }, state.richness, commanderEconomyBonuses(commander)),
+      ),
     },
     busy: state.buildJob !== null,
   };

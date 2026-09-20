@@ -54,6 +54,7 @@ import {
   kishUpgradeCost,
   legacyRankPosition,
   memberCap,
+  CODEX_MAX_LENGTH,
   normalizeCodex,
   normalizeRankName,
   outranks,
@@ -179,7 +180,8 @@ console.log('\n=== 4. Тексты ===');
 {
   check('кодекс принимает обычный текст с переносами', normalizeCodex('Первое.\r\nВторое.') === 'Первое.\nВторое.');
   check('управляющие символы вырезаются', normalizeCodex('a\u0007b') === 'ab');
-  check('длиннее пяти тысяч — отказ', normalizeCodex('я'.repeat(5001)) === null);
+  check('в пределах потолка проходит', normalizeCodex('я'.repeat(CODEX_MAX_LENGTH)) !== null);
+  check('длиннее потолка — отказ', normalizeCodex('я'.repeat(CODEX_MAX_LENGTH + 1)) === null);
   check('пустой кодекс допустим — это «кодекса нет»', normalizeCodex('   ') === '');
   check('имя ранга: пробелы схлопываются', normalizeRankName('  Старший   пилот ') === 'Старший пилот');
   check('имя ранга: разметка не проходит', normalizeRankName('<b>Босс</b>') === null);

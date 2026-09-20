@@ -1156,46 +1156,8 @@ class GameLoop {
       target_ = { position: planet.position, system: planet.system };
     }
 
-    // Груз берем только для рейсов, которые что-то везут туда.
-    // Хаб торгует лишь рудой и полимерами, поэтому плазму туда не грузим.
-    const empty = { ore: 0, polymers: 0, plasma: 0 };
-    const outboundCargo =
-      mission === 'HUB_PICKUP' || mission === 'KISH_PICKUP' || mission === 'HOLD' || mission === 'KISH_RAID'
-        ? empty
-        : mission === 'HUB_DELIVERY'
-        ? { ...cargo, plasma: 0 }
-        : cargo;
     // Трюмы участника синдиката шире на «Обозные трюмы» — и груз, и запрос на вывоз.
     const senderBuffs = commanderSyndicateBuffs(commander);
-    // Антиматерию везут только в казну Коша — на перенос Коша через Браму.
-    const antimatterCargo = mission === 'KISH_DELIVERY' ? Math.max(0, Math.floor(cargo.antimatter ?? 0)) : 0;
-    const cargoError = validateCargo(
-      ships,
-      { ...outboundCargo, plasma: outboundCargo.plasma + antimatterCargo },
-      senderBuffs.cargo,
-    );
-    if (cargoError) return { ok: false, error: cargoError };
-    if (outboundCargo.ore > base.resources.ore || outboundCargo.polymers > base.resources.polymers) {
-      return { ok: false, error: 'Недостаточно ресурсов для загрузки' };
-    }
-
-    const picking = mission === 'HUB_PICKUP' || mission === 'KISH_PICKUP';
-    // С хаба плазму не вывозят — хаб ею не торгует; из казны Коша вывозится и она.
-    const request = picking
-      ? { ore: pickup.ore, polymers: pickup.polymers, plasma: mission === 'KISH_PICKUP' ? (pickup.plasma ?? 0) : 0 }
-      : { ore: 0, polymers: 0, plasma: 0 };
-    if (picking) {
-      const requested = request.ore + request.polymers + request.plasma;
-      if (requested <= 0) {
-        return {
-          ok: false,
-          error: mission === 'KISH_PICKUP' ? 'Укажи, сколько вывезти из казны' : 'Укажи, сколько товара вывезти с хаба',
-        };
-      }
-      if (requested > fleetCapacity(ships, senderBuffs.cargo)) {
-        return { ok: false, error: `Трюмы вмещают ${fleetCapacity(ships, senderBuffs.cargo)}, а запрошено ${requested}` };
-      }
-    }
 
     /*
      * Через Браму — если в системе вылета и в системе цели стоят Брамы своего
@@ -1218,6 +1180,47 @@ class GameLoop {
       target_,
       { oneWay, cargoMultiplier: senderBuffs.cargo, viaGate },
     );
+
+    // Груз берем только для рейсов, которые что-то везут туда.
+    // Хаб торгует лишь рудой и полимерами, поэтому плазму туда не грузим.
+    const empty = { ore: 0, polymers: 0, plasma: 0 };
+    const outboundCargo =
+      mission === 'HUB_PICKUP' || mission === 'KISH_PICKUP' || mission === 'HOLD' || mission === 'KISH_RAID'
+        ? empty
+        : mission === 'HUB_DELIVERY'
+        ? { ...cargo, plasma: 0 }
+        : cargo;
+    // Антиматерию везут только в казну Коша — на перенос Коша через Браму.
+    const antimatterCargo = mission === 'KISH_DELIVERY' ? Math.max(0, Math.floor(cargo.antimatter ?? 0)) : 0;
+    const cargoError = validateCargo(
+      ships,
+      { ...outboundCargo, plasma: outboundCargo.plasma + antimatterCargo },
+      senderBuffs.cargo,
+      plan.fuelLoad,
+    );
+    if (cargoError) return { ok: false, error: cargoError };
+    if (outboundCargo.ore > base.resources.ore || outboundCargo.polymers > base.resources.polymers) {
+      return { ok: false, error: 'Недостаточно ресурсов для загрузки' };
+    }
+
+    const picking = mission === 'HUB_PICKUP' || mission === 'KISH_PICKUP';
+    // С хаба плазму не вывозят — хаб ею не торгует; из казны Коша вывозится и она.
+    const request = picking
+      ? { ore: pickup.ore, polymers: pickup.polymers, plasma: mission === 'KISH_PICKUP' ? (pickup.plasma ?? 0) : 0 }
+      : { ore: 0, polymers: 0, plasma: 0 };
+    if (picking) {
+      const requested = request.ore + request.polymers + request.plasma;
+      if (requested <= 0) {
+        return {
+          ok: false,
+          error: mission === 'KISH_PICKUP' ? 'Укажи, сколько вывезти из казны' : 'Укажи, сколько товара вывезти с хаба',
+        };
+      }
+      // Топливо рейса занимает трюмы, и вывезти можно только остаток.
+      if (requested > plan.usable) {
+        return { ok: false, error: `Трюмы вмещают ${plan.usable}, а запрошено ${requested}` };
+      }
+    }
 
     // Межзвездный прыжок без Брамы возможен только с гипердвигателем; антиматерия нужна обоим.
     if (plan.kind === 'INTERSTELLAR' && !plan.viaGate && !canJump(commander.techs)) {

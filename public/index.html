@@ -406,17 +406,6 @@
                 <div class="richness" id="richness"></div>
               </details>
             </div>
-
-            <div class="colony-col colony-garrison">
-              <div class="colony-block">
-                <h3 class="colony-sub">Флот на орбите <b id="garrison-fleet-total">0</b></h3>
-                <div id="garrison-fleet" class="garrison"></div>
-              </div>
-              <div class="colony-block">
-                <h3 class="colony-sub">Оборона планеты <b id="garrison-defense-total">0</b></h3>
-                <div id="garrison-defense" class="garrison"></div>
-              </div>
-            </div>
           </section>
 
           <!--
@@ -440,6 +429,17 @@
           <h3 class="panel-title">Флоты в полете</h3>
           <div class="queue queue-stacked" id="overview-fleets"></div>
 
+          <!--
+            Ангар и бастион: что есть на базе разбором, а не ведомостью.
+            В верфи и обороне этих списков больше нет — там решают, что
+            строить дальше, и перечень имеющегося только отодвигал карточки.
+          -->
+          <h3 class="panel-title" id="roster-fleet-title">Ангар</h3>
+          <div id="roster-fleet" class="fleet"></div>
+
+          <h3 class="panel-title" id="roster-defense-title">Бастион</h3>
+          <div id="roster-defense" class="fleet"></div>
+
           <h3 class="panel-title">Постройки</h3>
           <div class="level-table" id="level-buildings"></div>
 
@@ -461,14 +461,12 @@
 
         <section data-panel="shipyard" hidden>
           <h3 class="panel-title">Верфь</h3>
-          <div id="fleet" class="fleet"></div>
           <div id="ship-queue" class="queue"></div>
           <div id="ships" class="cards"></div>
         </section>
 
         <section data-panel="defense" hidden>
           <h3 class="panel-title">Стационарная оборона</h3>
-          <div id="defense-summary" class="fleet"></div>
           <div id="defense-queue" class="queue"></div>
           <div id="defenses" class="cards"></div>
         </section>
@@ -998,6 +996,11 @@
               в пустую форму, и без подписи она выглядит поломкой.
             -->
             <p id="fleet-empty" class="mission-warning" hidden></p>
+            <!--
+              Трюмы и топливо видно сразу по выбору кораблей: топливо едет
+              в тех же трюмах, и чем больше флот, тем меньше остается под груз.
+            -->
+            <div id="hold-summary" class="flight-plan hold-summary" hidden></div>
             <div class="step-actions">
               <button type="button" class="ghost" id="fleet-all">Выбрать все</button>
               <button type="button" class="ghost" id="fleet-none">Очистить</button>
@@ -1005,7 +1008,7 @@
           </section>
 
           <section class="step">
-            <h4 class="step-head"><span class="step-no">3</span> Груз и запуск</h4>
+            <h4 class="step-head"><span class="step-no">3</span> <span id="cargo-step-title">Груз и запуск</span></h4>
             <div id="cargo-inputs" class="fleet-inputs">
               <label class="field field-with-max"><span id="cargo-ore-label"><svg class="ico ore sm" role="img" aria-label="Руда"><title>Руда</title><use href="#ico-ore"/></svg> Руда</span><input id="cargo-ore" type="number" min="0" value="0"><button type="button" class="field-max" id="cargo-ore-max">все</button></label>
               <label class="field field-with-max"><span id="cargo-polymers-label"><svg class="ico polymers sm" role="img" aria-label="Полимеры"><title>Полимеры</title><use href="#ico-polymers"/></svg> Полимеры</span><input id="cargo-polymers" type="number" min="0" value="0"><button type="button" class="field-max" id="cargo-polymers-max">все</button></label>

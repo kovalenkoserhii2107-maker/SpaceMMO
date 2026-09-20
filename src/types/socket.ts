@@ -43,7 +43,12 @@ export interface BuildingCard {
    * Отдельным полем, а не строкой в `effect`, потому что показывается всегда
    * и у всех — расход есть даже у тех зданий, чей эффект описать нечем.
    */
-  energy: { usage: number; nextUsage: number };
+  /*
+   * Расход и выработка рядом: станция энергию только дает, и строка расхода
+   * у нее показывала «не растет» — то есть ничего. Выработка есть у всех,
+   * просто у всех, кроме станции, она не меняется с уровнем.
+   */
+  energy: { usage: number; nextUsage: number; output: number; nextOutput: number };
   /** На базе уже идет стройка. */
   busy: boolean;
 }
@@ -217,6 +222,8 @@ export interface BaseSnapshot {
   defenseCards: DefenseCard[];
   fleet: ShipCounts;
   defenses: DefenseCounts;
+  /** Бонус синдиката к трюмам: форма отправки считает по нему вместимость. */
+  cargoMultiplier: number;
   shipQueue: Array<{
     id: string;
     type: ShipType;
