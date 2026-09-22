@@ -19,7 +19,8 @@ import { verifyToken } from './services/authService.js';
 import { ensureAchievements } from './services/achievementService.js';
 import { settleSyndicateBuilds } from './services/syndicateService.js';
 import { warnIfInsecureSecret } from './config/auth.js';
-import type { HealthResponse } from './types/api.js';
+import type { HealthResponse, LivenessResponse } from './types/api.js';
+import { healthStatus, startTickWatchdog } from './services/healthService.js';
 import type {
   ClientToServerEvents,
   InterServerEvents,
@@ -33,8 +34,24 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.join(rootDir, 'public')));
 
-app.get('/api/health', (_req, res: Response<HealthResponse>) => {
-  res.json({ ok: true, serverTime: Date.now() });
+/*
+ * Две проверки, и у них разные читатели.
+ *
+ * `/api/health` — честное состояние: база и тик. Отвечает 503, если что-то
+ * лежит, и годится для внешнего мониторинга, который должен будить человека.
+ *
+ * `/api/health/live` — для проверки Fly. Она решает, слать ли на машину
+ * запросы, а машина у нас одна: снять ее с маршрута из-за секундного
+ * обрыва базы значило бы заменить игроку понятное сообщение об ошибке
+ * страницей прокси и заодно оборвать загрузку клиента. Поэтому здесь
+ * только «процесс отвечает»; зависший тик лечит сторож в самом процессе.
+ */
+app.get('/api/health', async (_req, res: Response<HealthResponse>) => {
+  const status = await healthStatus();
+  res.status(status.ok ? 200 : 503).json(status);
+});
+app.get('/api/health/live', (_req, res: Response<LivenessResponse>) => {
+  res.json({ ok: true, serverTime: Date.now(), tickAgeMs: gameLoop.tickAgeMs() });
 });
 app.use('/api/auth', authRouter);
 app.use('/api/market', marketRouter);
@@ -124,6 +141,7 @@ httpServer.listen(env.port, () => {
     console.error('[achievements] не удалось синхронизировать каталог:', error),
   );
   gameLoop.start(io);
+  startTickWatchdog();
   /*
    * Стройки в Коше закрываются по сроку и без открытого Коша: уровень модуля
    * решает предел состава, защиту казны и пропуск Брамы. Таймер живет здесь,

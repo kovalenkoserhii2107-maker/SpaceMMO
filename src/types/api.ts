@@ -27,8 +27,20 @@ export type ActionResponse =
   | { ok: false; error: string };
 
 export interface HealthResponse {
+  ok: boolean;
+  serverTime: number;
+  database: 'ok' | 'down';
+  /** Сколько назад закончился последний тик; null — цикл не запущен. */
+  tickAgeMs: number | null;
+  /** Что именно не так — только когда `ok` ложно. */
+  problems?: string[];
+}
+
+/** Живость процесса для проверки Fly: отвечает, пока жив цикл событий. */
+export interface LivenessResponse {
   ok: true;
   serverTime: number;
+  tickAgeMs: number | null;
 }
 
 export interface AccountView {

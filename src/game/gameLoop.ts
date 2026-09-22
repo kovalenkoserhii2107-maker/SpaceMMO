@@ -237,6 +237,12 @@ class GameLoop {
   private collectingRent = false;
   private tickCount = 0;
   private ticking = false;
+  /**
+   * Когда последний тик дошел до конца — удачно или с ошибкой, неважно:
+   * здесь меряется, жив ли сам цикл. Отстает эта метка — тик где-то завис,
+   * и мир стоит, хотя процесс отвечает на запросы.
+   */
+  private lastTickDoneAt = 0;
   /** Состояния online-командиров: commanderId -> состояние. */
   private readonly commanders = new Map<string, CommanderRuntimeState>();
   /** Базы, где достроилось здание: после сохранения проверим «Архитектора». */
@@ -248,6 +254,7 @@ class GameLoop {
   start(io: GameServer): void {
     if (this.timer) return;
     this.io = io;
+    this.lastTickDoneAt = Date.now();
     this.timer = setInterval(() => {
       void this.tick();
     }, TICK_INTERVAL_MS);
@@ -1726,7 +1733,13 @@ class GameLoop {
       console.error('[game-loop] ошибка тика:', error);
     } finally {
       this.ticking = false;
+      this.lastTickDoneAt = Date.now();
     }
+  }
+
+  /** Сколько миллисекунд назад закончился последний тик; null — цикл не запущен. */
+  tickAgeMs(now = Date.now()): number | null {
+    return this.timer ? now - this.lastTickDoneAt : null;
   }
 
 /**

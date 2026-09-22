@@ -1,0 +1,30 @@
+# Проверка каждого пуша и пулл-реквеста.
+#
+# В репозитории работают двое — Claude и Codex, — и typecheck, audit
+# и тесты до сих пор гонялись только руками, когда о них вспоминали.
+# Здесь идет ровно то, что сервера не требует: `npm run check`.
+# Наборы, которым нужен живой стенд (storage, commander, mail, debris,
+# admin), сюда не входят — базы в CI нет.
+#
+# DATABASE_URL — заглушка: `env.ts` требует переменную при импорте,
+# а prisma generate читает ее из prisma.config.ts. В базу никто не ходит.
+name: check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://ci:ci@127.0.0.1:1/ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npm run check
