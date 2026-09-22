@@ -4,6 +4,7 @@
  * блокируются в момент выставления ордера, поэтому продать одно и то же дважды нельзя.
  */
 import { commanderPacts, syndicateBuffsFor } from './syndicateAccess.js';
+import { RESERVE_EMAIL, reserveBand } from '../game/reserve.js';
 import { TRADE_PACT_FEE_MULTIPLIER } from '../game/syndicate.js';
 import {
   availableAt,
@@ -87,6 +88,12 @@ export interface MarketView {
   barterStats: { open: number; unitsOffered: number };
   /** Бартерные предложения хаба: обмен ресурса на ресурс, без денег. */
   barters: BarterView[];
+  /**
+   * Резерв хаба — открыто: коридор и фонд. Игрок должен знать, в каких
+   * пределах вообще может ходить цена и чем резерв держит нижнюю границу,
+   * а не догадываться по стакану, откуда взялась стена заявок.
+   */
+  reserve: { bands: Record<TradeResource, { floor: number; ceiling: number }>; fund: number };
   myOrders: PublicOrder[];
   trades: Array<{
     id: string;
@@ -202,12 +209,25 @@ async function ensureStorage(commanderId: string, hubId: string) {
   });
 }
 
+async function reserveView(): Promise<MarketView['reserve']> {
+  const fund = await prisma.commander.findFirst({
+    where: { user: { email: RESERVE_EMAIL } },
+    select: { credits: true },
+  });
+  return {
+    bands: { ORE: reserveBand('ORE'), POLYMERS: reserveBand('POLYMERS') },
+    fund: round2(fund?.credits ?? 0),
+  };
+}
+
 export async function getMarketView(commanderId: string): Promise<MarketView> {
   const commander = await prisma.commander.findUnique({ where: { id: commanderId } });
   const hub = await findHubForUser(commanderId);
+  const reserve = await reserveView();
 
   if (!commander || !hub) {
     return {
+      reserve,
       hub: null,
       credits: commander?.credits ?? 0,
       storage: null,
@@ -293,6 +313,7 @@ export async function getMarketView(commanderId: string): Promise<MarketView> {
   const here = { ore: storage?.ore ?? 0, polymers: storage?.polymers ?? 0 };
 
   return {
+    reserve,
     hub: { hubId: hub.id, name: hub.name },
     credits: round2(commander.credits),
     storage: {
@@ -542,11 +563,19 @@ export async function upgradeStorage(commanderId: string): Promise<MarketResult>
 export async function placeOrder(
   commanderId: string,
   input: { side: OrderSide; resource: TradeResource; quantity: number; pricePerUnit: number },
+  /*
+   * Хаб задается явно только резервом: колонии у него нет, и хаб «своей
+   * системы» не находится. Стакан общий на весь сервер, поэтому какой именно
+   * хаб — для сделок неважно, он решает лишь, чей склад держит залог.
+   */
+  options: { hubId?: string } = {},
 ): Promise<MarketResult> {
   const invalid = validateOrder(input);
   if (invalid) return { ok: false, error: invalid };
 
-  const hub = await findHubForUser(commanderId);
+  const hub = options.hubId
+    ? await prisma.tradeHub.findUnique({ where: { id: options.hubId } })
+    : await findHubForUser(commanderId);
   if (!hub) return { ok: false, error: 'Торговый хаб не найден' };
   await ensureStorage(commanderId, hub.id);
 

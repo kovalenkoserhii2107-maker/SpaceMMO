@@ -97,6 +97,7 @@ import {
 } from '../game/defenses.js';
 import { fleetCapacity, planFlight, validateCargo, validateComposition, type GalaxyPoint } from '../game/fleets.js';
 import { cargoShipsFor } from '../game/bot/logistics.js';
+import { RESERVE_IMPORT_LOT, RESERVE_NICKNAME, RESERVE_RENT_SHARE, reserveBand, reserveQuotes } from '../game/reserve.js';
 import {
   buyerEscrow,
   buyerFee,
@@ -214,6 +215,9 @@ interface Snapshot {
   goods: number;
   ore: number;
   polymers: number;
+  /** Размах цены за сутки: по одной цене на конец дня не видно, скачет ли она. */
+  oreRange: [number, number];
+  polymersRange: [number, number];
   trades: number;
   farms: string;
 }
@@ -256,6 +260,7 @@ class Exchange {
   private readonly book: Order[] = [];
   private readonly log: Array<{ resource: string; pricePerUnit: number; quantity: number }> = [];
   count = 0;
+
 
   /** Последние сделки: по ним `marketPrice` и считает рыночную цену. */
   get trades(): ReadonlyArray<{ resource: string; pricePerUnit: number; quantity: number }> {
@@ -747,6 +752,22 @@ function run(days: number, start: StartFile | null): { bots: Bot[]; log: Snapsho
   if (start) exchange.seed(start.trades);
   const log: Snapshot[] = [];
 
+  /*
+   * Резерв хаба — участник биржи, но не бот: не добывает, не строит,
+   * не решает. Его склад на хабе — запас фонда, счет — деньги фонда.
+   * Место на хабе у него без предела: фонд не платит сам себе за склад.
+   */
+  const reserve: Bot = {
+    ...freshBot({ name: RESERVE_NICKNAME, character: 'TRADER', position: HUB_POSITION, richness: ROSTER[0]!.richness }),
+    credits: 0,
+    stock: { ore: 0, polymers: 0, plasma: 0 },
+    hub: { ore: 0, polymers: 0, level: 60 },
+  };
+  byName.set(reserve.name, reserve);
+  let rentSeen = 0;
+  const imported = { ore: 0, polymers: 0 };
+  const range = { ORE: [Infinity, 0], POLYMERS: [Infinity, 0] } as Record<TradeResource, [number, number]>;
+
   let sinceDecide = 0;
 
   for (let step = 1; step <= (days * 86400) / STEP; step += 1) {
@@ -759,8 +780,34 @@ function run(days: number, start: StartFile | null): { bots: Bot[]; log: Snapsho
     sinceDecide += STEP;
     if (sinceDecide >= DECIDE_EVERY) {
       sinceDecide = 0;
+
+      // Фонд получает половину аренды складов, собранной за прошедший ход.
+      const rent = bots.reduce((sum, bot) => sum + bot.rentPaid, 0);
+      reserve.credits += (rent - rentSeen) * RESERVE_RENT_SHARE;
+      rentSeen = rent;
+
+      /*
+       * Резерв переставляет заявки, как `reserveService` на живом сервере:
+       * снимает свои, доводит запас товара под импорт до нормы — товар
+       * появляется из ничего, как у шахты, — и ставит заново.
+       */
+      for (const order of exchange.orders.filter((row) => row.owner === reserve.name)) exchange.drop(reserve, order.id);
+      for (const field of ['ore', 'polymers'] as const) {
+        imported[field] += Math.max(0, RESERVE_IMPORT_LOT - reserve.hub[field]);
+        reserve.hub[field] = Math.max(reserve.hub[field], RESERVE_IMPORT_LOT);
+      }
+      for (const quote of reserveQuotes(reserve.credits)) {
+        exchange.place(reserve, quote.side, quote.resource, quote.amount, quote.price, byName);
+      }
+
       for (const bot of bots) {
         apply(bot, decide(snapshotOf(bot, exchange)), exchange, byName, now);
+      }
+
+      for (const resource of ['ORE', 'POLYMERS'] as const) {
+        const price = marketPrice(resource, exchange.trades).price;
+        range[resource][0] = Math.min(range[resource][0], price);
+        range[resource][1] = Math.max(range[resource][1], price);
       }
     }
 
@@ -771,14 +818,42 @@ function run(days: number, start: StartFile | null): { bots: Bot[]; log: Snapsho
         goods: bots.reduce((sum, bot) => sum + bot.mined, 0),
         ore: marketPrice('ORE', exchange.trades).price,
         polymers: marketPrice('POLYMERS', exchange.trades).price,
+        oreRange: [...range.ORE],
+        polymersRange: [...range.POLYMERS],
         trades: exchange.count,
         farms: bots.map((bot) => bot.levels.CRYPTO_FARM).join('/'),
       });
+      range.ORE = [Infinity, 0];
+      range.POLYMERS = [Infinity, 0];
     }
   }
 
+  reserveState = {
+    credits: reserve.credits,
+    // Выставленный под импорт запас — не купленное: это норма, которую
+    // резерв держит на потолке. Считать надо ввезенное и оставшееся сверх нормы.
+    imported: {
+      ore: imported.ore - Math.min(RESERVE_IMPORT_LOT, reserve.hub.ore),
+      polymers: imported.polymers - Math.min(RESERVE_IMPORT_LOT, reserve.hub.polymers),
+    },
+    bought: {
+      ore: Math.max(0, reserve.hub.ore - RESERVE_IMPORT_LOT),
+      polymers: Math.max(0, reserve.hub.polymers - RESERVE_IMPORT_LOT),
+    },
+  };
   return { bots, log };
 }
+
+/* ------------------------- Резерв хаба ------------------------- */
+
+interface ReserveState {
+  credits: number;
+  /** Продано по потолку сверх нормы — то есть ввезено и ушло покупателям. */
+  imported: { ore: number; polymers: number };
+  /** Выкуплено по полу и лежит в фонде. */
+  bought: { ore: number; polymers: number };
+}
+let reserveState: ReserveState | null = null;
 
 /* ------------------------- Отчет ------------------------- */
 
@@ -885,12 +960,27 @@ console.log(
     ` | отказов ${[...refusals].map(([reason, count]) => `${reason} ${money(count)}`).join(', ') || 'нет'}`,
 );
 
-console.log('\n  день |      масса ₴ |   добыто ед | ₴/ед | руда | полимеры | сделок | фермы');
+// Присваивается внутри `run`, поэтому компилятор считает его здесь вечным null.
+const fund = reserveState as ReserveState | null;
+if (fund) {
+  const ore = reserveBand('ORE');
+  const polymers = reserveBand('POLYMERS');
+  console.log(
+    `  РЕЗЕРВ: фонд ₴${money(fund.credits)}` +
+      ` | ввезено руды ${money(fund.imported.ore)}, полимеров ${money(fund.imported.polymers)}` +
+      ` | выкуплено руды ${money(fund.bought.ore)}, полимеров ${money(fund.bought.polymers)}` +
+      ` | коридор руда ${ore.floor}–${ore.ceiling}, полимеры ${polymers.floor}–${polymers.ceiling}`,
+  );
+}
+
+const span = (range: [number, number]): string =>
+  Number.isFinite(range[0]) ? `${range[0].toFixed(1)}–${range[1].toFixed(1)}` : '—';
+console.log('\n  день |      масса ₴ |   добыто ед | ₴/ед |   руда (за сутки) | полимеры (за сутки) | сделок | фермы');
 for (const row of log) {
   if (!MARKS.includes(row.day) && row.day !== days) continue;
   console.log(
     `  ${String(row.day).padStart(4)} | ${money(row.money).padStart(12)} | ${money(row.goods).padStart(11)}` +
-      ` | ${(row.money / Math.max(1, row.goods)).toFixed(2).padStart(4)} | ${String(row.ore).padStart(4)}` +
-      ` | ${String(row.polymers).padStart(8)} | ${String(row.trades).padStart(6)} | ${row.farms}`,
+      ` | ${(row.money / Math.max(1, row.goods)).toFixed(2).padStart(4)} | ${String(row.ore).padStart(7)} ${span(row.oreRange).padStart(11)}` +
+      ` | ${String(row.polymers).padStart(7)} ${span(row.polymersRange).padStart(13)} | ${String(row.trades).padStart(6)} | ${row.farms}`,
   );
 }

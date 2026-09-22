@@ -8,6 +8,7 @@
  * поэтому очереди доигрываются и после выхода игрока из игры.
  */
 import type { JointAttackView } from '../types/api.js';
+import { RESERVE_EMAIL, RESERVE_RENT_SHARE } from './reserve.js';
 import { randomUUID } from 'node:crypto';
 import type { Server } from 'socket.io';
 import { prisma } from '../db/prisma.js';
@@ -1399,8 +1400,9 @@ class GameLoop {
           skipDuplicates: true,
         });
       }
+      // Резерв аренду не платит: фонд не платит сам себе за место под импорт.
       const storages = await prisma.hubAccount.findMany({
-        where: { level: { gt: 1 } },
+        where: { level: { gt: 1 }, commander: { user: { email: { not: RESERVE_EMAIL } } } },
         select: { commanderId: true, level: true },
       });
       if (storages.length === 0) return;
@@ -1411,6 +1413,7 @@ class GameLoop {
         due.set(row.commanderId, (due.get(row.commanderId) ?? 0) + amount);
       }
 
+      let collected = 0;
       for (const [commanderId, amount] of due) {
         const charge = Math.round(amount * 100) / 100;
         if (charge <= 0) continue;
@@ -1419,10 +1422,23 @@ class GameLoop {
           data: { credits: { decrement: charge } },
         });
         if (paid.count === 0) continue;
+        collected += charge;
         // Списание прошло мимо памяти тика: подтягиваем баланс, иначе
         // ближайший сброс вернет старое число (правило 12).
         const loaded = this.commanders.get(commanderId);
         if (loaded) this.syncCredits(commanderId, Math.max(0, loaded.credits - charge));
+      }
+      /*
+       * Половина собранного — в фонд резерва, остальное сгорает, как раньше.
+       * Это единственный вход денег в фонд помимо выручки от импорта:
+       * резерв выкупает по полу только на то, что мир и так отдал.
+       */
+      const share = Math.floor(collected * RESERVE_RENT_SHARE * 100) / 100;
+      if (share > 0) {
+        await prisma.commander.updateMany({
+          where: { user: { email: RESERVE_EMAIL } },
+          data: { credits: { increment: share } },
+        });
       }
     } catch (error) {
       console.error('[game-loop] плата за хаб не собралась', error);

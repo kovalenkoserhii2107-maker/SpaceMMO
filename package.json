@@ -20,7 +20,7 @@
     "audit": "tsc -p tsconfig.audit.json",
     "audit:client": "tsc -p tsconfig.client.json --pretty false | grep -E \"TS2304|TS2552\" ; test $? -ne 0 && tsx src/scripts/auditClientDom.ts",
     "check": "npm run typecheck && npm run audit && npm run audit:client && npm run test:offline",
-    "test:offline": "npm run test:combat && npm run test:fleets && npm run test:assets && npm run test:bot && npm run test:budget && npm run test:espionage && npm run test:score && npm run test:speed && npm run test:syndicate && npm run test:oauth",
+    "test:offline": "npm run test:combat && npm run test:fleets && npm run test:assets && npm run test:bot && npm run test:budget && npm run test:espionage && npm run test:score && npm run test:speed && npm run test:syndicate && npm run test:oauth && npm run test:reserve",
     "legacy:password": "tsx src/scripts/legacyPassword.ts",
     "admin:grant": "tsx src/scripts/grantAdmin.ts",
     "test:stand": "tsx src/scripts/testStand.ts",
@@ -39,7 +39,8 @@
     "test:fleets": "tsx tests/fleets.ts",
     "test:bot": "tsx tests/bot.ts",
     "test:budget": "tsx tests/budget.ts",
-    "test:espionage": "tsx tests/espionage.ts"
+    "test:espionage": "tsx tests/espionage.ts",
+    "test:reserve": "tsx tests/reserve.ts"
   },
   "keywords": [],
   "author": "",

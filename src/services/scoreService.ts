@@ -12,6 +12,7 @@
  * счет за секунды заметно не меняется.
  */
 import { prisma } from '../db/prisma.js';
+import { RESERVE_EMAIL } from '../game/reserve.js';
 import { gameLoop } from '../game/gameLoop.js';
 import { emptyLevels, type BuildingLevels, type BuildingType } from '../game/rules.js';
 import { emptyTechLevels, type TechLevels } from '../game/techTree.js';
@@ -114,6 +115,8 @@ async function computeAll(): Promise<{ players: ScoreRow[]; syndicates: Syndicat
     }
   >();
   const commanders = await prisma.commander.findMany({
+    // Резерв хаба — служебный участник биржи, а не игрок: в рейтинге ему нечего делать.
+    where: { user: { email: { not: RESERVE_EMAIL } } },
     include: {
       syndicate: {
         select: {

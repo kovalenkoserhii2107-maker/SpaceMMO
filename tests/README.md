@@ -6,9 +6,9 @@
 npm run check
 ```
 
-Typecheck, audit, `audit:client` и десять наборов, которые считают формулы
+Typecheck, audit, `audit:client` и одиннадцать наборов, которые считают формулы
 прямо на игровых модулях: `combat`, `fleets`, `assets`, `bot`, `budget`,
-`espionage`, `score`, `speed`, `syndicate`, `oauth` (`npm test` — только они).
+`espionage`, `score`, `speed`, `syndicate`, `oauth`, `reserve` (`npm test` — только они).
 То же запускает GitHub Actions на каждый пуш. Базе достаточно заглушки
 в `DATABASE_URL` — в нее никто не ходит.
 

@@ -18,6 +18,7 @@ import { adminRouter } from './routes/admin.js';
 import { verifyToken } from './services/authService.js';
 import { ensureAchievements } from './services/achievementService.js';
 import { settleSyndicateBuilds } from './services/syndicateService.js';
+import { runReserve } from './services/reserveService.js';
 import { warnIfInsecureSecret } from './config/auth.js';
 import type { HealthResponse, LivenessResponse } from './types/api.js';
 import { healthStatus, startTickWatchdog } from './services/healthService.js';
@@ -151,6 +152,9 @@ httpServer.listen(env.port, () => {
   setInterval(() => {
     settleSyndicateBuilds().catch((error: unknown) => console.error('[syndicate] стройки в Коше', error));
   }, 30_000);
+  // Резерв хаба держит коридор цен: раз в минуту переставляет свои заявки.
+  void runReserve();
+  setInterval(() => void runReserve(), 60_000);
   // Планировщик ботов идет следом за тиком: он ходит его же методами,
   // и без запущенного тика ему не с чем работать.
   botDirector.start();

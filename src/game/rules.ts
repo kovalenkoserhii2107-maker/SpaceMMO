@@ -97,7 +97,7 @@ const BASE_ENERGY_OUTPUT = 20;
  * построек у них выше, чем были доли в доходе, и ранний игрок упирался
  * не в общий объем добычи, а в перекос между ресурсами.
  */
-const BASE_YIELD_PER_SECOND: Record<MineType, number> = {
+export const BASE_YIELD_PER_SECOND: Record<MineType, number> = {
   ORE_MINE: 0.8,
   POLYMER_PLANT: 0.58,
   PLASMA_REACTOR: 0.36,
@@ -235,7 +235,7 @@ const ENERGY_DRAIN: Record<BuildingType, number> = {
  * стоке денег: без него масса растет, цены идут за ней, и весы ломаются.
  * Сток — комиссия биржи и плата за место на хабе (см. `hubRent`).
  */
-const CREDIT_BASE_PER_SECOND = 6;
+export const CREDIT_BASE_PER_SECOND = 6;
 
 /*
  * Показатель тот же, что у шахт, — 1.07, а не 1.1.

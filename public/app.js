@@ -4785,6 +4785,29 @@
       }).join('');
     el.marketQuotes.appendChild(skew);
 
+    /*
+     * Резерв хаба — открыто. Стена заявок на границах без подписи читалась бы
+     * как чья-то игра, а это коридор: выше потолка резерв продает сколько
+     * угодно, ниже пола выкупает, пока хватает фонда. Нагрузка ответа старых
+     * серверов поля не несет — тогда карточки просто нет.
+     */
+    const reserve = market.data.reserve;
+    if (reserve && reserve.bands) {
+      const card = document.createElement('div');
+      card.className = 'mk-stat';
+      card.innerHTML =
+        '<span class="mk-stat-head">Резерв хаба · коридор цен</span>' +
+        TRADED.map((resource) => {
+          const band = reserve.bands[resource];
+          return band
+            ? `<span class="mk-stat-foot"><span class="mk-res">${icoTag(resource)}${RESOURCE_LABELS[resource].toLowerCase()}</span>` +
+              `<span>выкуп <b>${band.floor.toFixed(2)}</b></span><span>импорт <b>${band.ceiling.toFixed(2)}</b></span></span>`
+            : '';
+        }).join('') +
+        `<span class="mk-stat-foot"><span>фонд выкупа <b>${fmt(reserve.fund)} ₴</b></span></span>`;
+      el.marketQuotes.appendChild(card);
+    }
+
     if (barter) {
       const card = document.createElement('div');
       card.className = 'mk-stat';
