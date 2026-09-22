@@ -2529,12 +2529,29 @@ button.nick:hover { color: var(--accent); }
   .sidebar { transition: none; }
 }
 
-/* На совсем узком экране остаются только запасы и криптогривна. */
+/*
+ * Телефон: шапка в две строки — командир с кнопками и все ресурсы одной
+ * строкой. Прежде полные числа переносились в три строки, и закрепленная
+ * полоса занимала четверть экрана на любой вкладке. Числа здесь короткие
+ * («3,75М», см. `fmtShort`), точные — в центре управления под шапкой.
+ *
+ * Энергия на телефоне — только остаток со знаком: он и отвечает, хватает ли
+ * ее, а прятать энергию на телефоне нельзя. Мощность шахт появляется, только
+ * когда просела: «100%» не сообщало ничего и занимало целую строку.
+ */
 @media (max-width: 560px) {
-  .topbar { padding: 10px 12px; gap: 10px; }
-  .resources { gap: 12px; }
+  .topbar { padding: 8px 12px; gap: 8px; row-gap: 8px; }
+  /* Не влезло на совсем узком экране — перенос, а не обрезка. */
+  .resources { flex-wrap: wrap; justify-content: space-between; gap: 4px; }
+  .res { gap: 3px; min-width: 0; }
+  .res .ico { width: 14px; height: 14px; }
+  .res b { font-size: 13px; }
   .res small { display: none; }
-  .base-trigger-text b { max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
+  #res-energy { display: none; }
+  .res-free { font-size: 12px; padding: 1px 5px; white-space: nowrap; }
+  /* Мощность шахт словами — в «Требует внимания» прямо под шапкой. */
+  .res.res-eff { display: none; }
+  .base-trigger-text b { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
 }
 
 /* ---------- Подробности постройки ---------- */
@@ -3645,15 +3662,13 @@ button.war-row-head:hover { background: rgba(120, 160, 255, 0.06); }
  * первым блоком, и у каждого пункта действие.
  */
 .ov-attention { display: grid; gap: 8px; margin-bottom: 12px; }
-/* Тревог нет — свободные очереди встают компактным рядом, а не лентой. */
-.ov-attention.calm { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
 .ov-alert {
   display: flex; align-items: center; gap: 12px; min-width: 0;
   padding: 10px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel);
 }
-.ov-alert > div { display: grid; gap: 2px; flex: 1; min-width: 0; }
-.ov-alert > div b { font-size: 14px; }
-.ov-alert > div span { font-size: 12px; color: var(--muted); }
+.ov-text { display: grid; gap: 2px; flex: 1; min-width: 0; }
+.ov-text b { font-size: 14px; }
+.ov-text span { font-size: 12px; color: var(--muted); }
 .ov-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
 .ov-alert.bad { border-color: rgba(248, 113, 113, 0.45); background: rgba(248, 113, 113, 0.07); }
 .ov-alert.bad .ov-dot { background: var(--err); box-shadow: 0 0 0 4px rgba(248, 113, 113, 0.18); }
@@ -3672,6 +3687,9 @@ button.war-row-head:hover { background: rgba(120, 160, 255, 0.06); }
 .ov-act:hover:not(:disabled) { border-color: var(--accent); }
 .ov-act.primary-soft { border-color: var(--accent); background: rgba(77, 210, 255, 0.12); }
 .ov-act:disabled { opacity: 0.5; cursor: default; }
+/* Простаивающие очереди — одной строкой, кнопки короткие и в ряд. */
+.ov-links { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.ov-link { padding: 6px 10px; font-size: 12px; font-weight: 600; }
 
 .ov-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; align-items: start; }
 .ov-card {
@@ -3711,6 +3729,8 @@ button.war-row-head:hover { background: rgba(120, 160, 255, 0.06); }
 @media (max-width: 560px) {
   .ov-alert { flex-wrap: wrap; }
   .ov-act { width: 100%; }
+  .ov-links { width: 100%; }
+  .ov-links .ov-link { flex: 1; width: auto; }
   /*
    * На телефоне остаются класс, штуки, залп и живучесть: длинные названия
    * вроде «Тяжелый истребитель «Гайдамака»» выталкивали числа за край.

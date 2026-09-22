@@ -326,6 +326,30 @@
     return Math.abs(number) < 10 ? number.toFixed(1).replace('.', ',') : fmt(Math.round(number));
   }
 
+  /*
+   * Числа в шапке телефона — коротко: «3,75М» вместо «3 751 365». Закрепленная
+   * полоса занимала четверть экрана тремя строками ресурсов, а точные
+   * значения стоят в центре управления прямо под ней. На широком экране
+   * числа прежние, полные.
+   */
+  const narrowHeader = window.matchMedia('(max-width: 560px)');
+  function fmtShort(value) {
+    const number = Number(value) || 0;
+    const abs = Math.abs(number);
+    const cut = (divisor, unit) => {
+      const scaled = number / divisor;
+      // Один знак после запятой и только до сотни: «3,8М», «37,7К», «622К».
+      // Шесть чисел должны встать в строку и на экране в 360 пикселей.
+      const digits = Math.abs(scaled) < 100 ? 1 : 0;
+      return `${Number(scaled.toFixed(digits)).toString().replace('.', ',')}${unit}`;
+    };
+    if (abs >= 1e9) return cut(1e9, 'Г');
+    if (abs >= 1e6) return cut(1e6, 'М');
+    if (abs >= 1e4) return cut(1e3, 'К');
+    return fmt(number);
+  }
+  const headerNum = (value) => (narrowHeader.matches ? fmtShort(value) : fmt(value));
+
   /**
    * Крупные суммы короче: 1 млн, 1,1 млн, 15,6 млн. В узкой таблице вклада
    * полные «1 500 000» раздвигали колонки, и было не понять, чье это число.
@@ -1079,7 +1103,7 @@
     // Отчет, отправленный до появления слотов, приходит без поля — читаем
     // защищенно и показываем хотя бы стартовую колонию.
     state.colonies = payload.colonies || { used: state.bases.length, slots: 1 };
-    el.resCredits.textContent = fmt(state.credits);
+    el.resCredits.textContent = headerNum(state.credits);
     if (!state.bases.length) return;
     if (!state.bases.some((base) => base.baseId === state.activeBaseId)) {
       state.activeBaseId = state.bases[0].baseId;
@@ -1214,14 +1238,22 @@
     el.navToggle.setAttribute('aria-expanded', String(open));
   });
   el.navScrim.addEventListener('click', () => closeNav());
+  // Повернули экран — числа шапки переписываются полными или короткими.
+  narrowHeader.addEventListener('change', () => {
+    if (state.kishMode) renderKishHeader();
+    else {
+      el.resCredits.textContent = headerNum(state.credits);
+      renderActiveBase();
+    }
+  });
 
   function renderActiveBase() {
     const base = activeBase();
     if (!base) return;
 
-    el.resOre.textContent = fmt(base.resources.ore);
-    el.resPolymers.textContent = fmt(base.resources.polymers);
-    el.resPlasma.textContent = fmt(base.resources.plasma);
+    el.resOre.textContent = headerNum(base.resources.ore);
+    el.resPolymers.textContent = headerNum(base.resources.polymers);
+    el.resPlasma.textContent = headerNum(base.resources.plasma);
     // Показываем расход, а не остаток. Остаток вел себя наоборот интуиции:
     // новая шахта увеличивает потребление, а число на экране падало — и это
     // читалось как «шахты уменьшают расход». Расход растет вместе с базой,
@@ -1240,7 +1272,7 @@
       node.textContent = stopped ? 'склад полон' : fmtRate(rate);
       node.style.color = stopped ? 'var(--err)' : '';
     }
-    el.resAntimatter.textContent = fmt(base.resources.antimatter);
+    el.resAntimatter.textContent = headerNum(base.resources.antimatter);
     el.rateAntimatter.textContent = `+${base.productionPerSecond.antimatter.toFixed(3)}/с`;
     el.rateEnergy.textContent = `из ${fmt(base.energy.output)}`;
 
@@ -1736,14 +1768,14 @@
     }
 
     if (!base.buildJob) {
-      items.push({ tone: 'info', title: 'Стройка свободна', text: 'строительный слот простаивает', action: { label: 'К постройкам', panel: 'buildings' } });
+      items.push({ tone: 'info', idleName: 'стройка', action: { label: 'Строить', panel: 'buildings' } });
     }
     if (!(state.research && state.research.active)) {
-      items.push({ tone: 'info', title: 'Наука свободна', text: 'лаборатория простаивает', action: { label: 'К исследованиям', panel: 'research' } });
+      items.push({ tone: 'info', idleName: 'наука', action: { label: 'Изучать', panel: 'research' } });
     }
     const yard = building('SHIPYARD');
     if (yard && yard.level > 0 && !(base.shipQueue && base.shipQueue.length)) {
-      items.push({ tone: 'info', title: 'Верфь простаивает', text: 'заказов нет', action: { label: 'К верфи', panel: 'shipyard' } });
+      items.push({ tone: 'info', idleName: 'верфь', action: { label: 'Заказать', panel: 'shipyard' } });
     }
     return items;
   }
@@ -1756,17 +1788,45 @@
     attentionSignature = signature;
 
     el.ovAttention.innerHTML = '';
-    el.ovAttention.classList.toggle('calm', items.every((item) => item.tone === 'info'));
     if (!items.length) {
       el.ovAttention.innerHTML =
-        '<div class="ov-alert ok"><span class="ov-dot"></span><div><b>Все в порядке</b>' +
+        '<div class="ov-alert ok"><span class="ov-dot"></span><div class="ov-text"><b>Все в порядке</b>' +
         '<span>работы идут, энергии хватает, место на складах есть</span></div></div>';
       return;
     }
-    for (const item of items) {
+    /*
+     * Свободные очереди — одной строкой «Простаивают: стройка · наука · верфь»
+     * с короткими кнопками. Порознь это были три пункта с кнопками во всю
+     * ширину, и на телефоне они отодвигали колонию на второй экран.
+     */
+    const idle = items.filter((item) => item.tone === 'info');
+    const alerts = items.filter((item) => item.tone !== 'info');
+    if (idle.length) {
+      alerts.push({
+        tone: 'info',
+        title: 'Простаивают',
+        text: idle.map((item) => item.idleName).join(' · '),
+        links: idle.map((item) => item.action),
+      });
+    }
+
+    for (const item of alerts) {
       const row = document.createElement('div');
       row.className = `ov-alert ${item.tone}`;
-      row.innerHTML = `<span class="ov-dot"></span><div><b>${item.title}</b><span>${item.text}</span></div>`;
+      row.innerHTML = `<span class="ov-dot"></span><div class="ov-text"><b>${item.title}</b><span>${item.text}</span></div>`;
+      if (item.links) {
+        const links = document.createElement('div');
+        links.className = 'ov-links';
+        for (const link of item.links) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'ov-act ov-link';
+          button.textContent = link.label;
+          button.addEventListener('click', () => showPanel(link.panel));
+          links.appendChild(button);
+        }
+        row.appendChild(links);
+      }
       if (item.action) {
         const button = document.createElement('button');
         button.type = 'button';
@@ -7149,7 +7209,7 @@
     state.kishMode = false;
     document.body.classList.remove('kish-mode');
     syncKishNav();
-    el.resCredits.textContent = fmt(state.credits);
+    el.resCredits.textContent = headerNum(state.credits);
     renderBaseList();
     renderActiveBase();
     showPanel(state.activeTab);
@@ -7159,11 +7219,11 @@
   function renderKishHeader() {
     const mine = syndicate.data && syndicate.data.mine;
     if (!mine) return;
-    el.resOre.textContent = fmt(mine.treasury.ore);
-    el.resPolymers.textContent = fmt(mine.treasury.polymers);
-    el.resPlasma.textContent = fmt(mine.treasury.plasma);
-    el.resAntimatter.textContent = fmt(mine.treasury.antimatter);
-    el.resCredits.textContent = fmt(mine.bank);
+    el.resOre.textContent = headerNum(mine.treasury.ore);
+    el.resPolymers.textContent = headerNum(mine.treasury.polymers);
+    el.resPlasma.textContent = headerNum(mine.treasury.plasma);
+    el.resAntimatter.textContent = headerNum(mine.treasury.antimatter);
+    el.resCredits.textContent = headerNum(mine.bank);
     for (const node of [el.rateOre, el.ratePolymers, el.ratePlasma, el.rateAntimatter]) {
       node.textContent = 'казна';
       node.style.color = '';
