@@ -525,121 +525,141 @@
 
         <section data-panel="market" hidden>
           <h3 class="panel-title">Хаб и биржа</h3>
+          <!--
+            Экран отвечает на один вопрос — купить или продать и почем, —
+            и все, что к нему не относится, ниже и свернуто. Прежде это была
+            лента из семи блоков равного веса высотой в четыре экрана,
+            начинавшаяся со складов: чтобы увидеть цену, надо было пролистать
+            логистику, а на телефоне стакан прятал за краем цену и кнопку.
+
+            Ресурс выбирается один раз, наверху, и задает весь экран: шапку,
+            стакан, форму и историю. Раньше он выбирался четырежды.
+          -->
+          <div class="mk-switch" id="market-switch" role="tablist" aria-label="Ресурс"></div>
+
+          <section class="mk-market" id="market-head" aria-live="polite"></section>
+          <!--
+            Динамика раскрывается по клику прямо здесь: модальных окон
+            в клиенте нет (правило 5).
+          -->
+          <div id="market-chart" class="mk-chart" hidden>
+            <div class="mk-chart-head">
+              <h4 id="market-chart-title" class="section-title"></h4>
+              <span class="muted" id="market-chart-note"></span>
+            </div>
+            <svg id="market-chart-svg" viewBox="0 0 900 120" preserveAspectRatio="none"
+                 role="img" aria-label="Средняя цена по дням"></svg>
+          </div>
 
           <!--
-            Три блока сверху вниз: что происходит с рынком, чем торгуют
-            сейчас, что уже прошло. Порядок не случаен — прежде чем выставить
-            заявку, надо понимать, дорого это или дешево.
+            Торговля одним блоком: стакан слева, форма справа. Строка стакана
+            подставляет в форму цену и объем — одно касание вместо поиска
+            кнопки в строке, и на телефоне не нужно ничего видеть за краем.
           -->
-          <section class="mk-head">
-            <div class="mk-head-top">
-              <div id="hub-storage" class="mk-hub"></div>
-              <div class="mk-hub-actions">
-                <button type="button" class="mk-action" id="upgrade-storage" hidden></button>
-                <!--
-                  Отсюда до рейса один шаг: товар лежит на хабе, а везут его
-                  формой у карты. Раньше путь был «вспомнить, что есть карта,
-                  найти на ней станцию, кликнуть, выбрать миссию».
-                -->
-                <button type="button" class="mk-action transport" id="hub-transport">Транспортировка</button>
+          <section class="mk-trade">
+            <div class="mk-depth">
+              <div class="mk-depth-col sell">
+                <div class="mk-depth-head"><span class="arw" aria-hidden="true">↑</span>Продают <small>дешевле — выше</small></div>
+                <div class="mk-depth-cols"><span>цена</span><span>объем</span></div>
+                <div id="depth-sell" class="mk-depth-list"></div>
               </div>
+              <div class="mk-depth-col buy">
+                <div class="mk-depth-head"><span class="arw" aria-hidden="true">↓</span>Покупают <small>дороже — выше</small></div>
+                <div class="mk-depth-cols"><span>цена</span><span>объем</span></div>
+                <div id="depth-buy" class="mk-depth-list"></div>
+              </div>
+              <div id="depth-mid" class="mk-depth-mid"></div>
             </div>
-            <div id="market-quotes" class="mk-stats"></div>
-            <!--
-              Динамика раскрывается по клику прямо здесь: модальных окон
-              в клиенте нет (правило 5).
-            -->
-            <div id="market-chart" class="mk-chart" hidden>
-              <div class="mk-chart-head">
-                <h4 id="market-chart-title" class="section-title"></h4>
-                <span class="muted" id="market-chart-note"></span>
+
+            <div class="mk-order">
+              <div class="mk-order-title" id="order-title">Заявка</div>
+              <!--
+                Сторона сделки — самое важное решение в форме, и обе кнопки
+                держат свой цвет всегда: серая половина переключателя
+                не говорит, чем она станет, если на нее нажать.
+                Стрелка кодирует направление товара вторым каналом.
+              -->
+              <div class="mk-side" id="order-side">
+                <button type="button" class="buy" aria-pressed="true" data-side="BUY">
+                  <span class="arw" aria-hidden="true">↓</span>Покупаю
+                </button>
+                <button type="button" class="sell" aria-pressed="false" data-side="SELL">
+                  <span class="arw" aria-hidden="true">↑</span>Продаю
+                </button>
               </div>
-              <svg id="market-chart-svg" viewBox="0 0 900 120" preserveAspectRatio="none"
-                   role="img" aria-label="Средняя цена по дням"></svg>
+              <div class="mk-field">
+                <label for="order-quantity">Количество</label>
+                <div class="mk-with-btn">
+                  <input id="order-quantity" type="text" inputmode="numeric" autocomplete="off">
+                  <button type="button" class="ghost tiny" id="order-max">макс</button>
+                </div>
+              </div>
+              <div class="mk-field">
+                <label for="order-price">Цена за единицу</label>
+                <div class="mk-with-btn">
+                  <input id="order-price" type="text" inputmode="decimal" autocomplete="off">
+                  <button type="button" class="ghost tiny" id="order-market">лучшая</button>
+                </div>
+              </div>
+              <p class="mk-order-hint" id="order-hint"></p>
+              <button type="button" class="primary" id="place-order">Выставить покупку</button>
             </div>
           </section>
 
-          <section class="mk-book">
-            <div class="mk-tabs" role="tablist">
-              <button type="button" class="mk-tab" role="tab" aria-selected="true" data-pane="orders">Заявки</button>
-              <button type="button" class="mk-tab" role="tab" aria-selected="false" data-pane="barter">Бартер</button>
+          <section class="mk-mine" id="my-orders-wrap" hidden>
+            <h4 class="section-title">Мои заявки</h4>
+            <div id="my-orders" class="mk-mine-list"></div>
+          </section>
+
+          <!--
+            Склад — одной строкой: сколько можно продать здесь и сколько места.
+            Разбивка по трем складам нужна, когда товар надо найти или вывезти,
+            а не каждый раз, когда смотрят цену, — поэтому она свернута.
+          -->
+          <section class="mk-strip">
+            <div id="hub-strip" class="mk-strip-text"></div>
+            <div class="mk-strip-actions">
+              <button type="button" class="mk-action" id="upgrade-storage" hidden></button>
+              <!--
+                Отсюда до рейса один шаг: товар лежит на хабе, а везут его
+                формой у карты.
+              -->
+              <button type="button" class="mk-action transport" id="hub-transport">Привезти или забрать</button>
             </div>
+          </section>
 
-            <div id="pane-orders">
-              <div class="mk-form">
-                <div class="mk-field">
-                  <label>Сторона</label>
-                  <!--
-                    Сторона сделки — самое важное решение в форме, и обе кнопки
-                    держат свой цвет всегда: серая половина переключателя
-                    не говорит, чем она станет, если на нее нажать.
-                    Стрелка кодирует направление товара вторым каналом.
-                  -->
-                  <div class="mk-side" id="order-side">
-                    <button type="button" class="buy" aria-pressed="true" data-side="BUY">
-                      <span class="arw" aria-hidden="true">↓</span>Покупаю
-                    </button>
-                    <button type="button" class="sell" aria-pressed="false" data-side="SELL">
-                      <span class="arw" aria-hidden="true">↑</span>Продаю
-                    </button>
-                  </div>
-                </div>
-                <div class="mk-field">
-                  <label for="order-resource">Ресурс</label>
-                  <select id="order-resource">
-                    <option value="ORE">Руда</option>
-                    <option value="POLYMERS">Полимеры</option>
-                  </select>
-                </div>
-                <div class="mk-field">
-                  <label for="order-quantity">Количество</label>
-                  <div class="mk-with-btn">
-                    <input id="order-quantity" type="text" inputmode="numeric" autocomplete="off">
-                    <button type="button" class="ghost tiny" id="order-max">макс</button>
-                  </div>
-                </div>
-                <div class="mk-field">
-                  <label for="order-price">Цена за единицу</label>
-                  <div class="mk-with-btn">
-                    <input id="order-price" type="text" inputmode="decimal" autocomplete="off">
-                    <button type="button" class="ghost tiny" id="order-market">рынок</button>
-                  </div>
-                </div>
-                <button type="button" class="primary" id="place-order">Выставить</button>
-              </div>
-              <p class="storage-note" id="order-hint"></p>
+          <details class="mk-fold">
+            <summary>Где лежит товар</summary>
+            <div id="hub-storage" class="mk-hub"></div>
+          </details>
 
-              <div class="mk-filters" id="book-filters">
-                <button type="button" class="mk-chip" aria-pressed="true" data-filter="side" data-value="ALL">Все</button>
-                <button type="button" class="mk-chip" aria-pressed="false" data-filter="side" data-value="BUY">Покупка</button>
-                <button type="button" class="mk-chip" aria-pressed="false" data-filter="side" data-value="SELL">Продажа</button>
-                <span class="mk-sep"></span>
-                <button type="button" class="mk-chip" aria-pressed="true" data-filter="res" data-value="ALL">Оба ресурса</button>
-                <button type="button" class="mk-chip" aria-pressed="false" data-filter="res" data-value="ORE">Руда</button>
-                <button type="button" class="mk-chip" aria-pressed="false" data-filter="res" data-value="POLYMERS">Полимеры</button>
-                <span class="mk-grow"><input type="search" id="book-trader" placeholder="Позывной торговца"></span>
-              </div>
-
-              <div class="mk-scroll">
-                <table class="mk-table">
-                  <thead>
-                    <tr>
-                      <th><button type="button" data-sort="side">Сторона <span class="arrow">▼</span></button></th>
-                      <th><button type="button" data-sort="resource">Ресурс <span class="arrow">▼</span></button></th>
-                      <th class="num"><button type="button" data-sort="remaining">Количество <span class="arrow">▼</span></button></th>
-                      <th class="num"><button type="button" data-sort="pricePerUnit" data-active="true">Цена <span class="arrow">▼</span></button></th>
-                      <th class="num"><button type="button" data-sort="total">Сумма <span class="arrow">▼</span></button></th>
-                      <th><button type="button" data-sort="trader">Торговец <span class="arrow">▼</span></button></th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody id="order-book"></tbody>
-                </table>
-              </div>
+          <details class="mk-fold" id="history-fold">
+            <summary id="history-title">История сделок</summary>
+            <div class="mk-filters" id="history-filters">
+              <button type="button" class="mk-chip" aria-pressed="false" data-hfilter="mine">Только мои</button>
             </div>
+            <div class="mk-scroll">
+              <table class="mk-table mk-table-log">
+                <thead>
+                  <tr>
+                    <th class="num">Количество</th>
+                    <th class="num">Цена</th>
+                    <th class="num">Сумма</th>
+                    <th>Продавец</th>
+                    <th>Покупатель</th>
+                    <th class="num">Когда</th>
+                  </tr>
+                </thead>
+                <tbody id="trade-log"></tbody>
+              </table>
+            </div>
+            <div class="mk-more"><button type="button" class="ghost tiny" id="trades-more">Показать еще</button></div>
+          </details>
 
-            <div id="pane-barter" hidden>
-              <div class="mk-form mk-form-barter">
+          <!-- Бартер живет по своим правилам и денег не трогает, поэтому он отдельно и свернут. -->
+          <details class="mk-fold" id="barter-fold">
+            <summary id="barter-title">Бартер</summary>
+            <div class="mk-form mk-form-barter">
                 <div class="mk-field">
                   <label for="barter-give-res">Отдаю</label>
                   <div class="mk-with-btn">
@@ -663,50 +683,19 @@
                 <button type="button" class="primary" id="barter-offer">Предложить</button>
               </div>
               <p class="storage-note" id="barter-hint"></p>
-
-              <div class="mk-scroll">
-                <table class="mk-table">
-                  <thead>
-                    <tr>
-                      <th>Отдает</th><th>Просит взамен</th>
-                      <th class="num">Курс</th><th>Торговец</th><th></th>
-                    </tr>
-                  </thead>
-                  <tbody id="barter-list"></tbody>
-                </table>
-              </div>
-            </div>
-          </section>
-
-          <section class="mk-history">
-            <h4 class="section-title">Прошло по бирже</h4>
-            <div class="mk-filters" id="history-filters">
-              <button type="button" class="mk-chip" aria-pressed="true" data-hfilter="res" data-value="ALL">Оба ресурса</button>
-              <button type="button" class="mk-chip" aria-pressed="false" data-hfilter="res" data-value="ORE">Руда</button>
-              <button type="button" class="mk-chip" aria-pressed="false" data-hfilter="res" data-value="POLYMERS">Полимеры</button>
-              <span class="mk-sep"></span>
-              <button type="button" class="mk-chip" aria-pressed="false" data-hfilter="mine" data-value="MINE">Только мои</button>
-            </div>
             <div class="mk-scroll">
               <table class="mk-table">
                 <thead>
                   <tr>
-                    <th>Ресурс</th>
-                    <th class="num">Количество</th>
-                    <th class="num">Цена</th>
-                    <th class="num">Сумма</th>
-                    <th>Продавец</th>
-                    <th>Покупатель</th>
-                    <th class="num">Когда</th>
+                    <th>Отдает</th><th>Просит взамен</th>
+                    <th class="num">Курс</th><th>Торговец</th><th></th>
                   </tr>
                 </thead>
-                <tbody id="trade-log"></tbody>
+                <tbody id="barter-list"></tbody>
               </table>
             </div>
-            <div class="mk-more"><button type="button" class="ghost tiny" id="trades-more">Показать еще</button></div>
-          </section>
+          </details>
         </section>
-
         <section data-panel="war" hidden>
           <h3 class="panel-title">Экспедиции и войны</h3>
           <!--

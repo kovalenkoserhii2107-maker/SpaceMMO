@@ -1320,40 +1320,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
  * понять, что с рынком, потом торговать, потом посмотреть, что вышло.
  */
 
-.mk-head { display: grid; gap: 14px; margin-bottom: 20px; }
-.mk-head-top { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
 .mk-hub b { color: var(--text); font-variant-numeric: tabular-nums; }
-
-.mk-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
-
-.mk-stat {
-  background: var(--panel-2); border: 1px solid var(--line);
-  border-radius: 10px; padding: 12px 14px; display: grid; gap: 8px;
-  text-align: left; font: inherit; color: inherit;
-  transition: border-color 0.15s, transform 0.15s;
-}
-button.mk-stat { cursor: pointer; }
-button.mk-stat:hover { border-color: var(--line-strong); transform: translateY(-1px); }
-.mk-stat[aria-expanded="true"] { border-color: var(--accent); }
-
-.mk-stat-head { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
-.mk-stat-head .ico { width: 18px; height: 18px; }
-.mk-stat-price { display: flex; align-items: baseline; gap: 8px; }
-.mk-stat-price b { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
-.mk-delta { font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
-.mk-delta.up { color: var(--ok); }
-.mk-delta.down { color: var(--err); }
-.mk-stat-foot { display: flex; gap: 12px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; flex-wrap: wrap; }
-.mk-stat-foot b { color: var(--text); font-weight: 500; }
-
-/* Перекос спроса: полоса от «одни продавцы» до «одни покупатели». */
-.mk-skew { display: grid; gap: 6px; }
-.mk-skew-bar { height: 6px; border-radius: 999px; background: rgba(27, 37, 63, 0.6); position: relative; overflow: hidden; }
-.mk-skew-bar i { position: absolute; top: 0; bottom: 0; }
-.mk-skew-bar .buy { background: var(--ok); opacity: 0.75; }
-.mk-skew-bar .sell { background: var(--err); opacity: 0.75; }
-.mk-skew-legend { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.mk-skew-legend .ico { width: 1.05em; height: 1.05em; }
 
 .mk-chart { padding-top: 4px; animation: panel-in 0.25s ease; }
 .mk-chart-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 10px; }
@@ -1361,13 +1328,6 @@ button.mk-stat:hover { border-color: var(--line-strong); transform: translateY(-
 .mk-chart svg { width: 100%; height: 120px; display: block; }
 
 /* ---------- Стакан ---------- */
-
-.mk-tabs { display: flex; gap: 4px; margin-bottom: 14px; }
-.mk-tab {
-  padding: 7px 14px; border-radius: 999px; border: 1px solid transparent;
-  background: none; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer;
-}
-.mk-tab[aria-selected="true"] { background: rgba(27, 37, 63, 0.6); border-color: var(--line-strong); color: var(--text); }
 
 .mk-form {
   display: grid; gap: 10px; align-items: end; margin-bottom: 12px;
@@ -1386,7 +1346,7 @@ button.mk-stat:hover { border-color: var(--line-strong); transform: translateY(-
  */
 .mk-form select,
 .mk-form input[type="text"],
-.mk-filters input[type="search"] {
+.mk-order input[type="text"] {
   width: 100%;
   padding: 9px 10px;
   border-radius: 8px;
@@ -1409,8 +1369,8 @@ button.mk-stat:hover { border-color: var(--line-strong); transform: translateY(-
 .mk-form select option { background: #0b1121; color: var(--text); }
 .mk-form select:focus,
 .mk-form input[type="text"]:focus,
-.mk-filters input[type="search"]:focus { border-color: var(--accent); }
-.mk-form input[type="text"] { font-variant-numeric: tabular-nums; }
+.mk-order input[type="text"]:focus { border-color: var(--accent); }
+.mk-form input[type="text"], .mk-order input[type="text"] { font-variant-numeric: tabular-nums; }
 /*
  * Кнопка при поле не сжимается: без `flex: none` она отдавала ширину полю
  * и обрезалась до «мак» — подпись, по которой не понять, что кнопка делает.
@@ -1459,8 +1419,6 @@ button.mk-stat:hover { border-color: var(--line-strong); transform: translateY(-
   background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer;
 }
 .mk-chip[aria-pressed="true"] { border-color: var(--line-strong); background: rgba(27, 37, 63, 0.6); color: var(--text); }
-.mk-sep { width: 1px; height: 20px; background: var(--line); }
-.mk-grow { flex: 1; min-width: 140px; }
 
 .mk-scroll { overflow-x: auto; }
 .mk-table { width: 100%; border-collapse: collapse; min-width: 720px; }
@@ -1468,14 +1426,6 @@ button.mk-stat:hover { border-color: var(--line-strong); transform: translateY(-
   text-align: left; padding: 8px 10px; font-size: 11px; font-weight: 500;
   color: var(--muted); letter-spacing: 0.04em; border-bottom: 1px solid var(--line); white-space: nowrap;
 }
-.mk-table th button {
-  background: none; border: 0; color: inherit; font: inherit; cursor: pointer;
-  padding: 0; display: inline-flex; gap: 4px; align-items: center;
-}
-.mk-table th button:hover { color: var(--text); }
-.mk-table th .arrow { opacity: 0; font-size: 9px; }
-.mk-table th button[data-active="true"] { color: var(--accent); }
-.mk-table th button[data-active="true"] .arrow { opacity: 1; }
 .mk-table td {
   padding: 10px; border-bottom: 1px solid rgba(120, 160, 255, 0.07);
   font-size: 13px; vertical-align: middle;
@@ -1529,7 +1479,6 @@ button.mk-stat:hover { border-color: var(--line-strong); transform: translateY(-
 .mk-empty { padding: 28px 10px; text-align: center; color: var(--muted); font-size: 13px; }
 .mk-more { display: flex; justify-content: center; margin-top: 12px; }
 .mk-ts { color: var(--muted); font-size: 12px; }
-.mk-history { margin-top: 22px; }
 
 @media (max-width: 900px) {
   .mk-form, .mk-form-barter { grid-template-columns: 1fr 1fr; }
@@ -3325,20 +3274,6 @@ button.nick:hover { color: var(--accent); }
   color: var(--muted);
 }
 .mk-store-foot b { color: var(--text); font-variant-numeric: tabular-nums; }
-/*
- * Кнопки переносят текст, а не растягивают панель. Подпись расширения длинная
- * намеренно — в ней и разовая цена, и аренда навсегда, — и в одну строку
- * на телефоне она не помещается никогда.
- */
-.mk-hub-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-.mk-hub-actions button {
-  flex: 1 1 auto;
-  min-width: 0;
-  white-space: normal;
-  text-align: left;
-  line-height: 1.35;
-}
-
 /* Остаток прямо в подписи поля: грузят из того, что есть, а не из памяти. */
 .field-have { font-style: normal; color: var(--accent); font-variant-numeric: tabular-nums; }
 
@@ -3498,10 +3433,8 @@ button.nick:hover { color: var(--accent); }
  * и те же цвета у колонок ниже. Цвет закреплен за складом, а не за
  * заполненностью: иначе различие «где лежит» потерялось бы снова.
  */
-.mk-head-top { display: grid; grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr); align-items: start; gap: 16px; }
 .mk-hub { gap: 12px; }
 .mk-store-top { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
-.mk-store-title { font-size: 16px; font-weight: 700; }
 .mk-store-sub { font-size: 12px; color: var(--muted); }
 .mk-store-total { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .mk-store-total b { font-size: 18px; color: var(--text); }
@@ -3517,11 +3450,8 @@ button.nick:hover { color: var(--accent); }
 .mk-store-col-hint { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
 .mk-store-col-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
 .mk-store-col-row b { color: var(--text); font-size: 13px; font-variant-numeric: tabular-nums; }
-.mk-store-avail { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--muted); padding-top: 8px; border-top: 1px solid var(--line); }
-.mk-store-avail b { color: var(--text); font-variant-numeric: tabular-nums; }
 
 /* Действия склада — настоящие кнопки с заголовком и строкой условий, а не мелкий текст. */
-.mk-hub-actions { flex-direction: column; margin-top: 0; }
 .mk-action {
   display: grid;
   gap: 3px;
@@ -3542,7 +3472,6 @@ button.nick:hover { color: var(--accent); }
 .mk-action .mk-action-warn { color: var(--err); }
 
 @media (max-width: 760px) {
-  .mk-head-top { grid-template-columns: 1fr; }
   .mk-store-cols { grid-template-columns: 1fr; }
 }
 
@@ -3551,8 +3480,8 @@ button.nick:hover { color: var(--accent); }
  * по самому широкому содержимому: на телефоне склады и кнопки уезжали
  * за правый край. Трек ограничен шириной экрана, вложенные блоки могут сжиматься.
  */
-.mk-head { grid-template-columns: minmax(0, 1fr); }
-.mk-head > *, .mk-head-top > *, .mk-store-cols > *, .mk-hub-actions > * { min-width: 0; }
+
+.mk-store-cols > * { min-width: 0; }
 .mk-store-col-title, .mk-store-col-hint { overflow-wrap: anywhere; }
 
 /*
@@ -3645,4 +3574,158 @@ button.war-row-head:hover { background: rgba(120, 160, 255, 0.06); }
   .war-row-head { grid-template-columns: auto minmax(0, 1fr); }
   .war-row-result { grid-column: 1 / -1; justify-items: start; grid-auto-flow: column; justify-content: space-between; }
   .war-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* ---------- Биржа: один экран на одно решение ---------- */
+
+/*
+ * Экран отвечает на один вопрос — купить или продать и почем. Сверху вниз:
+ * ресурс, его рынок, торговля, свои заявки; склад, история и бартер ниже
+ * и свернуты. Прежде это были семь блоков равного веса высотой в четыре
+ * экрана, и первым в глаза бросалась полоса склада, а не цена.
+ */
+
+/* Ресурс выбирается один раз и задает весь экран; цена видна на обеих вкладках. */
+.mk-switch { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
+.mk-switch-tab {
+  display: flex; align-items: baseline; gap: 6px 10px; flex-wrap: wrap;
+  padding: 10px 14px; border-radius: 12px; border: 1px solid var(--line);
+  background: var(--panel-2); color: var(--muted); font: inherit; text-align: left; cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+.mk-switch-tab:hover { border-color: var(--line-strong); }
+.mk-switch-tab .mk-res { font-weight: 600; }
+.mk-switch-tab b { font-size: 18px; color: var(--text); font-variant-numeric: tabular-nums; }
+.mk-switch-tab[aria-selected="true"] { border-color: var(--accent); background: rgba(77, 210, 255, 0.08); color: var(--text); }
+
+.mk-market, .mk-depth, .mk-order, .mk-mine, .mk-strip, .mk-fold {
+  border: 1px solid var(--line); border-radius: 14px; background: var(--panel);
+}
+
+.mk-market { display: grid; gap: 12px; padding: 14px 16px; margin-bottom: 10px; }
+.mk-market-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.mk-market-price { display: flex; align-items: baseline; gap: 6px 10px; flex-wrap: wrap; }
+.mk-market-price .mk-res { font-weight: 600; color: var(--muted); }
+.mk-market-price b { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.mk-unit { font-size: 12px; color: var(--muted); }
+
+/*
+ * Коридор резерва: полоса от нуля до потолка с запасом, окрашенный отрезок —
+ * где цену держит рынок, отметка — где она сейчас. Отвечает на «дорого
+ * или дешево» без чтения чисел; за коридором отметка оранжевая.
+ */
+.mk-corridor { display: grid; gap: 6px; }
+.mk-corridor-bar { position: relative; height: 10px; border-radius: 999px; background: rgba(27, 37, 63, 0.6); }
+.mk-corridor-band {
+  position: absolute; top: 0; bottom: 0; border-radius: 999px;
+  background: linear-gradient(90deg, rgba(74, 222, 128, 0.4), rgba(77, 210, 255, 0.28), rgba(248, 113, 113, 0.4));
+}
+.mk-corridor-mark {
+  position: absolute; top: -4px; width: 4px; height: 18px; margin-left: -2px;
+  border-radius: 2px; background: var(--text); box-shadow: 0 0 0 2px #05070f;
+}
+.mk-corridor-mark.out { background: var(--warm); }
+.mk-corridor-legend { display: flex; justify-content: space-between; gap: 4px 10px; font-size: 11px; color: var(--muted); flex-wrap: wrap; }
+.mk-corridor-legend b { color: var(--text); font-variant-numeric: tabular-nums; }
+.mk-corridor-note { flex: 1; text-align: center; }
+.mk-facts { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--muted); }
+.mk-facts b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* Торговля: стакан и форма рядом — прочитал цену, тут же выставил. */
+.mk-trade { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(260px, 1fr); gap: 10px; margin-bottom: 10px; }
+.mk-depth { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 12px; align-content: start; }
+.mk-depth-col { min-width: 0; }
+.mk-depth-head { display: flex; align-items: baseline; gap: 6px; font-size: 13px; font-weight: 700; margin-bottom: 4px; }
+.mk-depth-head small { font-weight: 400; font-size: 11px; color: var(--muted); }
+.mk-depth-col.sell .mk-depth-head { color: #fca5a5; }
+.mk-depth-col.buy .mk-depth-head { color: #86efac; }
+.mk-depth-cols {
+  display: grid; grid-template-columns: 1fr auto; padding: 0 8px 4px;
+  font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em;
+}
+.mk-depth-list { display: grid; gap: 2px; }
+
+/*
+ * Строка стакана — кнопка: касание подставляет ее в форму. Полоса позади —
+ * объем относительно крупнейшего лота стороны, чтобы стену было видно
+ * без чтения чисел. Торговец мелко под ценой и на телефоне прячется.
+ */
+.mk-depth-row {
+  position: relative; isolation: isolate;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px;
+  width: 100%; padding: 6px 8px; border: 0; border-radius: 6px;
+  background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer;
+}
+.mk-depth-row::before {
+  content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: var(--depth, 0%);
+  border-radius: 6px; z-index: -1; opacity: 0.14;
+}
+.mk-depth-col.sell .mk-depth-row::before { background: var(--err); }
+.mk-depth-col.buy .mk-depth-row::before { background: var(--ok); }
+.mk-depth-row:hover { background: rgba(120, 160, 255, 0.08); }
+.mk-depth-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.mk-depth-row b { font-size: 14px; font-variant-numeric: tabular-nums; }
+.mk-depth-col.sell .mk-depth-row b { color: #fca5a5; }
+.mk-depth-col.buy .mk-depth-row b { color: #86efac; }
+.mk-depth-row span { font-size: 13px; text-align: right; font-variant-numeric: tabular-nums; }
+.mk-depth-row small {
+  grid-column: 1 / -1; font-size: 11px; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mk-depth-row.mine { cursor: default; box-shadow: inset 0 0 0 1px rgba(157, 123, 255, 0.45); }
+.mk-depth-row.mine:hover { background: transparent; }
+.mk-depth-row.arrived { animation: mk-arrive 1.6s ease-out; }
+.mk-depth-empty { margin: 8px; font-size: 12px; color: var(--muted); }
+.mk-depth-more { justify-self: start; padding: 4px 8px; border: 0; background: none; color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; }
+.mk-depth-mid { grid-column: 1 / -1; font-size: 12px; color: var(--muted); text-align: center; }
+.mk-depth-mid b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+.mk-order { display: grid; gap: 10px; align-content: start; padding: 14px; }
+.mk-order-title { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; }
+.mk-order-hint { margin: 0; min-height: 2.8em; font-size: 12px; line-height: 1.4; color: var(--muted); font-variant-numeric: tabular-nums; }
+.mk-order .primary { width: 100%; }
+
+.mk-mine { padding: 12px 14px; margin-bottom: 10px; }
+.mk-mine .section-title { margin: 0 0 8px; }
+.mk-mine-list { display: grid; gap: 6px; }
+.mk-mine-row { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; }
+.mk-mine-sum { flex: 1; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.mk-mine-sum small { color: var(--muted); }
+
+/* Склад — одной строкой, с двумя кнопками рядом. */
+.mk-strip {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px 16px; flex-wrap: wrap;
+  padding: 10px 14px; margin-bottom: 8px;
+}
+.mk-strip-text { display: flex; align-items: center; gap: 4px 14px; flex-wrap: wrap; font-size: 13px; }
+.mk-strip-text b { font-variant-numeric: tabular-nums; }
+.mk-strip-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.mk-strip .mk-action { width: auto; padding: 7px 12px; border-radius: 10px; }
+.mk-strip .mk-action b { font-size: 13px; }
+.mk-strip .mk-action span { font-size: 11px; }
+
+/* Свернутое: где лежит товар, история, бартер. */
+.mk-fold { margin-bottom: 8px; }
+.mk-fold > summary {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  padding: 11px 14px; font-size: 13px; font-weight: 600; cursor: pointer; list-style: none;
+}
+.mk-fold > summary::-webkit-details-marker { display: none; }
+.mk-fold > summary::after { content: "▾"; color: var(--muted); transition: transform 0.15s; }
+.mk-fold[open] > summary::after { transform: rotate(180deg); }
+.mk-fold > :not(summary) { margin: 0 14px 14px; }
+.mk-table.mk-table-log { min-width: 560px; }
+
+@media (max-width: 900px) {
+  .mk-trade { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 560px) {
+  .mk-switch-tab { padding: 8px 10px; }
+  .mk-switch-tab b { font-size: 16px; }
+  .mk-market { padding: 12px; }
+  .mk-market-price b { font-size: 26px; }
+  .mk-corridor-note { order: 3; flex-basis: 100%; text-align: left; }
+  .mk-depth { padding: 8px; gap: 8px; }
+  .mk-depth-head small, .mk-depth-row small { display: none; }
+  .mk-depth-row { padding: 7px 6px; }
 }
