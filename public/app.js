@@ -30,6 +30,7 @@
     queueSummary: $('queue-summary'),
     energyStats: $('energy-stats'),
     overviewFleets: $('overview-fleets'),
+    ovAttention: $('ov-attention'),
     levelBuildings: $('level-buildings'),
     levelTechs: $('level-techs'),
     layout: document.querySelector('.layout'),
@@ -1505,6 +1506,7 @@
   let levelTableSignature = '';
 
   function renderOverview(base) {
+    renderAttention(base);
     renderEnergyStats(base);
     renderQueueSummary(base);
     renderOverviewRoster(base);
@@ -1539,43 +1541,258 @@
   const rosterKeys = { fleet: { value: null }, defense: { value: null } };
 
   /**
-   * Ангар и бастион. Прежде перечень имеющегося стоял в верфи и в обороне —
-   * то есть ровно там, где решают, что строить дальше, — и отодвигал карточки
-   * вниз на целый экран. Вопрос «что у меня есть» задают в центре управления,
-   * рядом со складом, энергией и очередями, и здесь же ему место.
-   *
-   * Разбор подробнее прежней ведомости в паспорте: у каждого класса профиль
-   * единицы, суммарные залп и живучесть, а у кораблей еще трюм всем классом,
-   * ход эскадры и расход плазмы — то, чем решается состав рейса.
+   * Силы колонии — таблицей. Прежде это были плитки с картинкой на каждый
+   * класс, и семь классов занимали целый экран. Числа те же: профиль единицы,
+   * залп и живучесть класса, у кораблей трюм, ход и расход плазмы; строка
+   * итога отвечает, чем колония богата в целом.
    */
   function renderOverviewRoster(base) {
     const hulls = Object.values(base.fleet).reduce((sum, n) => sum + (Number(n) || 0), 0);
     const guns = Object.values(base.defenses).reduce((sum, n) => sum + (Number(n) || 0), 0);
-    el.rosterFleetTitle.textContent = hulls ? `Ангар · ${fmt(hulls)} корпусов` : 'Ангар';
-    el.rosterDefenseTitle.textContent = guns ? `Бастион · ${fmt(guns)} установок` : 'Бастион';
+    el.rosterFleetTitle.textContent = hulls
+      ? `Флот · ${fmt(hulls)} ${plural(hulls, 'корабль', 'корабля', 'кораблей')}`
+      : 'Флот';
+    el.rosterDefenseTitle.textContent = guns
+      ? `Оборона · ${fmt(guns)} ${plural(guns, 'установка', 'установки', 'установок')}`
+      : 'Оборона';
 
-    renderRoster(
+    renderForces(
       el.rosterFleet,
       base.ships.map((ship) => ({ ...ship, kind: 'ship' })),
       base.fleet,
       rosterKeys.fleet,
-      'В ангаре пусто. Корабли строятся в верфи.',
-      (card, count) => {
-        const flight = card.flight;
-        if (!flight) return '';
-        const cargo = flight.cargo > 0 ? ` · трюм <b>${fmt(flight.cargo * count)}</b>` : '';
-        return `${cargo} · ход <b>${fmt(flight.speed)}</b>` +
-          ` · плазма <b>${fmtAmount(Math.round(flight.fuelPerSecond * count * 100) / 100)}</b>/с`;
-      },
+      'Кораблей на базе нет — они строятся в верфи.',
+      true,
     );
-
-    renderRoster(
+    renderForces(
       el.rosterDefense,
       base.defenseCards.map((item) => ({ ...item, kind: 'defense' })),
       base.defenses,
       rosterKeys.defense,
-      'Планета не укреплена. Турели строятся в разделе обороны.',
+      'Планета не укреплена — установки строятся в разделе обороны.',
+      false,
     );
+  }
+
+  /*
+   * Перерисовывается только при изменении состава: пересобирать картинки
+   * каждую секунду значит каждую секунду заново дергать их загрузку.
+   */
+  function renderForces(node, cards, counts, keyRef, emptyText, ships) {
+    const signature = cards.map((card) => `${card.type}:${counts[card.type] || 0}`).join('|');
+    if (keyRef.value === signature) return;
+    keyRef.value = signature;
+
+    node.innerHTML = '';
+    const owned = cards.filter((card) => (counts[card.type] || 0) > 0);
+    if (!owned.length) {
+      node.innerHTML = `<tr><td class="ov-empty">${emptyText}</td></tr>`;
+      return;
+    }
+
+    const head = document.createElement('tr');
+    head.className = 'ov-head';
+    head.innerHTML =
+      '<th>Класс</th><th class="num">Штук</th>' +
+      '<th class="num ov-unit" title="атака · щит · корпус одной единицы">Единица</th>' +
+      '<th class="num">Залп</th><th class="num">Живучесть</th>' +
+      (ships ? '<th class="num ov-extra">Трюм</th><th class="num ov-extra">Ход</th><th class="num ov-extra">Плазма/с</th>' : '');
+    node.appendChild(head);
+
+    const total = { count: 0, salvo: 0, endurance: 0, cargo: 0, fuel: 0 };
+    for (const card of owned) {
+      const count = counts[card.type] || 0;
+      const combat = card.combat || { attack: 0, shield: 0, hull: 0, note: null };
+      // Суммарные числа класса: одиночная атака 15 ничего не говорит, а «залп
+      // 75 по всем пяти» сразу сравнимо с обороной цели в отчете разведки.
+      const salvo = combat.attack * count;
+      const endurance = (combat.shield + combat.hull) * count;
+      const flight = card.flight;
+      const cargo = flight ? flight.cargo * count : 0;
+      const fuel = flight ? flight.fuelPerSecond * count : 0;
+      total.count += count;
+      total.salvo += salvo;
+      total.endurance += endurance;
+      total.cargo += cargo;
+      total.fuel += fuel;
+
+      const row = document.createElement('tr');
+      const name = document.createElement('td');
+      name.className = 'ov-name';
+      name.appendChild(artNode(card.type, card.label, card.kind, 'art-thumb'));
+      const label = document.createElement('span');
+      label.textContent = card.label;
+      if (combat.note) label.title = combat.note;
+      name.appendChild(label);
+      row.appendChild(name);
+      row.insertAdjacentHTML(
+        'beforeend',
+        `<td class="num"><b>${fmt(count)}</b></td>` +
+          `<td class="num ov-unit">${fmt(combat.attack)} · ${fmt(combat.shield)} · ${fmt(combat.hull)}</td>` +
+          `<td class="num">${fmt(salvo)}</td><td class="num">${fmt(endurance)}</td>` +
+          (ships
+            ? `<td class="num ov-extra">${cargo > 0 ? fmt(cargo) : '—'}</td>` +
+              `<td class="num ov-extra">${flight ? fmt(flight.speed) : '—'}</td>` +
+              `<td class="num ov-extra">${flight ? fmtAmount(Math.round(fuel * 100) / 100) : '—'}</td>`
+            : ''),
+      );
+      node.appendChild(row);
+    }
+
+    if (owned.length > 1) {
+      const sum = document.createElement('tr');
+      sum.className = 'ov-total';
+      sum.innerHTML =
+        `<td>Всего</td><td class="num">${fmt(total.count)}</td><td class="num ov-unit"></td>` +
+        `<td class="num">${fmt(total.salvo)}</td><td class="num">${fmt(total.endurance)}</td>` +
+        (ships
+          ? `<td class="num ov-extra">${fmt(total.cargo)}</td><td class="num ov-extra"></td>` +
+            `<td class="num ov-extra">${fmtAmount(Math.round(total.fuel * 100) / 100)}</td>`
+          : '');
+      node.appendChild(sum);
+    }
+  }
+
+  /**
+   * «Требует внимания» — первым блоком центра управления.
+   *
+   * Экран, на который заходят проверить колонию, должен начинаться с ответа
+   * «все ли в порядке». Прежде беда вроде нехватки энергии была красной
+   * полосой во втором блоке, и что с ней делать, приходилось вспоминать самому.
+   * Здесь у каждого пункта действие: если нужную постройку можно начать сразу,
+   * кнопка начинает ее — с ценой в подписи, — иначе ведет в раздел.
+   *
+   * Пороги — только над числами сервера (правило 3): клиент не считает
+   * экономику, он решает, о чем сказать первым.
+   */
+  let attentionSignature = '';
+
+  function attentionItems(base) {
+    const items = [];
+    const building = (type) => base.buildings.find((item) => item.type === type);
+    const costText = (cost) =>
+      ['ore', 'polymers', 'plasma']
+        .filter((key) => cost[key] > 0)
+        .map((key) => `${icon(key, 'sm')}${fmtCompact(cost[key])}`)
+        .join(' ');
+    /*
+     * Кнопка начинает стройку, только если ее можно начать прямо сейчас;
+     * иначе она ведет в раздел и говорит, что мешает, — «К постройкам»
+     * без причины оставлял игрока гадать, почему не «Построить».
+     */
+    const upgrade = (type) => {
+      const card = building(type);
+      if (!card) return { label: 'К постройкам', panel: 'buildings', focus: type };
+      if (!card.busy && card.canAfford && card.requirements.length === 0) {
+        return { label: `${card.label} → ур. ${card.nextLevel}`, cost: costText(card.cost), build: type };
+      }
+      const lack = ['ore', 'polymers', 'plasma']
+        .map((key) => ({ key, gap: Math.ceil(card.cost[key] - (base.resources[key] || 0)) }))
+        .filter((item) => item.gap > 0);
+      const why = card.requirements.length
+        ? 'нужны требования'
+        : card.busy
+          ? 'стройка занята'
+          : lack.length
+            ? `не хватает ${lack.map((item) => `${icon(item.key, 'sm')}${fmtCompact(item.gap)}`).join(' ')}`
+            : '';
+      return { label: 'К постройкам', cost: why, panel: 'buildings', focus: type };
+    };
+
+    const energy = base.energy;
+    if (energy && energy.efficiency < 1) {
+      const plant = building('POWER_PLANT');
+      const gain = plant && plant.energy ? Math.round((plant.energy.nextOutput || 0) - (plant.energy.output || 0)) : 0;
+      items.push({
+        tone: 'bad',
+        title: 'Энергии не хватает',
+        text:
+          `выработка ${fmt(energy.output)} при потреблении ${fmt(energy.usage)} — шахты работают на ${Math.round(energy.efficiency * 100)}%` +
+          (gain > 0 ? `. Энергостанция ур. ${plant.nextLevel} даст +${fmt(gain)}` : ''),
+        action: upgrade('POWER_PLANT'),
+      });
+    }
+
+    const STORE = { ore: 'ORE_STORAGE', polymers: 'POLYMER_STORAGE', plasma: 'PLASMA_STORAGE' };
+    for (const row of STORAGE_ROWS) {
+      const one = base.storage && base.storage[row.key];
+      if (!one) continue;
+      const name = building(STORE[row.key])?.label ?? row.label;
+      if (one.full) {
+        items.push({
+          tone: 'bad',
+          title: `${name} — места нет`,
+          text: `добыча: ${row.label.toLowerCase()} стоит, пока место не освободится`,
+          action: upgrade(STORE[row.key]),
+        });
+      } else if (one.fill >= 0.9) {
+        items.push({
+          tone: 'warn',
+          title: `${name} — занято ${Math.round(one.fill * 100)}%`,
+          text: 'скоро добыча встанет',
+          action: upgrade(STORE[row.key]),
+        });
+      }
+    }
+
+    if (!base.buildJob) {
+      items.push({ tone: 'info', title: 'Стройка свободна', text: 'строительный слот простаивает', action: { label: 'К постройкам', panel: 'buildings' } });
+    }
+    if (!(state.research && state.research.active)) {
+      items.push({ tone: 'info', title: 'Наука свободна', text: 'лаборатория простаивает', action: { label: 'К исследованиям', panel: 'research' } });
+    }
+    const yard = building('SHIPYARD');
+    if (yard && yard.level > 0 && !(base.shipQueue && base.shipQueue.length)) {
+      items.push({ tone: 'info', title: 'Верфь простаивает', text: 'заказов нет', action: { label: 'К верфи', panel: 'shipyard' } });
+    }
+    return items;
+  }
+
+  function renderAttention(base) {
+    if (!el.ovAttention) return;
+    const items = attentionItems(base);
+    const signature = base.baseId + JSON.stringify(items.map((item) => [item.tone, item.title, item.text, item.action && item.action.label, item.action && item.action.cost]));
+    if (signature === attentionSignature) return;
+    attentionSignature = signature;
+
+    el.ovAttention.innerHTML = '';
+    el.ovAttention.classList.toggle('calm', items.every((item) => item.tone === 'info'));
+    if (!items.length) {
+      el.ovAttention.innerHTML =
+        '<div class="ov-alert ok"><span class="ov-dot"></span><div><b>Все в порядке</b>' +
+        '<span>работы идут, энергии хватает, место на складах есть</span></div></div>';
+      return;
+    }
+    for (const item of items) {
+      const row = document.createElement('div');
+      row.className = `ov-alert ${item.tone}`;
+      row.innerHTML = `<span class="ov-dot"></span><div><b>${item.title}</b><span>${item.text}</span></div>`;
+      if (item.action) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = item.action.build ? 'ov-act primary-soft' : 'ov-act';
+        button.innerHTML = `<b>${item.action.label}</b>` + (item.action.cost ? `<span>${item.action.cost}</span>` : '');
+        button.addEventListener('click', async () => {
+          if (item.action.build) {
+            button.disabled = true;
+            await send(`/api/bases/${base.baseId}/build`, { type: item.action.build });
+            return;
+          }
+          showPanel(item.action.panel);
+          // Нужная карточка — сразу на виду и подсвечена: искать ее среди
+          // десятка остальных значит повторить работу, которую экран уже сделал.
+          const card = item.action.focus && cards.buildings.get(item.action.focus);
+          if (card && card.article) {
+            card.article.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            card.article.classList.remove('flash');
+            void card.article.offsetWidth;
+            card.article.classList.add('flash');
+          }
+        });
+        row.appendChild(button);
+      }
+      el.ovAttention.appendChild(row);
+    }
   }
 
   /**
@@ -2188,61 +2405,6 @@
     card.quantity.disabled = locked;
   }
 
-  /**
-   * Ангар верфи и позиции обороны: что у нас есть и на что оно способно.
-   *
-   * Отличается от гарнизона в паспорте колонии намеренно. Паспорт отвечает
-   * «сколько чего стоит на планете» и потому идет узкой ведомостью; здесь
-   * игрок решает, что строить дальше, и ему нужны сами характеристики —
-   * профиль единицы и то, что этот класс дает флоту в сумме.
-   *
-   * Перерисовывается только при изменении состава: пересобирать картинки
-   * каждую секунду значит каждую секунду заново дергать их загрузку.
-   */
-  function renderRoster(node, cards, counts, keyRef, emptyText, detail) {
-    const signature = cards.map((card) => `${card.type}:${counts[card.type] || 0}`).join('|');
-    if (keyRef.value === signature) return;
-    keyRef.value = signature;
-
-    node.innerHTML = '';
-    const owned = cards.filter((card) => (counts[card.type] || 0) > 0);
-
-    if (!owned.length) {
-      const empty = document.createElement('p');
-      empty.className = 'roster-empty';
-      empty.textContent = emptyText;
-      node.appendChild(empty);
-      return;
-    }
-
-    for (const card of owned) {
-      const count = counts[card.type] || 0;
-      const combat = card.combat || { attack: 0, shield: 0, hull: 0, note: null };
-      // Суммарные числа класса: одиночная атака 15 ничего не говорит, а «залп
-      // 75 по всем пяти» сразу сравнимо с обороной цели в отчете разведки.
-      const salvo = combat.attack * count;
-      const endurance = (combat.shield + combat.hull) * count;
-
-      const unit = document.createElement('article');
-      unit.className = 'roster-unit';
-      unit.appendChild(artNode(card.type, card.label, card.kind, 'art-tile'));
-
-      const body = document.createElement('div');
-      body.className = 'roster-body';
-      body.innerHTML =
-        `<span class="roster-head">${escapeHtml(card.label)}<b>×${fmt(count)}</b></span>` +
-        '<span class="roster-stats">' +
-        `<span><i>атака</i>${fmt(combat.attack)}</span>` +
-        `<span><i>щит</i>${fmt(combat.shield)}</span>` +
-        `<span><i>корпус</i>${fmt(combat.hull)}</span>` +
-        '</span>' +
-        `<span class="roster-total">залп <b>${fmt(salvo)}</b> · живучесть <b>${fmt(endurance)}</b>` +
-        `${detail ? detail(card, count) : ''}</span>` +
-        (combat.note ? `<span class="roster-note">${escapeHtml(combat.note)}</span>` : '');
-      unit.appendChild(body);
-      node.appendChild(unit);
-    }
-  }
 
   /**
    * Очередь верфи или обороны. Раньше это была строка текста «осталось 1 из 1»,

@@ -376,9 +376,17 @@
         -->
         <section data-panel="overview">
           <h3 class="panel-title">Центр управления</h3>
+          <!--
+            Экран отвечает на вопросы в том порядке, в каком их задают, заходя
+            в игру: все ли в порядке, что идет сейчас, что у меня есть — и уже
+            потом справочно, до каких уровней я дорос. Прежде первым стоял
+            паспорт колонии, а беда — энергии не хватает, шахты на половине
+            мощности — была красной полосой во втором блоке, без действия рядом.
+          -->
+          <section class="ov-attention" id="ov-attention" aria-live="polite"></section>
 
-          <section class="planet-card">
-            <div class="colony-col colony-id">
+          <div class="ov-grid">
+            <section class="ov-card planet-card">
               <div class="colony-ident">
                 <div class="colony-art" id="colony-art"></div>
                 <div class="colony-head">
@@ -386,65 +394,58 @@
                   <p class="muted" id="planet-meta">—</p>
                 </div>
               </div>
-
               <!--
                 Складов три, по одному на ресурс: полный склад полимеров больше
                 не останавливает добычу руды. Строки собираются скриптом.
               -->
               <div class="storage" id="storage">
-                <div class="storage-head">
-                  <span>Хранилища</span>
-                </div>
                 <div class="storage-rows" id="storage-rows"></div>
                 <p class="storage-note" id="storage-note"></p>
               </div>
-            </div>
-
-            <div class="colony-col">
-              <details class="colony-block colony-fold">
+              <div class="nrg" id="energy-stats"></div>
+              <details class="colony-fold">
                 <summary class="colony-sub">Богатство недр</summary>
                 <div class="richness" id="richness"></div>
               </details>
-            </div>
+            </section>
+
+            <!--
+              Что идет прямо сейчас: четыре очереди и флоты в полете. Свободная
+              очередь — не отсутствие новости, а сама новость: мощности стоят.
+              Флоты те же, что в сводке у карты, — «когда вернется рейс»
+              спрашивают, заходя в игру, а не стоя над картой.
+            -->
+            <section class="ov-card">
+              <h4 class="ov-title">Работы</h4>
+              <div class="queue-summary" id="queue-summary"></div>
+              <h4 class="ov-title">Флоты в полете</h4>
+              <div class="queue queue-stacked" id="overview-fleets"></div>
+            </section>
+          </div>
+
+          <!--
+            Силы — таблицей, а не плитками. Числа те же: профиль единицы, залп
+            и живучесть класса, у кораблей трюм, ход и расход плазмы; строка
+            итога сверху вниз отвечает, чем колония богата в целом. Плитки
+            с картинками занимали целый экран на семь классов.
+          -->
+          <section class="ov-card">
+            <h4 class="ov-title" id="roster-fleet-title">Флот</h4>
+            <div class="ov-scroll"><table class="ov-forces"><tbody id="roster-fleet"></tbody></table></div>
+            <h4 class="ov-title" id="roster-defense-title">Оборона</h4>
+            <div class="ov-scroll"><table class="ov-forces"><tbody id="roster-defense"></tbody></table></div>
           </section>
 
-          <!--
-            Склад и недра показывает паспорт выше, поэтому здесь их нет: список
-            колоний повторял те же полосы теми же числами. Осталось то, чего
-            в паспорте нет вовсе, — что строится прямо сейчас и какие уровни
-            уже взяты.
-          -->
-          <h3 class="panel-title">Энергия</h3>
-          <div class="nrg" id="energy-stats"></div>
-
-          <h3 class="panel-title">Очереди</h3>
-          <div class="queue-summary" id="queue-summary"></div>
-
-          <!--
-            Флоты в полете. Тот же список, что в правой сводке у карты, но
-            видеть его надо и не открывая карту: «когда вернется рейс» —
-            вопрос, с которым заходят в игру, а не которым занимаются,
-            уже стоя над картой.
-          -->
-          <h3 class="panel-title">Флоты в полете</h3>
-          <div class="queue queue-stacked" id="overview-fleets"></div>
-
-          <!--
-            Ангар и бастион: что есть на базе разбором, а не ведомостью.
-            В верфи и обороне этих списков больше нет — там решают, что
-            строить дальше, и перечень имеющегося только отодвигал карточки.
-          -->
-          <h3 class="panel-title" id="roster-fleet-title">Ангар</h3>
-          <div id="roster-fleet" class="fleet"></div>
-
-          <h3 class="panel-title" id="roster-defense-title">Бастион</h3>
-          <div id="roster-defense" class="fleet"></div>
-
-          <h3 class="panel-title">Постройки</h3>
-          <div class="level-table" id="level-buildings"></div>
-
-          <h3 class="panel-title">Технологии</h3>
-          <div class="level-table" id="level-techs"></div>
+          <div class="ov-grid">
+            <section class="ov-card">
+              <h4 class="ov-title">Постройки</h4>
+              <div class="level-table" id="level-buildings"></div>
+            </section>
+            <section class="ov-card">
+              <h4 class="ov-title">Технологии</h4>
+              <div class="level-table" id="level-techs"></div>
+            </section>
+          </div>
         </section>
 
         <section data-panel="buildings" hidden>

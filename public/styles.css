@@ -439,19 +439,10 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
  * и не длиннее пары сотен пикселей — полоса на всю ширину панели заставляла
  * вести глазом от заголовка слева до числа справа через пустое поле.
  *
- * Колонок две: адрес со складом и недра. Состав флота и обороны стоит ниже
- * своим разбором — в паспорте он повторял бы его теми же числами.
+ * Теперь паспорт — левая колонка центра управления: портрет, склады, энергия
+ * и свернутые недра одной стопкой. Состав флота и обороны стоит ниже таблицей.
  */
-.planet-card {
-  padding: 14px 20px;
-  display: grid;
-  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
-  gap: 16px 20px;
-  align-items: start;
-}
-.colony-col { display: grid; gap: 12px; align-content: start; min-width: 0; }
-/* Колонки разделены линией, а не только отступом: блоки внутри тоже с отступами. */
-.colony-col + .colony-col { padding-left: 20px; border-left: 1px solid var(--line); }
+.planet-card { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-content: start; }
 
 .colony-ident { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .colony-art { flex: none; width: 68px; }
@@ -461,7 +452,6 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .colony-head { min-width: 0; }
 .planet-card h2 { margin: 0 0 3px; font-size: 18px; }
 
-.colony-block { display: grid; gap: 6px; min-width: 0; }
 .colony-sub {
   display: flex;
   align-items: center;
@@ -518,14 +508,6 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 
 /* ---------- Хранилище: заполненность и остановка добычи ---------- */
 .storage { display: grid; gap: 6px; }
-.storage-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  font-size: 12px;
-  color: var(--muted);
-}
-.storage-head b { font-size: 13px; color: var(--text); font-variant-numeric: tabular-nums; }
 
 .storage-bar {
   height: 8px;
@@ -892,71 +874,6 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   background: linear-gradient(90deg, var(--accent), var(--accent-2));
   transition: width 0.4s ease;
 }
-
-/*
- * Ангар верфи и позиции обороны. Крупная квадратная миниатюра, профиль
- * единицы и сумма по классу. Круглые плашки со счетчиком здесь не годятся:
- * ровно так же выглядит гарнизон в паспорте колонии сверху, и два одинаковых
- * блока на одном экране читались как случайно повторенный.
- */
-.fleet {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
-  gap: 12px;
-  padding: 14px 16px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: var(--panel);
-}
-.roster-unit {
-  display: flex;
-  align-items: stretch;
-  gap: 12px;
-  min-width: 0;
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--panel-2);
-}
-.roster-body { display: grid; gap: 6px; align-content: start; min-width: 0; }
-.roster-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 600;
-}
-.roster-head b { flex: none; font-size: 17px; color: var(--accent); font-variant-numeric: tabular-nums; }
-
-/* Профиль единицы: три ячейки одной ширины, чтобы классы сравнивались взглядом. */
-.roster-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
-.roster-stats span {
-  display: grid;
-  gap: 1px;
-  padding: 4px 6px;
-  border-radius: 6px;
-  background: rgba(120, 160, 255, 0.07);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-.roster-stats i { font-size: 9px; font-style: normal; letter-spacing: 0.6px; text-transform: uppercase; color: var(--muted); }
-.roster-total { font-size: 11px; color: var(--muted); }
-.roster-total b { color: var(--text); font-variant-numeric: tabular-nums; }
-.roster-note { font-size: 11px; color: var(--warm); }
-
-/* Пустой ангар занимает всю ширину: одна фраза в узкой колонке рвется по слогам. */
-.roster-empty { grid-column: 1 / -1; margin: 0; font-size: 13px; color: var(--muted); }
-
-/* Квадратная плитка юнита в ангаре — в отличие от круглой метки в паспорте. */
-.art.art-tile {
-  flex: none;
-  width: 76px;
-  height: 76px;
-  aspect-ratio: 1 / 1;
-  border-radius: 10px;
-}
-.art.art-tile.art-missing::after { font-size: 16px; }
 
 .queue { display: grid; gap: 8px; }
 .queue .queue-item {
@@ -2527,14 +2444,6 @@ button.nick:hover { color: var(--accent); }
   }
 }
 
-@media (max-width: 900px) {
-  .planet-card { grid-template-columns: minmax(0, 1fr); }
-  .colony-col + .colony-col {
-    padding: 14px 0 0;
-    border-left: none;
-    border-top: 1px solid var(--line);
-  }
-}
 
 /*
  * Служебные показатели уступают место основным только в средней полосе.
@@ -2604,8 +2513,6 @@ button.nick:hover { color: var(--accent); }
 
   .colony-art { width: 68px; }
   .richness { grid-template-columns: auto minmax(40px, 1fr) auto auto; gap: 5px 8px; }
-  .roster-unit { gap: 10px; }
-  .art.art-tile { width: 64px; height: 64px; }
   .base-list { min-width: 0; width: max(220px, 60vw); }
 }
 
@@ -3728,4 +3635,88 @@ button.war-row-head:hover { background: rgba(120, 160, 255, 0.06); }
   .mk-depth { padding: 8px; gap: 8px; }
   .mk-depth-head small, .mk-depth-row small { display: none; }
   .mk-depth-row { padding: 7px 6px; }
+}
+
+/* ---------- Центр управления ---------- */
+
+/*
+ * Порядок — порядок вопросов, с которыми заходят в игру: все ли в порядке,
+ * что идет сейчас, что у меня есть, до чего дорос. «Требует внимания» —
+ * первым блоком, и у каждого пункта действие.
+ */
+.ov-attention { display: grid; gap: 8px; margin-bottom: 12px; }
+/* Тревог нет — свободные очереди встают компактным рядом, а не лентой. */
+.ov-attention.calm { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.ov-alert {
+  display: flex; align-items: center; gap: 12px; min-width: 0;
+  padding: 10px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel);
+}
+.ov-alert > div { display: grid; gap: 2px; flex: 1; min-width: 0; }
+.ov-alert > div b { font-size: 14px; }
+.ov-alert > div span { font-size: 12px; color: var(--muted); }
+.ov-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+.ov-alert.bad { border-color: rgba(248, 113, 113, 0.45); background: rgba(248, 113, 113, 0.07); }
+.ov-alert.bad .ov-dot { background: var(--err); box-shadow: 0 0 0 4px rgba(248, 113, 113, 0.18); }
+.ov-alert.warn { border-color: rgba(251, 191, 36, 0.4); background: rgba(251, 191, 36, 0.06); }
+.ov-alert.warn .ov-dot { background: var(--warn); }
+.ov-alert.info .ov-dot { background: var(--accent); }
+.ov-alert.ok .ov-dot { background: var(--ok); }
+
+.ov-act {
+  flex: none; display: grid; gap: 1px; justify-items: center;
+  padding: 7px 12px; border-radius: 10px; border: 1px solid var(--line-strong);
+  background: #05070f; color: var(--text); font: inherit; cursor: pointer;
+}
+.ov-act b { font-size: 12px; }
+.ov-act span { display: inline-flex; gap: 8px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ov-act:hover:not(:disabled) { border-color: var(--accent); }
+.ov-act.primary-soft { border-color: var(--accent); background: rgba(77, 210, 255, 0.12); }
+.ov-act:disabled { opacity: 0.5; cursor: default; }
+
+.ov-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; align-items: start; }
+.ov-card {
+  display: grid; gap: 12px; align-content: start; min-width: 0;
+  padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel);
+}
+[data-panel="overview"] > .ov-card { margin-bottom: 12px; }
+.ov-title { margin: 0; font-size: 13px; font-weight: 700; }
+.ov-card .queue-summary, .ov-card .nrg { margin: 0; }
+
+/* Силы таблицей: классы строками, итог внизу, ничего не прячется за плитками. */
+.ov-scroll { overflow-x: auto; }
+.ov-forces { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ov-forces th {
+  padding: 0 8px 6px; text-align: left; white-space: nowrap;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
+}
+.ov-forces td { padding: 5px 8px; border-top: 1px solid var(--line); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ov-forces .num { text-align: right; }
+.ov-forces .ov-name { display: flex; align-items: center; gap: 8px; }
+.ov-forces td.ov-unit { color: var(--muted); }
+.ov-forces .ov-total td { font-weight: 700; border-top: 1px solid var(--line-strong); }
+.ov-empty { padding: 4px 0; font-size: 13px; color: var(--muted); white-space: normal; }
+.art.art-thumb { flex: none; width: 28px; height: 28px; aspect-ratio: 1 / 1; border-radius: 6px; border-width: 1px; }
+.art.art-thumb.art-missing::after { font-size: 10px; }
+
+/* Переход из «Требует внимания» подсвечивает карточку, ради которой пришли. */
+@keyframes card-flash {
+  from { box-shadow: 0 0 0 3px var(--accent); }
+  to { box-shadow: 0 0 0 3px transparent; }
+}
+.flash { animation: card-flash 1.8s ease-out; }
+
+@media (max-width: 900px) {
+  .ov-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 560px) {
+  .ov-alert { flex-wrap: wrap; }
+  .ov-act { width: 100%; }
+  /*
+   * На телефоне остаются класс, штуки, залп и живучесть: длинные названия
+   * вроде «Тяжелый истребитель «Гайдамака»» выталкивали числа за край.
+   * Профиль единицы, трюм, ход и расход — на широком экране.
+   */
+  .ov-forces th.ov-unit, .ov-forces td.ov-unit, .ov-forces .ov-extra { display: none; }
+  .ov-forces td.ov-name { white-space: normal; line-height: 1.25; }
+  .ov-forces th, .ov-forces td { padding-left: 5px; padding-right: 5px; }
 }
