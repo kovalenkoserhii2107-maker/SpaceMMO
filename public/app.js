@@ -2140,7 +2140,7 @@
         cards.technologies.set(tech.tech, card);
       }
       for (const ship of base.ships) {
-        const card = createShipCard(el.ships, ship, base.baseId);
+        const card = createUnitCard(el.ships, ship, base.baseId, 'ship');
         // Замыкание берет карточку из снимка на момент открытия, а не тот
         // объект, что был при сборке: числа в снимке меняются каждую секунду.
         makeDetailed(card, ship.label, () => {
@@ -2150,7 +2150,7 @@
         cards.ships.set(ship.type, card);
       }
       for (const item of base.defenseCards) {
-        const card = createDefenseCard(el.defenses, item, base.baseId);
+        const card = createUnitCard(el.defenses, item, base.baseId, 'defense');
         makeDetailed(card, item.label, () => {
           const fresh = (activeBase()?.defenseCards || []).find((row) => row.type === item.type);
           openUnitDetail(fresh || item, 'defense');
@@ -2215,20 +2215,42 @@
     const article = document.createElement('article');
     article.className = 'card';
 
-    // Обложка: иллюстрация и заголовок в одной полосе. Уровень уезжает вправо,
-    // остальное содержимое карточки идет ниже на всю ширину — так сетка
-    // не зависит от размера иллюстрации и не ломается на узких экранах.
+    /*
+     * Обложка идет в край карточки, без своей рамки. Прежде это была коробка
+     * в коробке: рамка карточки, рамка обложки, рамка строки эффекта — три
+     * вложенных контура на двухсотпиксельной карточке, и глазу не за что
+     * было зацепиться. Граница нужна одна, и она у карточки.
+     */
     const header = document.createElement('header');
     header.className = 'card-cover';
-    if (type) header.appendChild(artNode(type, title, kind));
+    const art = type ? artNode(type, title, kind) : document.createElement('div');
+    if (!type) art.className = 'art art-missing';
+    header.appendChild(art);
+
+    /*
+     * Уровень — меткой поверх картинки, а не строкой под названием.
+     * Строкой он забирал у каждой карточки по тридцать пикселей высоты
+     * и стоял отдельной пилюлей между названием и эффектом, разрывая
+     * «что это» и «что даст». На картинке он читается как подпись к ней,
+     * а название получает строку целиком.
+     */
+    const level = document.createElement('span');
+    level.className = 'card-badge';
+    art.appendChild(level);
+
+    // Полоса работы по нижнему краю картинки: видно, какая именно карточка
+    // строится, не сверяя название с полосой над сеткой.
+    const progress = document.createElement('div');
+    progress.className = 'card-progress';
+    progress.hidden = true;
+    progress.innerHTML = '<i></i>';
+    art.appendChild(progress);
 
     const titles = document.createElement('div');
     titles.className = 'card-titles';
     const heading = document.createElement('h4');
     heading.textContent = title;
-    const level = document.createElement('span');
-    level.className = 'level';
-    titles.append(heading, level);
+    titles.appendChild(heading);
     header.appendChild(titles);
 
     const desc = document.createElement('div');
@@ -2236,25 +2258,29 @@
     desc.textContent = description;
     desc.hidden = !description;
 
-    // Строка эффекта идет без подписи: она у нее внутри — «добыча», «вместимость»,
-    // «энергия». Подписывать ее второй раз значит написать слово дважды.
+    /*
+     * Выгода — главное, что карточка сообщает, поэтому она стоит сразу под
+     * названием и выделена цветом, а не рамкой. Ниже тем же блоком ее цена
+     * в энергии: это одна мысль — «получишь столько, отдашь столько».
+     */
     const combat = document.createElement('div');
     combat.className = 'combat-line';
 
+    const energyRow = document.createElement('div');
+    energyRow.className = 'card-energy';
+    energyRow.hidden = true;
+    const energyLabel = document.createElement('span');
+    energyLabel.className = 'card-energy-label';
+    const energy = document.createElement('b');
+    energyRow.append(energyLabel, energy);
+
     /*
-     * Остальные характеристики — подписанной сеткой, а не набором строк подряд.
-     * Голый ряд «1 712 · 807» под иконками не говорит, цена это, запас или
-     * прирост, а именно на него смотрят перед нажатием кнопки. Подпись слева,
-     * значение справа, колонка подписей одной ширины у всех карточек —
-     * поэтому соседние карточки сравниваются по горизонтали.
+     * Цена и срок — подписанной сеткой под чертой. Подпись нужна: голый ряд
+     * «1 712 · 807» не говорит, цена это, запас или прирост. Черта отделяет
+     * то, что получаешь, от того, чем платишь.
      */
     const spec = document.createElement('dl');
     spec.className = 'spec';
-
-    const energy = document.createElement('dd');
-    const energyRow = specRow(icon('energy', 'sm') + ' Расход', energy);
-    const energyLabel = energyRow.querySelector('dt');
-    energyRow.hidden = true;
 
     const cost = document.createElement('dd');
     cost.className = 'cost';
@@ -2266,24 +2292,47 @@
     const time = document.createElement('dd');
     time.className = 'time';
 
-    // Цена — единственная строка с несколькими значениями сразу, и в узкую
-    // колонку она не помещается: на телефоне «807» отрывалось на свою строку
-    // и повисало без подписи. Метка помечает строку, стили разворачивают ее
-    // на всю ширину там, где места мало.
-    const costRow = specRow('Стоимость', cost);
+    const costRow = specRow('Цена', cost);
     costRow.classList.add('spec-cost');
-    spec.append(energyRow, costRow, specRow('Время', time));
+    const timeRow = specRow('Время', time);
+    spec.append(costRow, timeRow);
 
     const reqs = document.createElement('div');
     reqs.className = 'reqs';
 
-    article.append(header, desc, combat, spec, reqs);
+    article.append(header, desc, combat, energyRow, spec, reqs);
     container.appendChild(article);
 
     return {
-      article, cover: header, level, costOre, costPolymers, costPlasma,
+      article, cover: header, level, progress, costOre, costPolymers, costPlasma,
       combat, energy, energyRow, energyLabel, time, reqs,
+      costLabel: costRow.querySelector('dt'), timeLabel: timeRow.querySelector('dt'),
     };
+  }
+
+  /**
+   * Состояние кнопки карточки.
+   *
+   * Выключенная кнопка раньше оставалась той же яркой градиентной плашкой,
+   * что и рабочая, только чуть прозрачнее, и сетка из пятнадцати карточек
+   * «Идет стройка» выглядела как пятнадцать приглашений нажать. Теперь яркая
+   * только та кнопка, которую можно нажать; остальные — контуром, и причина
+   * написана словами, а не одним цветом цены: красное число не говорит,
+   * что именно мешает, тем, кто цвета не различает.
+   */
+  function setCardAction(button, label, mode) {
+    button.textContent = label;
+    button.disabled = mode !== 'ready';
+    button.className = mode === 'ready' ? 'primary' : `card-state ${mode}`;
+  }
+
+  /** Полоса работы на обложке: доля сделанного или ничего. */
+  function setCardProgress(card, job) {
+    card.article.classList.toggle('working', Boolean(job));
+    card.progress.hidden = !job;
+    if (!job) return;
+    const done = job.totalSeconds > 0 ? 1 - job.remainingSeconds / job.totalSeconds : 1;
+    card.progress.firstChild.style.width = `${Math.min(100, Math.max(0, done * 100)).toFixed(1)}%`;
   }
 
   function createActionCard(container, title, description, onClick, type, kind) {
@@ -2296,54 +2345,89 @@
     return { ...shell, button };
   }
 
-  function createShipCard(container, ship, baseId) {
-    const shell = createCardShell(container, ship.label, ship.description, ship.type, 'ship');
+  /*
+   * Корабль и установка заказываются одинаково — штуками, — поэтому и карточка
+   * у них одна. Различаются адрес заказа и папка с картинкой.
+   */
+  function createUnitCard(container, item, baseId, kind) {
+    const shell = createCardShell(container, item.label, item.description, item.type, kind);
+    shell.article.classList.add('card-unit');
 
     const order = document.createElement('div');
     order.className = 'order';
+    const field = document.createElement('div');
+    field.className = 'field-with-max';
     const quantity = document.createElement('input');
     quantity.type = 'number';
+    quantity.inputMode = 'numeric';
     quantity.min = '1';
-    quantity.max = '100';
+    quantity.max = String(MAX_UNIT_ORDER);
     quantity.value = '1';
+    quantity.setAttribute('aria-label', 'Количество');
+    // «Макс» — тем же приемом, что «все» в форме флота: набрать столько,
+    // на сколько хватает склада, — частое действие, а считать это в уме
+    // по трем ценам сразу игрок не обязан.
+    const max = document.createElement('button');
+    max.type = 'button';
+    max.className = 'field-max';
+    max.textContent = 'макс';
+    field.append(quantity, max);
+
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'primary';
     button.textContent = 'Построить';
     button.addEventListener('click', () =>
-      send(`/api/bases/${baseId}/ships`, { type: ship.type, quantity: Number(quantity.value) }));
+      send(`/api/bases/${baseId}/${kind === 'ship' ? 'ships' : 'defenses'}`,
+        { type: item.type, quantity: orderQuantity(quantity) }));
 
-    order.append(quantity, button);
+    order.append(field, button);
     shell.article.appendChild(order);
-    return { ...shell, button, quantity };
+    const queueBadge = document.createElement('span');
+    queueBadge.className = 'card-badge card-queue';
+    shell.level.parentNode.appendChild(queueBadge);
+    const card = { ...shell, button, quantity, max, queueBadge };
+
+    // Цена и срок меняются вместе с количеством сразу, не дожидаясь снимка:
+    // игрок набирает число, чтобы увидеть, во что оно обойдется.
+    const refresh = () => {
+      if (card.last) updateShipCard(card, card.last.base, card.last.item, card.last.ownedLabel);
+    };
+    quantity.addEventListener('input', refresh);
+    max.addEventListener('click', () => {
+      if (!card.last) return;
+      quantity.value = String(Math.max(1, affordableUnits(card.last.item.cost, card.last.base.resources)));
+      refresh();
+    });
+    return card;
   }
 
-  function createDefenseCard(container, item, baseId) {
-    const shell = createCardShell(container, item.label, item.description, item.type, 'defense');
+  /** Потолок заказа сервера (`MAX_SHIP_ORDER`, `MAX_DEFENSE_ORDER`). */
+  const MAX_UNIT_ORDER = 100;
 
-    const order = document.createElement('div');
-    order.className = 'order';
-    const quantity = document.createElement('input');
-    quantity.type = 'number';
-    quantity.min = '1';
-    quantity.max = '100';
-    quantity.value = '1';
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'primary';
-    button.textContent = 'Построить';
-    button.addEventListener('click', () =>
-      send(`/api/bases/${baseId}/defenses`, { type: item.type, quantity: Number(quantity.value) }));
-
-    order.append(quantity, button);
-    shell.article.appendChild(order);
-    return { ...shell, button, quantity };
+  /*
+   * Число из поля заказа. Не `Number()`: он превращает пустую строку в ноль
+   * (правило 13), а пустое поле посреди набора — это «еще не ввел», не «ноль».
+   */
+  function orderQuantity(input) {
+    const parsed = Number.parseInt(input.value, 10);
+    if (!Number.isFinite(parsed) || parsed < 1) return 1;
+    return Math.min(MAX_UNIT_ORDER, parsed);
   }
 
-  function fillCost(card, cost, resources) {
-    setCostPart(card.costOre, 'ore', cost.ore, resources.ore);
-    setCostPart(card.costPolymers, 'polymers', cost.polymers, resources.polymers);
-    setCostPart(card.costPlasma, 'plasma', cost.plasma, resources.plasma);
+  /** Сколько штук покрывает склад — в пределах потолка заказа. */
+  function affordableUnits(cost, resources) {
+    let units = MAX_UNIT_ORDER;
+    for (const key of ['ore', 'polymers', 'plasma']) {
+      if (cost[key] > 0) units = Math.min(units, Math.floor(resources[key] / cost[key]));
+    }
+    return Math.max(0, units);
+  }
+
+  function fillCost(card, cost, resources, count = 1) {
+    setCostPart(card.costOre, 'ore', cost.ore * count, resources.ore);
+    setCostPart(card.costPolymers, 'polymers', cost.polymers * count, resources.polymers);
+    setCostPart(card.costPlasma, 'plasma', cost.plasma * count, resources.plasma);
   }
 
   function setCostPart(node, resource, amount, stock) {
@@ -2364,50 +2448,38 @@
 
   function updateBuildingCard(card, base, building) {
     if (!card) return;
-    // Текущий уровень и тот, что получится, — в одной метке. Раньше первый
-    // стоял на обложке, второй в тексте кнопки, и связать их взглядом
-    // приходилось самому.
-    card.level.textContent = `Ур. ${building.level} → ${building.nextLevel}`;
-    // Тем же местом, что и боевой профиль у кораблей: короткая строка эффекта.
+    const job = base.buildJob && base.buildJob.building === building.type ? base.buildJob : null;
+    // Текущий уровень и тот, что получится, — одной меткой на картинке.
+    card.level.textContent = job
+      ? `Строится → ${job.targetLevel}`
+      : `Ур. ${building.level} → ${building.nextLevel}`;
+    setCardProgress(card, job);
+
     // Значок вместо существительного: «добыча» на карточке шахты повторяла
-    // ее название и переносила строку, а чего именно столько-то — не говорила.
+    // ее название, а чего именно столько-то — не говорила.
     const effect = building.effect;
     card.combat.innerHTML = effect
       ? (effect.icon ? icon(effect.icon, 'sm') + ' ' : '') + escapeHtml(effect.text)
       : '';
 
     /*
-     * Расход энергии показываем всегда и у всех — даже там, где он нулевой,
-     * и даже у станции, которая энергию только дает. Строка занимает место
-     * в любом случае: если у одной карточки ее не будет, у нее уедут вверх
-     * цена и время, и сравнивать соседние карточки станет нечем.
+     * Расход энергии — под выгодой, тем же блоком: дефицит энергии режет
+     * добычу на всех шахтах разом, и цену решения видно до нажатия кнопки.
      *
-     * Дефицит энергии режет добычу на всех шахтах разом, поэтому цена решения
-     * должна быть видна до постройки, а не после того, как просел КПД.
+     * У станции строки нет: ее выработку уже называет строка эффекта,
+     * а «Выработка +59» под «выработка 420 → 479» повторяла то же число
+     * вычитанием. Место под строку остается, иначе цена и срок у станции
+     * встали бы выше, чем у соседки по ряду.
      */
-    if (card.energy) {
-      const { usage, nextUsage, output, nextOutput } = building.energy;
-      const grow = nextUsage - usage;
-      const gain = (nextOutput || 0) - (output || 0);
-      // Оболочка карточки прячет строку по умолчанию: она есть только
-      // у построек, у кораблей и техники своего расхода нет.
-      card.energyRow.hidden = false;
-      /*
-       * У станции в этой строке стоит не расход, а прирост выработки.
-       * Расход у нее нулевой по определению, и строка честно показывала
-       * «не растет» — то есть занимала место, ничего не сообщая, тогда как
-       * решает при ее улучшении ровно одно число: сколько энергии прибавится.
-       *
-       * Остальным постройкам строка нужна прежней: дефицит режет добычу
-       * на всех шахтах разом, и цену решения видно до нажатия кнопки.
-       */
-      card.energyLabel.innerHTML = icon('energy', 'sm') + (gain > 0 ? ' Выработка' : ' Расход');
-      card.energy.innerHTML = gain > 0
-        ? `<span class="grow">+${fmtEnergy(gain)}</span>`
-        : grow > 0
-          ? `<span class="grow">+${fmtEnergy(grow)}</span>`
-          : '<span class="muted">не растет</span>';
-    }
+    const { usage, nextUsage, output, nextOutput } = building.energy;
+    const grow = nextUsage - usage;
+    const gain = (nextOutput || 0) - (output || 0);
+    card.energyRow.hidden = false;
+    card.energyRow.classList.toggle('blank', gain > 0);
+    card.energyLabel.innerHTML = icon('energy', 'sm') + ' расход';
+    card.energy.textContent = grow > 0 ? `+${fmtEnergy(grow)}` : 'не растет';
+    card.energy.className = grow > 0 ? 'grow' : 'muted';
+
     fillCost(card, building.cost, base.resources);
     card.time.textContent = fmtTime(building.seconds);
     fillRequirements(card, building.requirements);
@@ -2415,54 +2487,81 @@
     const locked = building.requirements.length > 0;
     card.article.classList.toggle('locked', locked);
     card.article.classList.toggle('built', building.level > 0);
-    card.button.disabled = locked || building.busy || !building.canAfford;
-    // Целевой уровень уехал в метку на обложке, поэтому кнопка называет
-    // только действие: на узкой карточке она иначе переносится в две строки.
-    card.button.textContent = building.busy
-      ? 'Идет стройка'
-      : building.level === 0
-        ? 'Построить'
-        : 'Улучшить';
+    if (job) setCardAction(card.button, `ещё ${fmtTime(job.remainingSeconds)}`, 'working');
+    else if (locked) setCardAction(card.button, 'Закрыто', 'locked');
+    else if (building.busy) setCardAction(card.button, 'Стройка занята', 'busy');
+    else if (!building.canAfford) setCardAction(card.button, 'Не хватает ресурсов', 'lack');
+    else setCardAction(card.button, building.level === 0 ? 'Построить' : 'Улучшить', 'ready');
   }
 
   function updateTechCard(card, base, tech) {
     if (!card) return;
-    card.level.textContent = `Ур. ${tech.level} → ${tech.nextLevel}`;
+    const active = state.research && state.research.active;
+    const job = active && active.tech === tech.tech ? active : null;
+    card.level.textContent = job ? `Изучается → ${job.targetLevel}` : `Ур. ${tech.level} → ${tech.nextLevel}`;
+    setCardProgress(card, job);
     fillCost(card, tech.cost, base.resources);
     card.time.textContent = fmtTime(tech.seconds);
     fillRequirements(card, tech.requirements);
 
     const locked = tech.requirements.length > 0;
     card.article.classList.toggle('locked', locked);
-    card.button.disabled = locked || tech.busy || !tech.canAfford;
-    card.button.textContent = tech.busy ? 'Лаборатория занята' : 'Изучить';
+    card.article.classList.toggle('built', tech.level > 0);
+    if (job) setCardAction(card.button, `ещё ${fmtTime(job.remainingSeconds)}`, 'working');
+    else if (locked) setCardAction(card.button, 'Закрыто', 'locked');
+    else if (tech.busy) setCardAction(card.button, 'Лаборатория занята', 'busy');
+    else if (!tech.canAfford) setCardAction(card.button, 'Не хватает ресурсов', 'lack');
+    else setCardAction(card.button, 'Изучить', 'ready');
   }
 
-  /** Строка боевого профиля: тип урона и слои защиты — по ней собирают контр-флот. */
-  function combatLine(combat) {
+  /**
+   * Боевой профиль тремя плитками: атака, щит, корпус.
+   *
+   * Строкой «атака 50 · щит 10 · корпус 400» профиль читался, но не
+   * сравнивался: у соседней карточки те же слова стояли в другом месте,
+   * потому что числа разной длины. Плитки держат колонки, и истребитель
+   * с крейсером сравниваются по вертикали одним взглядом.
+   */
+  function combatStats(combat) {
     if (!combat) return '';
-    const parts = [
-      combat.attack > 0 ? `атака ${combat.attack}` : 'без оружия',
-      combat.shield > 0 ? `щит ${combat.shield}` : null,
-      `корпус ${combat.hull}`,
-      combat.note,
-    ].filter(Boolean);
-    return parts.join(' · ');
+    const cell = (label, value) =>
+      `<span class="unit-stat${value > 0 ? '' : ' none'}"><b>${value > 0 ? fmt(value) : '—'}</b>${label}</span>`;
+    return '<span class="unit-stats">' +
+      cell('атака', combat.attack) + cell('щит', combat.shield) + cell('корпус', combat.hull) +
+      '</span>' + (combat.note ? `<span class="unit-note">${escapeHtml(combat.note)}</span>` : '');
   }
 
   function updateShipCard(card, base, ship, ownedLabel = 'В ангаре') {
     if (!card) return;
-    card.level.textContent = `${ownedLabel}: ${ship.owned}`;
+    card.last = { base, item: ship, ownedLabel };
+    const queue = (ownedLabel === 'В ангаре' ? base.shipQueue : base.defenseQueue) || [];
+    const queued = queue.filter((job) => job.type === ship.type).reduce((sum, job) => sum + job.remaining, 0);
+    // Ноль в ангаре меткой не пишется: «В ангаре: 0» на восьми карточках
+    // из двенадцати — шум, а пустота на картинке и есть этот ответ.
+    card.level.textContent = ship.owned > 0 ? `${ownedLabel} ${fmt(ship.owned)}` : '';
+    if (card.queueBadge) card.queueBadge.textContent = queued > 0 ? `+${fmt(queued)} в заказе` : '';
     card.article.classList.toggle('built', ship.owned > 0);
-    if (card.combat) card.combat.textContent = combatLine(ship.combat);
-    fillCost(card, ship.cost, base.resources);
-    card.time.textContent = `${fmtTime(ship.unitSeconds)} за штуку`;
+    card.article.classList.toggle('queued', queued > 0);
+    card.combat.innerHTML = combatStats(ship.combat);
+    card.combat.classList.add('unit');
+
+    const count = orderQuantity(card.quantity);
+    fillCost(card, ship.cost, base.resources, count);
+    card.costLabel.textContent = count > 1 ? `Цена ×${count}` : 'Цена';
+    card.timeLabel.textContent = count > 1 ? `Время ×${count}` : 'Время';
+    card.time.textContent = fmtTime(ship.unitSeconds * count);
     fillRequirements(card, ship.requirements);
 
     const locked = ship.requirements.length > 0;
+    const affordable = affordableUnits(ship.cost, base.resources);
     card.article.classList.toggle('locked', locked);
-    card.button.disabled = locked || !ship.canAfford;
-    card.quantity.disabled = locked;
+    // Запертому классу поле количества ни к чему: ввести в него нечего,
+    // а место оно отнимает у списка требований — единственного, что тут важно.
+    card.quantity.parentNode.hidden = locked;
+    card.max.disabled = locked || affordable < 1;
+    if (locked) setCardAction(card.button, 'Закрыто', 'locked');
+    else if (affordable < count) setCardAction(card.button, 'Не хватает', 'lack');
+    else setCardAction(card.button, 'Построить', 'ready');
   }
 
 
@@ -7406,8 +7505,14 @@
       : null;
     const buildingThis = constructionKey !== null && constructionKey === options.buildKey;
     card.article.classList.toggle('built', options.built !== false);
-    card.button.textContent = buildingThis ? 'Идет стройка' : options.label;
-    card.button.disabled = locked || !options.allowed || !affordable || Boolean(construction);
+    // Те же состояния, что у построек колонии: яркая только та кнопка,
+    // которую можно нажать, остальные называют причину словами.
+    if (buildingThis) setCardAction(card.button, 'Строится', 'working');
+    else if (locked) setCardAction(card.button, 'Закрыто', 'locked');
+    else if (construction) setCardAction(card.button, 'Стройка занята', 'busy');
+    else if (!affordable) setCardAction(card.button, 'Не хватает в казне', 'lack');
+    else if (!options.allowed) setCardAction(card.button, 'Нет права', 'busy');
+    else setCardAction(card.button, options.label, 'ready');
     card.button.title = locked ? 'Требования не выполнены'
       : !options.allowed ? options.deniedHint
       : construction && !buildingThis ? 'В Коше уже идет стройка — стройка одна на синдикат'
@@ -7511,8 +7616,12 @@
       card.article.classList.toggle('built', tech.level > 0);
       const studying = academy.research && academy.research.tech === tech.tech;
       const affordable = treasuryCovers(mine, tech.nextCost);
-      card.button.textContent = studying ? 'Изучается' : 'Изучать';
-      card.button.disabled = !can('ACADEMY') || locked || !tech.available || !affordable;
+      if (studying) setCardAction(card.button, 'Изучается', 'working');
+      else if (locked) setCardAction(card.button, 'Закрыто', 'locked');
+      else if (!tech.available) setCardAction(card.button, 'Академия занята', 'busy');
+      else if (!affordable) setCardAction(card.button, 'Не хватает в казне', 'lack');
+      else if (!can('ACADEMY')) setCardAction(card.button, 'Нет права', 'busy');
+      else setCardAction(card.button, 'Изучать', 'ready');
       card.button.title = !can('ACADEMY') ? 'Нужно право Академии'
         : locked ? 'Требования не выполнены'
         : !tech.available ? 'Академия занята другим изучением'
@@ -7538,7 +7647,7 @@
     node.innerHTML = '';
     for (const item of kish.defenses) {
       const card = createCardShell(node, item.label, '', item.type, 'defense');
-      card.level.textContent = `На позиции: ${fmt(item.count)}`;
+      card.level.textContent = item.count > 0 ? `На позиции ${fmt(item.count)}` : '';
       fillTreasuryCost(card, item.cost, mine);
       card.time.parentNode.hidden = true;
       const order = synEl('div', 'order');
