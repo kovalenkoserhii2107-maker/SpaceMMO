@@ -32,8 +32,9 @@ import {
 import { hubRent, marketPrice } from '../market.js';
 import { deliver } from '../../services/mailService.js';
 import { COMBAT_TYPES, SHIP_TYPES, SQUADRON_TYPES, emptyShipCounts, type ShipCounts } from '../ships.js';
-import { fleetSize, fleetCapacity } from '../fleets.js';
-import { hasEnoughResources, productionPerSecond, systemModifiers, storageCapacities } from '../rules.js';
+import { fleetSize } from '../fleets.js';
+import { cargoShipsFor, holdForCargo } from './logistics.js';
+import { hasEnoughResources, productionPerSecond, systemModifiers } from '../rules.js';
 import { economyBonuses, timeCompressionDrain } from '../techTree.js';
 import { storageUpgradeCost } from '../market.js';
 import { normalizeDefenses, normalizeShips } from '../fogOfWar.js';
@@ -746,6 +747,9 @@ async function execute(
       return pickupFromHub(commanderId, intent.baseId, intent.ore, intent.polymers);
     }
 
+    case 'HUB_DELIVERY':
+      return deliverToHub(commanderId, intent.baseId, intent.ore, intent.polymers);
+
     case 'DROP': {
       const result = await cancelOrder(commanderId, intent.orderId);
       return result;
@@ -794,13 +798,6 @@ async function execute(
 }
 
 /**
- * Довезти излишек до хаба.
- *
- * Продавать на бирже можно только со склада хаба, а добывается все на базе,
- * поэтому торговля бота — это рейс, а не одна кнопка. Рейс отправляется
- * отдельно от ордеров: пока груз летит, продавать нечего.
- */
-/**
  * Забрать товар с хаба домой.
  *
  * Без этого рейса у бота односторонний клапан: товар уезжает на хаб
@@ -813,48 +810,6 @@ async function execute(
  * за двадцать минут, и Крамар с 2.36 млн ₴ не мог купить ни единицы руды,
  * которой ему не хватало на постройку.
  */
-/**
- * Грузовики ровно под груз, а не весь транспортный флот.
- *
- * Топливо платится за каждый корабль в рейсе, груз он везет или нет. Бот
- * посылал за товаром все, что стояло в ангаре, и это съедало плазму целиком:
- * живой Крамар гонял 659 транспортов за пятью тысячами руды, которые
- * помещаются в три малых, а Беркут делал так 129 рейсов за сутки. Плазма
- * держалась у нуля при реакторе, дающем 23 тысячи в час, — и дальше правило
- * «ресурс, которого хронически нет, идут добывать» ставило первым пунктом
- * плана реактор за полмиллиона руды, на который бот копил сутками.
- *
- * Большие берутся первыми: у них на единицу трюма вдвое меньше расхода.
- * Трюмы считаются без бонуса синдиката — с ним места только больше.
- *
- * Запас в пятую часть — под топливо: оно едет в тех же трюмах, и рейс,
- * набранный трюмо в трюмо, не прошел бы проверку вылета вовсе. Доля
- * расхода к трюму у обоих грузовиков одна (0.0002 в секунду на единицу
- * места), поэтому одного числа хватает на любой состав, а пятой части —
- * на любой внутрисистемный перелет.
- */
-const CARGO_FUEL_MARGIN = 1.25;
-
-/** Под груз идет не весь трюм: топливо рейса едет в нем же. */
-function holdForCargo(ships: ShipCounts): number {
-  return Math.floor(fleetCapacity(ships) / CARGO_FUEL_MARGIN);
-}
-
-function cargoShipsFor(amount: number, available: { LARGE_CARGO: number; SMALL_CARGO: number }): ShipCounts {
-  const ships = emptyShipCounts();
-  const large = fleetCapacity({ ...emptyShipCounts(), LARGE_CARGO: 1 });
-  const small = fleetCapacity({ ...emptyShipCounts(), SMALL_CARGO: 1 });
-
-  let left = Math.max(0, amount) * CARGO_FUEL_MARGIN;
-  ships.LARGE_CARGO = Math.min(available.LARGE_CARGO, Math.floor(left / large));
-  left -= ships.LARGE_CARGO * large;
-  ships.SMALL_CARGO = Math.min(available.SMALL_CARGO, Math.ceil(left / small));
-  left -= ships.SMALL_CARGO * small;
-  // Малых не хватило на остаток — докрываем большим, если он еще есть.
-  if (left > 0 && ships.LARGE_CARGO < available.LARGE_CARGO) ships.LARGE_CARGO += 1;
-  return ships;
-}
-
 async function pickupFromHub(
   commanderId: string,
   baseId: string,
@@ -923,86 +878,46 @@ async function deliverToKish(
   );
 }
 
+/**
+ * Довезти излишек до хаба.
+ *
+ * Продавать на бирже можно только со склада хаба, а добывается все на базе,
+ * поэтому торговля бота — это рейс, а не одна кнопка. Что везти, решает
+ * `decide` (`hubDeliveryLoad`): только он знает, на что бот копит, и этого
+ * не вывозит. Здесь — только грузовики под груз и сам вылет.
+ */
 async function deliverToHub(
   commanderId: string,
-  snapshot: BotSnapshot,
-  hubId: string,
-): Promise<string | null> {
-  const base = snapshot.bases[0];
-  if (!base) return null;
+  baseId: string,
+  ore: number,
+  polymers: number,
+): Promise<ActionResult> {
+  const hub = await prisma.tradeHub.findFirst({
+    where: { system: { planets: { some: { base: { commanderId } } } } },
+    select: { id: true },
+  });
+  if (!hub) return { ok: false, error: 'Торговый хаб не найден' };
 
-  const cargoShips = base.ships.LARGE_CARGO + base.ships.SMALL_CARGO;
-  if (cargoShips === 0) return null;
-
-  const ships = emptyShipCounts();
-  ships.LARGE_CARGO = base.ships.LARGE_CARGO;
-  ships.SMALL_CARGO = base.ships.SMALL_CARGO;
-
-  /*
-   * Везем долю излишка, но не больше, чем влезает в трюмы.
-   *
-   * Без этой обрезки рейс просто не улетал: доля считалась от склада, легко
-   * перекрывала вместимость одного транспорта, и sendFleet отвечал отказом.
-   * Молча — потому что отказ здесь штатен, — и торговля бота не работала вовсе.
-   */
-  const hold = holdForCargo(ships);
-  if (hold <= 0) return null;
-
-  /*
-   * Вывозим только излишек — то, чего накопилось больше половины своего склада.
-   *
-   * Раньше в рейс уходило по сорок процентов и руды, и полимеров, независимо
-   * от того, много их или мало. Бот на этом сам себя обкрадывал: полимеров
-   * у него было под завязку, а руды на четверть склада, и именно руду он
-   * увозил на станцию — ту самую, которой не хватало на лабораторию.
-   * Живой бот простоял так с лабораторией четвертого уровня при шахтах
-   * седьмого несколько часов.
-   */
-  const caps = storageCapacities(base.levels);
-  const surplus = (held: number, cap: number) => Math.max(0, held - cap * 0.5);
-
-  /*
-   * Не везем то, что уже лежит на хабе непроданным.
-   *
-   * Без этого тормоза получался насос в пустоту: полимеров на рынке избыток,
-   * их никто не берет, но бот исправно возил новые — склад хаба забивался,
-   * и бот платил за расширение, каждый раз вдвое дороже предыдущего.
-   * Живой бот сжег так 1.9 млн ₴, подняв склад с четвертого уровня
-   * до восьмого ради 56 тысяч полимеров, которые никому не нужны.
-   *
-   * Порог — нынешний спрос в стакане плюс один трюм про запас: держать товар
-   * на хабе имеет смысл ровно настолько, насколько его готовы купить, плюс
-   * немного на случай, если покупатель появится до следующего рейса.
-   */
-  const demandFor = (resource: 'ORE' | 'POLYMERS') =>
-    snapshot.market.find((ref) => ref.resource === resource)?.demand ?? 0;
-  const glutted = (resource: 'ORE' | 'POLYMERS', onHub: number) =>
-    onHub > demandFor(resource) + hold;
-
-  let ore = glutted('ORE', snapshot.hubStorage.ore)
-    ? 0
-    : Math.floor(surplus(base.resources.ore, caps.ore) * 0.8);
-  let polymers = glutted('POLYMERS', snapshot.hubStorage.polymers)
-    ? 0
-    : Math.floor(surplus(base.resources.polymers, caps.polymers) * 0.8);
-  if (ore + polymers > hold) {
-    // Режем пропорционально, чтобы не вывезти один ресурс целиком.
-    const scale = hold / (ore + polymers);
-    ore = Math.floor(ore * scale);
-    polymers = Math.floor(polymers * scale);
+  // Ангар читается заново: вывоз с хаба в этом же ходу мог забрать часть
+  // грузовиков, и снимок, по которому решал `decide`, уже устарел.
+  const base = await prisma.base.findUnique({
+    where: { id: baseId },
+    select: { ships: { select: { type: true, count: true } } },
+  });
+  if (!base) return { ok: false, error: 'База не найдена' };
+  const hangar = { LARGE_CARGO: 0, SMALL_CARGO: 0 };
+  for (const row of base.ships) {
+    if (row.type === 'LARGE_CARGO' || row.type === 'SMALL_CARGO') hangar[row.type] = row.count;
   }
-  if (ore + polymers < 100) return null;
 
-  const result = await gameLoop.sendFleet(
+  return gameLoop.sendFleet(
     commanderId,
-    base.id,
-    { hubId },
+    baseId,
+    { hubId: hub.id },
     'HUB_DELIVERY',
-    // Трюмы всего флота нужны были только для обрезки груза; летят те, кто везет.
-    cargoShipsFor(ore + polymers, ships),
+    cargoShipsFor(ore + polymers, hangar),
     { ore, polymers, plasma: 0 },
   );
-  return result.ok ? `отвез в хаб ${ore + polymers}` : null;
 }
 
 /* ------------------------- Роли языковой модели ------------------------- */
@@ -2348,17 +2263,6 @@ async function turn(botId: string): Promise<BotTurn | null> {
   if (mail.sent > 0) {
     actions.push(`ОТВЕТ: писем ${mail.sent}`);
     await saveSpend(bot.id, mail.spend, shocks);
-  }
-
-  // Торговый рейс идет после решений: ордера бот выставляет с того, что уже
-  // лежит в хабе, а этот рейс наполняет хаб к следующему заходу.
-  const hub = await prisma.tradeHub.findFirst({
-    where: { system: { planets: { some: { base: { commanderId: bot.commanderId } } } } },
-    select: { id: true },
-  });
-  if (hub) {
-    const delivery = await deliverToHub(bot.commanderId, snapshot, hub.id);
-    if (delivery) actions.push(delivery);
   }
 
   /*

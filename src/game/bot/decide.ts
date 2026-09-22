@@ -51,6 +51,7 @@ import {
   type ShipType,
 } from '../ships.js';
 import { canJump, fleetCapacity, planFlight, type GalaxyPoint } from '../fleets.js';
+import { holdForCargo, homeKeep, hubDeliveryLoad } from './logistics.js';
 import { hubRent, storageUpgradeCost } from '../market.js';
 import { hopeless } from './directives.js';
 import {
@@ -396,6 +397,7 @@ export type BotIntent =
   | { kind: 'DROP'; orderId: string; why: string }
   /** Забрать товар с хаба домой: строят из того, что лежит на базе. */
   | { kind: 'PICKUP'; baseId: string; ore: number; polymers: number; why: string }
+  | { kind: 'HUB_DELIVERY'; baseId: string; ore: number; polymers: number; why: string }
   /** Расширить склад на хабе — платится криптогривной. */
   | { kind: 'HUB_UPGRADE'; why: string }
   /** Доделать стройку немедленно за криптогривну. */
@@ -1505,7 +1507,20 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
    */
   const shortfall = new Set<StoredResource>();
 
+  /*
+   * Сколько каждого ресурса требуют цели столицы — целиком, а не только
+   * недостающее. Это держится дома и не уходит на хаб: иначе руду, которой
+   * уже хватает на здание, ждущее полимеров, рейс увозил бы на продажу,
+   * и обратный рейс возвращал бы ее, как только она стала бы дефицитом.
+   */
+  const need = { ore: 0, polymers: 0 };
+  const rememberNeed = (cost: ResourceAmounts): void => {
+    need.ore = Math.max(need.ore, cost.ore);
+    need.polymers = Math.max(need.polymers, cost.polymers);
+  };
+
   const rememberShortfall = (stock: ResourceAmounts, cost: ResourceAmounts): void => {
+    rememberNeed(cost);
     for (const resource of STORED_RESOURCES) {
       if (cost[resource] > stock[resource]) shortfall.add(resource);
     }
@@ -1543,6 +1558,7 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
       for (const candidate of profile.researchOrder) {
         if (missingTechRequirements(candidate, capital.levels, snapshot.techs).length > 0) continue;
         const cost = researchCost(candidate, snapshot.techs[candidate] + 1);
+        rememberNeed(cost);
         for (const resource of STORED_RESOURCES) {
           if (cost[resource] > capital.resources[resource]) shortfall.add(resource);
         }
@@ -1791,6 +1807,8 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
          * на флот, а очередь — сначала то, что дороже и ждет дольше.
          */
         const cost = upgradeCost(goal, base.levels[goal] + 1);
+        // Дом и хаб у бота — это столица; цели других колоний туда не везут.
+        if (base.id === capital.id) rememberNeed(cost);
         for (const resource of STORED_RESOURCES) {
           if (cost[resource] > 0 && stock[resource] < cost[resource]) {
             /*
@@ -2464,21 +2482,49 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
    */
   const homeward = snapshot.bases[0];
   if (homeward) {
-    const hold = fleetCapacity({
+    /*
+     * Трюмы за вычетом топлива: оно едет в них же, и вылет проверяется
+     * по остатку. Запрос на всю вместимость ангара сервер отклонял —
+     * «Трюмы вмещают 19 688, а запрошено 20 000», — и бот, которому для
+     * вывоза нужен весь ангар, не вывозил ничего и повторял это каждый ход.
+     */
+    const hold = holdForCargo({
       ...emptyShipCounts(),
       LARGE_CARGO: homeward.ships.LARGE_CARGO,
       SMALL_CARGO: homeward.ships.SMALL_CARGO,
     });
     const caps = storageCapacities(homeward.levels);
-    const room = (resource: StoredResource): number =>
-      Math.max(0, caps[resource] - Math.max(0, homeward.resources[resource]));
+
+    /*
+     * Рейс на хаб — здесь, а не отдельным ходом директора: только здесь
+     * известно, на что бот копит, и этого он не вывозит.
+     * Идет первым — вывоз с хаба берет трюмы, оставшиеся после него.
+     */
+    const export_ = hubDeliveryLoad(snapshot, need);
+    if (export_) {
+      intents.push({
+        kind: 'HUB_DELIVERY',
+        baseId: homeward.id,
+        ore: export_.ore,
+        polymers: export_.polymers,
+        why: 'излишек сверх половины склада — на продажу',
+      });
+    }
+
+    /*
+     * Домой — ровно до границы вывоза: выше нее привезенное тут же ушло бы
+     * обратно следующим рейсом. Граница уже включает то, что требует цель.
+     */
+    const keep = homeKeep(caps, need);
+    const room = (resource: 'ore' | 'polymers'): number =>
+      Math.max(0, keep[resource] - Math.max(0, homeward.resources[resource]));
 
     // Порядок погрузки: сначала то, чего не хватает на цель.
     const queue: Array<'ore' | 'polymers'> = shortfall.has('polymers') && !shortfall.has('ore')
       ? ['polymers', 'ore']
       : ['ore', 'polymers'];
 
-    let left = hold;
+    let left = hold - (export_ ? export_.ore + export_.polymers : 0);
     const take = { ore: 0, polymers: 0 };
     for (const resource of queue) {
       const available = Math.floor(resource === 'ore' ? snapshot.hubStorage.ore : snapshot.hubStorage.polymers);
@@ -2488,7 +2534,7 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
     }
 
     // Мелочь рейса не стоит: транспорт уйдет надолго, а привезет ничто.
-    if (hold > 0 && take.ore + take.polymers >= 100) {
+    if (take.ore + take.polymers >= 100) {
       intents.push({
         kind: 'PICKUP',
         baseId: homeward.id,
@@ -2918,7 +2964,8 @@ function syndicateIntents(
         : Math.max(0, Math.floor(Math.min(goal.cost[resource] - bank[resource], Math.max(0, capital.resources[resource]) * share)));
     let ore = give('ore');
     let polymers = give('polymers');
-    const hold = fleetCapacity({
+    // Трюмы за вычетом топлива — по той же причине, что у вывоза с хаба.
+    const hold = holdForCargo({
       ...emptyShipCounts(),
       LARGE_CARGO: capital.ships.LARGE_CARGO,
       SMALL_CARGO: capital.ships.SMALL_CARGO,

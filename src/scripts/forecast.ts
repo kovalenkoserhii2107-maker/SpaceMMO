@@ -37,9 +37,10 @@
  *   - боя. Набеги, потери флота и грабеж не моделируются, поэтому за месяц
  *     флот накапливается до тысяч корпусов, чего в живой игре не бывает.
  *     Верить стоит неделе, дальше — только направлению;
- *   - логистики. Флот на хаб не летает: излишек переезжает раз в игровой час
- *     и ровно столько, сколько увезли бы имеющиеся грузовики. Правило отбора
- *     то же, что у настоящего рейса, — половина склада сверху;
+ *   - межзвездной логистики. Рейсы на хаб летают по-настоящему (см. «Рейсы»
+ *     ниже): время в пути, топливо в трюмах, грузовики, занятые рейсом.
+ *     Но все боты живут в одной системе, поэтому гиперпрыжков, Брам и
+ *     антиматерии нет;
  *   - синдикатов, колонизации и языковой модели. Боты играют по коду.
  *
  * Решения принимает `decide` — та же чистая функция, которой ходит живой бот,
@@ -94,7 +95,8 @@ import {
   type DefenseCounts,
   type DefenseType,
 } from '../game/defenses.js';
-import { fleetCapacity } from '../game/fleets.js';
+import { fleetCapacity, planFlight, validateCargo, validateComposition, type GalaxyPoint } from '../game/fleets.js';
+import { cargoShipsFor } from '../game/bot/logistics.js';
 import {
   buyerEscrow,
   buyerFee,
@@ -114,8 +116,9 @@ import {
 const STEP = 60;
 /** Как часто ходит планировщик — тот же такт, что у живого директора. */
 const DECIDE_EVERY = 60;
-/** Как часто излишек переезжает на хаб вместо настоящего рейса. */
-const HAUL_EVERY = 3600;
+/** Все боты в одной системе: хаб на нулевой орбите, как в живом генераторе. */
+const SYSTEM: GalaxyPoint = { galaxyX: 0, galaxyY: 0 };
+const HUB_POSITION = 0;
 /** Дни, на которых печатается строка сводки. */
 const MARKS = [1, 2, 3, 5, 7, 14, 21, 31];
 
@@ -133,20 +136,50 @@ interface PlanetRichness {
  * и тот же избыток и один и тот же дефицит, и стакан стоит намертво. Рынок жив
  * именно разницей планет.
  */
-const ROSTER: ReadonlyArray<{ name: string; character: BotCharacter; richness: PlanetRichness }> = [
-  { name: 'Рудный', character: 'TRADER', richness: { ore: 1.35, polymers: 0.7, plasma: 0.9, energy: 1.0, antimatter: 1 } },
-  { name: 'Полимерный', character: 'TRADER', richness: { ore: 0.65, polymers: 1.4, plasma: 1.0, energy: 1.1, antimatter: 1 } },
-  { name: 'Ровный', character: 'TRADER', richness: { ore: 1.1, polymers: 1.15, plasma: 0.7, energy: 0.9, antimatter: 1 } },
-  { name: 'Плазменный', character: 'TRADER', richness: { ore: 0.8, polymers: 0.85, plasma: 1.35, energy: 1.2, antimatter: 1 } },
-  { name: 'Боевой', character: 'AGGRESSOR', richness: { ore: 1.25, polymers: 0.9, plasma: 1.1, energy: 0.85, antimatter: 1 } },
-  { name: 'Бедный', character: 'AGGRESSOR', richness: { ore: 0.7, polymers: 1.3, plasma: 0.85, energy: 1.05, antimatter: 1 } },
-  { name: 'Средний', character: 'AGGRESSOR', richness: { ore: 1.0, polymers: 0.75, plasma: 1.2, energy: 0.95, antimatter: 1 } },
+/*
+ * Орбиты разные нарочно: дорога до хаба — это время и топливо, и дальний
+ * бот платит за торговлю больше ближнего. На живом сервере так и есть.
+ */
+const ROSTER: ReadonlyArray<{ name: string; character: BotCharacter; richness: PlanetRichness; position: number }> = [
+  { name: 'Рудный', character: 'TRADER', position: 3, richness: { ore: 1.35, polymers: 0.7, plasma: 0.9, energy: 1.0, antimatter: 1 } },
+  { name: 'Полимерный', character: 'TRADER', position: 5, richness: { ore: 0.65, polymers: 1.4, plasma: 1.0, energy: 1.1, antimatter: 1 } },
+  { name: 'Ровный', character: 'TRADER', position: 7, richness: { ore: 1.1, polymers: 1.15, plasma: 0.7, energy: 0.9, antimatter: 1 } },
+  { name: 'Плазменный', character: 'TRADER', position: 4, richness: { ore: 0.8, polymers: 0.85, plasma: 1.35, energy: 1.2, antimatter: 1 } },
+  { name: 'Боевой', character: 'AGGRESSOR', position: 6, richness: { ore: 1.25, polymers: 0.9, plasma: 1.1, energy: 0.85, antimatter: 1 } },
+  { name: 'Бедный', character: 'AGGRESSOR', position: 8, richness: { ore: 0.7, polymers: 1.3, plasma: 0.85, energy: 1.05, antimatter: 1 } },
+  { name: 'Средний', character: 'AGGRESSOR', position: 2, richness: { ore: 1.0, polymers: 0.75, plasma: 1.2, energy: 0.95, antimatter: 1 } },
 ];
+
+/** Рейс на хаб или с хаба. Корабли в полете из ангара вычтены. */
+interface Flight {
+  mission: 'HUB_DELIVERY' | 'HUB_PICKUP';
+  ships: ShipCounts;
+  /** Что в трюмах сейчас: груз туда, добыча обратно. */
+  cargo: { ore: number; polymers: number };
+  /** Что просили забрать с хаба. */
+  request: { ore: number; polymers: number };
+  arriveAt: number;
+  returnAt: number;
+  arrived: boolean;
+}
+
+/** Учет логистики: без него прогон не отличал бы рейс от отказа. */
+interface Logistics {
+  sent: number;
+  delivered: number;
+  picked: number;
+  fuel: number;
+  refused: Record<string, number>;
+}
 
 interface Bot {
   name: string;
   character: BotCharacter;
   richness: PlanetRichness;
+  /** Орбита базы: хаб на нулевой, расстояние до него — это она и есть. */
+  position: number;
+  flights: Flight[];
+  logistics: Logistics;
   levels: BuildingLevels;
   techs: TechLevels;
   stock: ResourceAmounts;
@@ -186,11 +219,18 @@ interface Snapshot {
 }
 
 /** Стартовое состояние — то же, что у настоящей новой колонии. */
+function emptyLogistics(): Logistics {
+  return { sent: 0, delivered: 0, picked: 0, fuel: 0, refused: {} };
+}
+
 function freshBot(row: (typeof ROSTER)[number]): Bot {
   return {
     name: row.name,
     character: row.character,
     richness: row.richness,
+    position: row.position,
+    flights: [],
+    logistics: emptyLogistics(),
     levels: { ...emptyLevels(), ORE_MINE: 1, POLYMER_PLANT: 1 },
     techs: emptyTechLevels(),
     stock: { ore: 1500, polymers: 800, plasma: 400 },
@@ -388,6 +428,9 @@ function snapshotOf(bot: Bot, exchange: Exchange): BotSnapshot {
   return {
     ...emptyBotSnapshot(bot.character),
     credits: bot.credits,
+    // Живой директор считает флоты в полете, и `decide` по ним решает,
+    // заказывать ли грузовик: пустой ангар — не всегда отсутствие транспорта.
+    fleetsInFlight: bot.flights.length,
     techs: { ...bot.techs },
     researching: bot.research !== null,
     bases: [base],
@@ -405,7 +448,7 @@ function snapshotOf(bot: Bot, exchange: Exchange): BotSnapshot {
   };
 }
 
-function apply(bot: Bot, intents: BotIntent[], exchange: Exchange, byName: Map<string, Bot>): void {
+function apply(bot: Bot, intents: BotIntent[], exchange: Exchange, byName: Map<string, Bot>, now: number): void {
   const speed = buildSpeedup(bot.techs);
   const units = (cost: ResourceAmounts, count: number): ResourceAmounts => ({
     ore: cost.ore * count,
@@ -466,13 +509,16 @@ function apply(bot: Bot, intents: BotIntent[], exchange: Exchange, byName: Map<s
       case 'TAKE':
         exchange.take(bot, intent.orderId, intent.amount, byName);
         break;
+      case 'HUB_DELIVERY': {
+        // Как `deliverToHub`: грузовики из нынешнего ангара ровно под груз.
+        const ships = cargoShipsFor(intent.ore + intent.polymers, bot.ships);
+        dispatch(bot, 'HUB_DELIVERY', ships, { ore: intent.ore, polymers: intent.polymers }, { ore: 0, polymers: 0 }, now);
+        break;
+      }
       case 'PICKUP': {
-        const ore = Math.min(intent.ore, bot.hub.ore);
-        const polymers = Math.min(intent.polymers, bot.hub.polymers);
-        bot.hub.ore -= ore;
-        bot.hub.polymers -= polymers;
-        bot.stock.ore += ore;
-        bot.stock.polymers += polymers;
+        // Как `pickupFromHub`: грузовики из ангара ровно под запрос.
+        const ships = cargoShipsFor(intent.ore + intent.polymers, bot.ships);
+        dispatch(bot, 'HUB_PICKUP', ships, { ore: 0, polymers: 0 }, { ore: intent.ore, polymers: intent.polymers }, now);
         break;
       }
       case 'RUSH': {
@@ -509,27 +555,104 @@ function apply(bot: Bot, intents: BotIntent[], exchange: Exchange, byName: Map<s
   }
 }
 
-/**
- * Рейс на хаб вместо настоящего полета: увозим излишек сверх половины склада,
- * сколько подняли бы имеющиеся трюмы. Отбор тот же, что у `deliverToHub`.
- */
-function haul(bot: Bot): void {
-  const hold = fleetCapacity({
-    ...emptyShipCounts(),
-    SMALL_CARGO: bot.ships.SMALL_CARGO,
-    LARGE_CARGO: bot.ships.LARGE_CARGO,
-  });
-  if (hold <= 0) return;
+/* ------------------------- Рейсы ------------------------- */
 
-  const caps = storageCapacities(bot.levels);
-  let room = Math.min(hold, Math.max(0, hubCapacity(bot.hub.level) - storageUsed(bot.hub)));
-  for (const resource of ['polymers', 'ore'] as const) {
-    if (room <= 0) break;
-    const moved = Math.min(Math.max(0, bot.stock[resource] - caps[resource] * 0.5), room);
-    bot.stock[resource] -= moved;
-    bot.hub[resource] += moved;
-    room -= moved;
+/*
+ * Рейс на хаб — тот же, что у живого бота, и считается теми же функциями:
+ * `planFlight` дает время и топливо, `validateCargo` — отказ по трюмам
+ * с топливом внутри, а проверки ниже повторяют `sendFleet` в той части,
+ * что касается хаба своей системы. Прежде излишек переезжал на хаб раз
+ * в игровой час сам собой, без топлива, без времени в пути и без занятых
+ * грузовиков, — и любая правка логистики в прогоне не видна была вовсе.
+ * Так прошла и правка «топливо едет в трюмах»: побайтово тот же ответ,
+ * хотя вывоз с хаба у живых ботов она ломала.
+ */
+function refuse(bot: Bot, reason: string): false {
+  bot.logistics.refused[reason] = (bot.logistics.refused[reason] ?? 0) + 1;
+  return false;
+}
+
+function dispatch(
+  bot: Bot,
+  mission: Flight['mission'],
+  ships: ShipCounts,
+  cargo: { ore: number; polymers: number },
+  request: { ore: number; polymers: number },
+  now: number,
+): boolean {
+  if (validateComposition(mission, ships)) return refuse(bot, 'состав');
+  if (SHIP_TYPES.some((type) => ships[type] > bot.ships[type])) return refuse(bot, 'нет кораблей');
+
+  const plan = planFlight(
+    ships,
+    bot.techs,
+    { position: bot.position, system: SYSTEM },
+    { position: HUB_POSITION, system: SYSTEM },
+  );
+  if (mission === 'HUB_DELIVERY') {
+    if (validateCargo(ships, { ...cargo, plasma: 0 }, 1, plan.fuelLoad)) return refuse(bot, 'трюмы');
+    if (cargo.ore > bot.stock.ore || cargo.polymers > bot.stock.polymers) return refuse(bot, 'груз');
+  } else {
+    const requested = request.ore + request.polymers;
+    if (requested <= 0) return refuse(bot, 'пустой запрос');
+    if (requested > plan.usable) return refuse(bot, 'трюмы');
   }
+  if (bot.stock.plasma < plan.fuel) return refuse(bot, 'плазма');
+
+  bot.stock.plasma -= plan.fuel;
+  bot.stock.ore -= cargo.ore;
+  bot.stock.polymers -= cargo.polymers;
+  for (const type of SHIP_TYPES) bot.ships[type] -= ships[type];
+  bot.flights.push({
+    mission,
+    ships: { ...ships },
+    cargo: { ...cargo },
+    request: { ...request },
+    arriveAt: now + plan.flightSeconds,
+    returnAt: now + plan.flightSeconds * 2,
+    arrived: false,
+  });
+  bot.logistics.sent += 1;
+  bot.logistics.fuel += plan.fuel;
+  return true;
+}
+
+/** Прилет и возврат: разгрузка по `unloadToHub`, погрузка по `loadFromHub`. */
+function advanceFlights(bot: Bot, now: number): void {
+  for (const flight of bot.flights) {
+    if (flight.arrived || flight.arriveAt > now) continue;
+    flight.arrived = true;
+    if (flight.mission === 'HUB_DELIVERY') {
+      // Что не влезло на склад хаба, остается в трюме и летит домой.
+      let room = Math.max(0, hubCapacity(bot.hub.level) - storageUsed(bot.hub));
+      for (const field of ['ore', 'polymers'] as const) {
+        const stored = Math.min(flight.cargo[field], room);
+        bot.hub[field] += stored;
+        flight.cargo[field] -= stored;
+        room -= stored;
+        bot.logistics.delivered += stored;
+      }
+    } else {
+      // Погрузка по полным трюмам: к прилету половина топлива уже сожжена.
+      let room = fleetCapacity(flight.ships);
+      for (const field of ['ore', 'polymers'] as const) {
+        const taken = Math.max(0, Math.floor(Math.min(flight.request[field], bot.hub[field], room)));
+        bot.hub[field] -= taken;
+        flight.cargo[field] += taken;
+        room -= taken;
+        bot.logistics.picked += taken;
+      }
+    }
+  }
+
+  const landed = bot.flights.filter((flight) => flight.returnAt <= now);
+  for (const flight of landed) {
+    // Груз садится на базу без оглядки на склад — так же, как `landFleet`.
+    bot.stock.ore += flight.cargo.ore;
+    bot.stock.polymers += flight.cargo.polymers;
+    for (const type of SHIP_TYPES) bot.ships[type] += flight.ships[type];
+  }
+  if (landed.length) bot.flights = bot.flights.filter((flight) => flight.returnAt > now);
 }
 
 function tick(bot: Bot): void {
@@ -539,10 +662,16 @@ function tick(bot: Bot): void {
   const rate = productionPerSecond(bot.levels, bot.richness, bonuses, defenseDrain, NEUTRAL_MODIFIERS, drain);
   const caps = storageCapacities(bot.levels);
 
+  /*
+   * Потолок склада останавливает добычу, но не отнимает уже лежащее — так же,
+   * как в живом `accrue`. Прежняя обрезка `min(потолок, …)` срезала до потолка
+   * все сверх него, в том числе привезенное с хаба: груз садится на базу без
+   * оглядки на склад, и в прогоне он исчезал на следующем же шаге.
+   */
   for (const resource of STORED_RESOURCES) {
     const before = bot.stock[resource];
-    bot.stock[resource] = Math.min(caps[resource], before + rate[resource] * STEP);
-    bot.mined += bot.stock[resource] - before;
+    bot.stock[resource] = Math.min(Math.max(before, caps[resource]), before + rate[resource] * STEP);
+    bot.mined += Math.max(0, bot.stock[resource] - before);
   }
 
   const efficiency = energyEfficiency(bot.levels, bot.richness, bonuses, defenseDrain, drain);
@@ -593,13 +722,25 @@ function tick(bot: Bot): void {
  * из последних сделок, чужих заявок живых игроков в прогоне нет.
  */
 interface StartFile {
-  bots: Array<Omit<Bot, 'mined' | 'earned' | 'rentPaid' | 'rushed'>>;
+  bots: Array<
+    Omit<Bot, 'mined' | 'earned' | 'rentPaid' | 'rushed' | 'position' | 'flights' | 'logistics'> & { position?: number }
+  >;
   trades: Array<{ resource: TradeResource; pricePerUnit: number; quantity: number }>;
 }
 
 function run(days: number, start: StartFile | null): { bots: Bot[]; log: Snapshot[] } {
   const bots: Bot[] = start
-    ? start.bots.map((row) => ({ ...row, mined: 0, earned: 0, rentPaid: 0, rushed: 0 }))
+    ? start.bots.map((row) => ({
+        ...row,
+        // Дампы, снятые до рейсов в прогоне, орбиты не несут: середина системы.
+        position: row.position ?? 5,
+        flights: [],
+        logistics: emptyLogistics(),
+        mined: 0,
+        earned: 0,
+        rentPaid: 0,
+        rushed: 0,
+      }))
     : ROSTER.map(freshBot);
   const byName = new Map(bots.map((bot) => [bot.name, bot]));
   const exchange = new Exchange();
@@ -607,21 +748,20 @@ function run(days: number, start: StartFile | null): { bots: Bot[]; log: Snapsho
   const log: Snapshot[] = [];
 
   let sinceDecide = 0;
-  let sinceHaul = 0;
 
   for (let step = 1; step <= (days * 86400) / STEP; step += 1) {
-    for (const bot of bots) tick(bot);
-
-    sinceHaul += STEP;
-    if (sinceHaul >= HAUL_EVERY) {
-      sinceHaul = 0;
-      for (const bot of bots) haul(bot);
+    const now = step * STEP;
+    for (const bot of bots) {
+      tick(bot);
+      advanceFlights(bot, now);
     }
 
     sinceDecide += STEP;
     if (sinceDecide >= DECIDE_EVERY) {
       sinceDecide = 0;
-      for (const bot of bots) apply(bot, decide(snapshotOf(bot, exchange)), exchange, byName);
+      for (const bot of bots) {
+        apply(bot, decide(snapshotOf(bot, exchange)), exchange, byName, now);
+      }
     }
 
     if ((step * STEP) % 86400 === 0) {
@@ -724,6 +864,25 @@ console.log(
     ` | уплачено за хаб ₴${money(bots.reduce((sum, bot) => sum + bot.rentPaid, 0))}` +
     ` | на спешку ₴${money(bots.reduce((sum, bot) => sum + bot.rushed, 0))}` +
     ` | хабы ${bots.map((bot) => bot.hub.level).join('/')}`,
+);
+
+/*
+ * Логистика отдельной строкой: отказы — это рейсы, которых бот хотел,
+ * а живой сервер бы не выпустил. Их рост после правки — первый признак,
+ * что правило разошлось с тем, как бот набирает флот.
+ */
+const refusals = new Map<string, number>();
+for (const bot of bots) {
+  for (const [reason, count] of Object.entries(bot.logistics.refused)) {
+    refusals.set(reason, (refusals.get(reason) ?? 0) + count);
+  }
+}
+console.log(
+  `  РЕЙСЫ: ${money(bots.reduce((sum, bot) => sum + bot.logistics.sent, 0))}` +
+    ` | на хаб ${money(bots.reduce((sum, bot) => sum + bot.logistics.delivered, 0))} ед` +
+    ` | с хаба ${money(bots.reduce((sum, bot) => sum + bot.logistics.picked, 0))} ед` +
+    ` | плазмы сожжено ${money(bots.reduce((sum, bot) => sum + bot.logistics.fuel, 0))}` +
+    ` | отказов ${[...refusals].map(([reason, count]) => `${reason} ${money(count)}`).join(', ') || 'нет'}`,
 );
 
 console.log('\n  день |      масса ₴ |   добыто ед | ₴/ед | руда | полимеры | сделок | фермы');

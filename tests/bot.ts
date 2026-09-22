@@ -52,6 +52,9 @@ import {
 import { emptyShipCounts, shipCost, shipUnitSeconds } from '../src/game/ships.js';
 import { defenseCost, defenseUnitSeconds, emptyDefenseCounts } from '../src/game/defenses.js';
 import { spentOnFleet } from '../src/game/score.js';
+import { cargoShipsFor, holdForCargo, homeKeep } from '../src/game/bot/logistics.js';
+import { planFlight } from '../src/game/fleets.js';
+import { storageCapacities as capsOf } from '../src/game/rules.js';
 import { hubRent, rushPrice, storageUpgradeCost } from '../src/game/market.js';
 
 const results: Array<{ name: string; passed: boolean }> = [];
@@ -1005,6 +1008,69 @@ function snapshotWith(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
     haul?.kind === 'PICKUP' && haul.ore + haul.polymers > 0,
     haul?.kind === 'PICKUP' ? `руда ${haul.ore}, полимеры ${haul.polymers}` : 'не везет',
   );
+}
+
+console.log('\n=== 7д. Логистика: топливо в трюмах и граница «держать дома» ===');
+{
+  /*
+   * Прогон с настоящими рейсами нашел здесь две беды разом. Вывоз с хаба
+   * просил всю вместимость ангара, а сервер после правки «топливо едет
+   * в трюмах» выпускает только остаток — бот, которому нужен весь ангар,
+   * не вывозил ничего. И вывоз вместе с рейсом на хаб гонял один и тот же
+   * груз по кругу: 138 млн единиц туда и обратно за неделю при добыче в 57.
+   */
+  const levels = { ...emptyLevels(), ORE_MINE: 6, POLYMER_PLANT: 5, POWER_PLANT: 7, SHIPYARD: 4, SCIENCE_CENTER: 4, ORE_STORAGE: 6, POLYMER_STORAGE: 6 };
+  const caps = capsOf(levels);
+  const techs = { ...emptyTechLevels(), COMBUSTION_DRIVE: 2 };
+  const world = (
+    home: { ore: number; polymers: number },
+    hub: { ore: number; polymers: number },
+    ships: Partial<Record<'SMALL_CARGO' | 'LARGE_CARGO', number>>,
+  ) =>
+    snapshotWith({
+      character: 'TRADER',
+      techs,
+      bases: [testBase('home', { levels, resources: { ...home, plasma: 4_000 }, ships: { ...emptyShipCounts(), ...ships } })],
+      hubStorage: { ore: hub.ore, polymers: hub.polymers, free: 100_000, level: 8, upgradeCost: storageUpgradeCost(9) },
+    });
+
+  // Регрессия: запрос на вывоз помещается в трюмы за вычетом топлива.
+  const fleet = { SMALL_CARGO: 3 };
+  const pickup = decide(world({ ore: 0, polymers: 0 }, { ore: 45_000, polymers: 20_000 }, fleet)).find((i) => i.kind === 'PICKUP');
+  const asked = pickup?.kind === 'PICKUP' ? pickup.ore + pickup.polymers : 0;
+  const hold = holdForCargo({ ...emptyShipCounts(), ...fleet });
+  check('вывоз не просит больше трюмов за вычетом топлива', asked > 0 && asked <= hold, `${asked} из ${hold}`);
+  const system = { galaxyX: 0, galaxyY: 0 };
+  const plan = planFlight(cargoShipsFor(asked, { LARGE_CARGO: 0, SMALL_CARGO: 3 }), techs, { position: 8, system }, { position: 0, system });
+  check('такой вывоз проходит проверку вылета с дальней орбиты', asked <= plan.usable, `${asked} при остатке ${plan.usable}`);
+
+  // Граница «держать дома»: половина склада или больше — сколько требует цель.
+  const keep = homeKeep(caps, { ore: 0, polymers: caps.polymers * 0.8 });
+  check('без цели дома держится половина склада', keep.ore === caps.ore * 0.5);
+  check('цель поднимает границу до своей цены', keep.polymers === caps.polymers * 0.8);
+  check('но не выше потолка склада', homeKeep(caps, { ore: caps.ore * 3, polymers: 0 }).ore === caps.ore);
+
+  // Круга нет: отвезенное на хаб следующий ход домой не возвращает.
+  const full = world({ ore: caps.ore * 0.95, polymers: caps.polymers * 0.95 }, { ore: 0, polymers: 0 }, { SMALL_CARGO: 20 });
+  const out = decide(full).find((i) => i.kind === 'HUB_DELIVERY');
+  check(
+    'излишек сверх границы уходит на хаб',
+    out?.kind === 'HUB_DELIVERY' && out.ore + out.polymers > 0,
+    out?.kind === 'HUB_DELIVERY' ? `руда ${out.ore}, полимеры ${out.polymers}` : 'не везет',
+  );
+  if (out?.kind === 'HUB_DELIVERY') {
+    const after = world(
+      { ore: caps.ore * 0.95 - out.ore, polymers: caps.polymers * 0.95 - out.polymers },
+      { ore: out.ore, polymers: out.polymers },
+      { SMALL_CARGO: 20 },
+    );
+    const back = decide(after).find((i) => i.kind === 'PICKUP');
+    check(
+      'отвезенное домой обратно не едет',
+      !back || (back.kind === 'PICKUP' && (out.ore === 0 || back.ore === 0) && (out.polymers === 0 || back.polymers === 0)),
+      back?.kind === 'PICKUP' ? `везет обратно руду ${back.ore}, полимеры ${back.polymers}` : 'не везет',
+    );
+  }
 }
 
 {

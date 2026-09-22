@@ -54,6 +54,8 @@ for (const bot of bots) {
       name: bot.commander.nickname,
       character: bot.character,
       richness: capital.richness,
+      // Орбита решает дорогу до хаба, а с ней время рейса и топливо.
+      position: live.position,
       levels: capital.levels,
       techs: snapshot.techs,
       stock: { ore: capital.resources.ore, polymers: capital.resources.polymers, plasma: capital.resources.plasma },
