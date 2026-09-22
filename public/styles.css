@@ -374,25 +374,63 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   background: rgba(8, 13, 26, 0.97);
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
 }
+/*
+ * Строки списка одинаковые у колоний и Коша: выбранная — мягкой заливкой
+ * с галочкой справа, а не рамкой. Рамка на одной строке и полоса на другой
+ * спорили между собой, и было непонятно, что из двух выбрано.
+ */
 .base-list button {
+  position: relative;
   width: 100%;
   text-align: left;
-  padding: 8px 10px;
+  padding: 8px 32px 8px 10px;
   color: var(--text);
   background: transparent;
-  border-color: transparent;
+  border: 1px solid transparent;
+  border-radius: 9px;
   font-size: 13px;
+  font-weight: 600;
 }
-.base-list button:hover { background: var(--panel-2); border-color: var(--line); }
-.base-list button.active { border-color: var(--accent); color: var(--accent); }
-.base-list small { display: block; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
-/* Предел расширения — подпись под списком, а не пункт: кликать по ней нечего. */
-.base-list-foot {
-  margin-top: 2px;
+.base-list button:hover { background: var(--panel-2); }
+.base-list button.active { background: rgba(77, 210, 255, 0.12); color: var(--accent); }
+.base-list button.active::after {
+  content: '✓';
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 13px;
+  color: var(--accent);
+}
+.base-list small { display: block; margin-top: 1px; color: var(--muted); font-size: 11px; font-weight: 400; font-variant-numeric: tabular-nums; }
+
+/* Заголовок раздела: колонии со счетчиком предела, ниже — синдикат. */
+.base-list-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 2px 8px;
   padding: 6px 10px 2px;
-  border-top: 1px solid var(--line);
   color: var(--muted);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.base-list-head b { font-weight: 600; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+.base-list-head small { flex-basis: 100%; margin: 0; text-transform: none; letter-spacing: 0; color: var(--warn); }
+.base-list-head:not(:first-child) { margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--line); }
+.base-list-tag {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 6px;
+  border-radius: 5px;
+  background: rgba(157, 123, 255, 0.16);
+  color: var(--accent-2);
   font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  vertical-align: 1px;
 }
 
 /* ---------- Центральная зона ---------- */
@@ -636,8 +674,6 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   flex-wrap: wrap;
   gap: 4px 14px;
   line-height: 1.4;
-  /* Две строки плюс промежуток между ними. */
-  min-height: calc(2 * 1.4em + 4px);
   align-content: flex-start;
   font-size: 12px;
   color: var(--muted);
@@ -667,28 +703,71 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
  * колонки там, где помещаются четыре.
  */
 .cards {
+  --cards-gap: 14px;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
-  gap: 14px;
+  gap: var(--cards-gap);
   align-items: stretch;
 }
 
+/* Полоса работы или очередь над сеткой не должна прилипать к карточкам. */
+.job-banner:not([hidden]) + .cards,
+.queue + .cards { margin-top: 14px; }
+
+/*
+ * Детей у карточки всегда восемь и в одном порядке: обложка с названием,
+ * описание, выгода, расход, цена, срок, требования, низ с кнопкой.
+ * Отсутствующее не удаляется из разметки, а схлопывается в ноль — иначе
+ * общая сетка ряда (ниже) съехала бы на первой карточке без описания.
+ */
 .card {
   --card-pad: 14px;
-  padding: var(--card-pad);
+  --card-gap: 8px;
+  padding: 0 0 var(--card-pad);
   display: flex;
   flex-direction: column;
-  gap: 8px;
   height: 100%;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 14px;
   background: var(--panel);
 }
-
+.card > * { margin: var(--card-gap) var(--card-pad) 0; min-width: 0; }
+.card > .card-cover { margin: 0; }
+.card > [hidden] {
+  display: block !important;
+  height: 0;
+  margin-top: 0;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  visibility: hidden;
+}
 /* Кнопка и поле заказа всегда внизу карточки — ряд выглядит ровным. */
-.card > button,
-.card > .order { margin-top: auto; }
+.card > .card-foot { margin-top: auto; padding-top: var(--card-gap); display: grid; gap: 6px; }
+
+/*
+ * Карточки одного ряда выровнены по общим строкам: картинки, названия,
+ * описания, выгода, цена, срок и кнопка встают на одну высоту у всех
+ * соседей. Без этого у карточки с длинным описанием все ниже него
+ * уезжало вниз, и цены соседних зданий стояли на разной высоте —
+ * сравнивать их глазами, ради чего карточки и стоят рядом, было нельзя.
+ *
+ * Ряды разделяет отступ снизу у карточки, а не промежуток сетки: промежуток
+ * лег бы и между внутренними строками.
+ */
+@supports (grid-template-rows: subgrid) {
+  .cards { row-gap: 0; }
+  .card {
+    display: grid;
+    grid-row: span 8;
+    grid-template-rows: subgrid;
+    row-gap: 0;
+    height: auto;
+    margin-bottom: var(--cards-gap);
+  }
+  .card > .card-foot { align-self: end; }
+}
 
 /*
  * Обложка кликабельна: по ней открывается подробная карточка постройки.
@@ -724,15 +803,14 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
  * читались бы серым пятном, поэтому картинка идет на всю ширину карточки.
  */
 /*
- * Обложка уходит в края карточки отрицательным отступом: своей рамки у нее
- * нет, границу держит сама карточка. Вложенные контуры — рамка карточки,
- * рамка обложки, рамка строки эффекта — дробили двухсотпиксельную карточку
- * на три коробки, и взгляду не за что было зацепиться.
+ * Обложка идет в края карточки: своей рамки у нее нет, границу держит сама
+ * карточка. Вложенные контуры — рамка карточки, рамка обложки, рамка строки
+ * эффекта — дробили двухсотпиксельную карточку на три коробки, и взгляду
+ * не за что было зацепиться.
  */
 .card-cover {
   display: flex;
   flex-direction: column;
-  margin: calc(-1 * var(--card-pad)) calc(-1 * var(--card-pad)) 0;
 }
 .card-cover .art { border-bottom: none; }
 .card-cover .art img { transition: filter 0.15s ease; }
@@ -742,28 +820,32 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
  * с размытием читается на любом арте — и на светлом небе, и на черной
  * тени, — а рамки у нее нет, чтобы не спорить с краем картинки.
  */
+/*
+ * Метка почти непрозрачная и с тонким светлым контуром: полупрозрачная
+ * терялась на светлом небе и на бликах арта, а метка — это число, которое
+ * должно читаться на любой картинке.
+ */
 .card-badge {
   position: absolute;
   left: 8px;
   bottom: 8px;
   z-index: 1;
   max-width: calc(100% - 16px);
-  padding: 3px 9px;
-  border-radius: 999px;
-  background: rgba(4, 8, 20, 0.78);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  padding: 2px 8px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(4, 8, 20, 0.9);
   color: var(--text);
   font-size: 12px;
-  font-weight: 600;
-  line-height: 1.3;
+  font-weight: 700;
+  line-height: 1.35;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   font-variant-numeric: tabular-nums;
 }
 .card-badge:empty { display: none; }
-.card.working .card-badge { color: #04121c; background: var(--accent); }
+.card.working .card-badge:not(.card-queue) { color: #04121c; background: var(--accent); border-color: var(--accent); }
 
 .card-progress {
   position: absolute;
@@ -863,7 +945,6 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   min-width: 0;
   font-size: 15px;
   line-height: 1.3;
-  min-height: 2.6em;
   overflow-wrap: anywhere;
   hyphens: auto;
   display: -webkit-box;
@@ -899,7 +980,6 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .card-energy b { font-weight: 600; }
 .card-energy b.grow { color: var(--warn); }
 .card-energy b.muted { font-weight: 400; color: var(--muted); }
-.card-energy.blank { visibility: hidden; }
 
 /*
  * Кнопка, которую нельзя нажать, выглядит так, что нажать ее не хочется:
@@ -916,7 +996,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .card-state.working { color: var(--accent); border-color: rgba(77, 210, 255, 0.55); background: rgba(77, 210, 255, 0.08); }
 .card-state.lack { color: var(--err); border-color: rgba(248, 113, 113, 0.35); }
 .card-state.locked { border-style: dashed; }
-.card > button.primary:disabled { opacity: 1; color: var(--muted); background: transparent; border: 1px solid var(--line); }
+.card-foot > button.primary:disabled { opacity: 1; color: var(--muted); background: transparent; border: 1px solid var(--line); }
 
 /*
  * Боевой профиль плитками: колонки держат числа на месте, и соседние
@@ -1942,7 +2022,6 @@ button.nick:hover { color: var(--accent); }
   font-size: 13px;
   font-weight: 600;
   line-height: 1.35;
-  min-height: calc(2 * 1.35em);
   color: var(--accent-2);
   font-variant-numeric: tabular-nums;
   display: -webkit-box;
@@ -1952,7 +2031,6 @@ button.nick:hover { color: var(--accent); }
 }
 /* Плиткам профиля обрезка в две строки не нужна: их высота известна. */
 .combat-line.unit { display: block; font-weight: 400; min-height: 0; }
-.combat-line:empty { display: none; }
 /*
  * Значок стоит в строке эффекта вместо существительного, поэтому он часть
  * текста, а не отдельная колонка: строка переносится, и flex поставил бы
@@ -2874,7 +2952,8 @@ button.nick:hover { color: var(--accent); }
  * и ряд «1 712 · 807» под иконками ничем не объявлял себя ценой: числа
  * без подписи читаются как что угодно — запас, прирост, добыча.
  */
-.spec { margin: 0; display: grid; gap: 5px; padding-top: 8px; border-top: 1px solid var(--line); }
+.spec { display: grid; gap: 5px; padding-top: 8px; border-top: 1px solid var(--line); }
+.card > .spec-time { margin-top: 5px; padding-top: 0; border-top: 0; }
 .spec-row {
   display: grid;
   grid-template-columns: minmax(56px, auto) minmax(0, 1fr);
@@ -2962,9 +3041,10 @@ button.nick:hover { color: var(--accent); }
  * достаточно крупной, чтобы объект узнавался.
  */
 @media (max-width: 640px) {
-  .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); --cards-gap: 8px; }
+  .job-banner:not([hidden]) + .cards, .queue + .cards { margin-top: 10px; }
 
-  .card { --card-pad: 9px; gap: 5px; border-radius: 12px; }
+  .card { --card-pad: 9px; --card-gap: 6px; border-radius: 12px; }
   /*
    * Обложка вытянута сильнее квадрата: панораму объекта узнать по ней все еще
    * можно, а девяносто лишних пикселей высоты на карточку — это как раз
@@ -2980,8 +3060,8 @@ button.nick:hover { color: var(--accent); }
    */
   .card.card-unit .art { aspect-ratio: 1 / 1; }
   .card-titles { padding-top: 7px; }
-  .card-titles h4 { font-size: 13px; line-height: 1.2; min-height: 2.4em; -webkit-line-clamp: 3; hyphens: manual; overflow-wrap: break-word; }
-  .card-badge { left: 6px; bottom: 6px; padding: 2px 7px; font-size: 11px; }
+  .card-titles h4 { font-size: 13px; line-height: 1.2; -webkit-line-clamp: 3; hyphens: manual; overflow-wrap: break-word; }
+  .card-badge { left: 6px; bottom: 6px; padding: 1px 6px; font-size: 11px; border-radius: 6px; }
   .card .desc { font-size: 11px; line-height: 1.2; }
   .card .prod, .card .cost { font-size: 11px; line-height: 1.2; }
 
@@ -3025,7 +3105,7 @@ button.nick:hover { color: var(--accent); }
   .level-table { grid-template-columns: 1fr; }
   .card .time { font-size: 10.5px; line-height: 1.2; }
   .energy-line { font-size: 10.5px; line-height: 1.2; min-height: 1.1em; }
-  .card > button, .order > button { padding: 9px 6px; font-size: 12.5px; min-height: 38px; }
+  .card-foot > button, .order > button { padding: 9px 6px; font-size: 12.5px; min-height: 38px; }
 
   /*
    * Иначе «Время постройки: 4 мин 12 с» переносится как придется, и на второй
@@ -3367,7 +3447,6 @@ button.nick:hover { color: var(--accent); }
  * энергия и КПД шахт к Кошу не относятся — их прячем, а не показываем нулями.
  */
 .kish-mode .res-aux { display: none; }
-.base-list-kish button { border-left: 3px solid var(--accent); }
 .kish-head { display: flex; gap: 16px; align-items: center; margin-bottom: 16px; }
 .kish-head h2 { margin: 0 0 4px; font-size: 20px; }
 .kish-head .art { width: 96px; height: 96px; flex: none; }

@@ -1150,6 +1150,16 @@
     baseListSignature = signature;
 
     el.baseList.innerHTML = '';
+    /*
+     * Список разбит на разделы с заголовками: колонии и, ниже, Кіш синдиката.
+     * Раньше Кіш отличался от колоний одной акцентной полосой слева — она
+     * читалась как «выбрано», хотя выбрана была колония сверху. Предел
+     * расширения стоит в заголовке раздела: он про колонии, а кликать
+     * по нему нечего.
+     */
+    const full = state.colonies.used >= state.colonies.slots;
+    appendBaseListHead('Колонии', `${state.colonies.used} из ${state.colonies.slots}`,
+      full ? 'чтобы основать еще, нужна астрофизика' : '');
     for (const base of state.bases) {
       const li = document.createElement('li');
       const button = document.createElement('button');
@@ -1173,18 +1183,28 @@
       el.baseList.appendChild(li);
     }
 
-    // Предел расширения виден там же, где список колоний: иначе о нем узнают
-    // только отказом на вылете колонизатора, уже построив его за десять тысяч.
-    const foot = document.createElement('li');
-    foot.className = 'base-list-foot';
-    foot.textContent =
-      `Колоний: ${state.colonies.used} из ${state.colonies.slots}` +
-      (state.colonies.used >= state.colonies.slots ? ' · нужен уровень астрофизики' : '');
-    el.baseList.appendChild(foot);
-
-    // Кіш — последней строкой, после счетчика колоний: к колониям он не относится.
+    // Кіш — своим разделом после колоний: к колониям он не относится.
     appendKishSwitchItem();
     renderDispatchOrigin();
+  }
+
+  /**
+   * Заголовок раздела в списке баз. Предел колоний стоит здесь, где его
+   * видно при выборе: иначе о нем узнают только отказом на вылете
+   * колонизатора, уже построив его за десять тысяч.
+   */
+  function appendBaseListHead(title, count, note) {
+    const li = document.createElement('li');
+    li.className = 'base-list-head';
+    li.innerHTML = '<span></span><b></b>';
+    li.querySelector('span').textContent = title;
+    li.querySelector('b').textContent = count || '';
+    if (note) {
+      const small = document.createElement('small');
+      small.textContent = note;
+      li.appendChild(small);
+    }
+    el.baseList.appendChild(li);
   }
 
   /* --- выпадающий список баз в шапке --- */
@@ -2265,6 +2285,7 @@
      */
     const combat = document.createElement('div');
     combat.className = 'combat-line';
+    combat.hidden = true;
 
     const energyRow = document.createElement('div');
     energyRow.className = 'card-energy';
@@ -2275,12 +2296,18 @@
     energyRow.append(energyLabel, energy);
 
     /*
-     * Цена и срок — подписанной сеткой под чертой. Подпись нужна: голый ряд
+     * Цена и срок — подписанными строками под чертой. Подпись нужна: голый ряд
      * «1 712 · 807» не говорит, цена это, запас или прирост. Черта отделяет
      * то, что получаешь, от того, чем платишь.
+     *
+     * Цена и срок — отдельные блоки, а не одна сетка: карточки ряда выровнены
+     * по общим строкам (subgrid), и срок встает на одну высоту у всех соседей,
+     * даже когда цена у одной карточки занимает две строки, а у другой одну.
      */
     const spec = document.createElement('dl');
     spec.className = 'spec';
+    const specTime = document.createElement('dl');
+    specTime.className = 'spec spec-time';
 
     const cost = document.createElement('dd');
     cost.className = 'cost';
@@ -2295,17 +2322,25 @@
     const costRow = specRow('Цена', cost);
     costRow.classList.add('spec-cost');
     const timeRow = specRow('Время', time);
-    spec.append(costRow, timeRow);
+    spec.append(costRow);
+    specTime.append(timeRow);
 
     const reqs = document.createElement('div');
     reqs.className = 'reqs';
+    reqs.hidden = true;
 
-    article.append(header, desc, combat, energyRow, spec, reqs);
+    // Низ карточки — кнопка или заказ со всем, что к нему относится. Один узел
+    // на всех: строк у карточек ряда должно быть поровну, иначе общая сетка
+    // разъедется на первой же карточке с лишним полем.
+    const foot = document.createElement('div');
+    foot.className = 'card-foot';
+
+    article.append(header, desc, combat, energyRow, spec, specTime, reqs, foot);
     container.appendChild(article);
 
     return {
       article, cover: header, level, progress, costOre, costPolymers, costPlasma,
-      combat, energy, energyRow, energyLabel, time, reqs,
+      combat, energy, energyRow, energyLabel, time, reqs, foot,
       costLabel: costRow.querySelector('dt'), timeLabel: timeRow.querySelector('dt'),
     };
   }
@@ -2341,7 +2376,7 @@
     button.type = 'button';
     button.className = 'primary';
     button.addEventListener('click', onClick);
-    shell.article.appendChild(button);
+    shell.foot.appendChild(button);
     return { ...shell, button };
   }
 
@@ -2382,7 +2417,7 @@
         { type: item.type, quantity: orderQuantity(quantity) }));
 
     order.append(field, button);
-    shell.article.appendChild(order);
+    shell.foot.appendChild(order);
     const queueBadge = document.createElement('span');
     queueBadge.className = 'card-badge card-queue';
     shell.level.parentNode.appendChild(queueBadge);
@@ -2439,6 +2474,7 @@
   function fillRequirements(card, requirements) {
     if (!requirements.length) {
       card.reqs.hidden = true;
+      card.reqs.textContent = '';
       return;
     }
     card.reqs.hidden = false;
@@ -2449,15 +2485,16 @@
   function updateBuildingCard(card, base, building) {
     if (!card) return;
     const job = base.buildJob && base.buildJob.building === building.type ? base.buildJob : null;
-    // Текущий уровень и тот, что получится, — одной меткой на картинке.
-    card.level.textContent = job
-      ? `Строится → ${job.targetLevel}`
-      : `Ур. ${building.level} → ${building.nextLevel}`;
+    // На метке — только нынешний уровень. «11 → 12» повторяло очевидное:
+    // кнопка «Улучшить» и так ведет на следующий, а выгода под названием
+    // показывает, что он даст. Не построенное меткой не помечается вовсе.
+    card.level.textContent = building.level > 0 ? `Ур. ${building.level}` : '';
     setCardProgress(card, job);
 
     // Значок вместо существительного: «добыча» на карточке шахты повторяла
     // ее название, а чего именно столько-то — не говорила.
     const effect = building.effect;
+    card.combat.hidden = !effect;
     card.combat.innerHTML = effect
       ? (effect.icon ? icon(effect.icon, 'sm') + ' ' : '') + escapeHtml(effect.text)
       : '';
@@ -2468,14 +2505,13 @@
      *
      * У станции строки нет: ее выработку уже называет строка эффекта,
      * а «Выработка +59» под «выработка 420 → 479» повторяла то же число
-     * вычитанием. Место под строку остается, иначе цена и срок у станции
-     * встали бы выше, чем у соседки по ряду.
+     * вычитанием. Выравнивание по ряду держит общая сетка карточек:
+     * цена у станции встает на ту же высоту, что у соседки со строкой расхода.
      */
     const { usage, nextUsage, output, nextOutput } = building.energy;
     const grow = nextUsage - usage;
     const gain = (nextOutput || 0) - (output || 0);
-    card.energyRow.hidden = false;
-    card.energyRow.classList.toggle('blank', gain > 0);
+    card.energyRow.hidden = gain > 0;
     card.energyLabel.innerHTML = icon('energy', 'sm') + ' расход';
     card.energy.textContent = grow > 0 ? `+${fmtEnergy(grow)}` : 'не растет';
     card.energy.className = grow > 0 ? 'grow' : 'muted';
@@ -2498,7 +2534,7 @@
     if (!card) return;
     const active = state.research && state.research.active;
     const job = active && active.tech === tech.tech ? active : null;
-    card.level.textContent = job ? `Изучается → ${job.targetLevel}` : `Ур. ${tech.level} → ${tech.nextLevel}`;
+    card.level.textContent = tech.level > 0 ? `Ур. ${tech.level}` : '';
     setCardProgress(card, job);
     fillCost(card, tech.cost, base.resources);
     card.time.textContent = fmtTime(tech.seconds);
@@ -2543,6 +2579,7 @@
     card.article.classList.toggle('built', ship.owned > 0);
     card.article.classList.toggle('queued', queued > 0);
     card.combat.innerHTML = combatStats(ship.combat);
+    card.combat.hidden = !ship.combat;
     card.combat.classList.add('unit');
 
     const count = orderQuantity(card.quantity);
@@ -7273,12 +7310,17 @@
   function appendKishSwitchItem() {
     const mine = syndicate.data && syndicate.data.mine;
     if (!mine) return;
+    appendBaseListHead('Синдикат', '', '');
     const li = document.createElement('li');
     li.className = 'base-list-kish';
     const button = document.createElement('button');
     button.type = 'button';
     button.className = state.kishMode ? 'active' : '';
-    button.textContent = `Кіш [${mine.tag}]`;
+    button.textContent = 'Кіш ';
+    const tag = document.createElement('span');
+    tag.className = 'base-list-tag';
+    tag.textContent = mine.tag;
+    button.appendChild(tag);
     const meta = document.createElement('small');
     meta.textContent = `${mine.kish.systemName || 'система не определена'} · ур. ${mine.kish.level}`;
     button.appendChild(meta);
@@ -7485,11 +7527,12 @@
     }
     card.level.textContent = options.level;
     card.combat.textContent = options.effect;
+    card.combat.hidden = !options.effect;
     fillTreasuryCost(card, options.cost, options.mine);
     // Модули строятся по времени: срок стоит в той же строке, что у построек колонии.
     if (typeof options.seconds === 'number') card.time.textContent = fmtTime(options.seconds);
     else card.time.parentNode.hidden = true;
-    if (options.extra) card.article.insertBefore(options.extra, card.button);
+    if (options.extra) card.foot.insertBefore(options.extra, card.button);
     // Требования — тем же компонентом, что у построек колонии: список и запертая карточка.
     // Старый ответ сервера поля не несет — тогда требований просто нет.
     const requirements = options.requirements || [];
@@ -7529,7 +7572,7 @@
     kishModuleCard(node, {
       mine, type: 'KISH', kind: 'planet', title: 'Кіш', detailUrl: '/api/syndicates/projection/module/KISH',
       description: 'Хаб синдиката. Каждый уровень добавляет одно место в составе.',
-      level: `Ур. ${kish.level} → ${kish.level + 1}`,
+      level: kish.level > 0 ? `Ур. ${kish.level}` : '',
       effect: `мест в составе: ${kish.memberCap}`,
       cost: { credits: kish.nextLevelCost }, seconds: kish.nextLevelSeconds, requirements: kish.nextLevelRequirements, buildKey: 'KISH:', allowed: can('KISH'), deniedHint: denyKish,
       label: 'Улучшить', onClick: () => syndicateAction('/api/syndicates/kish/upgrade'),
@@ -7537,7 +7580,7 @@
     kishModuleCard(node, {
       mine, type: 'SKARBNYTSIA', title: 'Скарбниця', detailUrl: '/api/syndicates/projection/module/SKARBNYTSIA',
       description: 'Бережет часть ресурсной казны при налете на Кіш. Гривну не грабят вовсе.',
-      level: `Ур. ${kish.treasuryLevel} → ${kish.treasuryLevel + 1}`,
+      level: kish.treasuryLevel > 0 ? `Ур. ${kish.treasuryLevel}` : '',
       effect: `несгораемо ${Math.round(kish.protectedShare * 100)}% ресурсов казны`,
       cost: kish.nextTreasuryCost, seconds: kish.nextTreasurySeconds, requirements: kish.nextTreasuryRequirements, buildKey: 'SKARBNYTSIA:', allowed: can('KISH'), deniedHint: denyKish, built: kish.treasuryLevel > 0,
       label: kish.treasuryLevel > 0 ? 'Улучшить' : 'Построить', onClick: () => syndicateAction('/api/syndicates/treasury/upgrade'),
@@ -7545,7 +7588,7 @@
     kishModuleCard(node, {
       mine, type: 'AKADEMIIA', title: 'Академия', detailUrl: '/api/syndicates/projection/module/AKADEMIIA',
       description: 'Открывает технологии синдиката. Ее уровень — потолок уровня любой технологии.',
-      level: `Ур. ${mine.academy.level} → ${mine.academy.level + 1}`,
+      level: mine.academy.level > 0 ? `Ур. ${mine.academy.level}` : '',
       effect: mine.academy.level > 0 ? `технологии до ур. ${mine.academy.level}` : 'технологии синдиката закрыты',
       cost: mine.academy.nextLevelCost, seconds: mine.academy.nextLevelSeconds, requirements: mine.academy.nextLevelRequirements, buildKey: 'AKADEMIIA:', allowed: can('ACADEMY'), deniedHint: 'Нужно право Академии', built: mine.academy.level > 0,
       label: mine.academy.level > 0 ? 'Улучшить' : 'Построить', onClick: () => syndicateAction('/api/syndicates/academy/upgrade'),
@@ -7553,7 +7596,7 @@
     kishModuleCard(node, {
       mine, type: 'DOZOR', title: 'Дозор', detailUrl: '/api/syndicates/projection/module/DOZOR',
       description: 'Показывает всем участникам вражеские атаки на колонии в радиусе от Коша.',
-      level: `Ур. ${mine.watch.level} → ${mine.watch.level + 1}`,
+      level: mine.watch.level > 0 ? `Ур. ${mine.watch.level}` : '',
       effect: mine.watch.level <= 0 ? 'атаки на колонии не видны'
         : mine.watch.radius === 0 ? 'наблюдает систему Коша' : `радиус ${mine.watch.radius} от Коша`,
       cost: { credits: mine.watch.nextLevelCost }, seconds: mine.watch.nextLevelSeconds, requirements: mine.watch.nextLevelRequirements, buildKey: 'DOZOR:', allowed: can('KISH'), deniedHint: denyKish, built: mine.watch.level > 0,
@@ -7565,7 +7608,7 @@
       kishModuleCard(node, {
         mine, type: 'BRAMA', title: `Брама · ${gate.systemName}`, description: gateDescription,
         detailUrl: `/api/syndicates/projection/module/BRAMA?systemId=${encodeURIComponent(gate.systemId)}`,
-        level: `Ур. ${gate.level} → ${gate.level + 1}`,
+        level: gate.level > 0 ? `Ур. ${gate.level}` : '',
         effect: `за час ${fmt(gate.windowShips)} из ${fmt(gate.throughput)} кораблей`,
         cost: gate.nextLevelCost, seconds: gate.nextLevelSeconds, requirements: gate.nextLevelRequirements, buildKey: `BRAMA:${gate.systemId}`, allowed: can('KISH'), deniedHint: denyKish,
         label: 'Улучшить', onClick: () => syndicateAction('/api/syndicates/gates', { systemId: gate.systemId }),
@@ -7582,7 +7625,7 @@
       select.addEventListener('change', () => { kishForm.gate = select.value; });
       kishModuleCard(node, {
         mine, type: 'BRAMA', title: 'Новая Брама', detailUrl: '/api/syndicates/projection/module/BRAMA', description: 'Строится в системе, где есть колония хотя бы одного участника.',
-        level: 'Ур. 0 → 1', effect: gateDescription, extra: synField('Система', select),
+        level: '', effect: gateDescription, extra: synField('Система', select),
         cost: mine.gates.firstLevelCost, seconds: mine.gates.firstLevelSeconds, requirements: mine.gates.firstLevelRequirements, buildKey: 'BRAMA:new', allowed: can('KISH'), deniedHint: denyKish, built: false,
         label: 'Построить', onClick: () => syndicateAction('/api/syndicates/gates', { systemId: select.value }),
       });
@@ -7602,7 +7645,7 @@
         () => syndicateAction('/api/syndicates/research', { tech: tech.tech }), `SYNDICATE_${tech.tech}`, 'tech');
       makeDetailed(card, tech.label, () =>
         openKishDetail(`/api/syndicates/projection/tech/${tech.tech}`, `SYNDICATE_${tech.tech}`, 'tech'));
-      card.level.textContent = `Ур. ${tech.level} → ${tech.level + 1}`;
+      card.level.textContent = tech.level > 0 ? `Ур. ${tech.level}` : '';
       fillTreasuryCost(card, tech.nextCost, mine);
       card.time.textContent = fmtTime(tech.seconds);
       // Как у технологий колонии: список недостающего и запертая карточка.
@@ -7657,7 +7700,7 @@
         () => syndicateAction('/api/syndicates/kish/defenses', { type: item.type, quantity: synInt(quantity) }), !can('KISH'));
       if (!can('KISH')) button.title = 'Нужно право развития Коша';
       order.append(quantity, button);
-      card.article.appendChild(order);
+      card.foot.appendChild(order);
     }
   }
 
