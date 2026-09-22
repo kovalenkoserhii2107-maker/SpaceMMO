@@ -109,6 +109,9 @@
     dispatch: $('dispatch'),
     missionMenu: $('mission-menu'),
     missionWarning: $('mission-warning'),
+    missionHint: $('mission-hint'),
+    coordFold: $('coord-fold'),
+    cargoBlock: $('cargo-block'),
     fleetInputs: $('fleet-inputs'),
     fleetEmpty: $('fleet-empty'),
     fleetAll: $('fleet-all'),
@@ -2987,18 +2990,18 @@
    */
   const MISSION_OPTIONS = {
     /* Своя колония: атаковать себя нельзя, зато можно перебросить туда флот. */
-    OWN_PLANET: [['TRANSPORT', 'Транспортировка'], ['DEPLOY', 'Дислокация']],
+    OWN_PLANET: [['TRANSPORT', 'Груз'], ['DEPLOY', 'Дислокация']],
     /* Колония участника своего синдиката: помочь, прикрыть, посмотреть. Атаки нет — своих не бьют. */
     ALLY_PLANET: [
       ['HOLD', 'Удержание'],
-      ['TRANSPORT', 'Отправить груз или помощь'],
-      ['SCAN', 'Разведка зондом'],
+      ['TRANSPORT', 'Груз или помощь'],
+      ['SCAN', 'Разведка'],
     ],
     /* Чужая колония. Порядок как у игрока в голове: напасть, помочь, посмотреть. */
     ENEMY_PLANET: [
       ['ATTACK', 'Атака'],
-      ['TRANSPORT', 'Отправить груз или помощь'],
-      ['SCAN', 'Шпионить зондом'],
+      ['TRANSPORT', 'Груз или помощь'],
+      ['SCAN', 'Разведка'],
     ],
     /*
      * Необитаемая планета. Ни транспорт, ни атака здесь невозможны — сервер
@@ -3006,16 +3009,16 @@
      * значит учить игрока, что интерфейс врет. Остается разведка, а к ней
      * ниже добавляется колонизация, если в составе есть основатель.
      */
-    FREE_PLANET: [['SCAN', 'Разведка зондом']],
+    FREE_PLANET: [['SCAN', 'Разведка']],
     /*
      * Планета не разведана: заселена она или нет — неизвестно. Здесь пункты
      * не мертвые, а именно неизвестные, и убирать их нельзя: игрок может знать
      * о планете от союзника. Сервер откажет, если догадка не подтвердится.
      */
     UNKNOWN_PLANET: [
-      ['SCAN', 'Разведка зондом'],
+      ['SCAN', 'Разведка'],
       ['ATTACK', 'Атака'],
-      ['TRANSPORT', 'Отправить груз или помощь'],
+      ['TRANSPORT', 'Груз или помощь'],
     ],
     HUB: [['HUB_DELIVERY', 'Доставка на хаб'], ['HUB_PICKUP', 'Вывоз с хаба']],
     KISH: [['KISH_DELIVERY', 'Доставка в Кіш'], ['KISH_PICKUP', 'Вывоз из казны'], ['HOLD', 'Удержание Коша']],
@@ -3030,6 +3033,44 @@
    * войну, и подставлять ее молча нельзя. Разведка ничего не разрушает.
    */
   const SAFE_DEFAULT_MISSIONS = ['SCAN', 'TRANSPORT', 'HUB_DELIVERY', 'KISH_DELIVERY', 'EXPEDITION'];
+
+  /*
+   * Одна строка под меню: что действие сделает. Кнопка «Атака» не говорит,
+   * что вылет объявит войну и что увезти можно только уязвимое, а «Груз
+   * или помощь» — что так же передают корабли.
+   */
+  const MISSION_HINTS = {
+    ATTACK: 'Бой с флотом и обороной цели. Победитель увозит уязвимую часть склада.',
+    TRANSPORT: 'Везет груз к цели и возвращается. Без возврата корабли останутся у цели — так передают флот.',
+    SCAN: 'Зонд снимет склад, флот и оборону. Боя нет, нужен только зонд.',
+    DEPLOY: 'Флот перебазируется на эту колонию и остается на ней вместе с грузом.',
+    COLONIZE: 'Колониальный транспорт основывает колонию; остальной флот и груз остаются на ней.',
+    HOLD: 'Флот стоит на орбите союзника выбранный срок и защищает его в бою.',
+    HARVEST: 'Переработчики собирают поле обломков и привозят его домой.',
+    HUB_DELIVERY: 'Товар ляжет на склад этого хаба — оттуда его продают на бирже.',
+    HUB_PICKUP: 'Забрать домой то, что лежит на складе хаба.',
+    KISH_DELIVERY: 'Ресурсы уйдут в казну синдиката и пойдут в твои заслуги.',
+    KISH_PICKUP: 'Вывоз из казны в пределах дневного лимита твоего ранга.',
+    KISH_RAID: 'Налет на чужой Кіш: бой с караулом и обороной, добыча — из казны.',
+    EXPEDITION: 'Полет в глубокий космос: находка, пираты или пустота.',
+  };
+
+  /** Кнопка запуска называет действие: «Запуск» не говорил, что именно уйдет. */
+  const MISSION_ACTIONS = {
+    ATTACK: 'Атаковать',
+    TRANSPORT: 'Отправить груз',
+    SCAN: 'Отправить зонд',
+    DEPLOY: 'Перебазировать',
+    COLONIZE: 'Основать колонию',
+    HOLD: 'Встать на удержание',
+    HARVEST: 'Собрать обломки',
+    HUB_DELIVERY: 'Везти на хаб',
+    HUB_PICKUP: 'Забрать с хаба',
+    KISH_DELIVERY: 'Везти в Кіш',
+    KISH_PICKUP: 'Забрать из казны',
+    KISH_RAID: 'Начать налет',
+    EXPEDITION: 'В экспедицию',
+  };
 
   /** Самая дальняя занятая орбита — по ней раскладываются остальные. */
   function maxPosition() {
@@ -3810,7 +3851,7 @@
           pdCell('шахты', `${planet.buildings.ORE_MINE}/${planet.buildings.POLYMER_PLANT}/${planet.buildings.PLASMA_REACTOR}`),
           pdCell('лаб', planet.buildings.SCIENCE_CENTER),
           pdCell('верфь', planet.buildings.SHIPYARD),
-          pdCell('склад', planet.buildings.STORAGE),
+          pdCell('склады', `${planet.buildings.ORE_STORAGE}/${planet.buildings.POLYMER_STORAGE}/${planet.buildings.PLASMA_STORAGE}`),
         ])
       : '';
 
@@ -4092,7 +4133,9 @@
     const capacity = compositionCapacity();
     const ships = readComposition();
     const picked = Object.values(ships).reduce((total, count) => total + count, 0);
-    if (picked <= 0) {
+    // Трюмы — вопрос только тех рейсов, что везут груз: шпиону или ударному
+    // флоту строка «трюмы, топливо, под груз» ничего не говорит.
+    if (picked <= 0 || !CARGO_MISSIONS.has(map.mission)) {
       el.holdSummary.hidden = true;
       return;
     }
@@ -4190,6 +4233,13 @@
     }
 
     syncFleetFields();
+    // Подстановка — раз на пару «действие и цель»: после запуска форма
+    // остается пустой, иначе второе нажатие отправило бы еще один зонд.
+    const autoKey = `${map.mission}|${JSON.stringify(currentTarget())}`;
+    if (map.autoMission !== autoKey) {
+      map.autoMission = autoKey;
+      autoFillForMission();
+    }
 
     syncCargoLimits();
 
@@ -4198,9 +4248,9 @@
     const hubRun = map.mission === 'HUB_PICKUP' || map.mission === 'HUB_DELIVERY';
     // Антиматерию возят только в казну Коша: она нужна на перенос Коша через Браму.
     el.cargoAntimatterField.hidden = map.mission !== 'KISH_DELIVERY';
-    if (el.cargoAntimatterField.hidden) el.cargoAntimatter.value = '0';
+    if (el.cargoAntimatterField.hidden) el.cargoAntimatter.value = '';
     el.cargoPlasmaField.hidden = hubRun;
-    if (hubRun) el.cargoPlasma.value = '0';
+    if (hubRun) el.cargoPlasma.value = '';
 
     // Выбор односторонности есть только у транспорта: дислокация и колонизация
     // односторонни всегда, остальные миссии всегда возвращаются.
@@ -4225,33 +4275,222 @@
      * один запуск, иначе он обещал бы то, чего в шаге нет.
      */
     const carries = CARGO_MISSIONS.has(map.mission);
-    el.cargoInputs.hidden = !carries;
-    el.cargoStepTitle.textContent = carries ? 'Груз и запуск' : 'Запуск';
+    const pickup = map.mission === 'HUB_PICKUP' || map.mission === 'KISH_PICKUP';
+    el.cargoBlock.hidden = !carries;
+    el.cargoStepTitle.textContent = pickup ? 'Что забрать' : 'Груз';
     if (!carries) {
-      el.cargoOre.value = '0';
-      el.cargoPolymers.value = '0';
-      el.cargoPlasma.value = '0';
-      el.cargoAntimatter.value = '0';
+      el.cargoOre.value = '';
+      el.cargoPolymers.value = '';
+      el.cargoPlasma.value = '';
+      el.cargoAntimatter.value = '';
     }
+    el.missionHint.textContent = MISSION_HINTS[map.mission] || '';
     syncHoldSummary();
+    syncSendButton();
+  }
+
+  /**
+   * Состав под задачу, чтобы не набирать его руками: разведке — один зонд,
+   * переработке — все переработчики. Срабатывает на смену действия или цели
+   * и только поверх пустого поля: набранное игроком не перетирается.
+   */
+  function autoFillForMission() {
+    const base = activeBase();
+    if (!base) return;
+    let changed = false;
+    // Подставленное под прошлое действие снимается, если игрок его не трогал:
+    // зонд, поставленный для разведки, в атаку лететь не должен.
+    const previous = map.autoFilled;
+    map.autoFilled = null;
+    if (previous) {
+      const refs = fleetInputs[previous.type];
+      if (refs && shipCount(refs.input) === previous.count) {
+        refs.input.value = '';
+        changed = true;
+      }
+    }
+    const fill = (type, count) => {
+      const refs = fleetInputs[type];
+      if (!refs || shipCount(refs.input) > 0 || count <= 0) return false;
+      refs.input.value = String(count);
+      map.autoFilled = { type, count };
+      return true;
+    };
+    if (map.mission === 'SCAN') changed = fill('PROBE', Math.min(1, base.fleet.PROBE || 0)) || changed;
+    if (map.mission === 'HARVEST') changed = fill('RECYCLER', base.fleet.RECYCLER || 0) || changed;
+    if (changed) {
+      syncFleetFields();
+      schedulePlan();
+    }
+  }
+
+  /** Кнопка запуска: глагол миссии, а без кораблей — что сделать сначала. */
+  function syncSendButton() {
+    const picked = Object.values(readComposition()).some((count) => count > 0);
+    el.sendFleetButton.disabled = !picked;
+    el.sendFleetButton.textContent = picked ? MISSION_ACTIONS[map.mission] || 'Запуск' : 'Выбери корабли';
+  }
+
+  /** Число кораблей в поле. Пустое поле — ноль, а не ошибка (правило 13). */
+  function shipCount(input) {
+    const parsed = Number.parseInt(input.value, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  }
+
+  /*
+   * Карточка цели. Отвечает на три вопроса по порядку: что это и чье, что
+   * о ней известно, что с ней сделать дальше. Прежде это был набор плиток
+   * одного веса — «шахты 5/4/2» стояло рядом с «склад undefined», а возраст
+   * разведки и три «???» занимали больше места, чем сами данные.
+   *
+   * Известное — строками «подпись — значение». Неизвестное не рисуется
+   * клетками с вопросами: вместо него одна строка разведки с возрастом
+   * и кнопкой «Разведать», которая сразу ставит зонд в форму ниже.
+   */
+  function tcHead(name, sub, chip, artSrc, zoom = 1) {
+    // Диск на арте не доходит до края кадра, поэтому картинка крупнее круга —
+    // тот же прием, что на карте (PLANET_ZOOM), иначе вокруг черная кайма.
+    const art = artSrc
+      ? `<span class="tc-art"><img src="${artSrc}" alt="" style="transform: scale(${zoom})" onerror="this.parentNode.remove()"></span>`
+      : '';
+    return `<div class="tc-head">${art}<div class="tc-id"><b>${escapeHtml(name)}</b>` +
+      `<span>${escapeHtml(sub)}</span>${chip || ''}</div></div>`;
+  }
+
+  function tcRow(label, valueHtml, css) {
+    return `<div class="tc-row${css ? ` ${css}` : ''}"><span>${label}</span><span>${valueHtml}</span></div>`;
+  }
+
+  /** Возраст разведки: минуты и часы, а дальше суток — днями. «455 ч» не читается. */
+  function fmtAge(seconds) {
+    if (seconds < 48 * 3600) return fmtTime(seconds);
+    return `${Math.floor(seconds / 86400)} дн`;
+  }
+
+  /** Классы с ненулевым числом строкой: «Сокіл 24 · Чайка 12». Пусто — «нет». */
+  function countsLine(counts, labels) {
+    const parts = Object.entries(counts || {})
+      .filter(([, count]) => count > 0)
+      .map(([type, count]) => `${escapeHtml(labels[type] || type)} <b>${fmt(count)}</b>`);
+    return parts.length ? parts.join(' · ') : 'нет';
+  }
+
+  function richnessLine(richness) {
+    return ['ore', 'polymers', 'plasma', 'antimatter']
+      .map((key) => {
+        const value = Number(richness[key]) || 0;
+        const tone = value >= 1.2 ? 'hi' : value < 0.8 ? 'lo' : '';
+        return `<span class="tc-rich ${tone}">${icon(key, 'sm')}×${value}</span>`;
+      })
+      .join('');
+  }
+
+  function scanLine(text, css, withButton) {
+    return `<div class="tc-scan ${css}"><span>${text}</span>` +
+      (withButton ? '<button type="button" class="tc-scan-go">Разведать</button>' : '') + '</div>';
+  }
+
+  function planetCardHtml(planet) {
+    const type = PLANET_TYPES[planet.type] || planet.type;
+    const art = PLANET_ART[planet.type] || 'rocky';
+    const place = `${map.data ? map.data.systemName + ' · ' : ''}орбита ${planet.position} · ${type}`;
+    const chip = planet.isOwn
+      ? '<span class="tc-chip own">ваша колония</span>'
+      : planet.colonized
+        ? '<span class="tc-chip foe">владелец <span class="tc-owner"></span></span>'
+        : planet.colonized === false
+          ? '<span class="tc-chip free">свободна</span>'
+          : '<span class="tc-chip unknown">не разведана</span>';
+    let rows = '';
+
+    if (planet.debris && planet.debris.ore + planet.debris.polymers > 0) {
+      rows += tcRow('Обломки', `${icon('ore', 'sm')} ${fmt(planet.debris.ore)} · ${icon('polymers', 'sm')} ${fmt(planet.debris.polymers)}`, 'debris');
+    }
+    if (planet.visibility !== 'UNKNOWN') {
+      if (planet.richness) rows += tcRow('Недра', richnessLine(planet.richness));
+      if (planet.buildings && planet.colonized) {
+        const b = planet.buildings;
+        rows += tcRow('Постройки',
+          `шахты <b>${b.ORE_MINE}/${b.POLYMER_PLANT}/${b.PLASMA_REACTOR}</b> · лаб <b>${b.SCIENCE_CENTER}</b> · верфь <b>${b.SHIPYARD}</b>`);
+      }
+      const hidden = planet.colonized && planet.staleHidden;
+      if (planet.colonized && !hidden) {
+        if (planet.resources) {
+          rows += tcRow('Склад',
+            `${icon('ore', 'sm')} ${fmt(planet.resources.ore)} · ${icon('polymers', 'sm')} ${fmt(planet.resources.polymers)} · ` +
+            `${icon('plasma', 'sm')} ${fmt(planet.resources.plasma)}`);
+        } else if (planet.resourcesTotal !== null && planet.resourcesTotal !== undefined) {
+          rows += tcRow('Склад', `всего <b>${fmt(planet.resourcesTotal)}</b>`);
+        }
+        if (planet.fleet) rows += tcRow('Флот', countsLine(planet.fleet, SHIP_LABELS));
+        else if (planet.fleetTotal !== null && planet.fleetTotal !== undefined) {
+          rows += tcRow('Флот', `<b>${fmt(planet.fleetTotal)}</b> вымпелов, классы не разобрать`);
+        }
+        if (planet.defenses) rows += tcRow('Оборона', countsLine(planet.defenses, DEFENSE_LABELS));
+        else if (planet.defenceTotal !== null && planet.defenceTotal !== undefined) {
+          rows += tcRow('Оборона', `<b>${fmt(planet.defenceTotal)}</b> установок`);
+        }
+      }
+    }
+
+    let scan = '';
+    if (!planet.isOwn) {
+      if (planet.visibility === 'UNKNOWN') {
+        scan = scanLine('Данных нет: что на планете, неизвестно', 'outdated', true);
+      } else if (planet.visibility === 'SCANNED') {
+        const age = `разведка ${fmtAge(planet.scanAgeSeconds || 0)} назад`;
+        if (planet.freshness === 'OUTDATED') {
+          scan = scanLine(`${age} — устарела${planet.colonized ? ', склад и флот скрыты' : ''}`, 'outdated', true);
+        } else if (planet.freshness === 'STALE') {
+          scan = scanLine(`${age} — могла устареть`, 'stale', true);
+        } else {
+          const shallow = planet.detail && planet.detail !== 'TECHS' && planet.colonized
+            ? ' · зонд видел не все, нужен перевес в «Шпионаже»'
+            : '';
+          scan = scanLine(`${age}${shallow}`, shallow ? 'stale' : 'fresh', false);
+        }
+      }
+    }
+
+    return tcHead(planet.name, place, chip, `/assets/planets/${art}.webp`, PLANET_ZOOM[art] ?? PLANET_ZOOM_DEFAULT) +
+      (rows ? `<div class="tc-rows">${rows}</div>` : '') + scan;
+  }
+
+  /** Кнопка «Разведать» в карточке: разведка с одним зондом, форма — на виду. */
+  function scanFromCard() {
+    map.mission = 'SCAN';
+    map.autoMission = null;
+    missionMenuSignature = '';
+    renderFleetInputs();
+    syncMissionOptions();
+    schedulePlan();
+    el.dispatch.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function showDispatch(base) {
+    el.dispatch.hidden = !base;
+    if (base) {
+      renderFleetInputs();
+      syncMissionOptions();
+      renderDispatchTarget();
+    }
   }
 
   function renderPlanetInfo() {
     const base = activeBase();
+    el.planetInfo.onclick = (event) => {
+      if (event.target.closest('.tc-scan-go')) scanFromCard();
+    };
 
     if (deepSpaceSelected()) {
       const slots = war.data && war.data.expeditionSlots;
       el.planetInfo.innerHTML =
-        `<b>Глубокий космос</b><br>система ${map.data.systemName} · 16-я позиция<br>` +
-        'Экспедиция уходит за пределы орбит: там можно найти брошенный груз, ' +
-        'наткнуться на пиратов или не найти ничего.<br>' +
-        (slots ? `слотов экспедиций: <b>${slots.used}</b> из <b>${slots.total}</b>` : '');
-      el.dispatch.hidden = !base;
-      if (base) {
-        renderFleetInputs();
-        syncMissionOptions();
-        renderDispatchTarget();
-      }
+        tcHead('Глубокий космос', `${map.data.systemName} · за 15-й орбитой`, '<span class="tc-chip">экспедиция</span>') +
+        '<div class="tc-rows">' +
+        tcRow('Что там', 'брошенный груз, пираты или ничего') +
+        (slots ? tcRow('Слоты', `<b>${slots.used}</b> из <b>${slots.total}</b> заняты`) : '') +
+        '</div>';
+      showDispatch(base);
       return;
     }
 
@@ -4259,42 +4498,36 @@
     if (kish) {
       // Чужой Кіш виден как станция, но рейсов к нему нет: возить в чужую
       // казну незачем, а вывоз из нее — грабеж, он придет с войнами синдикатов.
-      el.planetInfo.innerHTML = kish.own && kish.treasury
-        ? `<b>${escapeHtml(kish.name)}</b><br>хаб твоего синдиката · ур. ${kish.level}<br>` +
-          `казна: ${icon('ore', 'sm')} <b>${fmt(kish.treasury.ore)}</b> · ` +
-          `${icon('polymers', 'sm')} <b>${fmt(kish.treasury.polymers)}</b> · ` +
-          `${icon('plasma', 'sm')} <b>${fmt(kish.treasury.plasma)}</b>`
-        : `<b>${escapeHtml(kish.name)}</b><br>хаб чужого синдиката · ур. ${kish.level}<br>` +
-          'Налет возможен только в войне синдикатов — если ее нет, вылет объявит ее.';
+      let rows = '';
+      if (kish.own && kish.treasury) {
+        rows += tcRow('Казна',
+          `${icon('ore', 'sm')} ${fmt(kish.treasury.ore)} · ${icon('polymers', 'sm')} ${fmt(kish.treasury.polymers)} · ` +
+          `${icon('plasma', 'sm')} ${fmt(kish.treasury.plasma)}`);
+      } else {
+        rows += tcRow('Налет', 'только в войне синдикатов — если ее нет, вылет объявит ее');
+      }
       if (kish.debris && kish.debris.ore + kish.debris.polymers > 0) {
-        el.planetInfo.innerHTML += `<br>осколки: ${icon('ore', 'sm')} <b>${fmt(kish.debris.ore)}</b> · ` +
-          `${icon('polymers', 'sm')} <b>${fmt(kish.debris.polymers)}</b>`;
+        rows += tcRow('Осколки', `${icon('ore', 'sm')} ${fmt(kish.debris.ore)} · ${icon('polymers', 'sm')} ${fmt(kish.debris.polymers)}`, 'debris');
       }
-      el.dispatch.hidden = !base;
-      if (!el.dispatch.hidden) {
-        renderFleetInputs();
-        syncMissionOptions();
-        renderDispatchTarget();
-      }
+      el.planetInfo.innerHTML =
+        tcHead(kish.name, `хаб синдиката · ур. ${kish.level}`,
+          kish.own ? '<span class="tc-chip own">ваш синдикат</span>' : '<span class="tc-chip foe">чужой синдикат</span>',
+          '/assets/planets/kish.webp') +
+        `<div class="tc-rows">${rows}</div>`;
+      showDispatch(base);
       return;
     }
 
     const hub = selectedHub();
-
     if (hub) {
-      el.planetInfo.innerHTML = hub.storage
-        ? `<b>${hub.name}</b><br>нейтральная торговая станция · орбита ${hub.position}<br>` +
-          `твой склад: ${icon('ore', 'sm')} <b>${fmt(hub.storage.ore)}</b> · ` +
-          `${icon('polymers', 'sm')} <b>${fmt(hub.storage.polymers)}</b><br>` +
-          `занято ${fmt(hub.storage.ore + hub.storage.polymers)} из ${fmt(hub.storage.capacity)} ` +
-          `(свободно ${fmt(hub.storage.free)})`
-        : `<b>${hub.name}</b><br>нейтральная торговая станция`;
-      el.dispatch.hidden = !base;
-      if (base) {
-        renderFleetInputs();
-        syncMissionOptions();
-        renderDispatchTarget();
-      }
+      const rows = hub.storage
+        ? tcRow('Твой склад', `${icon('ore', 'sm')} ${fmt(hub.storage.ore)} · ${icon('polymers', 'sm')} ${fmt(hub.storage.polymers)}`) +
+          tcRow('Свободно', `<b>${fmt(hub.storage.free)}</b> из ${fmt(hub.storage.capacity)}`)
+        : '';
+      el.planetInfo.innerHTML =
+        tcHead(hub.name, `торговая станция · орбита ${hub.position}`, '<span class="tc-chip">биржа</span>') +
+        (rows ? `<div class="tc-rows">${rows}</div>` : '');
+      showDispatch(base);
       return;
     }
 
@@ -4308,91 +4541,131 @@
        * колонизации: свободные планеты почти всегда в чужих системах.
        */
       const coord = map.coordTarget;
+      if (coord) el.coordFold.open = true;
       el.planetInfo.innerHTML = coord
-        ? `<b>${escapeHtml(coord.planetName)}</b><br>` +
-          `система ${escapeHtml(coord.systemName)} · орбита ${coord.position} · ` +
-          `${coord.galaxyX}:${coord.galaxyY}<br>` +
-          'Цель задана координатами. Разведданных нет — отправь зонд.'
-        : 'Наведи курсор или выбери планету на карте.';
+        ? tcHead(coord.planetName, `${coord.systemName} · орбита ${coord.position} · ${coord.galaxyX}:${coord.galaxyY}`,
+          coord.isOwn ? '<span class="tc-chip own">ваша колония</span>'
+            : coord.owner ? '<span class="tc-chip foe">владелец <span class="tc-owner"></span></span>'
+              : '<span class="tc-chip free">свободна</span>') +
+          (coord.isOwn ? '' : scanLine('Цель задана координатами — разведданных здесь нет', 'outdated', true))
+        : '<p class="tc-empty">Выбери планету на карте — здесь появится, что о ней известно и что с ней можно сделать.</p>';
+      const coordOwner = el.planetInfo.querySelector('.tc-owner');
+      if (coordOwner && coord && coord.owner) coordOwner.appendChild(nickNode(coord.owner));
 
       el.dispatch.hidden = !base || !coord;
-      if (!el.dispatch.hidden) {
-        renderFleetInputs();
-        syncMissionOptions();
-        renderDispatchTarget();
-      }
+      if (!el.dispatch.hidden) showDispatch(base);
       return;
     }
 
-    el.planetInfo.innerHTML = planetDetailsHtml(planet, false);
-    el.dispatch.hidden = !base || (!map.coordTarget && planet.planetId === base.planetId);
-    if (!el.dispatch.hidden) {
-      renderFleetInputs();
-      syncMissionOptions();
-      renderDispatchTarget();
-    }
+    el.planetInfo.innerHTML = planetCardHtml(planet);
+    // Владелец — кнопка: с ним чаще всего и хотят договориться до вылета.
+    const ownerSlot = el.planetInfo.querySelector('.tc-owner');
+    if (ownerSlot && planet.owner) ownerSlot.appendChild(nickNode(planet.owner));
+    const own = !map.coordTarget && planet.planetId === base?.planetId;
+    el.dispatch.hidden = !base || own;
+    if (!el.dispatch.hidden) showDispatch(base);
   }
 
+  /*
+   * Состав — строкой на класс: картинка, имя, сколько в ангаре, степпер
+   * и «все». Раньше это были числовые поля с нулем внутри: ноль приходилось
+   * стирать, чтобы ввести число, а с телефона — еще и попадать в него.
+   * Теперь поле пустое, «+» и «−» меняют по одному, «все» берет класс целиком,
+   * а набранная строка подсвечена — видно, что уйдет в рейс.
+   */
   function renderFleetInputs() {
     const base = activeBase();
     if (!base) return;
 
     if (el.fleetInputs.childElementCount === 0) {
       for (const [type, label] of Object.entries(SHIP_LABELS)) {
-        const field = document.createElement('label');
-        field.className = 'field field-with-max';
-        const caption = document.createElement('span');
+        const field = document.createElement('div');
+        field.className = 'ship-row';
+
+        const meta = document.createElement('div');
+        meta.className = 'ship-meta';
+        const name = document.createElement('b');
+        name.textContent = label;
+        const caption = document.createElement('small');
+        meta.append(name, caption);
+
         const input = document.createElement('input');
         input.type = 'number';
+        input.inputMode = 'numeric';
         input.min = '0';
-        input.value = '0';
+        input.placeholder = '0';
         input.dataset.ship = type;
-        input.addEventListener('input', () => {
+        input.setAttribute('aria-label', label);
+        const changed = () => {
           syncMissionOptions();
           schedulePlan();
+        };
+        input.addEventListener('input', changed);
+        // Набранное сверх ангара срезается, когда игрок закончил ввод,
+        // а не на каждой цифре: иначе «12» при двенадцати нельзя было бы
+        // набрать через промежуточную «1».
+        input.addEventListener('change', () => {
+          const owned = (activeBase()?.fleet[type]) || 0;
+          const count = Math.min(shipCount(input), owned);
+          input.value = count > 0 ? String(count) : '';
+          changed();
         });
-        // Кнопка «все» рядом с полем: набрать весь класс — самое частое
-        // действие, а вводить трехзначное число с телефона неудобно.
+        input.addEventListener('focus', () => input.select());
+
+        const step = (delta) => {
+          const owned = (activeBase()?.fleet[type]) || 0;
+          const count = Math.max(0, Math.min(owned, shipCount(input) + delta));
+          input.value = count > 0 ? String(count) : '';
+          changed();
+        };
+        const minus = document.createElement('button');
+        minus.type = 'button';
+        minus.className = 'stepper-btn';
+        minus.textContent = '−';
+        minus.setAttribute('aria-label', `${label}: на один меньше`);
+        minus.addEventListener('click', () => step(-1));
+        const plus = document.createElement('button');
+        plus.type = 'button';
+        plus.className = 'stepper-btn';
+        plus.textContent = '+';
+        plus.setAttribute('aria-label', `${label}: на один больше`);
+        plus.addEventListener('click', () => step(1));
+        const stepper = document.createElement('div');
+        stepper.className = 'stepper';
+        stepper.append(minus, input, plus);
+
         const max = document.createElement('button');
         max.type = 'button';
-        max.className = 'field-max';
+        max.className = 'ship-all';
         max.textContent = 'все';
-        max.addEventListener('click', (event) => {
-          event.preventDefault();
-          const current = activeBase();
-          input.value = String((current && current.fleet[type]) || 0);
-          syncMissionOptions();
-          schedulePlan();
+        max.addEventListener('click', () => {
+          const owned = (activeBase()?.fleet[type]) || 0;
+          input.value = owned > 0 ? String(owned) : '';
+          changed();
         });
 
-        field.append(caption, input, max);
+        field.append(artNode(type, label, 'ship', 'art-thumb'), meta, stepper, max);
         el.fleetInputs.appendChild(field);
-        fleetInputs[type] = { caption, input, field, max };
+        fleetInputs[type] = { caption, input, field, max, minus, plus };
       }
     }
 
     /*
-    * В подписи и остаток, и трюм. Грузоподъемность класса решает состав рейса
-    * не меньше, чем его наличие: везти тысячу руды пятью истребителями нельзя,
-    * а увидеть это раньше отказа сервера было негде. У кого трюма нет вовсе —
-    * так и написано, а не пропущено: пустое место читается как «не знаю»,
-    * а тут ответ известен точно.
-    */
+     * В подписи и остаток, и трюм. Грузоподъемность класса решает состав рейса
+     * не меньше, чем его наличие: везти тысячу руды пятью истребителями нельзя.
+     * Трюм показывается только рейсам с грузом — шпиону он ни к чему.
+     */
     const cargoOf = new Map(
       (base.ships || []).map((card) => [card.type, card.flight ? card.flight.cargo : null]),
     );
-    for (const [type, label] of Object.entries(SHIP_LABELS)) {
-      const owned = base.fleet[type];
+    const carries = CARGO_MISSIONS.has(map.mission);
+    for (const type of Object.keys(SHIP_LABELS)) {
+      const owned = base.fleet[type] || 0;
       const cargo = cargoOf.get(type);
-      const hold =
-        cargo === null || cargo === undefined
-          ? ''
-          : cargo > 0
-            ? `трюм ${fmt(cargo)}`
-            : 'без трюма';
-      // Трюм подписью помельче: он справка, а не то, что вводят.
-      fleetInputs[type].caption.innerHTML =
-        `${escapeHtml(label)} (${owned})${hold ? `<em class="field-hold">${hold}</em>` : ''}`;
+      const hold = !carries || cargo === null || cargo === undefined
+        ? ''
+        : cargo > 0 ? ` · трюм ${fmt(cargo)}` : ' · без трюма';
+      fleetInputs[type].caption.textContent = `в ангаре ${fmt(owned)}${hold}`;
       fleetInputs[type].input.max = String(owned);
       fleetInputs[type].max.disabled = owned <= 0;
     }
@@ -4453,8 +4726,12 @@
       const owned = base ? base.fleet[type] || 0 : 0;
       const off = !allowed.has(type) || owned <= 0;
       refs.field.hidden = off;
-      if (off && refs.input.value !== '0') refs.input.value = '0';
+      if (off && refs.input.value !== '') refs.input.value = '';
       if (!off) shown += 1;
+      const count = shipCount(refs.input);
+      refs.field.classList.toggle('picked', count > 0);
+      refs.minus.disabled = count <= 0;
+      refs.plus.disabled = count >= owned;
     }
 
     /*
@@ -4491,7 +4768,7 @@
   function readComposition() {
     const ships = { PROBE: 0, SMALL_CARGO: 0, LIGHT_FIGHTER: 0 };
     for (const [type, refs] of Object.entries(fleetInputs)) {
-      ships[type] = Math.max(0, Number(refs.input.value) || 0);
+      ships[type] = shipCount(refs.input);
     }
     return ships;
   }
@@ -4636,7 +4913,7 @@
     const picked = Object.values(ships).reduce((total, count) => total + count, 0);
     if (picked <= 0) {
       map.plan = null;
-      el.flightPlan.textContent = 'Выбери корабли, чтобы увидеть расчет.';
+      el.flightPlan.innerHTML = '';
       showMissionWarning(null);
       syncHoldSummary();
       return;
@@ -4680,18 +4957,34 @@
         map.mission === 'COLONIZE' ||
         (map.mission === 'TRANSPORT' && el.oneWay.checked);
 
-      el.flightPlan.innerHTML =
-        (jump
-          ? `<b>${map.plan.viaGate ? 'Через Браму' : 'Гиперпрыжок'}</b> · дистанция <b>${map.plan.distance}</b> ед. по галактике` +
-            (map.plan.viaGate ? ` · плазмы до врат и от них <b>${fmtAmount(map.plan.fuel)}</b>` : '') + '<br>'
-          : `дистанция: <b>${map.plan.distance}</b> орбит · скорость <b>${map.plan.speed}</b><br>`) +
-        `время в пути: <b>${fmtTime(map.plan.flightSeconds)}</b>` +
-        (oneWay ? ' — флот остается на месте<br>' : ' в одну сторону<br>') +
-        `топливо (${oneWay ? 'в один конец' : 'туда-обратно'}): ` +
-        `<b class="${noFuel ? 'bad' : ''}">${fmtAmount(fuelAmount)}</b> ${fuelName} ` +
-        `(на складе ${fmtAmount(fuelStock)})<br>` +
-        `трюмы: <b class="${overload ? 'bad' : ''}">${fmt(cargo)}</b> из ${fmt(map.plan.usable)}` +
-        (map.plan.fuelLoad > 0 ? ` (топливо занимает ${fmt(Math.round(map.plan.fuelLoad))} из ${fmt(map.plan.capacity)})` : '');
+      /*
+       * Итог рейса — короткой таблицей, а не абзацем: в пути, прибытие
+       * на часах, топливо и, у рейсов с грузом, трюмы. Раньше это было пять
+       * строк текста, где нужное число приходилось искать глазами.
+       */
+      const arrival = new Date(Date.now() + map.plan.flightSeconds * 1000);
+      const arrivalText = map.plan.flightSeconds > 20 * 3600
+        ? arrival.toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+        : arrival.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+      const rows = [
+        ['В пути', `<b>${fmtTime(map.plan.flightSeconds)}</b>${oneWay ? ' · флот останется у цели' : ''}`],
+        ['Прибытие', `<b>${arrivalText}</b>`],
+      ];
+      if (jump) {
+        rows.push(['Маршрут', `${map.plan.viaGate ? 'через Браму' : 'гиперпрыжок'} · ${map.plan.distance} ед.`]);
+      }
+      rows.push([
+        'Топливо',
+        `<b class="${noFuel ? 'bad' : ''}">${fmtAmount(fuelAmount)}</b> ${fuelName}` +
+          (jump && map.plan.viaGate && map.plan.fuel > 0 ? ` + ${fmtAmount(map.plan.fuel)} плазмы` : '') +
+          ` <span class="fp-muted">${oneWay ? 'в один конец' : 'туда и обратно'} · есть ${fmtAmount(fuelStock)}</span>`,
+      ]);
+      if (CARGO_MISSIONS.has(map.mission)) {
+        rows.push(['Груз', `<b class="${overload ? 'bad' : ''}">${fmt(cargo)}</b> из ${fmt(map.plan.usable)}`]);
+      }
+      el.flightPlan.innerHTML = rows
+        .map(([label, value]) => `<div class="fp-row"><span>${label}</span><span>${value}</span></div>`)
+        .join('');
       // Расчет пришел — вместимость и расход в шаге состава уже не оценка,
       // а точные числа, и пределы полей груза считаются по ним же.
       syncCargoLimits();
@@ -4765,18 +5058,20 @@
 
     // Сбрасываем форму, чтобы повторный клик не отправил тот же флот дважды.
     if (ok) {
-      for (const refs of Object.values(fleetInputs)) refs.input.value = '0';
-      el.cargoOre.value = '0';
-      el.cargoPolymers.value = '0';
-      el.cargoPlasma.value = '0';
-      el.cargoAntimatter.value = '0';
+      for (const refs of Object.values(fleetInputs)) refs.input.value = '';
+      el.cargoOre.value = '';
+      el.cargoPolymers.value = '';
+      el.cargoPlasma.value = '';
+      el.cargoAntimatter.value = '';
+      map.autoFilled = null;
       el.presetSelect.value = '';
       el.oneWay.checked = false;
       el.jointAttack.value = '';
       map.joint = null;
       map.plan = null;
-      el.flightPlan.textContent = 'Выбери корабли, чтобы увидеть расчет.';
+      el.flightPlan.innerHTML = '';
       showMissionWarning(null);
+      syncMissionOptions();
     }
     await loadMap(mapSystemId());
     await loadGalaxy();
@@ -4860,7 +5155,8 @@
     if (!base) return;
     const allowed = new Set(shipsForMission(map.mission));
     for (const [type, refs] of Object.entries(fleetInputs)) {
-      if (allowed.has(type)) refs.input.value = String(base.fleet[type] || 0);
+      const owned = base.fleet[type] || 0;
+      if (allowed.has(type)) refs.input.value = owned > 0 ? String(owned) : '';
     }
     syncMissionOptions();
     schedulePlan();
@@ -4886,7 +5182,7 @@
   });
 
   el.fleetNone.addEventListener('click', () => {
-    for (const refs of Object.values(fleetInputs)) refs.input.value = '0';
+    for (const refs of Object.values(fleetInputs)) refs.input.value = '';
     syncMissionOptions();
     schedulePlan();
   });
@@ -4941,6 +5237,8 @@
     map.mission = button.dataset.mission;
     // Подпись выбранного меняется, поэтому подпись меню пересобирается целиком.
     missionMenuSignature = '';
+    // Трюм в подписях кораблей зависит от миссии: у рейса без груза его нет.
+    renderFleetInputs();
     syncMissionOptions();
     schedulePlan();
   });
@@ -7933,7 +8231,7 @@
 
   function renderPresetSelect() {
     const current = el.presetSelect.value;
-    el.presetSelect.innerHTML = '<option value="">— вручную —</option>';
+    el.presetSelect.innerHTML = '<option value="">— выбери шаблон —</option>';
     for (const preset of presets.list) {
       const option = document.createElement('option');
       option.value = preset.id;
@@ -7952,8 +8250,10 @@
     if (!preset) return;
 
     for (const [type, refs] of Object.entries(fleetInputs)) {
-      refs.input.value = String(preset.ships[type] || 0);
+      const count = preset.ships[type] || 0;
+      refs.input.value = count > 0 ? String(count) : '';
     }
+    syncMissionOptions();
     schedulePlan();
 
     const base = activeBase();
