@@ -2642,6 +2642,42 @@ console.log('\n=== 7г. Сбитый зонд закрывает цель на �
   );
 }
 
+console.log('\n=== 7е. Экспедиция не трогает плазму, которую ждет наука ===');
+{
+  /*
+   * Живые боты отправляли экспедицию на каждый свободный слот, и плазма
+   * стояла у нуля: лаборатория пустовала, ожидая технологию за десять тысяч
+   * плазмы, которая не копилась никогда. Экспедиция летит только на лишнее.
+   */
+  const levels = { ...emptyLevels(), ORE_MINE: 10, POLYMER_PLANT: 10, PLASMA_REACTOR: 8, POWER_PLANT: 12, SCIENCE_CENTER: 5, SHIPYARD: 5 };
+  const snapshotWith = (plasma: number, researching: boolean): BotSnapshot => ({
+    ...emptyBotSnapshot('TRADER'),
+    techs: { ...emptyTechLevels(), ENERGY_TECH: 3, ASTROPHYSICS: 1, COMBUSTION_DRIVE: 3 },
+    researching,
+    expeditionSlots: 1,
+    expeditionsInFlight: 0,
+    bases: [
+      testBase('cap', {
+        orbit: 3,
+        levels,
+        resources: { ore: 50_000, polymers: 50_000, plasma },
+        ships: { ...emptyShipCounts(), SMALL_CARGO: 5, LIGHT_FIGHTER: 8 },
+      }),
+    ],
+  });
+  const sends = (snapshot: BotSnapshot) => decide(snapshot).some((intent) => intent.kind === 'EXPEDITION');
+
+  check('пустой склад плазмы — экспедиция не летит', !sends(snapshotWith(500, false)));
+  check('плазмы вдоволь — экспедиция летит', sends(snapshotWith(500_000, false)));
+
+  // Пока наука идет, ждать ей нечего: остается только запас в полтора часа добычи.
+  const researchingPlasma = 60_000;
+  check(
+    'во время исследования держится только запас добычи',
+    sends(snapshotWith(researchingPlasma, true)),
+  );
+}
+
 console.log('\n=== 8. Поручения модели проверяются по сводке ===');
 
 {

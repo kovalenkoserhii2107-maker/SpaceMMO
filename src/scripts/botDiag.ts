@@ -12,7 +12,7 @@ import { writeFileSync } from 'node:fs';
 import { prisma } from '../db/prisma.js';
 import { gameLoop } from '../game/gameLoop.js';
 import { buildSnapshot } from '../game/bot/director.js';
-import { buildingPlan, decide, syndicateGoal } from '../game/bot/decide.js';
+import { buildingPlan, decide, nextMilestoneStep, syndicateGoal } from '../game/bot/decide.js';
 import { isBotCharacter } from '../game/bot/personality.js';
 import { readStoredPlan, withPlan } from '../game/bot/plan.js';
 import { creditOutput, productionPerSecond, storageCapacities, systemModifiers, upgradeCost } from '../game/rules.js';
@@ -123,6 +123,11 @@ for (const bot of bots) {
     );
     console.log(`  наука ${tech.padEnd(18)} → ${snapshot.techs[tech] + 1}: ${triple(cost)}  (${hoursTo(cost)}, в доле ${inShare ? 'да' : 'нет'})`);
   }
+  // Стратегический шаг вехи держит очередь своего направления: пока на него
+  // не хватает, прочее в этой очереди не начинается. Без строки простой
+  // лаборатории при полном складе не объяснить.
+  const step = nextMilestoneStep(snapshot, profile);
+  console.log(`  веха  ${step ? `${step.milestone}: ${JSON.stringify(step)}` : 'нет'}`);
   console.log(`  рынок ${snapshot.market.map((m) => `${m.resource} ${m.reference} skew ${m.skew}`).join('; ')}`);
   console.log(`  хаб   руда ${round(snapshot.hubStorage.ore)} пол ${round(snapshot.hubStorage.polymers)} свободно ${round(snapshot.hubStorage.free)}`);
   const own = snapshot.syndicate;

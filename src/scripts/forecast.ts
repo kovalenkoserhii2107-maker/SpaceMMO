@@ -97,6 +97,7 @@ import {
 } from '../game/defenses.js';
 import { fleetCapacity, planFlight, validateCargo, validateComposition, type GalaxyPoint } from '../game/fleets.js';
 import { cargoShipsFor } from '../game/bot/logistics.js';
+import { DEEP_SPACE_POSITION, expeditionSlots, resolveExpedition } from '../game/expeditions.js';
 import { RESERVE_IMPORT_LOT, RESERVE_NICKNAME, RESERVE_RENT_SHARE, reserveBand, reserveQuotes } from '../game/reserve.js';
 import {
   buyerEscrow,
@@ -151,9 +152,9 @@ const ROSTER: ReadonlyArray<{ name: string; character: BotCharacter; richness: P
   { name: 'Средний', character: 'AGGRESSOR', position: 2, richness: { ore: 1.0, polymers: 0.75, plasma: 1.2, energy: 0.95, antimatter: 1 } },
 ];
 
-/** Рейс на хаб или с хаба. Корабли в полете из ангара вычтены. */
+/** Рейс на хаб, с хаба или в экспедицию. Корабли в полете из ангара вычтены. */
 interface Flight {
-  mission: 'HUB_DELIVERY' | 'HUB_PICKUP';
+  mission: 'HUB_DELIVERY' | 'HUB_PICKUP' | 'EXPEDITION';
   ships: ShipCounts;
   /** Что в трюмах сейчас: груз туда, добыча обратно. */
   cargo: { ore: number; polymers: number };
@@ -171,6 +172,10 @@ interface Logistics {
   picked: number;
   fuel: number;
   refused: Record<string, number>;
+  /** Экспедиции: вылеты, сожженная плазма и привезенное. */
+  expeditions: number;
+  expeditionFuel: number;
+  expeditionLoot: number;
 }
 
 interface Bot {
@@ -224,7 +229,7 @@ interface Snapshot {
 
 /** Стартовое состояние — то же, что у настоящей новой колонии. */
 function emptyLogistics(): Logistics {
-  return { sent: 0, delivered: 0, picked: 0, fuel: 0, refused: {} };
+  return { sent: 0, delivered: 0, picked: 0, fuel: 0, refused: {}, expeditions: 0, expeditionFuel: 0, expeditionLoot: 0 };
 }
 
 function freshBot(row: (typeof ROSTER)[number]): Bot {
@@ -396,6 +401,7 @@ class Exchange {
 
 function snapshotOf(bot: Bot, exchange: Exchange): BotSnapshot {
   const base = testBase(bot.name, {
+    orbit: bot.position,
     levels: bot.levels,
     richness: bot.richness,
     anomaly: 'NONE',
@@ -436,6 +442,8 @@ function snapshotOf(bot: Bot, exchange: Exchange): BotSnapshot {
     // Живой директор считает флоты в полете, и `decide` по ним решает,
     // заказывать ли грузовик: пустой ангар — не всегда отсутствие транспорта.
     fleetsInFlight: bot.flights.length,
+    expeditionsInFlight: bot.flights.filter((flight) => flight.mission === 'EXPEDITION').length,
+    expeditionSlots: expeditionSlots(bot.techs),
     techs: { ...bot.techs },
     researching: bot.research !== null,
     bases: [base],
@@ -526,6 +534,9 @@ function apply(bot: Bot, intents: BotIntent[], exchange: Exchange, byName: Map<s
         dispatch(bot, 'HUB_PICKUP', ships, { ore: 0, polymers: 0 }, { ore: intent.ore, polymers: intent.polymers }, now);
         break;
       }
+      case 'EXPEDITION':
+        dispatchExpedition(bot, intent.ships, now);
+        break;
       case 'RUSH': {
         /*
          * Спешка: срок стройки схлопывается, а деньги уходят из мира.
@@ -622,11 +633,71 @@ function dispatch(
   return true;
 }
 
+/*
+ * Экспедиция — тот же рейс на плазме, только к 16-й позиции, и исход
+ * бросает тот же `resolveExpedition`, что у сервера. Прогон без нее
+ * не видел главного расхода плазмы у живых ботов: по 130–350 вылетов
+ * в сутки, и плазма у нуля при добыче в двадцать тысяч в час.
+ *
+ * Кости засеяны именем бота и номером вылета: прогон остается
+ * побайтово воспроизводимым, а сравниваются в нем правки, а не удача.
+ */
+function dispatchExpedition(bot: Bot, ships: ShipCounts, now: number): boolean {
+  if (SHIP_TYPES.some((type) => ships[type] > bot.ships[type])) return refuse(bot, 'нет кораблей');
+  if (bot.flights.filter((flight) => flight.mission === 'EXPEDITION').length >= expeditionSlots(bot.techs)) {
+    return refuse(bot, 'слоты экспедиций');
+  }
+  const plan = planFlight(
+    ships,
+    bot.techs,
+    { position: bot.position, system: SYSTEM },
+    { position: DEEP_SPACE_POSITION, system: SYSTEM },
+  );
+  if (bot.stock.plasma < plan.fuel) return refuse(bot, 'плазма');
+  bot.stock.plasma -= plan.fuel;
+  for (const type of SHIP_TYPES) bot.ships[type] -= ships[type];
+  bot.flights.push({
+    mission: 'EXPEDITION',
+    ships: { ...ships },
+    cargo: { ore: 0, polymers: 0 },
+    request: { ore: 0, polymers: 0 },
+    arriveAt: now + plan.flightSeconds,
+    returnAt: now + plan.flightSeconds * 2,
+    arrived: false,
+  });
+  bot.logistics.expeditions += 1;
+  bot.logistics.expeditionFuel += plan.fuel;
+  return true;
+}
+
+/** Детерминированные кости: mulberry32 от строки. */
+function seededRng(seed: string): () => number {
+  let state = 0;
+  for (const char of seed) state = (Math.imul(state, 31) + char.charCodeAt(0)) | 0;
+  return () => {
+    state = (state + 0x6d2b79f5) | 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 /** Прилет и возврат: разгрузка по `unloadToHub`, погрузка по `loadFromHub`. */
 function advanceFlights(bot: Bot, now: number): void {
   for (const flight of bot.flights) {
     if (flight.arrived || flight.arriveAt > now) continue;
     flight.arrived = true;
+    if (flight.mission === 'EXPEDITION') {
+      // Как `resolveExpeditionArrival`: исход по трюмам, уцелевшие летят домой.
+      const rng = seededRng(`${bot.name}#${bot.logistics.expeditions}#${flight.arriveAt}`);
+      const result = resolveExpedition(flight.ships, fleetCapacity(flight.ships), bot.techs, rng);
+      const hold = fleetCapacity(result.survivors);
+      flight.ships = result.survivors;
+      flight.cargo.ore = Math.min(result.loot.ore, hold);
+      flight.cargo.polymers = Math.min(result.loot.polymers, Math.max(0, hold - flight.cargo.ore));
+      bot.logistics.expeditionLoot += flight.cargo.ore + flight.cargo.polymers;
+      continue;
+    }
     if (flight.mission === 'HUB_DELIVERY') {
       // Что не влезло на склад хаба, остается в трюме и летит домой.
       let room = Math.max(0, hubCapacity(bot.hub.level) - storageUsed(bot.hub));
@@ -958,6 +1029,11 @@ console.log(
     ` | с хаба ${money(bots.reduce((sum, bot) => sum + bot.logistics.picked, 0))} ед` +
     ` | плазмы сожжено ${money(bots.reduce((sum, bot) => sum + bot.logistics.fuel, 0))}` +
     ` | отказов ${[...refusals].map(([reason, count]) => `${reason} ${money(count)}`).join(', ') || 'нет'}`,
+);
+console.log(
+  `  ЭКСПЕДИЦИИ: ${money(bots.reduce((sum, bot) => sum + bot.logistics.expeditions, 0))}` +
+    ` | плазмы ${money(bots.reduce((sum, bot) => sum + bot.logistics.expeditionFuel, 0))}` +
+    ` | привезли ${money(bots.reduce((sum, bot) => sum + bot.logistics.expeditionLoot, 0))} ед`,
 );
 
 // Присваивается внутри `run`, поэтому компилятор считает его здесь вечным null.

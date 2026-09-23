@@ -51,6 +51,7 @@ import {
   type ShipType,
 } from '../ships.js';
 import { canJump, fleetCapacity, planFlight, type GalaxyPoint } from '../fleets.js';
+import { DEEP_SPACE_POSITION } from '../expeditions.js';
 import { holdForCargo, homeKeep, hubDeliveryLoad } from './logistics.js';
 import { hubRent, storageUpgradeCost } from '../market.js';
 import { hopeless } from './directives.js';
@@ -433,6 +434,15 @@ const TRADED = ['ORE', 'POLYMERS'] as const;
  * не трогая слот стройки. Дальше цель не ждут, а строят посильное из плана.
  */
 const SAVING_HORIZON_HOURS = 6;
+
+/**
+ * Сколько часов собственной добычи плазмы экспедиция оставляет на складе.
+ *
+ * Выше порога «хронического дефицита» (час): иначе пустой склад плазмы
+ * ставил бы плазменный реактор первым пунктом плана — и копили бы на него,
+ * а не на то, что нужно.
+ */
+const EXPEDITION_PLASMA_KEEP_HOURS = 1.5;
 
 /* ------------------------- Кошельки ------------------------- */
 
@@ -1526,6 +1536,12 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
     }
   };
 
+  /**
+   * Сколько плазмы ждет наука: цена выбранной или ожидаемой технологии.
+   * Ее не трогают экспедиции — см. правило экспедиций ниже.
+   */
+  let researchPlasma = 0;
+
   /* --- Наука: одна на командира, поэтому считается от столицы --- */
   if (!snapshot.researching) {
     const strategicTech = strategicStep?.kind === 'RESEARCH' ? strategicStep.tech : null;
@@ -1542,6 +1558,8 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
           ? strategicTech
           : null
         : nextResearch(snapshot.techs, capital.levels, snapshot.character, purse, profile);
+    if (strategicCost) researchPlasma = strategicCost.plasma;
+    else if (tech) researchPlasma = researchCost(tech, snapshot.techs[tech] + 1).plasma;
     if (tech) {
       intents.push({
         kind: 'RESEARCH',
@@ -1559,6 +1577,7 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
         if (missingTechRequirements(candidate, capital.levels, snapshot.techs).length > 0) continue;
         const cost = researchCost(candidate, snapshot.techs[candidate] + 1);
         rememberNeed(cost);
+        if (!strategicCost) researchPlasma = cost.plasma;
         for (const resource of STORED_RESOURCES) {
           if (cost[resource] > capital.resources[resource]) shortfall.add(resource);
         }
@@ -2043,12 +2062,46 @@ export function decide(snapshot: BotSnapshot, override?: BotPersonality): BotInt
         ships[type] = Math.max(1, Math.floor(explorer.ships[type] / 4));
         break;
       }
-      intents.push({
-        kind: 'EXPEDITION',
-        baseId: explorer.id,
+
+      /*
+       * Экспедиция летит на плазму, и только на ту, что лишняя.
+       *
+       * Раньше она уходила, как только освобождался слот, — у живых ботов
+       * по 130–350 вылетов в сутки на 500–900 плазмы каждый. Плазма стояла
+       * у нуля при добыче в двадцать тысяч в час, и это запирало все
+       * остальное: пятеро из семи держали лабораторию пустой, ожидая
+       * «Астрофизику» за десять тысяч плазмы, которая не копилась никогда,
+       * а пустой склад плазмы ставил реактор первым пунктом плана стройки.
+       * Находка экспедиции — руда и полимеры, которых и так в избытке;
+       * плазма — узкое место науки. Поэтому экспедиция оставляет на складе
+       * цену ожидаемой технологии и полтора часа добычи плазмы сверх нее.
+       */
+      const home: GalaxyPoint = { galaxyX: 0, galaxyY: 0 };
+      const fuel = planFlight(
         ships,
-        why: `свободных экспедиционных слотов ${snapshot.expeditionSlots - snapshot.expeditionsInFlight}`,
-      });
+        snapshot.techs,
+        { position: explorer.orbit, system: home },
+        { position: DEEP_SPACE_POSITION, system: home },
+      ).fuel;
+      const plasmaRate = productionPerSecond(
+        explorer.levels,
+        explorer.richness,
+        economyBonuses(snapshot.techs),
+        0,
+        systemModifiers(explorer.anomaly),
+        timeCompressionDrain(snapshot.techs),
+      ).plasma;
+      const keep =
+        (explorer.id === capital.id ? researchPlasma : 0) +
+        plasmaRate * 3600 * EXPEDITION_PLASMA_KEEP_HOURS;
+      if (explorer.resources.plasma - fuel >= keep) {
+        intents.push({
+          kind: 'EXPEDITION',
+          baseId: explorer.id,
+          ships,
+          why: `свободных экспедиционных слотов ${snapshot.expeditionSlots - snapshot.expeditionsInFlight}`,
+        });
+      }
     }
   }
 
