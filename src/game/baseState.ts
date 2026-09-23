@@ -186,8 +186,15 @@ export interface BaseRuntimeState {
   lastTickAt: number;
   /** Изменились ресурсы/уровни — нужна периодическая запись. */
   dirty: boolean;
-  /** Изменились очереди или флот — нужна немедленная запись. */
+  /** Изменились очереди, флот или оборона — их строки надо переписать. */
   jobsDirty: boolean;
+  /**
+   * Что лежит в базе по последней успешной записи; `null` — еще не писали.
+   * По ним сброс пишет только изменившиеся классы, а не все двенадцать
+   * кораблей и пять установок на каждый выпущенный корпус.
+   */
+  savedShips?: ShipCounts | null;
+  savedDefenses?: DefenseCounts | null;
 }
 
 export interface CommanderRuntimeState {

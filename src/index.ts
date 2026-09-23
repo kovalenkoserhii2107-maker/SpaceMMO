@@ -65,9 +65,15 @@ app.use('/api', gameRouter);
 
 const httpServer = createServer(app);
 
+/*
+ * Сжатие кадров сокета включено: снимок состояния весит около 34 КБ и уходит
+ * каждому игроку раз в секунду — это сто с лишним мегабайт в час на телефоне.
+ * Сжатый он втрое-впятеро меньше, а статику и так сжимает прокси Fly, но кадры
+ * сокета он не трогает. Мелкие события сжимать незачем — отсюда порог.
+ */
 const io = new Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>(
   httpServer,
-  { cors: { origin: true } },
+  { cors: { origin: true }, perMessageDeflate: { threshold: 1024 } },
 );
 
 /**

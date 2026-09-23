@@ -2615,17 +2615,47 @@
    * очереди и стоят на нуле: верфь собирает заказы подряд, а не разом.
    */
   function renderUnitQueue(node, jobs, emptyText, onCancel) {
-    node.innerHTML = '';
-    if (!jobs.length) {
-      const empty = document.createElement('div');
-      empty.className = 'queue-item';
-      empty.textContent = emptyText;
-      node.appendChild(empty);
-      return;
+    /*
+     * Разметка собирается один раз на состав очереди, а каждую секунду
+     * обновляются только числа и полоса. Прежде очередь пересобиралась
+     * целиком раз в секунду вместе с кнопкой «Отменить», и нажатие,
+     * попавшее на перерисовку, терялось: палец опускался на старую кнопку,
+     * а поднимался уже над новой.
+     */
+    const signature = jobs.map((job) => job.id).join('|') || 'empty';
+    if (node.dataset.signature !== signature) {
+      node.dataset.signature = signature;
+      node.innerHTML = '';
+      if (!jobs.length) {
+        const empty = document.createElement('div');
+        empty.className = 'queue-item';
+        empty.textContent = emptyText;
+        node.appendChild(empty);
+        return;
+      }
+      jobs.forEach((job, index) => {
+        const item = document.createElement('div');
+        item.className = `job-banner${index === 0 ? '' : ' queued'}`;
+        item.dataset.job = job.id;
+        item.innerHTML =
+          '<div class="job-title"><span></span><b></b></div>' +
+          '<div class="bar"><i></i></div>' +
+          '<div class="job-meta"><span class="job-done"></span><span class="job-next"></span>' +
+          (typeof onCancel === 'function' ? '<button type="button" class="job-cancel">Отменить</button>' : '') +
+          '</div>';
+        // Возвращается за неотгруженные корпуса; наполовину собранный текущий
+        // сгорает, иначе отмена за секунду до выпуска собирала бы флот даром.
+        const cancel = item.querySelector('.job-cancel');
+        if (cancel) cancel.onclick = () => onCancel(job.id);
+        node.appendChild(item);
+      });
     }
+    if (!jobs.length) return;
 
     let waitBefore = 0;
     jobs.forEach((job, index) => {
+      const item = node.children[index];
+      if (!item) return;
       const done = job.quantity - job.remaining;
       // Время до конца заказа: текущая единица плюс оставшиеся целиком.
       // Для заказов из хвоста очереди к этому добавляется ожидание предыдущих.
@@ -2641,22 +2671,12 @@
       // Полоса меряет заказ целиком: собранные единицы плюс доля текущей.
       const progress = job.quantity > 0 ? (done + unitDone) / job.quantity : 0;
 
-      const item = document.createElement('div');
-      item.className = `job-banner${index === 0 ? '' : ' queued'}`;
-      item.innerHTML =
-        `<div class="job-title"><span>${escapeHtml(job.label)} · ${job.quantity} шт.</span>` +
-        `<b>${index === 0 ? 'осталось ' : 'готово через '}${fmtTime(totalSeconds)}</b></div>` +
-        '<div class="bar"><i></i></div>' +
-        `<div class="job-meta"><span>собрано ${done} из ${job.quantity}</span>` +
-        `<span>${index === 0 ? `выпуск через ${fmtTime(job.nextUnitInSeconds)}` : 'ждет очереди'} · по ${fmtTime(job.unitSeconds)} за штуку</span>` +
-        (typeof onCancel === 'function' ? '<button type="button" class="job-cancel">Отменить</button>' : '') +
-        '</div>';
+      item.querySelector('.job-title span').textContent = `${job.label} · ${job.quantity} шт.`;
+      item.querySelector('.job-title b').textContent = `${index === 0 ? 'осталось ' : 'готово через '}${fmtTime(totalSeconds)}`;
       item.querySelector('.bar > i').style.width = `${Math.min(100, Math.max(0, progress * 100)).toFixed(1)}%`;
-      // Возвращается за неотгруженные корпуса; наполовину собранный текущий
-      // сгорает, иначе отмена за секунду до выпуска собирала бы флот даром.
-      const cancel = item.querySelector('.job-cancel');
-      if (cancel) cancel.onclick = () => onCancel(job.id);
-      node.appendChild(item);
+      item.querySelector('.job-done').textContent = `собрано ${done} из ${job.quantity}`;
+      item.querySelector('.job-next').textContent =
+        `${index === 0 ? `выпуск через ${fmtTime(job.nextUnitInSeconds)}` : 'ждет очереди'} · по ${fmtTime(job.unitSeconds)} за штуку`;
     });
   }
 
@@ -4476,6 +4496,21 @@
     }
   }
 
+  /*
+   * Карточка цели пересобирается, только когда меняется ее содержимое.
+   * Рисуется она на каждое обновление состояния, то есть раз в секунду,
+   * и полная пересборка каждый раз стирала встроенное «Написать Ник?»
+   * у владельца через секунду после появления, а нажатие на «Разведать»,
+   * попавшее на перерисовку, терялось.
+   */
+  let planetInfoHtml = '';
+  function setPlanetInfo(html) {
+    if (html === planetInfoHtml) return false;
+    planetInfoHtml = html;
+    el.planetInfo.innerHTML = html;
+    return true;
+  }
+
   function renderPlanetInfo() {
     const base = activeBase();
     el.planetInfo.onclick = (event) => {
@@ -4484,12 +4519,12 @@
 
     if (deepSpaceSelected()) {
       const slots = war.data && war.data.expeditionSlots;
-      el.planetInfo.innerHTML =
+      setPlanetInfo(
         tcHead('Глубокий космос', `${map.data.systemName} · за 15-й орбитой`, '<span class="tc-chip">экспедиция</span>') +
         '<div class="tc-rows">' +
         tcRow('Что там', 'брошенный груз, пираты или ничего') +
         (slots ? tcRow('Слоты', `<b>${slots.used}</b> из <b>${slots.total}</b> заняты`) : '') +
-        '</div>';
+        '</div>');
       showDispatch(base);
       return;
     }
@@ -4509,11 +4544,11 @@
       if (kish.debris && kish.debris.ore + kish.debris.polymers > 0) {
         rows += tcRow('Осколки', `${icon('ore', 'sm')} ${fmt(kish.debris.ore)} · ${icon('polymers', 'sm')} ${fmt(kish.debris.polymers)}`, 'debris');
       }
-      el.planetInfo.innerHTML =
+      setPlanetInfo(
         tcHead(kish.name, `хаб синдиката · ур. ${kish.level}`,
           kish.own ? '<span class="tc-chip own">ваш синдикат</span>' : '<span class="tc-chip foe">чужой синдикат</span>',
           '/assets/planets/kish.webp') +
-        `<div class="tc-rows">${rows}</div>`;
+        `<div class="tc-rows">${rows}</div>`);
       showDispatch(base);
       return;
     }
@@ -4524,9 +4559,9 @@
         ? tcRow('Твой склад', `${icon('ore', 'sm')} ${fmt(hub.storage.ore)} · ${icon('polymers', 'sm')} ${fmt(hub.storage.polymers)}`) +
           tcRow('Свободно', `<b>${fmt(hub.storage.free)}</b> из ${fmt(hub.storage.capacity)}`)
         : '';
-      el.planetInfo.innerHTML =
+      setPlanetInfo(
         tcHead(hub.name, `торговая станция · орбита ${hub.position}`, '<span class="tc-chip">биржа</span>') +
-        (rows ? `<div class="tc-rows">${rows}</div>` : '');
+        (rows ? `<div class="tc-rows">${rows}</div>` : ''));
       showDispatch(base);
       return;
     }
@@ -4542,14 +4577,14 @@
        */
       const coord = map.coordTarget;
       if (coord) el.coordFold.open = true;
-      el.planetInfo.innerHTML = coord
+      const coordChanged = setPlanetInfo(coord
         ? tcHead(coord.planetName, `${coord.systemName} · орбита ${coord.position} · ${coord.galaxyX}:${coord.galaxyY}`,
           coord.isOwn ? '<span class="tc-chip own">ваша колония</span>'
             : coord.owner ? '<span class="tc-chip foe">владелец <span class="tc-owner"></span></span>'
               : '<span class="tc-chip free">свободна</span>') +
           (coord.isOwn ? '' : scanLine('Цель задана координатами — разведданных здесь нет', 'outdated', true))
-        : '<p class="tc-empty">Выбери планету на карте — здесь появится, что о ней известно и что с ней можно сделать.</p>';
-      const coordOwner = el.planetInfo.querySelector('.tc-owner');
+        : '<p class="tc-empty">Выбери планету на карте — здесь появится, что о ней известно и что с ней можно сделать.</p>');
+      const coordOwner = coordChanged && el.planetInfo.querySelector('.tc-owner');
       if (coordOwner && coord && coord.owner) coordOwner.appendChild(nickNode(coord.owner));
 
       el.dispatch.hidden = !base || !coord;
@@ -4557,9 +4592,9 @@
       return;
     }
 
-    el.planetInfo.innerHTML = planetCardHtml(planet);
+    const changed = setPlanetInfo(planetCardHtml(planet));
     // Владелец — кнопка: с ним чаще всего и хотят договориться до вылета.
-    const ownerSlot = el.planetInfo.querySelector('.tc-owner');
+    const ownerSlot = changed && el.planetInfo.querySelector('.tc-owner');
     if (ownerSlot && planet.owner) ownerSlot.appendChild(nickNode(planet.owner));
     const own = !map.coordTarget && planet.planetId === base?.planetId;
     el.dispatch.hidden = !base || own;
@@ -5088,10 +5123,39 @@
     for (const node of [el.fleetList, el.overviewFleets]) fillFleetList(node);
   }
 
+  /*
+   * Список собирается по составу рейсов, а раз в секунду обновляется только
+   * строка со временем. Прежде он пересобирался целиком каждую секунду,
+   * и «Отозвать» у удержания пересоздавалась под пальцем — нажатие на стыке
+   * перерисовки терялось.
+   */
+  function fleetRowParts(fleet) {
+    const direction = fleet.status === 'OUTBOUND'
+      ? `${fleet.originPlanetName} → ${fleet.targetName}`
+      : fleet.status === 'HOLDING'
+        ? `${fleet.targetName} (на удержании)`
+        : `${fleet.targetName} → ${fleet.originPlanetName} (возврат)`;
+    // Строка груза содержит иконки-разметку, поэтому только innerHTML:
+    // через textContent теги вывалились бы в интерфейс текстом.
+    const cargo = fleet.cargo.ore + fleet.cargo.polymers > 0
+      ? `, груз ${icon('ore', 'sm')} ${fmt(fleet.cargo.ore)} · ` +
+        `${icon('polymers', 'sm')} ${fmt(fleet.cargo.polymers)}` +
+        (fleet.cargo.plasma > 0 ? ` · ${icon('plasma', 'sm')} ${fmt(fleet.cargo.plasma)}` : '')
+      : '';
+    return {
+      title: `${fleet.missionLabel}: ${direction}`,
+      body: `${escapeHtml(fleet.composition)}${cargo} · `,
+      // Удержание можно прервать: флот идет домой, а не стоит до конца срока.
+      recall: fleet.mission === 'HOLD' && (fleet.status === 'OUTBOUND' || fleet.status === 'HOLDING'),
+    };
+  }
+
   function fillFleetList(node) {
     if (!node) return;
-    node.innerHTML = '';
     if (!state.fleets.length) {
+      if (node.dataset.signature === 'empty') return;
+      node.dataset.signature = 'empty';
+      node.innerHTML = '';
       const empty = document.createElement('div');
       empty.className = 'queue-item';
       empty.textContent = 'Флотов в полете нет';
@@ -5099,42 +5163,41 @@
       return;
     }
 
-    for (const fleet of state.fleets) {
-      const item = document.createElement('div');
-      item.className = 'queue-item';
-      const title = document.createElement('b');
-      const direction = fleet.status === 'OUTBOUND'
-        ? `${fleet.originPlanetName} → ${fleet.targetName}`
-        : fleet.status === 'HOLDING'
-          ? `${fleet.targetName} (на удержании)`
-          : `${fleet.targetName} → ${fleet.originPlanetName} (возврат)`;
-      const cargo = fleet.cargo.ore + fleet.cargo.polymers > 0
-        ? `, груз ${icon('ore', 'sm')} ${fmt(fleet.cargo.ore)} · ` +
-          `${icon('polymers', 'sm')} ${fmt(fleet.cargo.polymers)}` +
-          (fleet.cargo.plasma > 0 ? ` · ${icon('plasma', 'sm')} ${fmt(fleet.cargo.plasma)}` : '')
-        : '';
-      title.textContent = `${fleet.missionLabel}: ${direction}`;
-      const meta = document.createElement('span');
-      // Строка груза содержит иконки-разметку, поэтому только innerHTML:
-      // через textContent теги вывалились бы в интерфейс текстом.
+    const parts = state.fleets.map(fleetRowParts);
+    const signature = state.fleets
+      .map((fleet, index) => `${fleet.id}|${parts[index].title}|${parts[index].body}|${parts[index].recall}`)
+      .join('#');
+    if (node.dataset.signature !== signature) {
+      node.dataset.signature = signature;
+      node.innerHTML = '';
+      state.fleets.forEach((fleet, index) => {
+        const item = document.createElement('div');
+        item.className = 'queue-item';
+        const title = document.createElement('b');
+        title.textContent = parts[index].title;
+        const meta = document.createElement('span');
+        meta.innerHTML = `${parts[index].body}<span class="fleet-eta"></span>`;
+        item.append(title, meta);
+        if (parts[index].recall) {
+          const recall = document.createElement('button');
+          recall.type = 'button';
+          recall.className = 'ghost tiny';
+          recall.textContent = 'Отозвать';
+          recall.addEventListener('click', () => void send(`/api/fleets/${fleet.id}/recall`, {}));
+          item.appendChild(recall);
+        }
+        node.appendChild(item);
+      });
+    }
+
+    state.fleets.forEach((fleet, index) => {
+      const eta = node.children[index] && node.children[index].querySelector('.fleet-eta');
+      if (!eta) return;
       const holdLeft = fleet.status === 'HOLDING' && fleet.holdUntil
         ? Math.max(0, Math.ceil((fleet.holdUntil - Date.now()) / 1000))
         : null;
-      meta.innerHTML =
-        `${escapeHtml(fleet.composition)}${cargo} · ` +
-        (holdLeft !== null ? `удержание еще ${fmtTime(holdLeft)}` : `прибытие через ${fmtTime(fleet.etaSeconds)}`);
-      item.append(title, meta);
-      // Удержание можно прервать: флот идет домой, а не стоит до конца срока.
-      if (fleet.mission === 'HOLD' && (fleet.status === 'OUTBOUND' || fleet.status === 'HOLDING')) {
-        const recall = document.createElement('button');
-        recall.type = 'button';
-        recall.className = 'ghost tiny';
-        recall.textContent = 'Отозвать';
-        recall.addEventListener('click', () => void send(`/api/fleets/${fleet.id}/recall`, {}));
-        item.appendChild(recall);
-      }
-      node.appendChild(item);
-    }
+      eta.textContent = holdLeft !== null ? `удержание еще ${fmtTime(holdLeft)}` : `прибытие через ${fmtTime(fleet.etaSeconds)}`;
+    });
   }
 
   /* От склада на хабе до рейса за ним — один шаг. */

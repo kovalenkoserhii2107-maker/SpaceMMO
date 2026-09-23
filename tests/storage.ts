@@ -423,10 +423,11 @@ if (registered.status !== 200 && registered.status !== 201) {
     'карточка склада объясняет прирост вместимости',
     // Карточка печатает числа с разрядными пробелами, поэтому сверяем цифры,
     // а не форматирование.
+    // Эффект приходит разобранным на значок и текст (`{ icon, text }`).
     storages.every(
-      (card) => typeof card?.effect === 'string' && card.effect.replace(/\s/gu, '').includes('3500'),
+      (card) => typeof card?.effect?.text === 'string' && card.effect.text.replace(/\s/gu, '').includes('3500'),
     ),
-    storages[0]?.effect,
+    JSON.stringify(storages[0]?.effect),
   );
 }
 

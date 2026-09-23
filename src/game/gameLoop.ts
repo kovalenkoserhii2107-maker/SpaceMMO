@@ -65,6 +65,7 @@ import {
   emptyDefenseCounts,
   MAX_DEFENSE_ORDER,
   missingDefenseRequirements,
+  type DefenseCounts,
   type DefenseType,
 } from './defenses.js';
 import { resolveEspionage, espionageSeed } from './espionage.js';
@@ -476,6 +477,10 @@ class GameLoop {
         lastTickAt: Math.max(base.lastTickAt.getTime(), now - MAX_OFFLINE_SECONDS * 1000),
         dirty: false,
         jobsDirty: false,
+        // Прочитанное из базы и есть записанное — но только если строки есть
+        // у всех классов: недостающую строку первый сброс должен создать.
+        savedShips: base.ships.length === SHIP_TYPES.length ? { ...ships } : null,
+        savedDefenses: base.defenses.length === DEFENSE_TYPES.length ? { ...defenses } : null,
       });
     }
 
@@ -1816,16 +1821,21 @@ class GameLoop {
       structural = true;
     }
 
+    /*
+     * Выпуск корпуса помечает базу, но немедленной записи не требует.
+     *
+     * Прежде каждый выпущенный корабль сохранял игрока сразу — транзакцией
+     * на два десятка запросов, — и верфь, собирающая истребитель раз
+     * в четыре секунды, давала больше четверти всех запросов к базе.
+     * Выпуск считается от абсолютных меток, поэтому после перезапуска
+     * он восстанавливается тем же расчетом, а все, кто читает корабли
+     * из базы (бой, рейтинг, пульт), сначала сбрасывают игрока сами.
+     * Запись уходит плановым сбросом раз в двадцать тиков.
+     */
     for (const base of commander.bases.values()) {
       this.accrueTo(base, commander, now);
-      if (this.settleQueue(base.shipJobs, base.ships, now)) {
-        base.jobsDirty = true;
-        structural = true;
-      }
-      if (this.settleQueue(base.defenseJobs, base.defenses, now)) {
-        base.jobsDirty = true;
-        structural = true;
-      }
+      if (this.settleQueue(base.shipJobs, base.ships, now)) base.jobsDirty = true;
+      if (this.settleQueue(base.defenseJobs, base.defenses, now)) base.jobsDirty = true;
     }
 
     return structural;
@@ -3679,6 +3689,8 @@ class GameLoop {
   private async persistCommander(commander: CommanderRuntimeState): Promise<void> {
     const operations: Array<Prisma.PrismaPromise<unknown>> = [];
     const touched: BaseRuntimeState[] = [];
+    /** Что эта запись положит в базу — станет «записанным» после успеха. */
+    const written = new Map<BaseRuntimeState, { ships: ShipCounts; defenses: DefenseCounts }>();
 
     /*
      * Намытая криптогривна уходит инкрементом, а не записью баланса.
@@ -3806,7 +3818,9 @@ class GameLoop {
           );
         }
 
+        written.set(base, { ships: { ...base.ships }, defenses: { ...base.defenses } });
         for (const type of SHIP_TYPES) {
+          if (base.savedShips && base.savedShips[type] === base.ships[type]) continue;
           operations.push(
             prisma.ship.upsert({
               where: { baseId_type: { baseId: base.id, type } },
@@ -3841,6 +3855,7 @@ class GameLoop {
         }
 
         for (const type of DEFENSE_TYPES) {
+          if (base.savedDefenses && base.savedDefenses[type] === base.defenses[type]) continue;
           operations.push(
             prisma.defense.upsert({
               where: { baseId_type: { baseId: base.id, type } },
@@ -3907,6 +3922,10 @@ class GameLoop {
 
     try {
       await prisma.$transaction(operations);
+      for (const [base, counts] of written) {
+        base.savedShips = counts.ships;
+        base.savedDefenses = counts.defenses;
+      }
     } catch (error) {
       console.error('[game-loop] ошибка сохранения состояния:', error);
       for (const base of touched) {

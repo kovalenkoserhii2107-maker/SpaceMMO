@@ -1,11 +1,28 @@
 /** Разбор пользовательского ввода: некорректные значения отклоняем, а не подгоняем молча. */
 import { emptyShipCounts, SHIP_TYPES, type ShipCounts } from '../game/ships.js';
 
-/** Целое число >= 0. Дробное, отрицательное или нечисловое — null. */
+/*
+ * Число из тела запроса: только число или строка с числом.
+ *
+ * Голый `Number()` принимал лишнее (правило 13): `true` становился единицей,
+ * `[5]` — пятеркой, строка из пробелов — нулем. Такое не приходит от формы,
+ * только от подделанного запроса, и отвечать на него надо отказом.
+ */
+function numeric(value: unknown): number {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string' && /^\s*-?\d+(\.\d+)?\s*$/.test(value)) return Number(value);
+  return Number.NaN;
+}
+
+/**
+ * Целое число >= 0. Дробное, отрицательное или нечисловое — null.
+ * Больше безопасного целого — тоже null: дальше `1e300` проходил бы
+ * как «целое» и доезжал до расчетов цены и трюмов.
+ */
 export function nonNegativeInt(value: unknown, fallback = 0): number | null {
   if (value === undefined || value === null || value === '') return fallback;
-  const parsed = typeof value === 'number' ? value : Number(value);
-  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 0) return null;
+  const parsed = numeric(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) return null;
   return parsed;
 }
 
@@ -18,7 +35,7 @@ export function positiveInt(value: unknown): number | null {
 
 /** Положительная цена с точностью до сотых. */
 export function positivePrice(value: unknown): number | null {
-  const parsed = typeof value === 'number' ? value : Number(value);
+  const parsed = numeric(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return null;
   return Math.round(parsed * 100) / 100;
 }
