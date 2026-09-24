@@ -1143,6 +1143,8 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 /* Прозрачная площадка под свечением: у туманности нет края, ловить клик нечем. */
 .hit-area { fill: transparent; }
 .fleet-line { stroke: rgba(157, 123, 255, 0.5); stroke-width: 1.5; stroke-dasharray: 4 4; }
+/* Рейс через Браму: цвет врат и редкий пунктир — прыжок, а не путь. */
+.fleet-line.gate-route { stroke: rgba(77, 210, 255, 0.65); stroke-dasharray: 2 7; }
 .fleet-marker { fill: var(--accent-2); }
 
 /*
@@ -4152,3 +4154,19 @@ button.war-row-head:hover { background: rgba(120, 160, 255, 0.06); }
   .stepper input { width: 44px; padding: 8px 2px; }
   .ship-row { gap: 6px; padding: 6px; }
 }
+
+/* ---------- Аренда Брам ---------- */
+
+.kish-leases { margin-top: 14px; }
+.kish-leases:empty { display: none; }
+.lease-note { margin: 0 0 10px; font-size: 12px; line-height: 1.45; }
+.lease-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+.lease-form .primary { padding: 9px 14px; }
+.lease-row.ended { opacity: 0.6; }
+.chip.ok { color: var(--ok); border-color: rgba(74, 222, 128, 0.4); }

@@ -288,6 +288,8 @@ export interface FleetSnapshot {
   departedAt: number;
   arrivesAt: number;
   returnsAt: number;
+  /** Рейс через Браму: доля пути в одну сторону до мгновенного прыжка; `null` — без врат. */
+  gateShare: number | null;
   etaSeconds: number;
   progress: number;
 }
@@ -332,6 +334,17 @@ export interface SystemMap {
   planets: PlanetView[];
   hub: HubView | null;
   kishes: KishView[];
+  /** Брамы в системе: чьи, какого уровня и можно ли смотрящему через них прыгать. */
+  gates: GateView[];
+}
+
+/** Брама на карте системы. `access` — основание доступа смотрящего; `null` — чужая. */
+export interface GateView {
+  syndicateId: string;
+  tag: string;
+  level: number;
+  position: number;
+  access: 'OWN' | 'ALLY' | 'LEASED' | null;
 }
 
 /** Система на макро-карте галактики. */
@@ -349,8 +362,10 @@ export interface GalaxySystemView {
   colonized: boolean;
   /** Сколько планет системы игрок успел разведать. */
   scannedPlanets: number;
-  /** Уровень Брамы своего синдиката в системе; `null` — Брамы нет. */
+  /** Уровень Брамы, через которую смотрящий может прыгать отсюда; `null` — такой нет. */
   syndicateGate: number | null;
+  /** Чья это Брама для смотрящего: своя, союзника или арендованная. */
+  gateAccess: 'OWN' | 'ALLY' | 'LEASED' | null;
   /** Здесь стоит Кіш своего синдиката. */
   ownKish: boolean;
 }

@@ -86,8 +86,15 @@ export function isKishMission(mission: FleetMission): boolean {
 }
 
 interface FlightProfile {
-  /** Базовая скорость: чем выше, тем короче перелет. */
+  /** Скорость на обычной тяге, внутри системы: чем выше, тем короче перелет. */
   speed: number;
+  /**
+   * Скорость в гиперпространстве, между системами. У всех, кроме зонда,
+   * она равна обычной; зонд — курьер: систему он пересекает за секунды,
+   * а галактику за пару минут, и в состав флота это не переносится —
+   * флот идет со скоростью самого медленного.
+   */
+  warp: number;
   /** Грузоподъемность: руда, полимеры и плазма делят один трюм. */
   cargo: number;
   /** Расход плазмы в секунду полета на один корабль. */
@@ -103,40 +110,77 @@ export function flightProfile(type: ShipType): FlightProfile {
 }
 
 const FLIGHT_PROFILES: Record<ShipType, FlightProfile> = {
-  PROBE: { speed: 200, cargo: 0, fuelPerSecond: 0.05, antimatterPerDistance: 0.2 },
-  SMALL_CARGO: { speed: 100, cargo: 2000, fuelPerSecond: 0.4, antimatterPerDistance: 1.5 },
+  /*
+   * Зонд — единственный курьер: через систему за двадцать секунд, через всю
+   * галактику за две минуты. Разведка должна успевать раньше флота, который
+   * по ней посылают, иначе снимок устаревал бы в пути.
+   */
+  PROBE: { speed: 6000, warp: 180000, cargo: 0, fuelPerSecond: 0.05, antimatterPerDistance: 0.2 },
+  SMALL_CARGO: { speed: 100, warp: 100, cargo: 2000, fuelPerSecond: 0.4, antimatterPerDistance: 1.5 },
   // «Чумак» быстрее «Чайки»: за шестикратный трюм платят не скоростью, а ценой
   // постройки и расходом — иначе большой грузовик не имел бы смысла вовсе.
-  LARGE_CARGO: { speed: 140, cargo: 12000, fuelPerSecond: 1.2, antimatterPerDistance: 3.0 },
-  LIGHT_FIGHTER: { speed: 150, cargo: 50, fuelPerSecond: 0.2, antimatterPerDistance: 0.8 },
-  HEAVY_FIGHTER: { speed: 130, cargo: 100, fuelPerSecond: 0.4, antimatterPerDistance: 1.2 },
+  LARGE_CARGO: { speed: 140, warp: 140, cargo: 12000, fuelPerSecond: 1.2, antimatterPerDistance: 3.0 },
+  LIGHT_FIGHTER: { speed: 150, warp: 150, cargo: 50, fuelPerSecond: 0.2, antimatterPerDistance: 0.8 },
+  HEAVY_FIGHTER: { speed: 130, warp: 130, cargo: 100, fuelPerSecond: 0.4, antimatterPerDistance: 1.2 },
   // Тяжелые классы медленнее и прожорливее: за огневую мощь платят логистикой.
-  CRUISER: { speed: 90, cargo: 300, fuelPerSecond: 0.8, antimatterPerDistance: 2.5 },
-  FRIGATE: { speed: 120, cargo: 150, fuelPerSecond: 0.6, antimatterPerDistance: 2.0 },
-  BOMBER: { speed: 70, cargo: 500, fuelPerSecond: 1.5, antimatterPerDistance: 4.0 },
-  BATTLESHIP: { speed: 85, cargo: 1500, fuelPerSecond: 2.5, antimatterPerDistance: 6.0 },
+  CRUISER: { speed: 90, warp: 90, cargo: 300, fuelPerSecond: 0.8, antimatterPerDistance: 2.5 },
+  FRIGATE: { speed: 120, warp: 120, cargo: 150, fuelPerSecond: 0.6, antimatterPerDistance: 2.0 },
+  BOMBER: { speed: 70, warp: 70, cargo: 500, fuelPerSecond: 1.5, antimatterPerDistance: 4.0 },
+  BATTLESHIP: { speed: 85, warp: 85, cargo: 1500, fuelPerSecond: 2.5, antimatterPerDistance: 6.0 },
   // Авианосец тормозит любой флот, в котором идет: это цена его залпа по мелочи.
-  CARRIER: { speed: 60, cargo: 2000, fuelPerSecond: 3.0, antimatterPerDistance: 8.0 },
+  CARRIER: { speed: 60, warp: 60, cargo: 2000, fuelPerSecond: 3.0, antimatterPerDistance: 8.0 },
   // Переработчик: гигантский трюм ценой скорости и расхода плазмы.
   // За один рейс он собирает больше, чем десяток транспортов, но ползет и жжет.
-  RECYCLER: { speed: 40, cargo: 20000, fuelPerSecond: 3.0, antimatterPerDistance: 6.0 },
+  RECYCLER: { speed: 40, warp: 40, cargo: 20000, fuelPerSecond: 3.0, antimatterPerDistance: 6.0 },
   // Колонизатор везет припасы новой базы, поэтому трюм большой, а скорость
   // низкая: колонию основывают заранее, а не выигрывают гонку к планете.
-  COLONY_SHIP: { speed: 55, cargo: 5000, fuelPerSecond: 2.0, antimatterPerDistance: 5.0 },
+  COLONY_SHIP: { speed: 55, warp: 55, cargo: 5000, fuelPerSecond: 2.0, antimatterPerDistance: 5.0 },
 };
 
-/** Базовое время перелета между соседними орбитами, секунды. */
-const BASE_FLIGHT_SECONDS = 20;
-const SECONDS_PER_ORBIT = 25;
+/*
+ * Сроки полетов подобраны под темп месяца, а не под минуты.
+ *
+ * Прежде соседнюю систему флот проходил за три минуты, а свою — меньше чем
+ * за минуту: расстояние не значило ничего, и набег через полкарты стоил
+ * столько же времени, сколько на соседа. Теперь при скорости 100 без
+ * технологий до соседней планеты около пяти минут, через всю систему —
+ * двадцать; соседняя система — полчаса-час, самая дальняя — двое с лишним
+ * суток, а флот с переработчиком или авианосцем идет туда почти неделю.
+ */
+/** Разгон и торможение внутри системы, секунды при скорости 100. */
+const INTRA_BASE_SECONDS = 240;
+/** Секунд на орбиту при скорости 100. */
+const INTRA_SECONDS_PER_ORBIT = 64;
 /** Прирост скорости флота за уровень реактивного двигателя. */
 const DRIVE_SPEED_BONUS = 0.1;
 
-/** Постоянные затраты на разгон и выход из гиперпространства, секунды. */
-const JUMP_BASE_SECONDS = 120;
-/** Секунд полета на единицу расстояния между системами. */
-const JUMP_SECONDS_PER_DISTANCE = 30;
+/** Вход в гиперпространство и выход из него, секунды при скорости 100. */
+const JUMP_BASE_SECONDS = 1200;
+/**
+ * Секунд на квадрат расстояния между системами при скорости 100.
+ *
+ * Квадрат, а не прямая: соседние системы остаются соседями — полчаса-час,
+ * — а дальние становятся по-настоящему дальними. Прямая, откалиброванная
+ * под соседей, давала бы через всю галактику полдня, а откалиброванная
+ * под дальние — делала бы недельным поход к соседу.
+ */
+const JUMP_SECONDS_PER_DISTANCE_SQ = 300;
+/** Короче этого не бывает ни один прыжок, даже у зонда. */
+const JUMP_MIN_SECONDS = 20;
 /** Ускорение прыжка и экономия топлива за уровень гипердвигателя. */
 const HYPERDRIVE_BONUS = 0.15;
+
+/*
+ * Топливо считается по пройденному пути, а не по часам в полете.
+ *
+ * Сроки выросли впятеро, и с расходом «в секунду» так же выросла бы плазма
+ * на каждый рейс — вся логистика и экономика подобраны под прежний расход.
+ * Поэтому путь меряется прежней мерой: те же двадцать секунд разгона
+ * и двадцать пять на орбиту при скорости 100, — и расход не изменился
+ * ни у одного рейса, кроме зондов, которые стали быстрее и жгут меньше.
+ */
+const FUEL_BASE_UNITS = 20;
+const FUEL_UNITS_PER_ORBIT = 25;
 
 /** Координаты системы на макро-карте. */
 export interface GalaxyPoint {
@@ -175,12 +219,28 @@ function fleetSpeed(ships: ShipCounts, techs: TechLevels): number {
   return slowest * (1 + techs.COMBUSTION_DRIVE * DRIVE_SPEED_BONUS);
 }
 
-/** Время полета в одну сторону, секунды. */
+/** Гиперскорость флота: тоже по самому медленному, но от гиперскорости класса. */
+function fleetWarp(ships: ShipCounts): number {
+  let slowest = Number.POSITIVE_INFINITY;
+  for (const type of SHIP_TYPES) {
+    if (ships[type] > 0) slowest = Math.min(slowest, FLIGHT_PROFILES[type].warp);
+  }
+  return Number.isFinite(slowest) ? slowest : 0;
+}
+
+/** Время полета внутри системы в одну сторону, секунды. */
 function flightSeconds(ships: ShipCounts, techs: TechLevels, distance: number): number {
   const speed = fleetSpeed(ships, techs);
   if (speed <= 0) return 0;
-  const raw = ((BASE_FLIGHT_SECONDS + SECONDS_PER_ORBIT * distance) * 100) / speed;
+  const raw = ((INTRA_BASE_SECONDS + INTRA_SECONDS_PER_ORBIT * distance) * 100) / speed;
   return Math.max(5, Math.round(raw));
+}
+
+/** Путь внутри системы в прежней мере — по нему считается плазма. */
+function fuelPathSeconds(ships: ShipCounts, techs: TechLevels, distance: number): number {
+  const speed = fleetSpeed(ships, techs);
+  if (speed <= 0) return 0;
+  return Math.max(5, Math.round(((FUEL_BASE_UNITS + FUEL_UNITS_PER_ORBIT * distance) * 100) / speed));
 }
 
 /** Суммарная грузоподъемность флота. */
@@ -270,7 +330,7 @@ export function planFlight(
       speed: Math.round(fleetSpeed(ships, techs)),
       flightSeconds: seconds,
       capacity: fleetCapacity(ships, options.cargoMultiplier),
-      fuel: fuelCost(ships, seconds, trips),
+      fuel: fuelCost(ships, fuelPathSeconds(ships, techs, distance), trips),
       antimatter: 0,
     });
   }
@@ -286,6 +346,9 @@ export function planFlight(
     const toGate = flightSeconds(ships, techs, orbitDistance(from.position, GATE_POSITION));
     const fromGate = flightSeconds(ships, techs, orbitDistance(GATE_POSITION, to.position));
     const seconds = toGate + GATE_JUMP_SECONDS + fromGate;
+    const fuelPath =
+      fuelPathSeconds(ships, techs, orbitDistance(from.position, GATE_POSITION)) +
+      fuelPathSeconds(ships, techs, orbitDistance(GATE_POSITION, to.position));
     const neutral = { ...techs, HYPERDRIVE: 0 };
     return withHold({
       kind: 'INTERSTELLAR',
@@ -293,7 +356,7 @@ export function planFlight(
       speed: Math.round(fleetSpeed(ships, techs)),
       flightSeconds: seconds,
       capacity: fleetCapacity(ships, options.cargoMultiplier),
-      fuel: fuelCost(ships, toGate + fromGate, trips),
+      fuel: fuelCost(ships, fuelPath, trips),
       antimatter: Math.max(1, Math.ceil(jumpAntimatterCost(ships, neutral, distance, trips) * GATE_ANTIMATTER_SHARE)),
       viaGate: true,
     });
@@ -311,13 +374,30 @@ export function planFlight(
   });
 }
 
-/** Время гиперпрыжка в одну сторону: расстояние по макро-карте и гипердвигатель. */
+/**
+ * Какую долю пути в одну сторону рейс через Браму проходит до прыжка.
+ *
+ * Оба участка идут на одной скорости, а прыжок мгновенный, поэтому доля
+ * зависит только от орбит — и карта по ней ставит флот в систему вылета
+ * или в систему цели, а не тащит его по прямой через всю галактику.
+ */
+export function gateLegShare(fromPosition: number, toPosition: number): number {
+  const before = INTRA_BASE_SECONDS + INTRA_SECONDS_PER_ORBIT * orbitDistance(fromPosition, GATE_POSITION);
+  const after = INTRA_BASE_SECONDS + INTRA_SECONDS_PER_ORBIT * orbitDistance(GATE_POSITION, toPosition);
+  return before / (before + after);
+}
+
+/**
+ * Время гиперпрыжка в одну сторону: квадрат расстояния по макро-карте,
+ * гиперскорость самого медленного класса и гипердвигатель. Реактивный
+ * двигатель здесь не участвует: в гиперпространстве идут не на тяге.
+ */
 function jumpSeconds(ships: ShipCounts, techs: TechLevels, distance: number): number {
-  const speed = fleetSpeed(ships, techs);
-  if (speed <= 0) return 0;
+  const warp = fleetWarp(ships);
+  if (warp <= 0) return 0;
   const raw =
-    ((JUMP_BASE_SECONDS + JUMP_SECONDS_PER_DISTANCE * distance) * 100) / speed / hyperdriveFactor(techs);
-  return Math.max(30, Math.round(raw));
+    ((JUMP_BASE_SECONDS + JUMP_SECONDS_PER_DISTANCE_SQ * distance * distance) * 100) / warp / hyperdriveFactor(techs);
+  return Math.max(JUMP_MIN_SECONDS, Math.round(raw));
 }
 
 /** Расход антиматерии за маршрут; `trips` — как и у плазмы, число концов пути. */

@@ -113,6 +113,7 @@ model Commander {
   warsAgainst      WarDeclaration[]        @relation("WarTarget")
   achievements     CommanderAchievement[]
   bot              Bot?
+  gateLeases       GateLease[]
 
   @@map("commanders")
 }
@@ -227,6 +228,8 @@ model Syndicate {
   pactsFirst   SyndicatePact[]         @relation("PactFirst")
   construction SyndicateConstruction?
   pactsSecond  SyndicatePact[]         @relation("PactSecond")
+  leasesGiven  GateLease[]             @relation("GateLeaseOwner")
+  leasesTaken  GateLease[]             @relation("GateLeaseTenant")
 
   @@map("syndicates")
 }
@@ -393,6 +396,11 @@ enum SyndicateTxKind {
   KISH_RAIDED
   /// Возврат казны за отмененную стройку в Коше.
   BUILD_REFUND
+  /// Плата за аренду сети Брам: пришла владельцу и ушла из казны арендатора.
+  GATE_LEASE_INCOME
+  GATE_LEASE_PAYMENT
+  /// Возврат за неиспользованный срок, когда владелец расторг аренду.
+  GATE_LEASE_REFUND
 }
 
 enum SyndicatePermission {
@@ -1270,6 +1278,35 @@ model SyndicateGate {
 
   @@unique([syndicateId, systemId])
   @@map("syndicate_gates")
+}
+
+/// Аренда сети Брам: синдикат-владелец пускает в свои врата игрока или
+/// другой синдикат на срок за плату вперед. Статус выводится из дат, как
+/// у пактов: без `startsAt` — предложение, до `endsAt` — действует, дальше —
+/// история. Арендатор — игрок или синдикат, ровно одно из двух.
+model GateLease {
+  id                String    @id @default(cuid())
+  ownerSyndicateId  String
+  tenantCommanderId String?
+  tenantSyndicateId String?
+  /// Плата за весь срок, ₴; ноль — доступ в подарок.
+  price             Int
+  hours             Int
+  offeredById       String?
+  createdAt         DateTime  @default(now())
+  startsAt          DateTime?
+  endsAt            DateTime?
+  /// Кто заплатил: при досрочном расторжении владельцем возврат идет ему.
+  paidById          String?
+
+  owner           Syndicate  @relation("GateLeaseOwner", fields: [ownerSyndicateId], references: [id], onDelete: Cascade)
+  tenantCommander Commander? @relation(fields: [tenantCommanderId], references: [id], onDelete: Cascade)
+  tenantSyndicate Syndicate? @relation("GateLeaseTenant", fields: [tenantSyndicateId], references: [id], onDelete: Cascade)
+
+  @@index([ownerSyndicateId])
+  @@index([tenantCommanderId])
+  @@index([tenantSyndicateId])
+  @@map("gate_leases")
 }
 
 /// Оборона Коша: установки, купленные из казны. В бою восстанавливаются

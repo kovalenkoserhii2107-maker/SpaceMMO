@@ -16,10 +16,10 @@ import {
 } from '../game/fogOfWar.js';
 import { emptyDefenseCounts, type DefenseCounts, type DefenseType } from '../game/defenses.js';
 import { emptyShipCounts, type ShipCounts } from '../game/ships.js';
-import type { GalaxyMap, HubView, KishView, SystemMap } from '../types/socket.js';
-import { membershipOf } from './syndicateAccess.js';
+import type { GalaxyMap, GateView, HubView, KishView, SystemMap } from '../types/socket.js';
+import { gateAccessFor, membershipOf } from './syndicateAccess.js';
 import { hubStockUsage } from './hubStock.js';
-import { hasPermission, KISH_POSITION } from '../game/syndicate.js';
+import { GATE_POSITION, hasPermission, KISH_POSITION } from '../game/syndicate.js';
 
 /**
  * Карта одной системы для игрока.
@@ -44,7 +44,7 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
     : home.system;
   if (!targetSystem) return null;
 
-  const [planets, scans, hub, kishes, viewer] = await Promise.all([
+  const [planets, scans, hub, kishes, viewer, gateRows, gateAccess] = await Promise.all([
     prisma.planet.findMany({
       where: { systemId: targetSystem.id },
       orderBy: { position: 'asc' },
@@ -57,6 +57,12 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
     }),
     prisma.syndicate.findMany({ where: { kishSystemId: targetSystem.id }, include: { bank: true } }),
     prisma.commander.findUnique({ where: { id: commanderId }, select: { syndicateId: true } }),
+    prisma.syndicateGate.findMany({
+      where: { systemId: targetSystem.id },
+      include: { syndicate: { select: { tag: true } } },
+      orderBy: { level: 'desc' },
+    }),
+    gateAccessFor(commanderId),
   ]);
 
   const scanByPlanet = new Map(scans.map((scan) => [scan.planetId, scan]));
@@ -174,6 +180,15 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
     };
   });
 
+  // Брамы видны всем, как станции: постройка у звезды — не тайна разведки.
+  const gateViews: GateView[] = gateRows.map((row) => ({
+    syndicateId: row.syndicateId,
+    tag: row.syndicate.tag,
+    level: row.level,
+    position: GATE_POSITION,
+    access: gateAccess.get(row.syndicateId) ?? null,
+  }));
+
   return {
     systemId: targetSystem.id,
     systemName: targetSystem.name,
@@ -185,6 +200,7 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
     planets: views,
     hub: hubView,
     kishes: kishViews,
+    gates: gateViews,
   };
 }
 
@@ -206,7 +222,7 @@ export async function buildGalaxyMap(commanderId: string): Promise<GalaxyMap | n
   });
   if (!home) return null;
 
-  const [systems, scans, member] = await Promise.all([
+  const [systems, scans, member, access] = await Promise.all([
     prisma.solarSystem.findMany({
       orderBy: [{ galaxyX: 'asc' }, { galaxyY: 'asc' }],
       include: {
@@ -216,11 +232,25 @@ export async function buildGalaxyMap(commanderId: string): Promise<GalaxyMap | n
     prisma.planetScan.findMany({ where: { commanderId }, select: { planetId: true } }),
     prisma.commander.findUnique({
       where: { id: commanderId },
-      select: { syndicate: { select: { kishSystemId: true, gates: { select: { systemId: true, level: true } } } } },
+      select: { syndicate: { select: { kishSystemId: true } } },
     }),
+    gateAccessFor(commanderId),
   ]);
-  // Сеть своих Брам и Кіш на карте галактики: по ним видно, куда можно прыгнуть без гипердвигателя.
-  const gateLevel = new Map((member?.syndicate?.gates ?? []).map((gate) => [gate.systemId, gate.level]));
+  /*
+   * Сеть доступных Брам на карте галактики: свои, союзника и арендованные.
+   * По ним видно, куда можно прыгнуть мгновенно; в системе берется лучшая
+   * по основанию доступа, как и при вылете.
+   */
+  const gateRows = access.size
+    ? await prisma.syndicateGate.findMany({ where: { syndicateId: { in: [...access.keys()] } }, select: { systemId: true, level: true, syndicateId: true } })
+    : [];
+  const accessRank = { OWN: 0, ALLY: 1, LEASED: 2 } as const;
+  const gateBySystem = new Map<string, { level: number; access: 'OWN' | 'ALLY' | 'LEASED' }>();
+  for (const row of gateRows) {
+    const kind = access.get(row.syndicateId)!;
+    const current = gateBySystem.get(row.systemId);
+    if (!current || accessRank[kind] < accessRank[current.access]) gateBySystem.set(row.systemId, { level: row.level, access: kind });
+  }
 
   const scanned = new Set(scans.map((scan) => scan.planetId));
 
@@ -238,7 +268,8 @@ export async function buildGalaxyMap(commanderId: string): Promise<GalaxyMap | n
       hasOwnColony: system.planets.some((planet) => planet.base?.commanderId === commanderId),
       colonized: system.planets.some((planet) => planet.base !== null),
       scannedPlanets: system.planets.filter((planet) => scanned.has(planet.id)).length,
-      syndicateGate: gateLevel.get(system.id) ?? null,
+      syndicateGate: gateBySystem.get(system.id)?.level ?? null,
+      gateAccess: gateBySystem.get(system.id)?.access ?? null,
       ownKish: member?.syndicate?.kishSystemId === system.id,
     })),
   };

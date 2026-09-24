@@ -135,6 +135,11 @@ export interface FleetRuntimeState {
   departedAt: number;
   arrivesAt: number;
   returnsAt: number;
+  /**
+   * Рейс через Браму: доля пути в одну сторону до прыжка (`gateLegShare`);
+   * `null` — обычный полет.
+   */
+  gateShare: number | null;
 }
 
 export interface ResearchHelperState {
@@ -804,6 +809,7 @@ export function fleetSnapshots(commander: CommanderRuntimeState, now: number): F
       departedAt: fleet.departedAt,
       arrivesAt: fleet.arrivesAt,
       returnsAt: fleet.returnsAt,
+      gateShare: fleet.gateShare,
       etaSeconds: Math.max(0, Math.ceil((legEnd - now) / 1000)),
       progress: Math.min(1, Math.max(0, (now - legStart) / legTotal)),
     };

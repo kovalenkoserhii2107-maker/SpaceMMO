@@ -265,7 +265,12 @@ export function syndicateBuffs(levels: SyndicateTechLevels, joinedAt: number | n
 export const BRAMA_BASE = { credits: 5_000_000, ore: 2_000_000, polymers: 2_000_000 } as const;
 export const BRAMA_THROUGHPUT_PER_LEVEL = 200;
 export const GATE_ANTIMATTER_SHARE = 0.3;
-export const GATE_JUMP_SECONDS = 120;
+/**
+ * Прыжок через Браму мгновенный: время рейса — только путь по орбитам
+ * до врат и от врат. В этом и смысл врат при недельных перелетах через
+ * галактику — расстояние между системами для них перестает существовать.
+ */
+export const GATE_JUMP_SECONDS = 0;
 /** Врата стоят у звезды, как хаб и Кіш. */
 export const GATE_POSITION = 0;
 
@@ -281,6 +286,39 @@ export function bramaUpgradeCost(targetLevel: number): TreasuryCost {
 /** Сколько кораблей Брама пропускает за час. */
 export function bramaThroughput(level: number): number {
   return BRAMA_THROUGHPUT_PER_LEVEL * Math.max(0, Math.floor(level));
+}
+
+/*
+ * Аренда сети Брам.
+ *
+ * Синдикат-владелец пускает в свои врата игрока или другой синдикат на срок
+ * за плату вперед. Сроки — фиксированный набор: договор читается одной
+ * строкой («неделя за миллион»), а произвольные часы превратили бы список
+ * предложений в таблицу, которую надо считать. Плата уходит в казну
+ * владельца — это перевод, а не сток: деньги мира не исчезают.
+ */
+export const GATE_LEASE_HOURS = [24, 72, 168, 720] as const;
+export type GateLeaseHours = (typeof GATE_LEASE_HOURS)[number];
+/** Потолок платы — защита от лишних нулей, как у взноса в казну. */
+export const GATE_LEASE_PRICE_MAX = 1_000_000_000;
+
+export function isGateLeaseHours(value: unknown): value is GateLeaseHours {
+  return typeof value === 'number' && (GATE_LEASE_HOURS as readonly number[]).includes(value);
+}
+
+/**
+ * Возврат за неиспользованный срок, когда владелец расторгает аренду сам.
+ *
+ * Пропорционально остатку и вниз до целого: арендатор заплатил за срок,
+ * и отнять его досрочно, оставив деньги себе, значило бы продать один
+ * и тот же доступ дважды. Если расторгает арендатор — возврата нет,
+ * это его решение.
+ */
+export function gateLeaseRefund(price: number, startsAt: number, endsAt: number, now: number): number {
+  const total = endsAt - startsAt;
+  if (total <= 0 || now >= endsAt) return 0;
+  const left = Math.min(total, endsAt - Math.max(startsAt, now));
+  return Math.max(0, Math.floor((price * left) / total));
 }
 
 /*
@@ -494,7 +532,9 @@ export function normalizeDescription(raw: unknown): string | null {
 /** Направление операции казны — для журнала и сводки поступлений и расходов. */
 export type TreasuryFlow = 'IN' | 'OUT' | 'NEUTRAL';
 
-const INCOMING_TREASURY_KINDS: readonly string[] = ['DONATION', 'TAX', 'ENTRY_FEE', 'RESOURCE_DELIVERY', 'BUILD_REFUND'];
+const INCOMING_TREASURY_KINDS: readonly string[] = [
+  'DONATION', 'TAX', 'ENTRY_FEE', 'RESOURCE_DELIVERY', 'BUILD_REFUND', 'GATE_LEASE_INCOME',
+];
 
 /**
  * Основание — не поступление и не расход: цена основания сгорает, в казну

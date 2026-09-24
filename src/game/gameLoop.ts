@@ -45,6 +45,7 @@ import { JOINT_MIN_LEAD_MS, MAX_JOINT_FLEETS, splitLoot,
   splitSurvivors,
   MISSION_LABELS,
   planFlight,
+  gateLegShare,
   validateCargo,
   resolveOneWay,
   validateComposition,
@@ -74,10 +75,12 @@ import { checkArchitect, checkPirateBane } from '../services/achievementService.
 import { canAttack, declareSyndicateWar, declareWar } from '../services/warService.js';
 import { availableAt, depositLocal, lockHubStocks, withdrawStock } from '../services/hubStock.js';
 import { alliedSyndicateIds, commanderPacts, pactsInForce,
+  gateAccessFor,
   membershipOf,
   sameSyndicate,
   syndicateBuffsFor,
   withdrawnToday,
+  type GateAccessKind,
   type SyndicateTechState,
 } from '../services/syndicateAccess.js';
 import {
@@ -88,6 +91,7 @@ import {
   treasuryProtectedShare,
   emptySyndicateTechLevels,
   hasPermission,
+  GATE_POSITION,
   KISH_POSITION,
   splitTax,
   withdrawAllowance,
@@ -1582,9 +1586,10 @@ class GameLoop {
   }
 
   /**
-   * Можно ли лететь через Браму: Брамы своего синдиката в обеих системах
-   * и свободное место в часовом окне врат вылета. `reason` объясняет,
-   * почему нельзя, когда врата есть, но не пропустят.
+   * Можно ли лететь через Браму: доступные врата в обеих системах — свои,
+   * союзника или арендованные (`gateAccessFor`) — и свободное место в часовом
+   * окне врат вылета. `reason` объясняет, почему нельзя, когда врата есть,
+   * но не пропустят.
    */
   async gateRoute(
     commanderId: string,
@@ -1592,10 +1597,11 @@ class GameLoop {
     toSystemId: string,
     shipCount: number,
   ): Promise<{ usable: boolean; reason: string | null }> {
-    const member = await prisma.commander.findUnique({ where: { id: commanderId }, select: { syndicateId: true } });
-    if (!member?.syndicateId || fromSystemId === toSystemId) return { usable: false, reason: null };
-    const fromGate = await this.usableGate(member.syndicateId, fromSystemId);
-    const toGate = await this.usableGate(member.syndicateId, toSystemId);
+    if (fromSystemId === toSystemId) return { usable: false, reason: null };
+    const access = await gateAccessFor(commanderId);
+    if (access.size === 0) return { usable: false, reason: null };
+    const fromGate = await this.usableGate(access, fromSystemId);
+    const toGate = await this.usableGate(access, toSystemId);
     if (!fromGate || !toGate) return { usable: false, reason: null };
     const windowOpen = Date.now() - fromGate.windowStartedAt.getTime() < GATE_WINDOW_MS;
     const used = windowOpen ? fromGate.windowShips : 0;
@@ -1607,20 +1613,21 @@ class GameLoop {
   }
 
   /**
-   * Брама в системе, через которую синдикат может прыгать: своя или союзника
-   * по пакту. Своя берется первой — ее окно синдикат считает своим.
+   * Брама в системе, через которую игрок может прыгать. Своя берется первой,
+   * за ней союзника, последней арендованная: окно считает владелец врат,
+   * и тратить чужое окно, когда есть свое, незачем.
    */
-  private async usableGate(syndicateId: string, systemId: string) {
-    const owners = [syndicateId, ...(await alliedSyndicateIds(syndicateId))];
-    const gates = await prisma.syndicateGate.findMany({ where: { systemId, syndicateId: { in: owners } } });
-    return gates.find((gate) => gate.syndicateId === syndicateId) ?? gates[0] ?? null;
+  private async usableGate(access: Map<string, GateAccessKind>, systemId: string) {
+    const gates = await prisma.syndicateGate.findMany({ where: { systemId, syndicateId: { in: [...access.keys()] } } });
+    const rank = { OWN: 0, ALLY: 1, LEASED: 2 } as const;
+    return gates.sort((a, b) => rank[access.get(a.syndicateId)!] - rank[access.get(b.syndicateId)!])[0] ?? null;
   }
 
   /** Резерв места в часовом окне Брамы вылета — одним условным UPDATE, без гонок. */
   private async reserveGate(commanderId: string, fromSystemId: string, shipCount: number): Promise<boolean> {
-    const member = await prisma.commander.findUnique({ where: { id: commanderId }, select: { syndicateId: true } });
-    if (!member?.syndicateId) return false;
-    const gate = await this.usableGate(member.syndicateId, fromSystemId);
+    const access = await gateAccessFor(commanderId);
+    if (access.size === 0) return false;
+    const gate = await this.usableGate(access, fromSystemId);
     if (!gate) return false;
     const limit = bramaThroughput(gate.level);
     const expired = new Date(Date.now() - GATE_WINDOW_MS);
@@ -4121,6 +4128,14 @@ function toFleetRuntime(row: FleetRow): FleetRuntimeState {
     departedAt: row.departedAt.getTime(),
     arrivesAt: row.arrivesAt.getTime(),
     returnsAt: row.returnsAt.getTime(),
+    gateShare: row.viaGate
+      ? gateLegShare(
+          row.originPlanet.position,
+          row.targetPlanet?.position ??
+            row.targetHub?.position ??
+            (row.targetSystemId ? DEEP_SPACE_POSITION : GATE_POSITION),
+        )
+      : null,
   };
 }
 

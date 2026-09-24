@@ -180,6 +180,7 @@
     jointAttack: $('joint-attack'),
     kishOverview: $('kish-overview'),
     kishModules: $('kish-modules'),
+    kishLeases: $('kish-leases'),
     kishResearchJob: $('kish-research-job'),
     kishTechs: $('kish-techs'),
     kishDefenseSummary: $('kish-defense-summary'),
@@ -3207,6 +3208,33 @@
   }
 
   /*
+   * Брамы стоят на кольце станций напротив Кошей: в системе их может быть
+   * несколько, по одной на синдикат, и каждой следующей — свой угол.
+   */
+  const GATE_ANGLE = (145 * Math.PI) / 180;
+  const GATE_ANGLE_STEP = (-30 * Math.PI) / 180;
+
+  function gatePointAt(index) {
+    return polar(MAP.hubOrbit, GATE_ANGLE + index * GATE_ANGLE_STEP);
+  }
+
+  /**
+   * Точка врат, через которые пройдет рейс: лучшая доступная Брама системы
+   * (своя, союзника, арендованная), как и при вылете. Врат на карте нет —
+   * центр системы: так рисуется рейс в систему, чья карта еще без данных.
+   */
+  function gatePointHere() {
+    const gates = (map.data && map.data.gates) || [];
+    const rank = { OWN: 0, ALLY: 1, LEASED: 2 };
+    let best = -1;
+    gates.forEach((gate, index) => {
+      if (!gate.access) return;
+      if (best < 0 || rank[gate.access] < rank[gates[best].access]) best = index;
+    });
+    return best >= 0 ? gatePointAt(best) : polar(0, 0);
+  }
+
+  /*
     * Карта системы. Без аргумента — своя, с systemId — чужая: маршрут это умел
     * с самого начала, просто клиент никогда не спрашивал.
     *
@@ -3440,6 +3468,7 @@
 
     if (map.data.hub) renderHub(map.data.hub);
     (map.data.kishes || []).forEach((kish, index) => renderKish(kish, index));
+    (map.data.gates || []).forEach((gate, index) => renderGate(gate, index));
     renderDeepSpace();
     renderFleetMarkers();
   }
@@ -3640,6 +3669,37 @@
     svg.appendChild(group);
   }
 
+  const GATE_ACCESS_TEXT = {
+    OWN: 'врата твоего синдиката',
+    ALLY: 'врата союзника — прыгать можно',
+    LEASED: 'арендованы — прыгать можно до конца срока',
+  };
+
+  /** Брама на карте системы: видна всем, прыгать может тот, у кого есть доступ. */
+  function renderGate(gate, index) {
+    const svg = el.systemMap;
+    const { x, y } = gatePointAt(index);
+    const group = svgEl('g', { class: `hub-node gate-node${gate.access ? ' open' : ''}` });
+    celestialBody(group, x, y, HUB_RADIUS, {
+      kind: 'glow',
+      fill: gate.access ? 'rgba(77, 210, 255, 0.18)' : 'rgba(160, 170, 200, 0.12)',
+      src: '/assets/buildings/brama.webp',
+      spread: 1.6,
+    });
+    const label = svgEl('text', { x, y: y + HUB_RADIUS + 16, class: 'planet-label name hub-label' });
+    label.textContent = `Брама [${gate.tag}] ${gate.level}`;
+    group.appendChild(label);
+    group.addEventListener('mouseenter', () => {
+      tipContent(
+        `<div class="pd-head"><b>Брама [${escapeHtml(gate.tag)}]</b><span>ур. ${gate.level}</span></div>` +
+          `<div class="pd-note">${gate.access ? GATE_ACCESS_TEXT[gate.access] : 'чужие врата — прыжок недоступен; доступ можно арендовать'}</div>`,
+      );
+      anchorTooltip(el.systemMap, x, y, HUB_RADIUS);
+    });
+    group.addEventListener('mouseleave', hideTooltip);
+    svg.appendChild(group);
+  }
+
   function showKishTooltip(kish, x, y) {
     const head =
       `<div class="pd-head"><b>${escapeHtml(kish.name)}</b>` +
@@ -3698,46 +3758,76 @@
 
     const layer = svgEl('g', { class: 'fleet-layer' });
     const now = Date.now();
+    const here = map.data.systemId;
     const byId = new Map(map.data.planets.map((p) => [p.planetId, p]));
+    const originPointOf = (fleet) => {
+      const planet = byId.get(fleet.originPlanetId);
+      return planet ? planetPoint(planet.position) : null;
+    };
+    const targetPointOf = (fleet) => {
+      if (fleet.targetKind === 'HUB') return map.data.hub ? hubPoint() : null;
+      if (fleet.targetKind === 'KISH') return kishPointFor(fleet.targetSyndicateId);
+      if (fleet.targetKind === 'DEEP_SPACE') return deepSpacePoint();
+      const planet = byId.get(fleet.targetPlanetId);
+      return planet ? planetPoint(planet.position) : null;
+    };
 
     for (const fleet of state.fleets) {
-      const origin = byId.get(fleet.originPlanetId);
-      const target = fleet.targetKind === 'HUB'
-        ? { position: null, hub: true }
-        : fleet.targetKind === 'KISH'
-          ? { position: null, kish: fleet.targetSyndicateId }
-        : fleet.targetKind === 'DEEP_SPACE'
-          ? { position: null, deep: true }
-          : byId.get(fleet.targetPlanetId);
-      if (!origin || !target) continue;
-
       // Флот на удержании стоит у цели: маркер там, где закончился путь туда.
       const outbound = fleet.status === 'OUTBOUND' || fleet.status === 'HOLDING';
-      const from = outbound ? origin : target;
-      const to = outbound ? target : origin;
       const legStart = outbound ? fleet.departedAt : fleet.arrivesAt;
       const legEnd = outbound ? fleet.arrivesAt : fleet.returnsAt;
       const progress = Math.min(1, Math.max(0, (now - legStart) / Math.max(1, legEnd - legStart)));
+      const originHere = fleet.fromSystemId === here;
+      const targetHere = fleet.toSystemId === here;
 
-      // Точки на круговой карте, поэтому маршрут — отрезок между ними,
-      // а маркер едет по этому отрезку пропорционально пройденному времени.
-      const pointOf = (end) => (end.hub ? hubPoint() : end.kish ? kishPointFor(end.kish)
-        : end.deep ? deepSpacePoint() : planetPoint(end.position));
-      const a = pointOf(from);
-      const b = pointOf(to);
-      // Кіш в другой системе на этой карте не нарисован — и рейс к нему тоже.
-      if (!a || !b) continue;
+      let a;
+      let b;
+      let t;
+      let note = '';
+      if (fleet.gateShare === null || fleet.gateShare === undefined) {
+        /*
+         * Обычный рейс рисуется, только когда оба конца в этой системе.
+         * Межзвездный перелет виден на карте галактики, а рейс к хабу или
+         * Кошу чужой системы прежде рисовался к станции той карты, которая
+         * открыта, — то есть не туда.
+         */
+        if (!originHere || !targetHere) continue;
+        const origin = originPointOf(fleet);
+        const target = targetPointOf(fleet);
+        if (!origin || !target) continue;
+        a = outbound ? origin : target;
+        b = outbound ? target : origin;
+        t = progress;
+      } else {
+        /*
+         * Рейс через Браму — два участка по орбитам и мгновенный прыжок
+         * между ними. Туда: от планеты к вратам в системе вылета, затем
+         * от врат к цели в системе прибытия; обратно — зеркально. Каждый
+         * участок рисуется на карте своей системы.
+         */
+        const firstShare = outbound ? fleet.gateShare : 1 - fleet.gateShare;
+        const firstLeg = progress < firstShare;
+        t = firstLeg ? progress / Math.max(0.001, firstShare) : (progress - firstShare) / Math.max(0.001, 1 - firstShare);
+        const inOrigin = outbound === firstLeg;
+        if ((inOrigin && !originHere) || (!inOrigin && !targetHere)) continue;
+        const endpoint = inOrigin ? originPointOf(fleet) : targetPointOf(fleet);
+        if (!endpoint) continue;
+        const gate = gatePointHere();
+        a = firstLeg ? endpoint : gate;
+        b = firstLeg ? gate : endpoint;
+        note = firstLeg ? ' · к Браме' : ' · от Брамы';
+      }
 
       layer.appendChild(svgEl('line', {
-        class: 'fleet-line', x1: a.x, y1: a.y, x2: b.x, y2: b.y,
+        class: `fleet-line${note ? ' gate-route' : ''}`, x1: a.x, y1: a.y, x2: b.x, y2: b.y,
       }));
-
-      const cx = a.x + (b.x - a.x) * progress;
-      const cy = a.y + (b.y - a.y) * progress;
+      const cx = a.x + (b.x - a.x) * t;
+      const cy = a.y + (b.y - a.y) * t;
       layer.appendChild(svgEl('circle', { class: 'fleet-marker', cx, cy, r: 5 }));
 
       const label = svgEl('text', { x: cx, y: cy - 12, class: 'planet-label' });
-      label.textContent = `${fleet.missionLabel} · ${fmtTime(fleet.etaSeconds)}`;
+      label.textContent = `${fleet.missionLabel}${note} · ${fmtTime(fleet.etaSeconds)}`;
       layer.appendChild(label);
     }
 
@@ -6107,6 +6197,7 @@
       if (!response.ok) return;
       war.data = await response.json();
       renderDiplomacy();
+      void loadGateLeases();
       renderBattles();
       renderExpeditions();
       renderWarSummary();
@@ -6162,6 +6253,151 @@
       card.appendChild(row);
     }
     el.diplomacy.appendChild(card);
+  }
+
+  /* ---------- Аренда Брам ---------- */
+
+  /*
+   * Договоры аренды сети Брам. Одни данные на два места: владелец видит
+   * сданное в «Отсеках» Коша, арендатор — предложения и действующую
+   * аренду во вкладке «Дипломатия», куда ведет и письмо о предложении.
+   */
+  const gateLeases = { data: null };
+
+  async function loadGateLeases() {
+    const result = await api('/api/war/gates/leases');
+    if (!result.ok) return;
+    gateLeases.data = result.data;
+    renderGateLeasesOwner();
+    renderGateLeasesTenant();
+  }
+
+  const LEASE_TERMS = [[24, 'сутки'], [72, '3 суток'], [168, 'неделя'], [720, 'месяц']];
+  const leaseTermLabel = (hours) => (LEASE_TERMS.find(([value]) => value === hours) || [0, `${hours} ч`])[1];
+
+  function leaseStatusText(lease) {
+    if (lease.status === 'OFFERED') return 'ждет ответа';
+    if (lease.status === 'ACTIVE') return `действует до ${synDateTime(lease.endsAt)}`;
+    return `закончилась ${synDateTime(lease.endsAt)}`;
+  }
+
+  function leaseRow(lease, side) {
+    const row = synEl('div', `syn-member lease-row ${lease.status.toLowerCase()}`);
+    const info = synEl('div', 'syn-member-info');
+    const name = synEl('div', 'syn-member-name');
+    const who = side === 'OWNER'
+      ? (lease.tenant.kind === 'PLAYER' ? lease.tenant.nickname : `[${lease.tenant.tag}] ${lease.tenant.name}`)
+      : `Брамы [${lease.owner.tag}] ${lease.owner.name}`;
+    name.append(
+      synEl('span', null, who),
+      synEl('span', `chip${lease.status === 'ACTIVE' ? ' ok' : ''}`, lease.status === 'OFFERED' ? 'предложение' : lease.status === 'ACTIVE' ? 'действует' : 'закончилась'),
+    );
+    info.append(name, synEl('div', 'syn-member-meta',
+      `${leaseTermLabel(lease.hours)} · ${fmt(lease.price)} ₴ · ${lease.gates} ${plural(lease.gates, 'система', 'системы', 'систем')} с вратами · ${leaseStatusText(lease)}`));
+    const actions = synEl('div', 'member-actions');
+    const act = async (path, body) => {
+      await send(path, body);
+      await loadGateLeases();
+      await loadGalaxy();
+    };
+    if (lease.canRespond) {
+      actions.append(
+        synConfirm('Принять', lease.price > 0 ? `Заплатить ${fmt(lease.price)} ₴?` : 'Точно принять?', 'primary',
+          () => act(`/api/war/gates/leases/${lease.id}/respond`, { accept: true })),
+        synButton('Отклонить', 'ghost', () => act(`/api/war/gates/leases/${lease.id}/respond`, { accept: false })),
+      );
+    } else if (lease.canCancel) {
+      const label = lease.status === 'OFFERED' ? 'Отозвать' : side === 'OWNER' ? 'Расторгнуть' : 'Выйти из аренды';
+      const ask = lease.status === 'OFFERED'
+        ? 'Точно отозвать?'
+        : side === 'OWNER' ? 'Остаток вернется. Точно?' : 'Без возврата. Точно?';
+      actions.append(synConfirm(label, ask, 'ghost', () => act(`/api/war/gates/leases/${lease.id}/cancel`)));
+    }
+    row.append(info, actions);
+    return row;
+  }
+
+  /** Блок владельца в «Отсеках» Коша: форма предложения и сданные договоры. */
+  function renderGateLeasesOwner() {
+    const node = el.kishLeases;
+    if (!node) return;
+    node.innerHTML = '';
+    const data = gateLeases.data;
+    const mine = syndicate.data && syndicate.data.mine;
+    if (!data || !mine || !mine.gates || mine.gates.list.length === 0) return;
+
+    const card = synCard('Аренда Брам');
+    card.appendChild(synEl('p', 'muted lease-note',
+      'Сдайте доступ к своей сети Брам игроку или синдикату: весь срок арендатор прыгает через ваши врата ' +
+      'мгновенно, плата уходит в казну вперед. Пропускная способность общая. Расторгнуть можно с возвратом остатка.'));
+
+    if (data.canOffer) {
+      const form = synEl('div', 'lease-form');
+      const kind = document.createElement('select');
+      for (const [value, label] of [['PLAYER', 'Игроку'], ['SYNDICATE', 'Синдикату']]) {
+        const option = synEl('option', null, label);
+        option.value = value;
+        kind.appendChild(option);
+      }
+      kind.value = kishForm.leaseKind || 'PLAYER';
+      const tenant = document.createElement('input');
+      tenant.type = 'text';
+      tenant.value = kishForm.leaseTenant || '';
+      const syncPlaceholder = () => { tenant.placeholder = kind.value === 'PLAYER' ? 'позывной' : 'тег синдиката'; };
+      syncPlaceholder();
+      const term = document.createElement('select');
+      for (const [value, label] of LEASE_TERMS) {
+        const option = synEl('option', null, label);
+        option.value = String(value);
+        term.appendChild(option);
+      }
+      term.value = kishForm.leaseHours || '168';
+      const price = synNumber(kishForm.leasePrice || 0, 0);
+      kind.addEventListener('change', () => { kishForm.leaseKind = kind.value; syncPlaceholder(); });
+      tenant.addEventListener('input', () => { kishForm.leaseTenant = tenant.value; });
+      term.addEventListener('change', () => { kishForm.leaseHours = term.value; });
+      price.addEventListener('input', () => { kishForm.leasePrice = price.value; });
+      const submit = synButton('Предложить', 'primary', async () => {
+        const ok = await send('/api/war/gates/leases', {
+          tenantKind: kind.value,
+          tenant: tenant.value,
+          hours: Number.parseInt(term.value, 10),
+          price: synInt(price),
+        });
+        if (ok) {
+          kishForm.leaseTenant = '';
+          await loadGateLeases();
+        }
+      });
+      form.append(synField('Кому', kind), synField('Кто', tenant), synField('Срок', term), synField('Плата, ₴', price), submit);
+      card.appendChild(form);
+    }
+
+    if (data.given.length) {
+      for (const lease of data.given) card.appendChild(leaseRow(lease, 'OWNER'));
+    } else {
+      card.appendChild(synEl('div', 'hub-storage', 'Врата никому не сданы.'));
+    }
+    node.appendChild(card);
+  }
+
+  /** Карточка арендатора в «Дипломатии»: предложения и действующая аренда. */
+  function renderGateLeasesTenant() {
+    if (!el.diplomacy) return;
+    const old = el.diplomacy.querySelector('.lease-card');
+    if (old) old.remove();
+    const data = gateLeases.data;
+    if (!data) return;
+    const card = synCard('Аренда Брам');
+    card.classList.add('lease-card');
+    if (data.taken.length) {
+      for (const lease of data.taken) card.appendChild(leaseRow(lease, 'TENANT'));
+    } else {
+      card.appendChild(synEl('div', 'hub-storage',
+        'Чужие Брамы можно арендовать: синдикат-владелец предлагает доступ на срок за плату, и весь срок ' +
+        'флот прыгает через его врата мгновенно. Предложения появятся здесь и придут письмом.'));
+    }
+    el.diplomacy.prepend(card);
   }
 
   function renderSyndicateDiplomacy(mine) {
@@ -6571,18 +6807,28 @@
       const legEnd = outbound ? fleet.arrivesAt : fleet.returnsAt;
       const progress = Math.min(1, Math.max(0, (now - legStart) / Math.max(1, legEnd - legStart)));
 
+      /*
+       * Через Браму флот не ползет по прямой через галактику: прыжок
+       * мгновенный. До прыжка он стоит в системе вылета (идет к вратам
+       * по орбитам), после — в системе цели. Линия между ними — пунктир
+       * прыжка, а не маршрут.
+       */
+      const viaGate = fleet.gateShare !== null && fleet.gateShare !== undefined;
+      const jumped = viaGate && progress >= (outbound ? fleet.gateShare : 1 - fleet.gateShare);
+      const t = viaGate ? (jumped ? 1 : 0) : progress;
+
       // Классы те же, что на карте системы: рейс должен выглядеть рейсом
       // на обеих картах, а не двумя разными сущностями.
       layer.appendChild(svgEl('line', {
-        class: 'fleet-line', x1: a.x, y1: a.y, x2: b.x, y2: b.y,
+        class: `fleet-line${viaGate ? ' gate-route' : ''}`, x1: a.x, y1: a.y, x2: b.x, y2: b.y,
       }));
 
-      const cx = a.x + (b.x - a.x) * progress;
-      const cy = a.y + (b.y - a.y) * progress;
+      const cx = a.x + (b.x - a.x) * t;
+      const cy = a.y + (b.y - a.y) * t;
       layer.appendChild(svgEl('circle', { class: 'fleet-marker', cx, cy, r: 5 }));
 
       const label = svgEl('text', { x: cx, y: cy - 12, class: 'planet-label' });
-      label.textContent = `${fleet.missionLabel} · ${fmtTime(fleet.etaSeconds)}`;
+      label.textContent = `${fleet.missionLabel}${viaGate ? (jumped ? ' · от Брамы' : ' · к Браме') : ''} · ${fmtTime(fleet.etaSeconds)}`;
       layer.appendChild(label);
       drawn += 1;
     }
@@ -6653,7 +6899,10 @@
       // по которой флот прыгает без гипердвигателя.
       if (system.syndicateGate || system.ownKish) {
         const badge = svgEl('text', { x: point.x, y: point.y - SYSTEM_ICON / 2 - 8, class: 'system-label gate-badge' });
-        badge.textContent = [system.ownKish ? 'Кіш' : null, system.syndicateGate ? `Брама ${system.syndicateGate}` : null]
+        // Чья Брама — словом: союзника и арендованная тоже дают прыжок,
+        // но их окно и срок принадлежат не твоему синдикату.
+        const gateWord = system.gateAccess === 'LEASED' ? ' · аренда' : system.gateAccess === 'ALLY' ? ' · союзник' : '';
+        badge.textContent = [system.ownKish ? 'Кіш' : null, system.syndicateGate ? `Брама ${system.syndicateGate}${gateWord}` : null]
           .filter(Boolean).join(' · ');
         group.appendChild(badge);
       }
@@ -7788,6 +8037,7 @@
     const can = (permission) => mine.me.permissions.includes(permission);
     renderKishOverview(mine, can);
     renderKishModules(mine, can);
+    void loadGateLeases();
     renderKishResearch(mine, can);
     renderKishDefenses(mine, can);
     renderKishFleet(mine);

@@ -8,6 +8,14 @@ import {
 } from '../services/warService.js';
 import { currentCommander, requireAuth, requireCommander } from './middleware.js';
 import { cancelPact, proposePact, respondPact } from '../services/pactService.js';
+import {
+  cancelGateLease,
+  getGateLeases,
+  offerGateLease,
+  respondGateLease,
+  type GateLeaseOverview,
+} from '../services/gateLeaseService.js';
+import { nonNegativeInt } from './validation.js';
 import { isPactKind } from '../game/syndicate.js';
 import type { ActionResponse, DiplomacyResponse, ErrorResponse } from '../types/api.js';
 
@@ -100,4 +108,54 @@ warRouter.post('/syndicate/pact/cancel', async (req, res: Response<ActionRespons
   }
   const result = await cancelPact(currentCommander(req).id, pactId);
   res.status(result.ok ? 200 : 409).json(result);
+});
+
+/* ------------------------- Аренда Брам ------------------------- */
+
+/** Договоры аренды: сданные своим синдикатом и взятые смотрящим или его синдикатом. */
+warRouter.get('/gates/leases', async (req, res: Response<GateLeaseOverview>) => {
+  res.json(await getGateLeases(currentCommander(req).id));
+});
+
+warRouter.post('/gates/leases', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const body = (req.body ?? {}) as { tenantKind?: unknown; tenant?: unknown; hours?: unknown; price?: unknown };
+  const price = nonNegativeInt(body.price, Number.NaN);
+  const hours = nonNegativeInt(body.hours, Number.NaN);
+  if (
+    (body.tenantKind !== 'PLAYER' && body.tenantKind !== 'SYNDICATE') ||
+    typeof body.tenant !== 'string' || !body.tenant.trim() ||
+    price === null || hours === null
+  ) {
+    res.status(400).json({ error: 'Укажи арендатора, срок и плату' });
+    return;
+  }
+  const result = await offerGateLease(currentCommander(req).id, { tenantKind: body.tenantKind, tenant: body.tenant, hours, price });
+  if (!result.ok) {
+    res.status(result.status).json({ error: result.error });
+    return;
+  }
+  res.json(result);
+});
+
+warRouter.post('/gates/leases/:id/respond', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const accept = (req.body as { accept?: unknown } | undefined)?.accept;
+  if (typeof accept !== 'boolean') {
+    res.status(400).json({ error: 'Не указан ответ' });
+    return;
+  }
+  const result = await respondGateLease(currentCommander(req).id, String(req.params.id), accept);
+  if (!result.ok) {
+    res.status(result.status).json({ error: result.error });
+    return;
+  }
+  res.json(result);
+});
+
+warRouter.post('/gates/leases/:id/cancel', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const result = await cancelGateLease(currentCommander(req).id, String(req.params.id));
+  if (!result.ok) {
+    res.status(result.status).json({ error: result.error });
+    return;
+  }
+  res.json(result);
 });

@@ -9,6 +9,7 @@
  */
 import {
   fleetCapacity,
+  gateLegShare,
   galaxyDistance,
   isFleetMission,
   isOneWayMission,
@@ -22,6 +23,7 @@ import {
 import { emptyShipCounts, missingShipRequirements, type ShipCounts } from '../src/game/ships.js';
 import { colonySlots, emptyTechLevels, type TechLevels } from '../src/game/techTree.js';
 import { emptyLevels } from '../src/game/rules.js';
+import { gateLeaseRefund, isGateLeaseHours } from '../src/game/syndicate.js';
 
 const BASE_URL = 'http://localhost:3000';
 const results: Array<{ name: string; passed: boolean }> = [];
@@ -415,6 +417,55 @@ console.log('\n=== Совместная атака: дележ добычи ==='
   const over = splitLoot({ ore: 100, polymers: 0, plasma: 0 }, [30, 20]);
   check('не влезшее в трюмы остается у защитника', over[0]!.ore + over[1]!.ore === 50, `${over[0]!.ore}+${over[1]!.ore}`);
   check('без флотов делить нечего', splitLoot({ ore: 5, polymers: 5, plasma: 5 }, []).length === 0);
+}
+
+console.log('\n=== Сроки полетов, Брамы и аренда ===');
+{
+  const home = { galaxyX: 0, galaxyY: 0 };
+  const far = (d: number) => ({ galaxyX: d, galaxyY: 0 });
+  const one = (type: keyof ShipCounts) => ({ ...emptyShipCounts(), [type]: 1 });
+  const techs = (drive: number, hyper: number): TechLevels => ({ ...emptyTechLevels(), COMBUSTION_DRIVE: drive, HYPERDRIVE: hyper });
+  const intra = (ships: ShipCounts, t: TechLevels, orbits: number) =>
+    planFlight(ships, t, { position: 1, system: home }, { position: 1 + orbits, system: home });
+  const jump = (ships: ShipCounts, t: TechLevels, d: number) =>
+    planFlight(ships, t, { position: 1, system: home }, { position: 1, system: far(d) });
+  const minutes = (s: number) => s / 60;
+  const hours = (s: number) => s / 3600;
+
+  const cargo = one('SMALL_CARGO');
+  const near = intra(cargo, techs(0, 0), 1).flightSeconds;
+  const across = intra(cargo, techs(0, 0), 15).flightSeconds;
+  check('до соседней планеты около пяти минут', minutes(near) >= 4 && minutes(near) <= 6, `${near} с`);
+  check('через всю систему около двадцати минут', minutes(across) >= 18 && minutes(across) <= 22, `${across} с`);
+  check('реактивный двигатель сокращает полет по системе', intra(cargo, techs(10, 0), 15).flightSeconds < across * 0.6);
+
+  const neighbour = jump(cargo, techs(0, 1), 3).flightSeconds;
+  check('соседняя система — от получаса до часа', minutes(neighbour) >= 30 && minutes(neighbour) <= 60, `${Math.round(minutes(neighbour))} мин`);
+  const slowest = jump(one('RECYCLER'), techs(0, 1), 28).flightSeconds;
+  check('самая дальняя у самого медленного — почти неделя', hours(slowest) >= 120 && hours(slowest) <= 170, `${hours(slowest).toFixed(1)} ч`);
+  check('гипердвигатель ускоряет прыжок', jump(cargo, techs(0, 10), 28).flightSeconds < jump(cargo, techs(0, 1), 28).flightSeconds * 0.6);
+  check('дальность решает квадратом', jump(cargo, techs(0, 1), 20).flightSeconds > jump(cargo, techs(0, 1), 10).flightSeconds * 3);
+
+  const probe = one('PROBE');
+  check('зонд пересекает систему за двадцать секунд', intra(probe, techs(0, 0), 15).flightSeconds <= 20);
+  check('зонд пересекает галактику за две минуты', jump(probe, techs(0, 1), 28).flightSeconds <= 120);
+  check('зонд в составе флота не ускоряет флот', jump({ ...cargo, PROBE: 1 }, techs(0, 1), 3).flightSeconds === neighbour);
+
+  // Топливо считается по пути в прежней мере: сроки выросли, расход — нет.
+  check('плазма на рейс прежняя', intra({ ...emptyShipCounts(), SMALL_CARGO: 10 }, techs(0, 0), 3).fuel === Math.ceil(10 * 0.4 * ((20 + 25 * 3) * 100 / 100) * 2));
+
+  const viaGate = planFlight(cargo, techs(0, 0), { position: 3, system: home }, { position: 5, system: far(28) }, { viaGate: true });
+  const plain = intra(cargo, techs(0, 0), 3).flightSeconds + intra(cargo, techs(0, 0), 5).flightSeconds;
+  check('прыжок через Браму мгновенный: только путь к вратам и от них', viaGate.flightSeconds === plain, `${viaGate.flightSeconds} против ${plain}`);
+  check('доля пути до врат растет с дальностью орбиты', gateLegShare(8, 1) > gateLegShare(1, 8));
+  check('доля пути до врат между нулем и единицей', gateLegShare(3, 5) > 0 && gateLegShare(3, 5) < 1);
+
+  const start = 0;
+  const end = 168 * 3600 * 1000;
+  check('возврат за половину срока — половина платы', gateLeaseRefund(1000, start, end, end / 2) === 500);
+  check('после конца срока возвращать нечего', gateLeaseRefund(1000, start, end, end + 1) === 0);
+  check('до начала срока возвращается вся плата', gateLeaseRefund(1000, start, end, start - 10) === 1000);
+  check('сроки аренды — только из набора', isGateLeaseHours(168) && !isGateLeaseHours(100) && !isGateLeaseHours('168'));
 }
 
 try {
