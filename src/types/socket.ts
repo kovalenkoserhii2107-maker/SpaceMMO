@@ -272,7 +272,7 @@ export interface FleetSnapshot {
   /** Системы концов рейса: по ним макро-карта рисует межзвездный перелет. */
   fromSystemId: string;
   toSystemId: string | null;
-  targetKind: 'PLANET' | 'HUB' | 'DEEP_SPACE' | 'KISH';
+  targetKind: 'PLANET' | 'HUB' | 'DEEP_SPACE' | 'KISH' | 'GATE';
   targetSyndicateId: string | null;
   targetPlanetId: string | null;
   targetHubId: string | null;
@@ -344,7 +344,13 @@ export interface GateView {
   tag: string;
   level: number;
   position: number;
-  access: 'OWN' | 'ALLY' | 'LEASED' | null;
+  access: 'OWN' | 'ALLY' | 'LEASED' | 'TOLL' | null;
+  /** Цена разового прохода за корабль и прыжок; `null` — проход закрыт. */
+  toll: number | null;
+  /** Врата выведены из строя осадой до этого момента (мс); `null` — работают. */
+  disabledUntil: number | null;
+  /** После осады врата неуязвимы до этого момента (мс). */
+  siegeImmuneUntil: number | null;
 }
 
 /** Система на макро-карте галактики. */
@@ -365,7 +371,7 @@ export interface GalaxySystemView {
   /** Уровень Брамы, через которую смотрящий может прыгать отсюда; `null` — такой нет. */
   syndicateGate: number | null;
   /** Чья это Брама для смотрящего: своя, союзника или арендованная. */
-  gateAccess: 'OWN' | 'ALLY' | 'LEASED' | null;
+  gateAccess: 'OWN' | 'ALLY' | 'LEASED' | 'TOLL' | null;
   /** Здесь стоит Кіш своего синдиката. */
   ownKish: boolean;
 }

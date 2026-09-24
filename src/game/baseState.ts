@@ -121,7 +121,7 @@ export interface FleetRuntimeState {
   toSystemId: string | null;
   originPlanetName: string;
   /// Цель — планета или торговый хаб.
-  targetKind: 'PLANET' | 'HUB' | 'DEEP_SPACE' | 'KISH';
+  targetKind: 'PLANET' | 'HUB' | 'DEEP_SPACE' | 'KISH' | 'GATE';
   targetSyndicateId: string | null;
   targetPlanetId: string | null;
   targetHubId: string | null;

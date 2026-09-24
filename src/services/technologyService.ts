@@ -20,6 +20,7 @@ import {
   type TechnologyType,
 } from '../game/techTree.js';
 import { systemModifiers } from '../game/rules.js';
+import { JUMP_ECONOMY_FLOOR, JUMP_ECONOMY_PER_LEVEL } from '../game/fleets.js';
 import type { BuildingProjectionRow, TechnologyProjection } from '../types/socket.js';
 
 /** Сколько уровней показываем вперед. */
@@ -47,10 +48,13 @@ const EFFECT: Record<TechnologyType, { label: string; at: (level: number) => num
   ESPIONAGE: { label: 'ступень разведки', at: (l) => l },
   // У этих польза не выражается числом: они открывают классы кораблей
   // и ветки дерева, и колонка величины у них пуста, а не занята нулем.
+  HYPERSPACE_PHYSICS: {
+    label: 'расход антиматерии на прыжок, %',
+    at: (l) => Math.round(Math.max(JUMP_ECONOMY_FLOOR, 1 - l * JUMP_ECONOMY_PER_LEVEL) * 100),
+  },
+  HYPERDRIVE: { label: 'скорость прыжка, %', at: (l) => Math.round((1 + l * 0.15) * 100) },
+  COMBUSTION_DRIVE: { label: 'скорость в системе, %', at: (l) => Math.round((1 + l * 0.1) * 100) },
   COMPUTING_TECH: null,
-  COMBUSTION_DRIVE: null,
-  HYPERSPACE_PHYSICS: null,
-  HYPERDRIVE: null,
 };
 
 export async function getTechnologyProjection(

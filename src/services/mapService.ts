@@ -17,7 +17,7 @@ import {
 import { emptyDefenseCounts, type DefenseCounts, type DefenseType } from '../game/defenses.js';
 import { emptyShipCounts, type ShipCounts } from '../game/ships.js';
 import type { GalaxyMap, GateView, HubView, KishView, SystemMap } from '../types/socket.js';
-import { gateAccessFor, membershipOf } from './syndicateAccess.js';
+import { gateAccessFor, membershipOf, type GateAccessKind } from './syndicateAccess.js';
 import { hubStockUsage } from './hubStock.js';
 import { GATE_POSITION, hasPermission, KISH_POSITION } from '../game/syndicate.js';
 
@@ -59,7 +59,7 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
     prisma.commander.findUnique({ where: { id: commanderId }, select: { syndicateId: true } }),
     prisma.syndicateGate.findMany({
       where: { systemId: targetSystem.id },
-      include: { syndicate: { select: { tag: true } } },
+      include: { syndicate: { select: { tag: true, gateToll: true } } },
       orderBy: { level: 'desc' },
     }),
     gateAccessFor(commanderId),
@@ -187,6 +187,10 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
     level: row.level,
     position: GATE_POSITION,
     access: gateAccess.get(row.syndicateId) ?? null,
+    // Цена прохода объявлена открыто: игрок решает, лететь ли, до вылета.
+    toll: row.syndicate.gateToll,
+    disabledUntil: row.disabledUntil && row.disabledUntil.getTime() > now ? row.disabledUntil.getTime() : null,
+    siegeImmuneUntil: row.siegeImmuneUntil && row.siegeImmuneUntil.getTime() > now ? row.siegeImmuneUntil.getTime() : null,
   }));
 
   return {
@@ -242,10 +246,17 @@ export async function buildGalaxyMap(commanderId: string): Promise<GalaxyMap | n
    * по основанию доступа, как и при вылете.
    */
   const gateRows = access.size
-    ? await prisma.syndicateGate.findMany({ where: { syndicateId: { in: [...access.keys()] } }, select: { systemId: true, level: true, syndicateId: true } })
+    ? await prisma.syndicateGate.findMany({
+        where: {
+          syndicateId: { in: [...access.keys()] },
+          // Выведенные осадой врата не пропускают — и на карте сети их нет.
+          OR: [{ disabledUntil: null }, { disabledUntil: { lt: new Date() } }],
+        },
+        select: { systemId: true, level: true, syndicateId: true },
+      })
     : [];
-  const accessRank = { OWN: 0, ALLY: 1, LEASED: 2 } as const;
-  const gateBySystem = new Map<string, { level: number; access: 'OWN' | 'ALLY' | 'LEASED' }>();
+  const accessRank = { OWN: 0, ALLY: 1, LEASED: 2, TOLL: 3 } as const;
+  const gateBySystem = new Map<string, { level: number; access: GateAccessKind }>();
   for (const row of gateRows) {
     const kind = access.get(row.syndicateId)!;
     const current = gateBySystem.get(row.systemId);

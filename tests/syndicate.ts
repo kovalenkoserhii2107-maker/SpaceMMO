@@ -245,7 +245,11 @@ console.log('\n=== 8. Подробности модулей и технолог�
   const brama = syndicateModuleProjection('BRAMA', 2);
   check('таблица модуля: текущий уровень и десять вперед', brama.rows.length === PROJECTION_DEPTH + 1 && brama.rows[0]!.current && brama.rows[0]!.cost === null);
   check('цена в таблице совпадает с ценой улучшения', JSON.stringify(brama.rows[1]!.cost) === JSON.stringify(bramaCostForProjection(3)));
-  check('эффект Брамы растет с уровнем', brama.rows[0]!.effect === '400 кораблей' && brama.rows[1]!.effect === '600 кораблей', brama.rows[1]!.effect);
+  check(
+    'эффект Брамы растет с уровнем: пропуск, доля антиматерии и щит',
+    brama.rows[0]!.effect === '400 кораблей · 26% · 17500' && brama.rows[1]!.effect === '600 кораблей · 22% · 30625',
+    `${brama.rows[0]!.effect} → ${brama.rows[1]!.effect}`,
+  );
   const counter = syndicateTechProjection('COUNTERINTEL', 2, 1);
   check('контрразведка дает +1 на третьем уровне', counter.rows[1]!.effect === '+1 к «Шпионажу»', counter.rows[1]!.effect);
   check('уровень выше Академии помечен', counter.rows[1]!.note === 'нужно: Академия ур. 3' && counter.rows[0]!.note === null, `${counter.rows[1]!.note}`);

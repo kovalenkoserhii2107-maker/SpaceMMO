@@ -43,6 +43,7 @@ import {
   outranks,
   academyUpgradeCost,
   bramaThroughput,
+  gateSiegeShield,
   bramaUpgradeCost,
   treasuryProtectedShare,
   treasuryUpgradeCost,
@@ -176,6 +177,12 @@ export interface SyndicateView {
       throughput: number;
       /** Сколько кораблей прошло в текущем часовом окне. */
       windowShips: number;
+      /** Щит врат против осады: такой залп уцелевшей эскадры их выключает. */
+      siegeShield: number;
+      /** Выключены осадой до (мс); `null` — работают. */
+      disabledUntil: number | null;
+      /** Неуязвимы после осады до (мс). */
+      siegeImmuneUntil: number | null;
       nextLevelCost: TreasuryCost;
       nextLevelSeconds: number;
       /** Чего не хватает на следующий уровень — как у построек колонии. */
@@ -551,6 +558,9 @@ async function getSyndicateView(syndicateId: string, viewerId: string): Promise<
         level: gate.level,
         throughput: bramaThroughput(gate.level),
         windowShips: now - gate.windowStartedAt.getTime() < 3_600_000 ? gate.windowShips : 0,
+        siegeShield: gateSiegeShield(gate.level),
+        disabledUntil: gate.disabledUntil && gate.disabledUntil.getTime() > now ? gate.disabledUntil.getTime() : null,
+        siegeImmuneUntil: gate.siegeImmuneUntil && gate.siegeImmuneUntil.getTime() > now ? gate.siegeImmuneUntil.getTime() : null,
         nextLevelCost: bramaUpgradeCost(gate.level + 1),
         nextLevelSeconds: syndicateBuildSeconds('BRAMA', gate.level + 1, engineering),
         nextLevelRequirements: needs('BRAMA', gate.level + 1),
@@ -1407,6 +1417,9 @@ export async function moveKish(commanderId: string, systemId: string): Promise<S
     include: { system: true },
   });
   if (!gate) return { ok: false, error: 'Кіш переносится только в систему со своей Брамой', status: 409 };
+  if (gate.disabledUntil && gate.disabledUntil.getTime() > Date.now()) {
+    return { ok: false, error: 'Брама в этой системе выведена из строя осадой', status: 409 };
+  }
 
   const availableAt = kishMoveAvailableAt(syndicate.kishMovedAt?.getTime() ?? null);
   if (availableAt > Date.now()) {
@@ -1868,18 +1881,22 @@ async function watchIncoming(
 ): Promise<WatchedFleet[]> {
   const now = Date.now();
   const raids = await prisma.fleet.findMany({
-    where: { targetSyndicateId: syndicateId, mission: 'KISH_RAID', status: 'OUTBOUND' },
-    include: { commander: { select: { nickname: true, syndicate: { select: { tag: true } } } } },
+    where: { targetSyndicateId: syndicateId, mission: { in: ['KISH_RAID', 'GATE_SIEGE'] }, status: 'OUTBOUND' },
+    include: {
+      commander: { select: { nickname: true, syndicate: { select: { tag: true } } } },
+      targetSystem: { select: { name: true } },
+    },
     orderBy: { arrivesAt: 'asc' },
   });
-  // Налет на сам Кіш Дозор видит всегда: Кіш — центр его круга.
+  // Налет на сам Кіш и осаду своих врат Дозор видит всегда: это свое имущество,
+  // и о нападении на него знают все, кто может его защитить.
   const raidRows: WatchedFleet[] = raids.map((fleet) => ({
     fleetId: fleet.id,
     attacker: fleet.commander.nickname,
     attackerTag: fleet.commander.syndicate?.tag ?? null,
-    target: 'Кіш',
-    planetName: 'Кіш',
-    systemName: '',
+    target: fleet.mission === 'GATE_SIEGE' ? 'Брама' : 'Кіш',
+    planetName: fleet.mission === 'GATE_SIEGE' ? 'Брама' : 'Кіш',
+    systemName: fleet.mission === 'GATE_SIEGE' ? (fleet.targetSystem?.name ?? '') : '',
     arrivesInSeconds: Math.max(0, Math.ceil((fleet.arrivesAt.getTime() - now) / 1000)),
     ships: FLEET_SHIP_COLUMNS.reduce((sum, column) => sum + fleet[column], 0),
   }));

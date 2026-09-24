@@ -566,6 +566,17 @@ export interface CombatProfileView extends UnitStats {
   note: string | null;
 }
 
+/**
+ * Суммарный залп эскадры за раунд — без скорострела и щитов, с оружейной
+ * технологией. Им меряют то, что не дерется в ответ: щит Брамы при осаде.
+ */
+export function fleetSalvo(ships: ShipCounts, techs: TechLevels = emptyCombatTechs()): number {
+  const bonus = combatBonuses(techs).attack;
+  let total = 0;
+  for (const type of Object.keys(SHIP_COMBAT) as ShipType[]) total += SHIP_COMBAT[type].attack * (ships[type] ?? 0);
+  return Math.round(total * bonus);
+}
+
 export function shipCombatProfile(type: ShipType): CombatProfileView {
   return withNote(SHIP_COMBAT[type]);
 }

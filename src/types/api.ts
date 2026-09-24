@@ -107,6 +107,8 @@ export type GalaxyResponse = GalaxyMap;
  */
 export type FlightPreviewResponse = FlightPlan & {
   warning?: string | null;
+  /** Плата за разовый проход через чужие Брамы, если маршрут идет через них. */
+  gateToll?: { total: number; owners: string[] } | null;
 };
 export type MarketResponse = MarketView;
 export type DiplomacyResponse = DiplomacyView;

@@ -2,7 +2,7 @@
  * Логистика: дальность, время в пути, грузоподъемность и расход топлива.
  * Модуль чистый: только формулы, без обращения к БД.
  */
-import { GATE_ANTIMATTER_SHARE, GATE_JUMP_SECONDS, GATE_POSITION } from './syndicate.js';
+import { GATE_JUMP_SECONDS, GATE_POSITION, gateAntimatterShare } from './syndicate.js';
 import type { ResourceAmounts } from './rules.js';
 import type { TechLevels } from './techTree.js';
 import { emptyShipCounts, SHIP_TYPES, shipLabel, type ShipCounts, type ShipType } from './ships.js';
@@ -22,6 +22,7 @@ const FLEET_MISSIONS = [
   'KISH_PICKUP',
   'HOLD',
   'KISH_RAID',
+  'GATE_SIEGE',
 ] as const;
 export type FleetMission = (typeof FLEET_MISSIONS)[number];
 
@@ -68,6 +69,7 @@ export const MISSION_LABELS: Record<FleetMission, string> = {
   KISH_PICKUP: 'Вывоз из казны Коша',
   HOLD: 'Удержание',
   KISH_RAID: 'Налет на Кіш',
+  GATE_SIEGE: 'Осада Брамы',
   ATTACK: 'Атака',
   DEPLOY: 'Дислокация',
   EXPEDITION: 'Экспедиция',
@@ -167,8 +169,24 @@ const JUMP_BASE_SECONDS = 1200;
 const JUMP_SECONDS_PER_DISTANCE_SQ = 300;
 /** Короче этого не бывает ни один прыжок, даже у зонда. */
 const JUMP_MIN_SECONDS = 20;
-/** Ускорение прыжка и экономия топлива за уровень гипердвигателя. */
+/** Ускорение прыжка за уровень гипердвигателя. */
 const HYPERDRIVE_BONUS = 0.15;
+/*
+ * Экономия антиматерии — «Гиперпространственная физика».
+ *
+ * Прежде ветка открывала синтезатор и дальше была тупиковой, а экономию
+ * топлива давал гипердвигатель вместе со скоростью. Теперь у каждой своя
+ * роль: гипердвигатель — быстрее, физика — дешевле, и дальние перелеты
+ * на сутки требуют обеих. Пол в треть: прыжок совсем без антиматерии
+ * сделал бы бессмысленным ее синтез.
+ */
+export const JUMP_ECONOMY_PER_LEVEL = 0.06;
+export const JUMP_ECONOMY_FLOOR = 0.3;
+
+/** Во сколько обходится антиматерия прыжка: единица без физики, треть на пределе. */
+export function jumpFuelFactor(techs: TechLevels): number {
+  return Math.max(JUMP_ECONOMY_FLOOR, 1 - Math.max(0, techs.HYPERSPACE_PHYSICS) * JUMP_ECONOMY_PER_LEVEL);
+}
 
 /*
  * Топливо считается по пройденному пути, а не по часам в полете.
@@ -314,7 +332,7 @@ export function planFlight(
   techs: TechLevels,
   from: { position: number; system: GalaxyPoint },
   to: { position: number; system: GalaxyPoint },
-  options: { oneWay?: boolean; cargoMultiplier?: number; viaGate?: boolean } = {},
+  options: { oneWay?: boolean; cargoMultiplier?: number; viaGate?: boolean; gateLevel?: number } = {},
 ): FlightPlan {
   // Дислокация не возвращается, поэтому и топливо за обратный путь не берем.
   const trips = options.oneWay ? 1 : 2;
@@ -346,10 +364,11 @@ export function planFlight(
     const toGate = flightSeconds(ships, techs, orbitDistance(from.position, GATE_POSITION));
     const fromGate = flightSeconds(ships, techs, orbitDistance(GATE_POSITION, to.position));
     const seconds = toGate + GATE_JUMP_SECONDS + fromGate;
+    const share = gateAntimatterShare(options.gateLevel ?? 1);
     const fuelPath =
       fuelPathSeconds(ships, techs, orbitDistance(from.position, GATE_POSITION)) +
       fuelPathSeconds(ships, techs, orbitDistance(GATE_POSITION, to.position));
-    const neutral = { ...techs, HYPERDRIVE: 0 };
+
     return withHold({
       kind: 'INTERSTELLAR',
       distance,
@@ -357,7 +376,7 @@ export function planFlight(
       flightSeconds: seconds,
       capacity: fleetCapacity(ships, options.cargoMultiplier),
       fuel: fuelCost(ships, fuelPath, trips),
-      antimatter: Math.max(1, Math.ceil(jumpAntimatterCost(ships, neutral, distance, trips) * GATE_ANTIMATTER_SHARE)),
+      antimatter: Math.max(1, Math.ceil(jumpAntimatterCost(ships, techs, distance, trips) * share)),
       viaGate: true,
     });
   }
@@ -411,7 +430,7 @@ function jumpAntimatterCost(
     (total, type) => total + ships[type] * FLIGHT_PROFILES[type].antimatterPerDistance,
     0,
   );
-  const total = (perDistance * distance * trips) / hyperdriveFactor(techs);
+  const total = perDistance * distance * trips * jumpFuelFactor(techs);
   return total <= 0 ? 0 : Math.max(1, Math.ceil(total));
 }
 
@@ -431,6 +450,9 @@ export function validateComposition(mission: FleetMission, ships: ShipCounts): s
   // Удержание — это защита: грузовики на чужой орбите никого не прикроют.
   if (mission === 'KISH_RAID' && !hasWeapons(ships)) {
     return 'Для налета на Кіш нужен хотя бы один вооруженный корабль';
+  }
+  if (mission === 'GATE_SIEGE' && !hasWeapons(ships)) {
+    return 'Для осады Брамы нужен хотя бы один вооруженный корабль';
   }
   if (mission === 'HOLD' && !hasWeapons(ships)) {
     return 'Для удержания нужен хотя бы один вооруженный корабль';

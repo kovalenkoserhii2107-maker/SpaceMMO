@@ -171,7 +171,9 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
   },
   HYPERSPACE_PHYSICS: {
     label: 'Гиперпространственная физика',
-    description: 'Открывает постройку синтезатора антиматерии.',
+    description:
+      'Открывает синтезатор антиматерии. Каждый уровень снижает расход антиматерии ' +
+      'на межзвездный прыжок и прыжок через Браму на 6%, до трети от базового.',
     cost: { ore: 800, polymers: 2280, plasma: 600, factor: 2.1 },
     baseSeconds: 240,
     timeFactor: 2.15,
@@ -195,7 +197,7 @@ const TECHNOLOGIES: Record<TechnologyType, TechDefinition> = {
     label: 'Гипердвигатель',
     description:
       'Открывает межзвездные прыжки на антиматерии. Каждый уровень ускоряет прыжок ' +
-      'и снижает расход топлива.',
+      'на 15%; расход топлива снижает «Гиперпространственная физика».',
     cost: { ore: 1500, polymers: 1900, plasma: 900, factor: 2.0 },
     baseSeconds: 300,
     timeFactor: 2.15,

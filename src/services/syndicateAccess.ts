@@ -286,8 +286,8 @@ export async function alliedSyndicateIds(syndicateId: string, now = Date.now()):
   return rows.map((row) => (row.firstSyndicateId === syndicateId ? row.secondSyndicateId : row.firstSyndicateId));
 }
 
-/** Почему игрок может прыгать через Брамы синдиката: свои, союзника или в аренду. */
-export type GateAccessKind = 'OWN' | 'ALLY' | 'LEASED';
+/** Почему игрок может прыгать через Брамы синдиката: свои, союзника, в аренду или за разовую плату. */
+export type GateAccessKind = 'OWN' | 'ALLY' | 'LEASED' | 'TOLL';
 
 /**
  * Чьими вратами игрок может пользоваться: владелец сети → основание доступа.
@@ -301,6 +301,12 @@ export type GateAccessKind = 'OWN' | 'ALLY' | 'LEASED';
  * Война между синдикатом арендатора и владельцем аренду не отменяет, но
  * глушит: пустить врага в свои врата значило бы подарить ему недельный
  * марш-бросок, а деньги уже уплачены — после мира доступ вернется сам.
+ *
+ * Разовый проход — последним и слабее всех: сеть, для которой владелец
+ * назначил цену за корабль (`Syndicate.gateToll`), открыта любому, с кем
+ * он не воюет. Аренда выгоднее тому, кто прыгает часто, проход — тому,
+ * кто летит один раз; иметь оба значит платить за аренду, поэтому
+ * аренда проход перекрывает.
  */
 export async function gateAccessFor(commanderId: string, now = Date.now()): Promise<Map<string, GateAccessKind>> {
   const access = new Map<string, GateAccessKind>();
@@ -319,9 +325,12 @@ export async function gateAccessFor(commanderId: string, now = Date.now()): Prom
     },
     select: { ownerSyndicateId: true },
   });
-  if (leases.length === 0) return access;
+  const tolls = await prisma.syndicate.findMany({ where: { gateToll: { not: null } }, select: { id: true } });
 
-  const owners = [...new Set(leases.map((lease) => lease.ownerSyndicateId))].filter((owner) => !access.has(owner));
+  const leased = [...new Set(leases.map((lease) => lease.ownerSyndicateId))].filter((owner) => !access.has(owner));
+  const tolled = tolls.map((row) => row.id).filter((owner) => !access.has(owner) && !leased.includes(owner));
+  const owners = [...leased, ...tolled];
+  if (owners.length === 0) return access;
   const hostile = syndicateId
     ? await prisma.syndicateWar.findMany({
         where: {
@@ -334,8 +343,11 @@ export async function gateAccessFor(commanderId: string, now = Date.now()): Prom
       })
     : [];
   const enemies = new Set(hostile.flatMap((war) => [war.aggressorId, war.targetId]));
-  for (const owner of owners) {
+  for (const owner of leased) {
     if (!enemies.has(owner)) access.set(owner, 'LEASED');
+  }
+  for (const owner of tolled) {
+    if (!enemies.has(owner)) access.set(owner, 'TOLL');
   }
   return access;
 }

@@ -13,9 +13,10 @@ import {
   getGateLeases,
   offerGateLease,
   respondGateLease,
+  setGateToll,
   type GateLeaseOverview,
 } from '../services/gateLeaseService.js';
-import { nonNegativeInt } from './validation.js';
+import { nonNegativeInt, positiveInt } from './validation.js';
 import { isPactKind } from '../game/syndicate.js';
 import type { ActionResponse, DiplomacyResponse, ErrorResponse } from '../types/api.js';
 
@@ -144,6 +145,22 @@ warRouter.post('/gates/leases/:id/respond', async (req, res: Response<ActionResp
     return;
   }
   const result = await respondGateLease(currentCommander(req).id, String(req.params.id), accept);
+  if (!result.ok) {
+    res.status(result.status).json({ error: result.error });
+    return;
+  }
+  res.json(result);
+});
+
+warRouter.post('/gates/toll', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const raw = (req.body as { price?: unknown } | undefined)?.price;
+  // null закрывает проход; иначе — целое число, разобранное без Number() (правило 13).
+  const price = raw === null ? null : positiveInt(raw);
+  if (raw !== null && price === null) {
+    res.status(400).json({ error: 'Цена прохода — целое положительное число' });
+    return;
+  }
+  const result = await setGateToll(currentCommander(req).id, price);
   if (!result.ok) {
     res.status(result.status).json({ error: result.error });
     return;

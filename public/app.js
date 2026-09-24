@@ -3045,6 +3045,8 @@
     KISH: [['KISH_DELIVERY', 'Доставка в Кіш'], ['KISH_PICKUP', 'Вывоз из казны'], ['HOLD', 'Удержание Коша']],
     /* Кіш чужого синдиката: налет объявляет войну синдикатов, если ее еще нет. */
     FOREIGN_KISH: [['KISH_RAID', 'Налет на Кіш']],
+    /* Чужая Брама: осада выключает врата, войну синдикатов объявляет сам вылет. */
+    FOREIGN_GATE: [['GATE_SIEGE', 'Осада Брамы']],
     DEEP_SPACE: [['EXPEDITION', 'Экспедиция']],
   };
 
@@ -3073,6 +3075,7 @@
     KISH_DELIVERY: 'Ресурсы уйдут в казну синдиката и пойдут в твои заслуги.',
     KISH_PICKUP: 'Вывоз из казны в пределах дневного лимита твоего ранга.',
     KISH_RAID: 'Налет на чужой Кіш: бой с караулом и обороной, добыча — из казны.',
+    GATE_SIEGE: 'Пробить щит врат залпом эскадры: Брама встанет на 6 ч. Объявляет войну синдикатов.',
     EXPEDITION: 'Полет в глубокий космос: находка, пираты или пустота.',
   };
 
@@ -3090,6 +3093,7 @@
     KISH_DELIVERY: 'Везти в Кіш',
     KISH_PICKUP: 'Забрать из казны',
     KISH_RAID: 'Начать налет',
+    GATE_SIEGE: 'Начать осаду',
     EXPEDITION: 'В экспедицию',
   };
 
@@ -3198,6 +3202,11 @@
   const KISH_ANGLE = (-35 * Math.PI) / 180;
   const KISH_ANGLE_STEP = (30 * Math.PI) / 180;
 
+  function gatePointFor(syndicateId) {
+    const index = (map.data && map.data.gates ? map.data.gates : []).findIndex((gate) => gate.syndicateId === syndicateId);
+    return index < 0 ? null : gatePointAt(index);
+  }
+
   function kishPointFor(syndicateId) {
     const index = (map.data && map.data.kishes ? map.data.kishes : []).findIndex((kish) => kish.syndicateId === syndicateId);
     return index < 0 ? null : polar(MAP.hubOrbit, KISH_ANGLE + index * KISH_ANGLE_STEP);
@@ -3225,10 +3234,10 @@
    */
   function gatePointHere() {
     const gates = (map.data && map.data.gates) || [];
-    const rank = { OWN: 0, ALLY: 1, LEASED: 2 };
+    const rank = { OWN: 0, ALLY: 1, LEASED: 2, TOLL: 3 };
     let best = -1;
     gates.forEach((gate, index) => {
-      if (!gate.access) return;
+      if (!gate.access || gate.disabledUntil) return;
       if (best < 0 || rank[gate.access] < rank[gates[best].access]) best = index;
     });
     return best >= 0 ? gatePointAt(best) : polar(0, 0);
@@ -3673,31 +3682,56 @@
     OWN: 'врата твоего синдиката',
     ALLY: 'врата союзника — прыгать можно',
     LEASED: 'арендованы — прыгать можно до конца срока',
+    TOLL: 'открыта для прохода за плату',
   };
+
+  /** Что сказать о вратах одной строкой: выключены осадой, отдыхают после нее или кто через них прыгает. */
+  function gateStatusText(gate) {
+    if (gate.disabledUntil) return `выведена из строя осадой — еще ${fmtTime(Math.ceil((gate.disabledUntil - Date.now()) / 1000))}`;
+    const access = gate.access ? GATE_ACCESS_TEXT[gate.access] : gate.toll ? '' : 'чужие врата — доступ можно арендовать';
+    return access;
+  }
 
   /** Брама на карте системы: видна всем, прыгать может тот, у кого есть доступ. */
   function renderGate(gate, index) {
     const svg = el.systemMap;
     const { x, y } = gatePointAt(index);
-    const group = svgEl('g', { class: `hub-node gate-node${gate.access ? ' open' : ''}` });
+    const open = gate.access && !gate.disabledUntil;
+    const selected = map.selectedKind === 'GATE' && map.selectedId === gate.syndicateId;
+    const group = svgEl('g', {
+      class: `hub-node gate-node${open ? ' open' : ''}${gate.disabledUntil ? ' down' : ''}${selected ? ' selected' : ''}`,
+    });
     celestialBody(group, x, y, HUB_RADIUS, {
       kind: 'glow',
-      fill: gate.access ? 'rgba(77, 210, 255, 0.18)' : 'rgba(160, 170, 200, 0.12)',
+      fill: open ? 'rgba(77, 210, 255, 0.18)' : 'rgba(160, 170, 200, 0.12)',
       src: '/assets/buildings/brama.webp',
       spread: 1.6,
     });
     const label = svgEl('text', { x, y: y + HUB_RADIUS + 16, class: 'planet-label name hub-label' });
-    label.textContent = `Брама [${gate.tag}] ${gate.level}`;
+    label.textContent = `Брама [${gate.tag}] ${gate.level}${gate.disabledUntil ? ' · стоит' : ''}`;
     group.appendChild(label);
     group.addEventListener('mouseenter', () => {
+      const status = gateStatusText(gate);
       tipContent(
         `<div class="pd-head"><b>Брама [${escapeHtml(gate.tag)}]</b><span>ур. ${gate.level}</span></div>` +
-          `<div class="pd-note">${gate.access ? GATE_ACCESS_TEXT[gate.access] : 'чужие врата — прыжок недоступен; доступ можно арендовать'}</div>`,
+          (status ? `<div class="pd-note">${status}</div>` : '') +
+          (gate.toll && gate.access !== 'OWN' && gate.access !== 'ALLY' && gate.access !== 'LEASED'
+            ? `<div class="pd-note">проход: <b>${fmt(gate.toll)} ₴</b> за корабль и прыжок</div>`
+            : ''),
       );
       anchorTooltip(el.systemMap, x, y, HUB_RADIUS);
     });
     group.addEventListener('mouseleave', hideTooltip);
+    group.addEventListener('click', () => selectGate(gate));
     svg.appendChild(group);
+  }
+
+  function selectGate(gate) {
+    map.selectedKind = 'GATE';
+    map.selectedId = gate.syndicateId;
+    clearCoordTarget();
+    renderMap();
+    renderPlanetInfo();
   }
 
   function showKishTooltip(kish, x, y) {
@@ -3767,6 +3801,7 @@
     const targetPointOf = (fleet) => {
       if (fleet.targetKind === 'HUB') return map.data.hub ? hubPoint() : null;
       if (fleet.targetKind === 'KISH') return kishPointFor(fleet.targetSyndicateId);
+      if (fleet.targetKind === 'GATE') return gatePointFor(fleet.targetSyndicateId);
       if (fleet.targetKind === 'DEEP_SPACE') return deepSpacePoint();
       const planet = byId.get(fleet.targetPlanetId);
       return planet ? planetPoint(planet.position) : null;
@@ -4093,6 +4128,11 @@
   function selectedKish() {
     if (!map.data || map.selectedKind !== 'KISH') return null;
     return (map.data.kishes || []).find((kish) => kish.syndicateId === map.selectedId) || null;
+  }
+
+  function selectedGate() {
+    if (!map.data || map.selectedKind !== 'GATE') return null;
+    return (map.data.gates || []).find((gate) => gate.syndicateId === map.selectedId) || null;
   }
 
   function selectedHub() {
@@ -4619,6 +4659,29 @@
       return;
     }
 
+    const gate = selectedGate();
+    if (gate) {
+      const friendly = gate.access === 'OWN' || gate.access === 'ALLY';
+      let rows = '';
+      const status = gateStatusText(gate);
+      if (status) rows += tcRow('Доступ', status);
+      if (gate.toll) rows += tcRow('Проход', `<b>${fmt(gate.toll)} ₴</b> за корабль и прыжок`);
+      if (gate.siegeImmuneUntil && !gate.disabledUntil) {
+        rows += tcRow('После осады', `неуязвима еще ${fmtTime(Math.ceil((gate.siegeImmuneUntil - Date.now()) / 1000))}`);
+      } else if (!friendly && !gate.disabledUntil) {
+        rows += tcRow('Осада', `щит врат растет с уровнем; только в войне синдикатов — если ее нет, вылет объявит ее`);
+      }
+      setPlanetInfo(
+        tcHead(`Брама [${gate.tag}]`, `врата синдиката · ур. ${gate.level}`,
+          friendly ? '<span class="tc-chip own">ваша сеть</span>' : '<span class="tc-chip foe">чужой синдикат</span>',
+          '/assets/buildings/brama.webp') +
+        `<div class="tc-rows">${rows}</div>`);
+      // К своей Браме рейсов нет: через нее прыгают, а не летят к ней.
+      el.dispatch.hidden = !base || friendly;
+      if (!el.dispatch.hidden) showDispatch(base);
+      return;
+    }
+
     const kish = selectedKish();
     if (kish) {
       // Чужой Кіш виден как станция, но рейсов к нему нет: возить в чужую
@@ -4940,6 +5003,20 @@
         colonized: false,
       };
     }
+    const gate = selectedGate();
+    if (gate) {
+      // Своя и союзная Брама — не цель рейса: туда не летают, через нее прыгают.
+      const friendly = gate.access === 'OWN' || gate.access === 'ALLY';
+      return {
+        kind: friendly ? 'GATE' : 'FOREIGN_GATE',
+        request: { targetSyndicateId: gate.syndicateId, targetSystemId: map.data.systemId },
+        name: `Брама [${gate.tag}]`,
+        place: `система ${map.data.systemName} · ур. ${gate.level}`,
+        owner: null,
+        isOwn: friendly,
+        colonized: false,
+      };
+    }
     const kish = selectedKish();
     if (kish && !kish.own) {
       return {
@@ -5104,6 +5181,16 @@
           (jump && map.plan.viaGate && map.plan.fuel > 0 ? ` + ${fmtAmount(map.plan.fuel)} плазмы` : '') +
           ` <span class="fp-muted">${oneWay ? 'в один конец' : 'туда и обратно'} · есть ${fmtAmount(fuelStock)}</span>`,
       ]);
+      // Проход через чужие врата платится при вылете сразу за оба прыжка.
+      const toll = map.plan.gateToll;
+      if (toll && toll.total > 0) {
+        const short = toll.total > state.credits;
+        rows.push([
+          'Проход',
+          `<b class="${short ? 'bad' : ''}">${fmt(toll.total)} ₴</b> ` +
+            `<span class="fp-muted">врата ${toll.owners.map((tag) => `[${escapeHtml(tag)}]`).join(', ')}</span>`,
+        ]);
+      }
       if (CARGO_MISSIONS.has(map.mission)) {
         rows.push(['Груз', `<b class="${overload ? 'bad' : ''}">${fmt(cargo)}</b> из ${fmt(map.plan.usable)}`]);
       }
@@ -6379,6 +6466,41 @@
       card.appendChild(synEl('div', 'hub-storage', 'Врата никому не сданы.'));
     }
     node.appendChild(card);
+    node.appendChild(renderGateTollCard(data));
+  }
+
+  /*
+   * Разовый проход — вторая половина торговли доступом. Аренда для тех,
+   * кто прыгает часто; проход открыт всем, с кем синдикат не воюет, и
+   * платится за каждый корабль и прыжок в момент вылета.
+   */
+  function renderGateTollCard(data) {
+    const card = synCard('Разовый проход');
+    card.appendChild(synEl('p', 'muted lease-note',
+      data.toll
+        ? `Открыт: ${fmt(data.toll)} ₴ за корабль и прыжок. Платит каждый, с кем синдикат не воюет, — сразу в казну.`
+        : 'Закрыт. Откройте проход, и через ваши Брамы сможет прыгать любой, с кем синдикат не воюет, ' +
+          'платя за каждый корабль и прыжок. Аренда перекрывает проход: арендатор не платит дважды.'));
+    if (!data.canOffer) return card;
+    const form = synEl('div', 'lease-form');
+    const price = synNumber(kishForm.tollPrice || data.toll || 100, 1);
+    price.addEventListener('input', () => { kishForm.tollPrice = price.value; });
+    const save = synButton(data.toll ? 'Изменить цену' : 'Открыть проход', 'primary', async () => {
+      const value = synInt(price);
+      if (!value) return;
+      if (await send('/api/war/gates/toll', { price: value })) {
+        kishForm.tollPrice = '';
+        await loadGateLeases();
+      }
+    });
+    form.append(synField('Цена за корабль, ₴', price), save);
+    if (data.toll) {
+      form.append(synButton('Закрыть', 'ghost', async () => {
+        if (await send('/api/war/gates/toll', { price: null })) await loadGateLeases();
+      }));
+    }
+    card.appendChild(form);
+    return card;
   }
 
   /** Карточка арендатора в «Дипломатии»: предложения и действующая аренда. */
@@ -6901,7 +7023,7 @@
         const badge = svgEl('text', { x: point.x, y: point.y - SYSTEM_ICON / 2 - 8, class: 'system-label gate-badge' });
         // Чья Брама — словом: союзника и арендованная тоже дают прыжок,
         // но их окно и срок принадлежат не твоему синдикату.
-        const gateWord = system.gateAccess === 'LEASED' ? ' · аренда' : system.gateAccess === 'ALLY' ? ' · союзник' : '';
+        const gateWord = { LEASED: ' · аренда', ALLY: ' · союзник', TOLL: ' · проход' }[system.gateAccess] || '';
         badge.textContent = [system.ownKish ? 'Кіш' : null, system.syndicateGate ? `Брама ${system.syndicateGate}${gateWord}` : null]
           .filter(Boolean).join(' · ');
         group.appendChild(badge);
@@ -8214,13 +8336,18 @@
       label: mine.watch.level > 0 ? 'Улучшить' : 'Построить', onClick: () => syndicateAction('/api/syndicates/watch/upgrade'),
     });
 
-    const gateDescription = 'Прыжок между системами со своими Брамами без «Гипердвигателя» и за треть антиматерии.';
+    const gateDescription =
+      'Мгновенный прыжок между системами со своими Брамами без «Гипердвигателя». ' +
+      'Каждый уровень снижает долю антиматерии на прыжок и поднимает щит против осады.';
     for (const gate of mine.gates.list) {
       kishModuleCard(node, {
         mine, type: 'BRAMA', title: `Брама · ${gate.systemName}`, description: gateDescription,
         detailUrl: `/api/syndicates/projection/module/BRAMA?systemId=${encodeURIComponent(gate.systemId)}`,
         level: gate.level > 0 ? `Ур. ${gate.level}` : '',
-        effect: `за час ${fmt(gate.windowShips)} из ${fmt(gate.throughput)} кораблей`,
+        effect: gate.disabledUntil
+          ? `выведена осадой — еще ${fmtTime(Math.ceil((gate.disabledUntil - Date.now()) / 1000))}`
+          : `за час ${fmt(gate.windowShips)} из ${fmt(gate.throughput)} кораблей · щит ${fmt(gate.siegeShield)}` +
+            (gate.siegeImmuneUntil ? ' · после осады неуязвима' : ''),
         cost: gate.nextLevelCost, seconds: gate.nextLevelSeconds, requirements: gate.nextLevelRequirements, buildKey: `BRAMA:${gate.systemId}`, allowed: can('KISH'), deniedHint: denyKish,
         label: 'Улучшить', onClick: () => syndicateAction('/api/syndicates/gates', { systemId: gate.systemId }),
       });

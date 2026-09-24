@@ -209,6 +209,9 @@ model Syndicate {
   contributedValue Float @default(0)
   /// Вложено из казны в Кіш и его модули.
   investedValue    Float @default(0)
+  /// Плата за разовый проход через Брамы синдиката, ₴ за корабль за прыжок;
+  /// `null` — проход закрыт, прыгать могут только свои, союзники и арендаторы.
+  gateToll         Int?
 
   leader       Commander               @relation("SyndicateLeader", fields: [leaderId], references: [id], onDelete: Cascade)
   members      Commander[]             @relation("SyndicateMembers")
@@ -401,6 +404,8 @@ enum SyndicateTxKind {
   GATE_LEASE_PAYMENT
   /// Возврат за неиспользованный срок, когда владелец расторг аренду.
   GATE_LEASE_REFUND
+  /// Плата за разовый проход через Брамы.
+  GATE_TOLL
 }
 
 enum SyndicatePermission {
@@ -415,6 +420,8 @@ enum SyndicatePermission {
   DIPLOMACY
   KISH
   ACADEMY
+  /// Цены Брам: аренда сети и плата за разовый проход.
+  GATES
 }
 
 enum SyndicateRecruitment {
@@ -1109,6 +1116,8 @@ enum FleetMission {
   KISH_PICKUP
   HOLD
   KISH_RAID
+  /// Осада чужой Брамы в войне синдикатов: врата выключаются на срок.
+  GATE_SIEGE
 }
 
 enum ExpeditionOutcome {
@@ -1271,6 +1280,11 @@ model SyndicateGate {
   /// и держится час. Резервируется при вылете одним условным UPDATE.
   windowStartedAt DateTime @default(now())
   windowShips     Int      @default(0)
+  /// Врата выключены осадой до этого момента.
+  disabledUntil    DateTime?
+  /// После осады врата неуязвимы до этого момента: иначе их держали бы
+  /// закрытыми вечно, сменяя друг друга.
+  siegeImmuneUntil DateTime?
   createdAt       DateTime @default(now())
 
   syndicate Syndicate   @relation(fields: [syndicateId], references: [id], onDelete: Cascade)

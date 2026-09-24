@@ -331,17 +331,18 @@ gameRouter.post('/bases/:baseId/fleets/preview', async (req, res: Response<Fligh
   const oneWay =
     isFleetMission(body.mission) && resolveOneWay(body.mission, body.oneWay === true);
 
+  // Предпросмотр показывает тот же маршрут, по которому пойдет вылет: через Браму,
+  // если пропустят и проход по карману.
+  const hostile =
+    body.mission === 'KISH_RAID' || body.mission === 'GATE_SIEGE' ? (readTarget(body).syndicateId ?? null) : null;
+  const gate = await gameLoop.gateRoute(commander.commanderId, base.systemId, target.systemId, fleetSize(ships), oneWay, hostile);
+  const viaGate = gate.usable && gate.tollTotal <= commander.credits;
   const plan = planFlight(
     ships,
     commander.techs,
     { position: base.position, system: base.galaxy },
     target,
-    {
-      oneWay,
-      cargoMultiplier: commanderSyndicateBuffs(commander).cargo,
-      // Предпросмотр показывает тот же маршрут, по которому пойдет вылет: через Браму, если можно.
-      viaGate: (await gameLoop.gateRoute(commander.commanderId, base.systemId, target.systemId, fleetSize(ships))).usable,
-    },
+    { oneWay, cargoMultiplier: commanderSyndicateBuffs(commander).cargo, viaGate, gateLevel: gate.level },
   );
 
   // Предупреждение считается только для атаки и только по живой цели:
@@ -350,7 +351,11 @@ gameRouter.post('/bases/:baseId/fleets/preview', async (req, res: Response<Fligh
   const defenderId = body.mission === 'ATTACK' ? await gameLoop.planetOwner(readTarget(body)) : null;
   const warning = defenderId ? await attackWarning(currentCommander(req).id, defenderId) : null;
 
-  res.json({ ...plan, warning });
+  res.json({
+    ...plan,
+    warning,
+    gateToll: viaGate && gate.tollTotal > 0 ? { total: gate.tollTotal, owners: gate.tolls.map((toll) => toll.tag) } : null,
+  });
 });
 
 /** Отправить флот с базы на другую планету. */

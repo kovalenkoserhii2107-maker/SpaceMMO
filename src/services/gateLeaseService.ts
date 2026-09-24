@@ -3,8 +3,9 @@
  * синдикат на срок за плату вперед.
  *
  * Жизненный цикл — как у пактов: предложение → принятие с оплатой → срок →
- * история. Предлагает и расторгает со стороны владельца ранг с правом развития
- * Коша (Брамы — его модули); принимает игрок сам за себя или ранг с правом
+ * история. Предлагает и расторгает со стороны владельца ранг с правом «цены
+ * Брам» — отдельным от развития Коша: строить врата и торговать доступом
+ * к ним — разные поручения, и главарь раздает их разным людям. Принимает игрок сам за себя или ранг с правом
  * дипломатии за свой синдикат, и платит тот, кто принял: игрок со своего счета,
  * синдикат из казны. Что аренда разрешает, решает вылет флота через
  * `gateAccessFor`; здесь только договор, деньги и письма.
@@ -14,6 +15,7 @@ import { prisma } from '../db/prisma.js';
 import { gameLoop } from '../game/gameLoop.js';
 import {
   GATE_LEASE_PRICE_MAX,
+  GATE_TOLL_MAX,
   gateLeaseRefund,
   hasPermission,
   isGateLeaseHours,
@@ -44,8 +46,12 @@ export interface GateLeaseOverview {
   given: GateLeaseView[];
   /** Договоры, где арендатор — сам смотрящий или его синдикат. */
   taken: GateLeaseView[];
-  /** Может ли смотрящий сдавать врата своего синдиката. */
+  /** Может ли смотрящий сдавать врата своего синдиката и назначать проход. */
   canOffer: boolean;
+  /** Цена разового прохода через врата своего синдиката; `null` — проход закрыт. */
+  toll: number | null;
+  /** Есть ли у своего синдиката хоть одна Брама — иначе сдавать нечего. */
+  hasGates: boolean;
 }
 
 class LeaseError extends Error {
@@ -77,7 +83,7 @@ export async function getGateLeases(commanderId: string): Promise<GateLeaseOverv
   const now = Date.now();
   const access = await membershipOf(commanderId);
   const syndicateId = access.ok ? access.syndicateId : null;
-  const canManage = access.ok && hasPermission(access, 'KISH');
+  const canManage = access.ok && hasPermission(access, 'GATES');
   const canDiplomacy = access.ok && hasPermission(access, 'DIPLOMACY');
 
   const rows = await prisma.gateLease.findMany({
@@ -113,11 +119,37 @@ export async function getGateLeases(commanderId: string): Promise<GateLeaseOverv
     };
   };
 
+  const own = syndicateId
+    ? await prisma.syndicate.findUnique({ where: { id: syndicateId }, select: { gateToll: true, _count: { select: { gates: true } } } })
+    : null;
   return {
     given: rows.filter((row) => row.ownerSyndicateId === syndicateId).map((row) => view(row, 'OWNER')),
     taken: rows.filter((row) => row.ownerSyndicateId !== syndicateId).map((row) => view(row, 'TENANT')),
     canOffer: canManage,
+    toll: own?.gateToll ?? null,
+    hasGates: (own?._count.gates ?? 0) > 0,
   };
+}
+
+/**
+ * Разовый проход: цена за корабль и прыжок для всех, с кем синдикат не воюет,
+ * или `null` — закрыть. Меняется сразу и без писем: уже улетевшие заплатили
+ * при вылете, а следующий увидит новую цену в предпросмотре маршрута.
+ */
+export async function setGateToll(commanderId: string, price: number | null): Promise<LeaseResult> {
+  const access = await requirePermission(commanderId, 'GATES');
+  if (!access.ok) {
+    return {
+      ok: false,
+      error: access.status === 403 ? 'Цену прохода назначает ранг с правом «цены Брам»' : access.error,
+      status: access.status,
+    };
+  }
+  if (price !== null && (!Number.isSafeInteger(price) || price < 1 || price > GATE_TOLL_MAX)) {
+    return { ok: false, error: `Цена прохода — целое число от 1 до ${GATE_TOLL_MAX} ₴ за корабль`, status: 400 };
+  }
+  await prisma.syndicate.update({ where: { id: access.syndicateId }, data: { gateToll: price } });
+  return { ok: true, message: price === null ? 'Проход через Брамы закрыт' : `Проход открыт: ${price} ₴ за корабль и прыжок` };
 }
 
 async function notify(recipientIds: string[], subject: string, body: string): Promise<void> {
@@ -165,11 +197,11 @@ export interface LeaseOfferInput {
 }
 
 export async function offerGateLease(commanderId: string, input: LeaseOfferInput): Promise<LeaseResult> {
-  const access = await requirePermission(commanderId, 'KISH');
+  const access = await requirePermission(commanderId, 'GATES');
   if (!access.ok) {
     return {
       ok: false,
-      error: access.status === 403 ? 'Сдавать Брамы может ранг с правом развития Коша' : access.error,
+      error: access.status === 403 ? 'Сдавать Брамы может ранг с правом «цены Брам»' : access.error,
       status: access.status,
     };
   }
@@ -358,7 +390,7 @@ export async function cancelGateLease(commanderId: string, leaseId: string): Pro
   const access = await membershipOf(commanderId);
   const ownerSide = access.ok && access.syndicateId === lease.ownerSyndicateId;
   if (ownerSide) {
-    if (!hasPermission(access, 'KISH')) return { ok: false, error: 'Расторгать аренду может ранг с правом развития Коша', status: 403 };
+    if (!hasPermission(access, 'GATES')) return { ok: false, error: 'Расторгать аренду может ранг с правом «цены Брам»', status: 403 };
   } else {
     const tenantSelf = lease.tenantCommanderId === commanderId;
     const tenantRank = access.ok && lease.tenantSyndicateId === access.syndicateId && hasPermission(access, 'DIPLOMACY');

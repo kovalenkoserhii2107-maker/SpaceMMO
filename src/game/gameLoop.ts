@@ -70,7 +70,7 @@ import {
   type DefenseType,
 } from './defenses.js';
 import { resolveEspionage, espionageSeed } from './espionage.js';
-import { plunderAmount, resolveBattle, type PlunderResult, type SideForces, type UnitLoss } from './combat.js';
+import { fleetSalvo, plunderAmount, resolveBattle, type BattleOutcome, type PlunderResult, type SideForces, type UnitLoss } from './combat.js';
 import { checkArchitect, checkPirateBane } from '../services/achievementService.js';
 import { canAttack, declareSyndicateWar, declareWar } from '../services/warService.js';
 import { availableAt, depositLocal, lockHubStocks, withdrawStock } from '../services/hubStock.js';
@@ -86,6 +86,11 @@ import { alliedSyndicateIds, commanderPacts, pactsInForce,
 import {
   pactsForbidAttack,
   bramaThroughput,
+  gateTollCost,
+  gateSiegeShield,
+  gateSiegeState,
+  GATE_SIEGE_DOWN_MS,
+  GATE_SIEGE_IMMUNE_MS,
   effectiveTaxRate,
   plunderTreasury,
   treasuryProtectedShare,
@@ -181,6 +186,20 @@ const HARVEST_RETRIES = 3;
 const IDLE_EVICT_MS = 600_000;
 /** Как часто проверять прилеты флотов (в тиках). */
 const FLEET_SWEEP_EVERY_TICKS = 2;
+
+/** Маршрут через Брамы: пропустят ли, чьи врата вылета и сколько стоит проход. */
+export interface GateRoute {
+  usable: boolean;
+  reason: string | null;
+  gateId: string | null;
+  /** Уровень врат вылета — от него доля антиматерии на прыжок. */
+  level: number;
+  tolls: { syndicateId: string; tag: string; amount: number }[];
+  tollTotal: number;
+}
+
+/** Отказ внутри транзакции вылета через Браму — откатывает и окно, и плату. */
+class GateLaunchError extends Error {}
 
 type GameServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
 
@@ -972,6 +991,43 @@ class GameLoop {
       targetSystemId = system.id;
       targetSystemRef = system.id;
       target_ = { position: DEEP_SPACE_POSITION, system };
+    } else if (mission === 'GATE_SIEGE') {
+      /*
+       * Осада Брамы — как налет на Кіш: только от лица синдиката, только
+       * в войне синдикатов, и войну объявляет сам вылет рангу с правом
+       * дипломатии. Цель — врата синдиката в конкретной системе.
+       */
+      if (!target.syndicateId || !target.systemId) return { ok: false, error: 'Не указаны врата для осады' };
+      const gate = await prisma.syndicateGate.findUnique({
+        where: { syndicateId_systemId: { syndicateId: target.syndicateId, systemId: target.systemId } },
+        include: { system: true },
+      });
+      if (!gate) return { ok: false, error: 'Брама не найдена' };
+      const own = await prisma.commander.findUnique({ where: { id: commanderId }, select: { syndicateId: true } });
+      if (!own?.syndicateId) return { ok: false, error: 'Осада Брамы возможна только от лица синдиката' };
+      if (own.syndicateId === target.syndicateId) return { ok: false, error: 'Свои врата не осаждают' };
+      if (pactsForbidAttack(await pactsInForce(own.syndicateId, target.syndicateId))) {
+        return { ok: false, error: 'С этим синдикатом действует пакт о ненападении' };
+      }
+      const state = gateSiegeState(gate, Date.now());
+      if (state === 'DISABLED') return { ok: false, error: 'Эта Брама уже выведена из строя' };
+      if (state === 'IMMUNE') {
+        const hours = Math.ceil((gate.siegeImmuneUntil!.getTime() - Date.now()) / 3_600_000);
+        return { ok: false, error: `Брама восстанавливается после осады — неуязвима еще ${hours} ч` };
+      }
+      const atWar = await prisma.syndicateWar.findFirst({
+        where: {
+          OR: [
+            { aggressorId: own.syndicateId, targetId: target.syndicateId },
+            { aggressorId: target.syndicateId, targetId: own.syndicateId },
+          ],
+        },
+      });
+      if (!atWar) declareWarOn = target.syndicateId;
+      targetSyndicateId = target.syndicateId;
+      targetSystemId = gate.systemId;
+      targetSystemRef = gate.systemId;
+      target_ = { position: GATE_POSITION, system: gate.system };
     } else if (target.syndicateId && (mission === 'KISH_RAID' || mission === 'HOLD' || mission === 'HARVEST')) {
       const syndicate = await prisma.syndicate.findUnique({
         where: { id: target.syndicateId },
@@ -1184,8 +1240,17 @@ class GameLoop {
     const gateSize = fleetSize(ships);
     let viaGate = false;
     let gateNote = '';
+    let gate: GateRoute | null = null;
     if (targetSystemRef && targetSystemRef !== base.systemId) {
-      const gate = await this.gateRoute(commanderId, base.systemId, targetSystemRef, gateSize);
+      // Налет и осада идут на синдикат, с которым война либо есть, либо будет
+      // объявлена вылетом: лететь к его вратам через его же сеть — и платить
+      // ему за проход — нельзя, даже пока война еще не объявлена.
+      const hostile = mission === 'KISH_RAID' || mission === 'GATE_SIEGE' ? targetSyndicateId : null;
+      gate = await this.gateRoute(commanderId, base.systemId, targetSystemRef, gateSize, oneWay, hostile);
+      // Проход не по карману — летим гиперпрыжком, если он есть, как при полном окне.
+      if (gate.usable && gate.tollTotal > commander.credits) {
+        gate = { ...gate, usable: false, reason: `проход стоит ${gate.tollTotal} ₴` };
+      }
       viaGate = gate.usable;
       gateNote = gate.reason ? ` (${gate.reason})` : '';
     }
@@ -1195,14 +1260,15 @@ class GameLoop {
       commander.techs,
       { position: base.position, system: base.galaxy },
       target_,
-      { oneWay, cargoMultiplier: senderBuffs.cargo, viaGate },
+      { oneWay, cargoMultiplier: senderBuffs.cargo, viaGate, gateLevel: gate?.level ?? 1 },
     );
 
     // Груз берем только для рейсов, которые что-то везут туда.
     // Хаб торгует лишь рудой и полимерами, поэтому плазму туда не грузим.
     const empty = { ore: 0, polymers: 0, plasma: 0 };
     const outboundCargo =
-      mission === 'HUB_PICKUP' || mission === 'KISH_PICKUP' || mission === 'HOLD' || mission === 'KISH_RAID'
+      mission === 'HUB_PICKUP' || mission === 'KISH_PICKUP' || mission === 'HOLD' || mission === 'KISH_RAID' ||
+      mission === 'GATE_SIEGE'
         ? empty
         : mission === 'HUB_DELIVERY'
         ? { ...cargo, plasma: 0 }
@@ -1287,15 +1353,16 @@ class GameLoop {
     const holdMs = mission === 'HOLD' ? holdHours * 3_600_000 : 0;
     const returnsAt = arrivesAt + holdMs + plan.flightSeconds * 1000;
 
+    // Окно Брамы и проход — последним шагом перед вылетом, но до списания
+    // груза и топлива: отказ по заполненному окну не должен их сжечь.
+    if (plan.viaGate && gate) {
+      const launched = await this.launchThroughGate(commanderId, gate, gateSize);
+      if (!launched.ok) return launched;
+    }
+
     base.resources.ore -= outboundCargo.ore;
     base.resources.polymers -= outboundCargo.polymers;
     base.resources.plasma -= plan.fuel + outboundCargo.plasma;
-    // Пропускная способность резервируется последней, перед самим вылетом:
-    // отказ после резерва занимал бы место в окне Брамы зря.
-    if (plan.viaGate && !(await this.reserveGate(commanderId, base.systemId, gateSize))) {
-      return { ok: false, error: 'Брама вылета только что заполнилась — попробуй через минуту или гиперпрыжком' };
-    }
-
     base.resources.antimatter -= plan.antimatter + antimatterCargo;
     for (const type of SHIP_TYPES) base.ships[type] -= ships[type];
     base.dirty = true;
@@ -1361,7 +1428,8 @@ class GameLoop {
           ? `Экспедиция стартовала: ${fleetSize(ships)} кораблей, до точки ${plan.flightSeconds} с`
           : plan.kind === 'INTERSTELLAR'
           ? `${plan.viaGate ? 'Через Браму' : 'Гиперпрыжок'}: ${fleetSize(ships)} кораблей, в пути ${plan.flightSeconds} с, ` +
-            `сожжено ${plan.antimatter} антиматерии`
+            `сожжено ${plan.antimatter} антиматерии` +
+            (plan.viaGate && gate && gate.tollTotal > 0 ? `, за проход ${gate.tollTotal} ₴` : '')
           : `Флот вылетел: ${fleetSize(ships)} кораблей, в пути ${plan.flightSeconds} с, ` +
             `сожжено ${plan.fuel} плазмы`,
     };
@@ -1557,6 +1625,14 @@ class GameLoop {
   async getTargetLocation(
     target: { planetId?: string; hubId?: string; systemId?: string; syndicateId?: string },
   ): Promise<{ position: number; system: { galaxyX: number; galaxyY: number }; systemId: string } | null> {
+    // Синдикат вместе с системой — это его Брама там (цель осады), без системы — его Кіш.
+    if (target.syndicateId && target.systemId) {
+      const gate = await prisma.syndicateGate.findUnique({
+        where: { syndicateId_systemId: { syndicateId: target.syndicateId, systemId: target.systemId } },
+        include: { system: true },
+      });
+      return gate ? { position: GATE_POSITION, system: gate.system, systemId: gate.systemId } : null;
+    }
     if (target.syndicateId) {
       const syndicate = await prisma.syndicate.findUnique({
         where: { id: target.syndicateId },
@@ -1587,57 +1663,140 @@ class GameLoop {
 
   /**
    * Можно ли лететь через Браму: доступные врата в обеих системах — свои,
-   * союзника или арендованные (`gateAccessFor`) — и свободное место в часовом
-   * окне врат вылета. `reason` объясняет, почему нельзя, когда врата есть,
-   * но не пропустят.
+   * союзника, арендованные или за разовый проход (`gateAccessFor`) — и
+   * свободное место в часовом окне врат вылета. `reason` объясняет, почему
+   * нельзя, когда врата есть, но не пропустят.
+   *
+   * Проход платится владельцу тех врат, с которых начинается прыжок: туда —
+   * вратам вылета, обратно — вратам цели. Считается при вылете целиком, как
+   * и топливо: платить на обратном пути было бы нечем проверить заранее.
    */
   async gateRoute(
     commanderId: string,
     fromSystemId: string,
     toSystemId: string,
     shipCount: number,
-  ): Promise<{ usable: boolean; reason: string | null }> {
-    if (fromSystemId === toSystemId) return { usable: false, reason: null };
+    oneWay = false,
+    /** Синдикат, с которым этот вылет начинает войну: его сетью лететь нельзя. */
+    hostile: string | null = null,
+  ): Promise<GateRoute> {
+    const none: GateRoute = { usable: false, reason: null, gateId: null, level: 1, tolls: [], tollTotal: 0 };
+    if (fromSystemId === toSystemId) return none;
     const access = await gateAccessFor(commanderId);
-    if (access.size === 0) return { usable: false, reason: null };
+    if (hostile) access.delete(hostile);
+    if (access.size === 0) return none;
     const fromGate = await this.usableGate(access, fromSystemId);
     const toGate = await this.usableGate(access, toSystemId);
-    if (!fromGate || !toGate) return { usable: false, reason: null };
+    if (!fromGate || !toGate) return none;
     const windowOpen = Date.now() - fromGate.windowStartedAt.getTime() < GATE_WINDOW_MS;
     const used = windowOpen ? fromGate.windowShips : 0;
     const limit = bramaThroughput(fromGate.level);
     if (used + shipCount > limit) {
-      return { usable: false, reason: `Брама пропустила за час ${used} из ${limit} кораблей` };
+      return { ...none, reason: `Брама пропустила за час ${used} из ${limit} кораблей` };
     }
-    return { usable: true, reason: null };
+
+    const jumps = [fromGate, ...(oneWay ? [] : [toGate])].filter((gate) => access.get(gate.syndicateId) === 'TOLL');
+    const owners = await prisma.syndicate.findMany({
+      where: { id: { in: [...new Set(jumps.map((gate) => gate.syndicateId))] } },
+      select: { id: true, tag: true, gateToll: true },
+    });
+    const tolls = owners
+      .map((owner) => ({
+        syndicateId: owner.id,
+        tag: owner.tag,
+        amount: gateTollCost(
+          owner.gateToll ?? 0,
+          shipCount,
+          jumps.filter((gate) => gate.syndicateId === owner.id).length,
+        ),
+      }))
+      .filter((toll) => toll.amount > 0);
+    return {
+      usable: true,
+      reason: null,
+      gateId: fromGate.id,
+      level: fromGate.level,
+      tolls,
+      tollTotal: tolls.reduce((sum, toll) => sum + toll.amount, 0),
+    };
   }
 
   /**
    * Брама в системе, через которую игрок может прыгать. Своя берется первой,
-   * за ней союзника, последней арендованная: окно считает владелец врат,
-   * и тратить чужое окно, когда есть свое, незачем.
+   * за ней союзника, арендованная и последней — за проход: окно считает
+   * владелец врат, и тратить чужое окно и деньги, когда есть свое, незачем.
+   * Врата, выведенные из строя осадой, не пропускают никого, и своих тоже.
    */
   private async usableGate(access: Map<string, GateAccessKind>, systemId: string) {
-    const gates = await prisma.syndicateGate.findMany({ where: { systemId, syndicateId: { in: [...access.keys()] } } });
-    const rank = { OWN: 0, ALLY: 1, LEASED: 2 } as const;
+    const gates = await prisma.syndicateGate.findMany({
+      where: {
+        systemId,
+        syndicateId: { in: [...access.keys()] },
+        OR: [{ disabledUntil: null }, { disabledUntil: { lt: new Date() } }],
+      },
+    });
+    const rank = { OWN: 0, ALLY: 1, LEASED: 2, TOLL: 3 } as const;
     return gates.sort((a, b) => rank[access.get(a.syndicateId)!] - rank[access.get(b.syndicateId)!])[0] ?? null;
   }
 
-  /** Резерв места в часовом окне Брамы вылета — одним условным UPDATE, без гонок. */
-  private async reserveGate(commanderId: string, fromSystemId: string, shipCount: number): Promise<boolean> {
-    const access = await gateAccessFor(commanderId);
-    if (access.size === 0) return false;
-    const gate = await this.usableGate(access, fromSystemId);
-    if (!gate) return false;
-    const limit = bramaThroughput(gate.level);
+  /**
+   * Резерв места в часовом окне Брамы вылета и плата за проход — одной
+   * транзакцией. Порознь каждая половина оставляла бы след при отказе другой:
+   * оплаченный проход без места в окне или занятое место без платы.
+   * Резерв — условный UPDATE, плата — условное списание с `gte`.
+   */
+  private async launchThroughGate(
+    commanderId: string,
+    route: GateRoute,
+    shipCount: number,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (!route.gateId) return { ok: false, error: 'Брама вылета недоступна' };
+    const limit = bramaThroughput(route.level);
     const expired = new Date(Date.now() - GATE_WINDOW_MS);
-    const updated = await prisma.$executeRaw`
-      UPDATE syndicate_gates SET
-        "windowShips" = CASE WHEN "windowStartedAt" < ${expired} THEN ${shipCount} ELSE "windowShips" + ${shipCount} END,
-        "windowStartedAt" = CASE WHEN "windowStartedAt" < ${expired} THEN NOW() ELSE "windowStartedAt" END
-      WHERE id = ${gate.id}
-        AND (CASE WHEN "windowStartedAt" < ${expired} THEN ${shipCount} ELSE "windowShips" + ${shipCount} END) <= ${limit}`;
-    return updated > 0;
+    const nickname =
+      (await prisma.commander.findUnique({ where: { id: commanderId }, select: { nickname: true } }))?.nickname ?? 'пилот';
+    try {
+      await prisma.$transaction(async (tx) => {
+        const updated = await tx.$executeRaw`
+          UPDATE syndicate_gates SET
+            "windowShips" = CASE WHEN "windowStartedAt" < ${expired} THEN ${shipCount} ELSE "windowShips" + ${shipCount} END,
+            "windowStartedAt" = CASE WHEN "windowStartedAt" < ${expired} THEN NOW() ELSE "windowStartedAt" END
+          WHERE id = ${route.gateId}
+            AND ("disabledUntil" IS NULL OR "disabledUntil" < NOW())
+            AND (CASE WHEN "windowStartedAt" < ${expired} THEN ${shipCount} ELSE "windowShips" + ${shipCount} END) <= ${limit}`;
+        if (updated === 0) throw new GateLaunchError('Брама вылета только что заполнилась — попробуй через минуту или гиперпрыжком');
+        if (route.tollTotal <= 0) return;
+        const paid = await tx.commander.updateMany({
+          where: { id: commanderId, credits: { gte: route.tollTotal } },
+          data: { credits: { decrement: route.tollTotal } },
+        });
+        if (paid.count === 0) throw new GateLaunchError(`На проход через Брамы нужно ${route.tollTotal} ₴`);
+        for (const toll of route.tolls) {
+          await tx.syndicateBank.upsert({
+            where: { syndicateId: toll.syndicateId },
+            create: { syndicateId: toll.syndicateId, credits: toll.amount },
+            update: { credits: { increment: toll.amount } },
+          });
+          await tx.syndicateTransaction.create({
+            data: {
+              syndicateId: toll.syndicateId,
+              actorId: commanderId,
+              kind: 'GATE_TOLL',
+              amount: toll.amount,
+              comment: `проход ${shipCount} кор.: ${nickname}`,
+            },
+          });
+        }
+      });
+    } catch (error) {
+      if (error instanceof GateLaunchError) return { ok: false, error: error.message };
+      throw error;
+    }
+    if (route.tollTotal > 0) {
+      const fresh = await prisma.commander.findUnique({ where: { id: commanderId }, select: { credits: true } });
+      if (fresh) this.syncCredits(commanderId, fresh.credits);
+    }
+    return { ok: true };
   }
 
   /** Заказ стационарной обороны. Очередь своя, но правила те же, что у кораблей. */
@@ -1986,6 +2145,10 @@ class GameLoop {
    * и груз зачислился бы дважды.
    */
   private async handleArrival(fleet: FleetRow, now: number): Promise<void> {
+    if (fleet.mission === 'GATE_SIEGE') {
+      await this.resolveGateSiege(fleet, now);
+      return;
+    }
     if (fleet.targetSyndicateId && (fleet.mission === 'KISH_RAID' || fleet.mission === 'HOLD' || fleet.mission === 'HARVEST')) {
       if (fleet.mission === 'KISH_RAID') {
         await this.resolveKishRaid(fleet, fleet.targetSyndicateId, now);
@@ -2941,52 +3104,7 @@ class GameLoop {
         return null;
       }
 
-      const holders = await tx.fleet.findMany({
-        where: { targetSyndicateId: syndicateId, mission: 'HOLD', status: 'HOLDING' },
-      });
-      const holderShips = holders.map((holder) => shipsFromFleetColumns(holder));
-      const defenderShips = emptyShipCounts();
-      for (const ships of holderShips) {
-        for (const type of SHIP_TYPES) defenderShips[type] += ships[type];
-      }
-      const defenderDefenses = emptyDefenseCounts();
-      for (const row of syndicate.defenses) defenderDefenses[row.type] = row.count;
-
-      const outcome = resolveBattle(
-        { ships: attackerShips, defenses: emptyDefenseCounts() },
-        { ships: defenderShips, defenses: defenderDefenses },
-      );
-
-      for (const row of syndicate.defenses) {
-        await tx.syndicateDefense.update({ where: { id: row.id }, data: { count: outcome.defenderSurvivorDefenses[row.type] } });
-      }
-
-      const shares = splitSurvivors(outcome.defenderSurvivorShips, holderShips);
-      for (const [index, holder] of holders.entries()) {
-        const left = shares[index]!;
-        const lost = fleetSize(holderShips[index]!) - fleetSize(left);
-        if (fleetSize(left) === 0) await tx.fleet.delete({ where: { id: holder.id } });
-        else await tx.fleet.update({ where: { id: holder.id }, data: shipColumnsOf(left) });
-        await tx.message.create({
-          data: {
-            recipientId: holder.commanderId,
-            type: 'FLEET',
-            subject: `Удержание: налет на Кіш [${syndicate.tag}]`,
-            body:
-              `Флот на удержании у Коша принял бой. ` +
-              (fleetSize(left) === 0
-                ? `Флот погиб целиком: ${lost} кораблей.`
-                : `Потеряно кораблей: ${lost}, уцелело ${fleetSize(left)} — удержание продолжается.`),
-          },
-        });
-      }
-
-      if (outcome.debris.ore > 0 || outcome.debris.polymers > 0) {
-        await tx.syndicate.update({
-          where: { id: syndicateId },
-          data: { debrisOre: { increment: outcome.debris.ore }, debrisPolymers: { increment: outcome.debris.polymers } },
-        });
-      }
+      const { outcome, defenderShips } = await this.kishGuardBattle(tx, syndicate, attackerShips, 'налет на Кіш');
 
       let loot = plunderTreasury({ ore: 0, polymers: 0, plasma: 0 }, 0, 0);
       if (outcome.winner === 'ATTACKER') {
@@ -3097,6 +3215,230 @@ class GameLoop {
       : [];
     await this.notify([...mails, ...copies]);
     void now;
+  }
+
+  /**
+   * Осада Брамы.
+   *
+   * Если в системе стоит Кіш владельца, сначала бой с его охраной — те же
+   * силы, что защищают Кіш от налета. Уцелевшие осаждающие бьют по щиту
+   * врат: залп не меньше щита (`gateSiegeShield`) — и врата выключены
+   * на шесть часов, после чего полсуток неуязвимы. Ничего не грабится:
+   * у врат нет склада, а цель осады — сеть, а не добыча.
+   */
+  private async resolveGateSiege(fleet: FleetRow, now: number): Promise<void> {
+    const attackerShips = fleetShips(fleet);
+    const result = await prisma.$transaction(async (tx) => {
+      const gate =
+        fleet.targetSyndicateId && fleet.targetSystemId
+          ? await tx.syndicateGate.findUnique({
+              where: { syndicateId_systemId: { syndicateId: fleet.targetSyndicateId, systemId: fleet.targetSystemId } },
+              include: {
+                system: true,
+                syndicate: { include: { defenses: true, members: { select: { id: true } } } },
+              },
+            })
+          : null;
+      // Врата снесли, пока флот летел, или их уже выключил кто-то другой: разворот без боя.
+      if (!gate || gateSiegeState(gate, now) !== 'OPEN') {
+        await tx.fleet.update({ where: { id: fleet.id }, data: { status: 'RETURNING' } });
+        return { kind: 'MISSED' as const, tag: gate?.syndicate.tag ?? '?', systemName: gate?.system.name ?? '?' };
+      }
+      const syndicate = gate.syndicate;
+
+      let survivors = attackerShips;
+      let battle: { outcome: BattleOutcome; defenderShips: ShipCounts } | null = null;
+      // Бой только там, где есть кому драться: пустой Кіш рядом с вратами
+      // не повод слать защитникам отчет о бое без единого выстрела.
+      const guarded =
+        syndicate.kishSystemId === gate.systemId &&
+        (syndicate.defenses.some((row) => row.count > 0) ||
+          (await tx.fleet.count({ where: { targetSyndicateId: syndicate.id, mission: 'HOLD', status: 'HOLDING' } })) > 0);
+      if (guarded) {
+        battle = await this.kishGuardBattle(tx, syndicate, attackerShips, 'осада Брамы');
+        survivors = battle.outcome.attackerSurvivors;
+        const attacker = await tx.commander.findUniqueOrThrow({ where: { id: fleet.commanderId }, select: { syndicateId: true } });
+        const destroyedByAttacker = spentOnFleet(shipsLost(battle.defenderShips, battle.outcome.defenderSurvivorShips));
+        const destroyedByDefender = spentOnFleet(shipsLost(attackerShips, survivors));
+        if (attacker.syndicateId && destroyedByAttacker > 0) {
+          await tx.syndicate.updateMany({ where: { id: attacker.syndicateId }, data: { destroyedValue: { increment: destroyedByAttacker } } });
+        }
+        if (destroyedByDefender > 0) {
+          await tx.syndicate.update({ where: { id: syndicate.id }, data: { destroyedValue: { increment: destroyedByDefender } } });
+        }
+      }
+
+      const guardWon = battle !== null && battle.outcome.winner !== 'ATTACKER';
+      const salvo = guardWon ? 0 : fleetSalvo(survivors);
+      const shield = gateSiegeShield(gate.level);
+      const broken = !guardWon && salvo >= shield;
+      if (broken) {
+        const disabledUntil = new Date(now + GATE_SIEGE_DOWN_MS);
+        await tx.syndicateGate.update({
+          where: { id: gate.id },
+          data: { disabledUntil, siegeImmuneUntil: new Date(disabledUntil.getTime() + GATE_SIEGE_IMMUNE_MS) },
+        });
+      }
+
+      if (fleetSize(survivors) > 0) {
+        await tx.fleet.update({ where: { id: fleet.id }, data: { ...shipColumnsOf(survivors), status: 'RETURNING' } });
+      } else {
+        await tx.fleet.delete({ where: { id: fleet.id } });
+      }
+      const attacker = await tx.commander.update({
+        where: { id: fleet.commanderId },
+        data: broken ? { battlesWon: { increment: 1 } } : { battlesLost: { increment: 1 } },
+        select: { nickname: true },
+      });
+      return {
+        kind: 'FOUGHT' as const,
+        broken,
+        guardWon,
+        salvo,
+        shield,
+        level: gate.level,
+        battle,
+        attackerName: attacker.nickname,
+        leaderId: syndicate.leaderId,
+        memberIds: syndicate.members.map((member) => member.id),
+        tag: syndicate.tag,
+        system: gate.system,
+      };
+    });
+
+    if (result.kind === 'MISSED') {
+      await this.notify([
+        {
+          recipientId: fleet.commanderId,
+          senderId: null,
+          type: 'FLEET',
+          subject: `Осада Брамы [${result.tag}] не состоялась`,
+          body: `Брама [${result.tag}] в системе ${result.systemName} уже выведена из строя или снесена — флот возвращается без боя.`,
+        },
+      ]);
+      return;
+    }
+
+    const where = `Брама [${result.tag}] ${result.level} ур. · ${result.system.name}`;
+    const verdict = result.guardWon
+      ? 'Охрана Коша отбила осаду — до врат флот не дошел.'
+      : result.broken
+        ? `Щит врат пробит (залп ${result.salvo} при щите ${result.shield}): Брама выведена из строя на 6 ч, ` +
+          'затем 12 ч неуязвима.'
+        : `Щит врат выдержал: залп ${result.salvo} при щите ${result.shield}. Брама работает.`;
+    const mails: OutgoingMessage[] = [
+      {
+        recipientId: fleet.commanderId,
+        senderId: null,
+        type: 'FLEET',
+        subject: `Осада: ${where} — ${result.broken ? 'успех' : 'неудача'}`,
+        body: verdict,
+      },
+      ...result.memberIds.map((recipientId) => ({
+        recipientId,
+        senderId: null,
+        type: 'SYNDICATE' as const,
+        subject: `${where}: ${result.broken ? 'выведена из строя' : 'осада отбита'}`,
+        body: `${result.attackerName} осаждал Браму. ${verdict}`,
+      })),
+    ];
+    if (result.battle) {
+      const kishName = `Кіш [${result.tag}]`;
+      const battleMails = buildBattleMail({
+        attackerId: fleet.commanderId,
+        defenderId: result.leaderId,
+        attackerName: result.attackerName,
+        defenderName: kishName,
+        location: {
+          planetName: kishName,
+          systemName: result.system.name,
+          position: KISH_POSITION,
+          galaxyX: result.system.galaxyX,
+          galaxyY: result.system.galaxyY,
+        },
+        outcome: result.battle.outcome,
+        // У врат нет склада: грабить нечего, отчет показывает одни потери.
+        plunder: {
+          ore: 0, polymers: 0, plasma: 0, protectedAmount: 0, surplus: 0, takeable: 0,
+          cargoLimited: false, stored: 0, storageCapacity: 0,
+        },
+      });
+      // Заголовки отчета о бое писаны под налет («разграблена»), а у врат
+      // грабить нечего: называем бой тем, чем он был.
+      mails.push(
+        ...battleMails.map((mail) => ({
+          ...mail,
+          subject:
+            mail.recipientId === fleet.commanderId
+              ? `Осада Брамы: бой с охраной Коша [${result.tag}]`
+              : `Осада Брамы: охрана Коша [${result.tag}] приняла бой`,
+        })),
+      );
+    }
+    await this.notify(mails);
+  }
+
+  /**
+   * Бой с охраной Коша: оборона из казны и флоты участников на удержании.
+   * Общий у налета на Кіш и осады Брамы в системе Коша — защищают их одни
+   * и те же силы. Уцелевшие делятся между флотами удержания по вкладу,
+   * погибшие целиком удаляются, осколки ложатся у Коша.
+   */
+  private async kishGuardBattle(
+    tx: Prisma.TransactionClient,
+    syndicate: { id: string; tag: string; defenses: { id: string; type: DefenseType; count: number }[] },
+    attackerShips: ShipCounts,
+    what: string,
+  ) {
+    const syndicateId = syndicate.id;
+    const holders = await tx.fleet.findMany({
+      where: { targetSyndicateId: syndicateId, mission: 'HOLD', status: 'HOLDING' },
+    });
+    const holderShips = holders.map((holder) => shipsFromFleetColumns(holder));
+    const defenderShips = emptyShipCounts();
+    for (const ships of holderShips) {
+      for (const type of SHIP_TYPES) defenderShips[type] += ships[type];
+    }
+    const defenderDefenses = emptyDefenseCounts();
+    for (const row of syndicate.defenses) defenderDefenses[row.type] = row.count;
+
+    const outcome = resolveBattle(
+      { ships: attackerShips, defenses: emptyDefenseCounts() },
+      { ships: defenderShips, defenses: defenderDefenses },
+    );
+
+    for (const row of syndicate.defenses) {
+      await tx.syndicateDefense.update({ where: { id: row.id }, data: { count: outcome.defenderSurvivorDefenses[row.type] } });
+    }
+
+    const shares = splitSurvivors(outcome.defenderSurvivorShips, holderShips);
+    for (const [index, holder] of holders.entries()) {
+      const left = shares[index]!;
+      const lost = fleetSize(holderShips[index]!) - fleetSize(left);
+      if (fleetSize(left) === 0) await tx.fleet.delete({ where: { id: holder.id } });
+      else await tx.fleet.update({ where: { id: holder.id }, data: shipColumnsOf(left) });
+      await tx.message.create({
+        data: {
+          recipientId: holder.commanderId,
+          type: 'FLEET',
+          subject: `Удержание: ${what} [${syndicate.tag}]`,
+          body:
+            `Флот на удержании у Коша принял бой (${what}). ` +
+            (fleetSize(left) === 0
+              ? `Флот погиб целиком: ${lost} кораблей.`
+              : `Потеряно кораблей: ${lost}, уцелело ${fleetSize(left)} — удержание продолжается.`),
+        },
+      });
+    }
+
+    if (outcome.debris.ore > 0 || outcome.debris.polymers > 0) {
+      await tx.syndicate.update({
+        where: { id: syndicateId },
+        data: { debrisOre: { increment: outcome.debris.ore }, debrisPolymers: { increment: outcome.debris.polymers } },
+      });
+    }
+
+    return { outcome, defenderShips };
   }
 
   /** Сбор осколков у Коша — тем же условным списанием, что и поле у планеты. */
@@ -4083,10 +4425,13 @@ function toFleetRuntime(row: FleetRow): FleetRuntimeState {
     toSystemId:
       row.targetPlanet?.systemId ??
       row.targetHub?.systemId ??
+      (row.mission === 'GATE_SIEGE' ? row.targetSystemId : null) ??
       row.targetSyndicate?.kishSystemId ??
       row.targetSystemId ??
       null,
-    targetKind: row.targetSystemId
+    targetKind: row.mission === 'GATE_SIEGE'
+      ? 'GATE'
+      : row.targetSystemId
       ? 'DEEP_SPACE'
       : row.targetHubId
         ? 'HUB'
@@ -4097,6 +4442,9 @@ function toFleetRuntime(row: FleetRow): FleetRuntimeState {
     targetHubId: row.targetHubId,
     targetSyndicateId: row.targetSyndicateId,
     targetName:
+      (row.mission === 'GATE_SIEGE' && row.targetSyndicate
+        ? `Брама [${row.targetSyndicate.tag}]${row.targetSystem ? ` · ${row.targetSystem.name}` : ''}`
+        : null) ??
       (row.targetSyndicate ? `Кіш [${row.targetSyndicate.tag}]` : null) ??
       row.targetHub?.name ??
       row.targetPlanet?.name ??
@@ -4133,7 +4481,7 @@ function toFleetRuntime(row: FleetRow): FleetRuntimeState {
           row.originPlanet.position,
           row.targetPlanet?.position ??
             row.targetHub?.position ??
-            (row.targetSystemId ? DEEP_SPACE_POSITION : GATE_POSITION),
+            (row.targetSystemId && row.mission !== 'GATE_SIEGE' ? DEEP_SPACE_POSITION : GATE_POSITION),
         )
       : null,
   };

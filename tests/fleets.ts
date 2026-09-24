@@ -12,6 +12,7 @@ import {
   gateLegShare,
   galaxyDistance,
   isFleetMission,
+  jumpFuelFactor,
   isOneWayMission,
   resolveOneWay,
   splitLoot,
@@ -23,7 +24,15 @@ import {
 import { emptyShipCounts, missingShipRequirements, type ShipCounts } from '../src/game/ships.js';
 import { colonySlots, emptyTechLevels, type TechLevels } from '../src/game/techTree.js';
 import { emptyLevels } from '../src/game/rules.js';
-import { gateLeaseRefund, isGateLeaseHours } from '../src/game/syndicate.js';
+import {
+  gateAntimatterShare,
+  gateLeaseRefund,
+  gateSiegeShield,
+  gateSiegeState,
+  gateTollCost,
+  isGateLeaseHours,
+} from '../src/game/syndicate.js';
+import { fleetSalvo } from '../src/game/combat.js';
 
 const BASE_URL = 'http://localhost:3000';
 const results: Array<{ name: string; passed: boolean }> = [];
@@ -130,10 +139,17 @@ console.log('\n=== 3. Межзвездный прыжок ===');
 
   const hyper = planFlight(fleet({ CRUISER: 4 }), techs({ HYPERDRIVE: 5 }), HOME, FAR_SYSTEM);
   check(
-    'гипердвигатель ускоряет и удешевляет прыжок',
-    hyper.flightSeconds < jump.flightSeconds && hyper.antimatter < jump.antimatter,
+    'гипердвигатель ускоряет прыжок, но расход не меняет',
+    hyper.flightSeconds < jump.flightSeconds && hyper.antimatter === jump.antimatter,
     `${jump.flightSeconds} с / ${jump.antimatter} → ${hyper.flightSeconds} с / ${hyper.antimatter}`,
   );
+  const physics = planFlight(fleet({ CRUISER: 4 }), techs({ HYPERSPACE_PHYSICS: 5 }), HOME, FAR_SYSTEM);
+  check(
+    'гиперпространственная физика экономит антиматерию по 6% за уровень',
+    physics.antimatter === Math.max(1, Math.ceil(jump.antimatter * 0.7)) && physics.flightSeconds === jump.flightSeconds,
+    `${jump.antimatter} → ${physics.antimatter}`,
+  );
+  check('экономия физики упирается в треть', jumpFuelFactor(techs({ HYPERSPACE_PHYSICS: 30 })) === 0.3);
 
   check(
     'расстояние по галактике считается по координатам',
@@ -466,6 +482,29 @@ console.log('\n=== Сроки полетов, Брамы и аренда ===');
   check('после конца срока возвращать нечего', gateLeaseRefund(1000, start, end, end + 1) === 0);
   check('до начала срока возвращается вся плата', gateLeaseRefund(1000, start, end, start - 10) === 1000);
   check('сроки аренды — только из набора', isGateLeaseHours(168) && !isGateLeaseHours(100) && !isGateLeaseHours('168'));
+
+  // Уровень врат удешевляет прыжок: треть на первом, до десятой доли.
+  check('первая Брама — треть антиматерии', gateAntimatterShare(1) === 0.3);
+  check('каждый уровень врат снимает по четыре пункта', Math.abs(gateAntimatterShare(3) - 0.22) < 1e-9);
+  check('доля врат не опускается ниже десятой', gateAntimatterShare(20) === 0.1);
+  const lowGate = planFlight(cargo, techs(0, 0), { position: 3, system: home }, { position: 5, system: far(28) }, { viaGate: true, gateLevel: 1 });
+  const highGate = planFlight(cargo, techs(0, 0), { position: 3, system: home }, { position: 5, system: far(28) }, { viaGate: true, gateLevel: 6 });
+  check('Брама выше уровнем берет меньше антиматерии', highGate.antimatter < lowGate.antimatter, `${lowGate.antimatter} → ${highGate.antimatter}`);
+
+  // Проход: цена × корабли × прыжки.
+  check('проход туда и обратно — два прыжка', gateTollCost(50, 10, 2) === 1000);
+  check('проход закрытыми вратами ничего не стоит', gateTollCost(0, 10, 2) === 0);
+
+  // Осада: залп против щита, шесть часов простоя, полсуток защиты.
+  check('десять линкоров пробивают щит первой Брамы', fleetSalvo({ ...emptyShipCounts(), BATTLESHIP: 10 }) >= gateSiegeShield(1));
+  check('девять — нет', fleetSalvo({ ...emptyShipCounts(), BATTLESHIP: 9 }) < gateSiegeShield(1));
+  check('щит растет с уровнем', gateSiegeShield(3) > gateSiegeShield(2) && gateSiegeShield(2) > gateSiegeShield(1));
+  check('грузовики щит не пробивают', fleetSalvo({ ...emptyShipCounts(), LARGE_CARGO: 1000 }) === 0);
+  const t = 1_000_000;
+  check('врата без осады открыты', gateSiegeState({ disabledUntil: null, siegeImmuneUntil: null }, t) === 'OPEN');
+  check('после осады врата стоят', gateSiegeState({ disabledUntil: new Date(t + 1), siegeImmuneUntil: new Date(t + 2) }, t) === 'DISABLED');
+  check('затем неуязвимы', gateSiegeState({ disabledUntil: new Date(t - 1), siegeImmuneUntil: new Date(t + 1) }, t) === 'IMMUNE');
+  check('и снова открыты для осады', gateSiegeState({ disabledUntil: new Date(t - 2), siegeImmuneUntil: new Date(t - 1) }, t) === 'OPEN');
 }
 
 try {

@@ -17,6 +17,7 @@ export const SYNDICATE_PERMISSIONS = [
   'DIPLOMACY',
   'KISH',
   'ACADEMY',
+  'GATES',
 ] as const;
 
 export type SyndicatePermission = (typeof SYNDICATE_PERMISSIONS)[number];
@@ -33,6 +34,7 @@ export const PERMISSION_LABELS: Record<SyndicatePermission, string> = {
   DIPLOMACY: 'дипломатия',
   KISH: 'развитие Коша',
   ACADEMY: 'наука синдиката',
+  GATES: 'цены Брам',
 };
 
 export function isSyndicatePermission(value: unknown): value is SyndicatePermission {
@@ -265,6 +267,66 @@ export function syndicateBuffs(levels: SyndicateTechLevels, joinedAt: number | n
 export const BRAMA_BASE = { credits: 5_000_000, ore: 2_000_000, polymers: 2_000_000 } as const;
 export const BRAMA_THROUGHPUT_PER_LEVEL = 200;
 export const GATE_ANTIMATTER_SHARE = 0.3;
+/*
+ * Уровень врат удешевляет прыжок: треть антиматерии на первом уровне,
+ * минус четыре пункта за каждый следующий, до десятой. Считается по вратам
+ * вылета — их окно и тратится. Прежде уровень давал одну пропускную
+ * способность, и вложиться в него ради своих рейсов было незачем.
+ */
+export const GATE_ANTIMATTER_STEP = 0.04;
+export const GATE_ANTIMATTER_FLOOR = 0.1;
+
+/*
+ * Разовый проход: цена за корабль и прыжок, которую назначает владелец сети.
+ * Платит каждый прыжок (туда и обратно — два), а получает казна тех врат,
+ * с которых прыжок начинается: они же тратят свое часовое окно. Потолок —
+ * защита от лишних нулей, а не от жадности: за проход дороже гиперпрыжка
+ * просто никто не полетит.
+ */
+export const GATE_TOLL_MAX = 100_000;
+
+/** Проход за один рейс: цена × корабли × прыжки. */
+export function gateTollCost(price: number, ships: number, jumps: number): number {
+  return Math.max(0, Math.floor(price)) * Math.max(0, ships) * Math.max(0, jumps);
+}
+
+/*
+ * Осада Брамы — война за сеть, а не за казну.
+ *
+ * Врата не рушатся: они стоят миллионы, и потерять их одним налетом значило
+ * бы, что строить их незачем. Осада выключает врата на шесть часов — ни свои,
+ * ни арендаторы, ни проход через них не прыгают, — а потом дает им полсуток
+ * неуязвимости, иначе враг держал бы сеть выключенной вечно, прилетая
+ * к концу каждого срока.
+ *
+ * Сначала бой с защитой Коша, если он стоит в той же системе, — оборона
+ * и флоты на удержании. Потом щит врат: уцелевшая эскадра должна дать залп
+ * не меньше щита, и он растет с уровнем — большая сеть выключается
+ * большим флотом. Десять линкоров на первом уровне, втрое больше на третьем.
+ */
+export const GATE_SIEGE_DOWN_MS = 6 * 3600 * 1000;
+export const GATE_SIEGE_IMMUNE_MS = 12 * 3600 * 1000;
+const GATE_SHIELD_BASE = 10_000;
+const GATE_SHIELD_GROWTH = 1.75;
+
+/** Залп, которым пробивается щит Брамы данного уровня. */
+export function gateSiegeShield(level: number): number {
+  return Math.round(GATE_SHIELD_BASE * GATE_SHIELD_GROWTH ** (Math.max(1, Math.floor(level)) - 1));
+}
+
+/** Состояние врат для осады: работают, выключены или под защитой после осады. */
+export function gateSiegeState(
+  gate: { disabledUntil: Date | null; siegeImmuneUntil: Date | null },
+  now: number,
+): 'OPEN' | 'DISABLED' | 'IMMUNE' {
+  if (gate.disabledUntil && gate.disabledUntil.getTime() > now) return 'DISABLED';
+  if (gate.siegeImmuneUntil && gate.siegeImmuneUntil.getTime() > now) return 'IMMUNE';
+  return 'OPEN';
+}
+
+export function gateAntimatterShare(level: number): number {
+  return Math.max(GATE_ANTIMATTER_FLOOR, GATE_ANTIMATTER_SHARE - GATE_ANTIMATTER_STEP * (Math.max(1, Math.floor(level)) - 1));
+}
 /**
  * Прыжок через Браму мгновенный: время рейса — только путь по орбитам
  * до врат и от врат. В этом и смысл врат при недельных перелетах через
@@ -533,7 +595,7 @@ export function normalizeDescription(raw: unknown): string | null {
 export type TreasuryFlow = 'IN' | 'OUT' | 'NEUTRAL';
 
 const INCOMING_TREASURY_KINDS: readonly string[] = [
-  'DONATION', 'TAX', 'ENTRY_FEE', 'RESOURCE_DELIVERY', 'BUILD_REFUND', 'GATE_LEASE_INCOME',
+  'DONATION', 'TAX', 'ENTRY_FEE', 'RESOURCE_DELIVERY', 'BUILD_REFUND', 'GATE_LEASE_INCOME', 'GATE_TOLL',
 ];
 
 /**
@@ -699,9 +761,12 @@ const MODULE_INFO: Record<SyndicateModule, {
   },
   BRAMA: {
     label: 'Брама',
-    description: 'Прыжок между системами со своими Брамами без «Гипердвигателя» и за треть антиматерии.',
-    effectLabel: 'пропускает в час',
-    effect: (level) => `${bramaThroughput(level)} кораблей`,
+    description:
+      'Мгновенный прыжок между системами со своими Брамами без «Гипердвигателя». Каждый уровень ' +
+      'снижает долю антиматерии на прыжок и поднимает щит против осады.',
+    effectLabel: 'в час · антиматерия · щит',
+    effect: (level) =>
+      `${bramaThroughput(level)} кораблей · ${Math.round(gateAntimatterShare(level) * 100)}% · ${gateSiegeShield(level)}`,
     cost: bramaUpgradeCost,
   },
 };
