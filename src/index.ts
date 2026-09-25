@@ -33,6 +33,24 @@ const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 const app = express();
 app.use(express.json());
+
+/*
+ * Запросы сборщиков превью — в лог. Превью ссылки в мессенджерах строит
+ * их сервер, и если карточки нет, снаружи не понять, пришел ли он вообще
+ * и что получил. Обычные запросы не пишутся: их слишком много, а сборщики
+ * приходят редко — по разу на новую ссылку.
+ */
+const PREVIEW_BOTS = /TelegramBot|facebookexternalhit|Facebot|Twitterbot|WhatsApp|Slackbot|Discordbot|LinkedInBot|vkShare|Viber|SkypeUriPreview|Googlebot|bingbot|redditbot/i;
+app.use((req, res, next) => {
+  const agent = req.get('user-agent') ?? '';
+  if (PREVIEW_BOTS.test(agent)) {
+    res.on('finish', () => {
+      console.log(`[preview-bot] ${req.method} ${req.originalUrl} → ${res.statusCode} · ${agent.slice(0, 120)}`);
+    });
+  }
+  next();
+});
+
 app.use(express.static(path.join(rootDir, 'public')));
 
 /*
