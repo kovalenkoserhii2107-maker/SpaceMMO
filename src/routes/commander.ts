@@ -14,6 +14,7 @@ import {
   updateTemplate,
   validateTemplateName,
 } from '../services/fleetTemplateService.js';
+import { gameGuide } from '../game/guide.js';
 import { listEspionageTargets } from '../services/mapService.js';
 import { simulateBattle, type SimulationStock } from '../services/simulationService.js';
 import { currentCommander, requireAuth, requireCommander } from './middleware.js';
@@ -23,6 +24,7 @@ import type {
   ErrorResponse,
   EspionageResponse,
   FleetTemplatesResponse,
+  GuideResponse,
   SimulationResponse,
 } from '../types/api.js';
 
@@ -105,6 +107,11 @@ commanderRouter.post('/simulate', (req, res: Response<SimulationResponse | Error
 });
 
 /* ------------------------- Шаблоны флотов ------------------------- */
+
+/** База знаний: статьи с числами, посчитанными игровыми формулами. */
+commanderRouter.get('/guide', (_req, res: Response<GuideResponse>) => {
+  res.json({ articles: gameGuide() });
+});
 
 commanderRouter.get('/fleet-templates', async (req, res: Response<FleetTemplatesResponse>) => {
   res.json({ templates: await listTemplates(currentCommander(req).id) });

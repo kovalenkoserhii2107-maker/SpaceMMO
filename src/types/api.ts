@@ -167,3 +167,24 @@ export interface JointAttackView {
 export interface JointAttacksResponse {
   attacks: JointAttackView[];
 }
+
+/** Блок статьи базы знаний: клиент рисует его текстом, без разметки из данных. */
+export type GuideBlock =
+  | { kind: 'p'; text: string }
+  | { kind: 'tip'; text: string }
+  | { kind: 'list'; items: string[] }
+  | { kind: 'steps'; items: string[] }
+  | { kind: 'table'; head: string[]; rows: string[][] };
+
+/** Статья базы знаний: раздел, заголовок, одна строка «о чем» и содержание. */
+export interface GuideArticle {
+  id: string;
+  section: string;
+  title: string;
+  summary: string;
+  blocks: GuideBlock[];
+}
+
+export interface GuideResponse {
+  articles: GuideArticle[];
+}

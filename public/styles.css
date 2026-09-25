@@ -4277,3 +4277,102 @@ button.war-row-head:hover { background: rgba(120, 160, 255, 0.06); }
 .member-actions .lease-price { width: 88px; }
 .lease-row.ended { opacity: 0.6; }
 .chip.ok { color: var(--ok); border-color: rgba(74, 222, 128, 0.4); }
+
+/* ---------- База знаний ---------- */
+
+/*
+ * Заголовок раздела и ссылка «Как это работает» — в одну строку: ссылка
+ * справа, мелко и контуром. Она помощь, а не действие, и спорить с кнопками
+ * раздела не должна.
+ */
+.panel-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.guide-link {
+  flex: none;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.guide-link:hover { color: var(--accent); border-color: var(--line-strong); }
+.tc-scan + .guide-link, .tc-rows + .guide-link { justify-self: start; margin-top: 2px; }
+
+/* Слева оглавление с поиском, справа статья; на узком экране — одно под другим. */
+.guide { display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); gap: 16px; align-items: start; }
+.guide-index {
+  display: grid;
+  gap: 10px;
+  position: sticky;
+  top: calc(var(--header-h, 80px) + 12px);
+  max-height: calc(100vh - var(--header-h, 80px) - 32px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.guide-index input[type="search"] { width: 100%; }
+#guide-list { display: grid; gap: 4px; }
+.guide-section {
+  margin: 10px 0 2px;
+  font-size: 11px;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.guide-item {
+  display: grid;
+  gap: 2px;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.guide-item b { font-size: 13px; font-weight: 600; }
+.guide-item span { font-size: 11.5px; color: var(--muted); line-height: 1.35; }
+.guide-item:hover { background: var(--panel-2); }
+.guide-item.active { background: rgba(77, 210, 255, 0.08); border-color: rgba(77, 210, 255, 0.35); }
+.guide-empty { margin: 6px 2px; font-size: 12px; }
+
+/* Статья читается как текст, а не как карточка с плитками: строка до 72 знаков. */
+.guide-article { gap: 12px; padding: 22px 24px; outline: none; }
+.guide-article > p, .guide-article > ul, .guide-article > ol { max-width: 72ch; }
+.guide-kicker { font-size: 11px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--accent); }
+.guide-title { margin: 0; font-size: 22px; line-height: 1.25; }
+.guide-summary { margin: 0; color: var(--muted); font-size: 14px; }
+.guide-p { margin: 0; font-size: 14px; line-height: 1.6; }
+.guide-list, .guide-steps { margin: 0; padding-left: 22px; display: grid; gap: 6px; font-size: 14px; line-height: 1.55; }
+.guide-steps li::marker { color: var(--accent); font-weight: 700; }
+.guide-tip {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border-left: 3px solid var(--ok);
+  background: rgba(74, 222, 128, 0.06);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+.guide-tip::before { content: 'Совет. '; font-weight: 700; color: var(--ok); }
+.guide-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+.guide-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.guide-table th {
+  text-align: left;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 8px 10px;
+  background: var(--panel-2);
+  white-space: nowrap;
+}
+.guide-table td { padding: 8px 10px; border-top: 1px solid var(--line); vertical-align: top; line-height: 1.45; }
+.guide-table td:first-child { font-weight: 600; }
+
+@media (max-width: 900px) {
+  .guide { grid-template-columns: 1fr; }
+  .guide-index { position: static; max-height: none; overflow: visible; }
+  .guide-article { padding: 16px; }
+}

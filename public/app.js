@@ -213,6 +213,9 @@
     mailBadge: $('mail-badge'),
     mailFilters: $('mail-filters'),
     mailList: $('mail-list'),
+    guideSearch: $('guide-search'),
+    guideList: $('guide-list'),
+    guideArticle: $('guide-article'),
     mailSummary: $('mail-summary'),
     mailReadAll: $('mail-read-all'),
     mailTo: $('mail-to'),
@@ -1073,6 +1076,7 @@
       setMapMode('galaxy');
     }
     if (name === 'market') void loadMarket();
+    if (name === 'guide') void loadGuide();
     if (name === 'syndicate') void loadSyndicate();
     if (panel.startsWith('kish-')) void loadSyndicate();
     if (name === 'war') {
@@ -4814,7 +4818,8 @@
           friendly ? '<span class="tc-chip own">ваша сеть</span>' : '<span class="tc-chip foe">чужой синдикат</span>',
           '/assets/buildings/brama.webp') +
         `<div class="tc-rows">${rows}</div>` +
-        (friendly || gate.access === 'LEASED' ? '' : gateRequestBlock(gate)));
+        (friendly || gate.access === 'LEASED' ? '' : gateRequestBlock(gate)) +
+        '<button type="button" class="guide-link" data-guide="gate-access">Как работают Брамы</button>');
       // К своей Браме рейсов нет: через нее прыгают, а не летят к ней.
       el.dispatch.hidden = !base || friendly;
       if (!el.dispatch.hidden) showDispatch(base);
@@ -8279,6 +8284,152 @@
     li.appendChild(button);
     el.baseList.appendChild(li);
   }
+
+  /* ------------------------------ База знаний ------------------------------ */
+
+  /*
+   * Статьи приходят с сервера: числа в них посчитаны теми же формулами,
+   * что и игра, и справка не отстает от баланса. Грузятся один раз
+   * за сессию — меняются они только с выкаткой.
+   *
+   * Текст рисуется через `textContent`, а не разметкой: статья — данные,
+   * и ни одна строка из них не должна стать тегом.
+   */
+  const GUIDE_KEY = 'spacemmo.guide';
+  const guide = { articles: null, current: null, query: '', loading: null };
+
+  function guideMemory(value) {
+    try {
+      if (value === undefined) return localStorage.getItem(GUIDE_KEY);
+      localStorage.setItem(GUIDE_KEY, value);
+    } catch (error) {
+      /* выбор статьи — удобство, без хранилища просто откроется первая */
+    }
+    return null;
+  }
+
+  async function loadGuide() {
+    if (!guide.articles) {
+      guide.loading = guide.loading || fetch('/api/commander/guide', { headers: authHeaders() })
+        .then((response) => (response.ok ? response.json() : null))
+        .catch(() => null);
+      const data = await guide.loading;
+      guide.loading = null;
+      if (!data) {
+        el.guideArticle.textContent = 'Не удалось загрузить базу знаний — попробуй еще раз.';
+        return;
+      }
+      guide.articles = data.articles;
+    }
+    if (!guide.current || !guide.articles.some((article) => article.id === guide.current)) {
+      const remembered = guideMemory();
+      guide.current = guide.articles.some((article) => article.id === remembered) ? remembered : guide.articles[0].id;
+    }
+    renderGuideList();
+    renderGuideArticle();
+  }
+
+  /** Весь текст статьи одной строкой — по нему идет поиск. */
+  function guideText(article) {
+    const parts = [article.title, article.summary, article.section];
+    for (const block of article.blocks) {
+      if (block.text) parts.push(block.text);
+      if (block.items) parts.push(...block.items);
+      if (block.head) parts.push(...block.head, ...block.rows.flat());
+    }
+    return parts.join(' ').toLowerCase();
+  }
+
+  function renderGuideList() {
+    if (!guide.articles) return;
+    const query = guide.query.trim().toLowerCase();
+    const found = guide.articles.filter((article) => !query || guideText(article).includes(query));
+    el.guideList.innerHTML = '';
+    if (!found.length) {
+      el.guideList.appendChild(synEl('p', 'muted guide-empty', 'Ничего не нашлось. Попробуй другое слово.'));
+      return;
+    }
+    let section = null;
+    for (const article of found) {
+      if (article.section !== section) {
+        section = article.section;
+        el.guideList.appendChild(synEl('h4', 'guide-section', section));
+      }
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = `guide-item${article.id === guide.current ? ' active' : ''}`;
+      item.dataset.article = article.id;
+      item.append(synEl('b', null, article.title), synEl('span', null, article.summary));
+      el.guideList.appendChild(item);
+    }
+  }
+
+  function renderGuideArticle() {
+    const article = guide.articles && guide.articles.find((item) => item.id === guide.current);
+    const root = el.guideArticle;
+    root.innerHTML = '';
+    if (!article) return;
+    root.append(synEl('span', 'guide-kicker', article.section), synEl('h2', 'guide-title', article.title));
+    root.appendChild(synEl('p', 'guide-summary', article.summary));
+    for (const block of article.blocks) {
+      if (block.kind === 'p') root.appendChild(synEl('p', 'guide-p', block.text));
+      else if (block.kind === 'tip') root.appendChild(synEl('p', 'guide-tip', block.text));
+      else if (block.kind === 'list' || block.kind === 'steps') {
+        const listNode = document.createElement(block.kind === 'steps' ? 'ol' : 'ul');
+        listNode.className = `guide-${block.kind}`;
+        for (const text of block.items) listNode.appendChild(synEl('li', null, text));
+        root.appendChild(listNode);
+      } else if (block.kind === 'table') {
+        // Широкие таблицы (корабли) листаются вбок внутри себя, а не растягивают экран.
+        const wrap = synEl('div', 'guide-table-wrap');
+        const tableNode = document.createElement('table');
+        tableNode.className = 'guide-table';
+        const head = document.createElement('tr');
+        for (const cell of block.head) head.appendChild(synEl('th', null, cell));
+        tableNode.createTHead().appendChild(head);
+        const body = tableNode.createTBody();
+        for (const row of block.rows) {
+          const tr = document.createElement('tr');
+          for (const cell of row) tr.appendChild(synEl('td', null, cell));
+          body.appendChild(tr);
+        }
+        wrap.appendChild(tableNode);
+        root.appendChild(wrap);
+      }
+    }
+  }
+
+  function selectGuideArticle(id) {
+    guide.current = id;
+    guideMemory(id);
+    renderGuideList();
+    renderGuideArticle();
+    // На телефоне список стоит над статьей: без прокрутки выбор выглядел бы как «ничего не случилось».
+    if (window.matchMedia('(max-width: 900px)').matches) el.guideArticle.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  /** Переход к статье из любого раздела: кнопки «Как это работает». */
+  function openGuide(id) {
+    guide.current = id;
+    guideMemory(id);
+    guide.query = '';
+    el.guideSearch.value = '';
+    showPanel('guide');
+    el.guideArticle.scrollIntoView({ block: 'start' });
+  }
+
+  el.guideList.addEventListener('click', (event) => {
+    const item = event.target.closest('.guide-item');
+    if (item) selectGuideArticle(item.dataset.article);
+  });
+  el.guideSearch.addEventListener('input', () => {
+    guide.query = el.guideSearch.value;
+    renderGuideList();
+  });
+  document.addEventListener('click', (event) => {
+    const link = event.target.closest('.guide-link[data-guide]');
+    if (link) openGuide(link.dataset.guide);
+  });
 
   function enterKish(tab) {
     if (!syndicate.data || !syndicate.data.mine) return;
