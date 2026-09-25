@@ -114,6 +114,7 @@ model Commander {
   achievements     CommanderAchievement[]
   bot              Bot?
   gateLeases       GateLease[]
+  gateRequests     GateAccessRequest[]
 
   @@map("commanders")
 }
@@ -160,11 +161,11 @@ enum BotCharacter {
 }
 
 model Syndicate {
-  id       String @id @default(cuid())
-  name     String @unique
+  id          String @id @default(cuid())
+  name        String @unique
   /// Короткий тег для отображения рядом с позывным.
-  tag      String @unique
-  leaderId String @unique
+  tag         String @unique
+  leaderId    String @unique
   /// Короткое описание под названием: кто мы и кого ищем. Видно и кандидатам.
   description String @default("")
 
@@ -232,6 +233,7 @@ model Syndicate {
   construction SyndicateConstruction?
   pactsSecond  SyndicatePact[]         @relation("PactSecond")
   leasesGiven  GateLease[]             @relation("GateLeaseOwner")
+  gateRequests GateAccessRequest[]     @relation("GateRequestOwner")
   leasesTaken  GateLease[]             @relation("GateLeaseTenant")
 
   @@map("syndicates")
@@ -883,7 +885,6 @@ model Fleet {
   jointFleets     Fleet[]      @relation("JointAttack")
 
   @@index([jointLeadId])
-
   @@index([status, arrivesAt])
   @@index([status, returnsAt])
   @@index([commanderId])
@@ -1272,20 +1273,20 @@ model HubAccount {
 /// прыгает без «Гипердвигателя» и за треть антиматерии. Ставится только там,
 /// где есть колония хотя бы одного участника.
 model SyndicateGate {
-  id              String   @id @default(cuid())
-  syndicateId     String
-  systemId        String
-  level           Int      @default(1)
+  id               String    @id @default(cuid())
+  syndicateId      String
+  systemId         String
+  level            Int       @default(1)
   /// Часовое окно пропускной способности: открывается первым прыжком
   /// и держится час. Резервируется при вылете одним условным UPDATE.
-  windowStartedAt DateTime @default(now())
-  windowShips     Int      @default(0)
+  windowStartedAt  DateTime  @default(now())
+  windowShips      Int       @default(0)
   /// Врата выключены осадой до этого момента.
   disabledUntil    DateTime?
   /// После осады врата неуязвимы до этого момента: иначе их держали бы
   /// закрытыми вечно, сменяя друг друга.
   siegeImmuneUntil DateTime?
-  createdAt       DateTime @default(now())
+  createdAt        DateTime  @default(now())
 
   syndicate Syndicate   @relation(fields: [syndicateId], references: [id], onDelete: Cascade)
   system    SolarSystem @relation(fields: [systemId], references: [id], onDelete: Cascade)
@@ -1321,6 +1322,32 @@ model GateLease {
   @@index([tenantCommanderId])
   @@index([tenantSyndicateId])
   @@map("gate_leases")
+}
+
+/// Какой доступ к вратам просит игрок. Условия назначает владелец.
+enum GateRequestKind {
+  /// Разовый проход — заявка по умолчанию: ответом на нее владелец открывает проход с ценой.
+  TOLL
+  /// Аренда на срок: ответом владелец отправляет предложение аренды.
+  LEASE
+}
+
+/// Заявка игрока на доступ к сети Брам синдиката. Одна на пару «владелец — игрок».
+model GateAccessRequest {
+  id               String          @id @default(cuid())
+  ownerSyndicateId String
+  requesterId      String
+  kind             GateRequestKind
+  createdAt        DateTime        @default(now())
+  /// Отклонена: повторить можно через сутки.
+  declinedAt       DateTime?
+
+  owner     Syndicate @relation("GateRequestOwner", fields: [ownerSyndicateId], references: [id], onDelete: Cascade)
+  requester Commander @relation(fields: [requesterId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerSyndicateId, requesterId])
+  @@index([requesterId])
+  @@map("gate_access_requests")
 }
 
 /// Оборона Коша: установки, купленные из казны. В бою восстанавливаются

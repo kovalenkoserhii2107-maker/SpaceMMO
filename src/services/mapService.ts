@@ -181,6 +181,18 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
   });
 
   // Брамы видны всем, как станции: постройка у звезды — не тайна разведки.
+  // Своя заявка на доступ, еще ждущая ответа: кнопка в карточке врат говорит «ждет ответа».
+  const pendingRequests = gateRows.length
+    ? await prisma.gateAccessRequest.findMany({
+        where: {
+          requesterId: commanderId,
+          ownerSyndicateId: { in: gateRows.map((row) => row.syndicateId) },
+          declinedAt: null,
+          createdAt: { gt: new Date(now - 7 * 24 * 3600 * 1000) },
+        },
+        select: { ownerSyndicateId: true, kind: true },
+      })
+    : [];
   const gateViews: GateView[] = gateRows.map((row) => ({
     syndicateId: row.syndicateId,
     tag: row.syndicate.tag,
@@ -191,6 +203,7 @@ export async function buildSystemMap(commanderId: string, systemId?: string): Pr
     toll: row.syndicate.gateToll,
     disabledUntil: row.disabledUntil && row.disabledUntil.getTime() > now ? row.disabledUntil.getTime() : null,
     siegeImmuneUntil: row.siegeImmuneUntil && row.siegeImmuneUntil.getTime() > now ? row.siegeImmuneUntil.getTime() : null,
+    requested: pendingRequests.find((request) => request.ownerSyndicateId === row.syndicateId)?.kind ?? null,
   }));
 
   return {

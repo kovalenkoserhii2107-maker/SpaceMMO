@@ -3741,7 +3741,7 @@
   /** Что сказать о вратах одной строкой: выключены осадой, отдыхают после нее или кто через них прыгает. */
   function gateStatusText(gate) {
     if (gate.disabledUntil) return `выведена из строя осадой — еще ${fmtTime(Math.ceil((gate.disabledUntil - Date.now()) / 1000))}`;
-    const access = gate.access ? GATE_ACCESS_TEXT[gate.access] : gate.toll ? '' : 'чужие врата — доступ можно арендовать';
+    const access = gate.access ? GATE_ACCESS_TEXT[gate.access] : gate.toll ? '' : 'чужие врата — прыжок только с доступом';
     return access;
   }
 
@@ -4711,6 +4711,37 @@
       (rows ? `<div class="tc-rows">${rows}</div>` : '') + scan;
   }
 
+  const GATE_REQUEST_TEXT = { TOLL: 'разовый проход', LEASE: 'аренду' };
+
+  /*
+   * Заявка на доступ — прямо в карточке врат, где игрок и понял, что они
+   * ему нужны. Условия назначает владелец, поэтому проситель выбирает
+   * только вид доступа: разовый проход — первым и главным действием, аренда —
+   * вторым. Если проход уже открыт, просить его нечего, и остается аренда.
+   */
+  function gateRequestBlock(gate) {
+    if (gate.requested) {
+      return `<div class="tc-scan"><span>Заявка на ${GATE_REQUEST_TEXT[gate.requested]} отправлена — ждет ответа владельца</span></div>`;
+    }
+    const button = (kind, label, primary) =>
+      `<button type="button" class="tc-scan-go tc-gate-request${primary ? '' : ' ghost'}" ` +
+      `data-syndicate="${escapeHtml(gate.syndicateId)}" data-kind="${kind}">${label}</button>`;
+    const tollOpen = gate.access === 'TOLL';
+    return (
+      '<div class="tc-scan tc-access">' +
+      `<span>${tollOpen ? 'Прыгать часто выгоднее по аренде' : 'Доступ по заявке — условия назначит владелец'}</span>` +
+      '<span class="tc-access-actions">' +
+      (tollOpen ? '' : button('TOLL', 'Попросить проход', true)) +
+      button('LEASE', 'Попросить аренду', tollOpen) +
+      '</span></div>'
+    );
+  }
+
+  async function requestGateAccess(syndicateId, kind) {
+    if (!syndicateId) return;
+    if (await send('/api/war/gates/requests', { syndicateId, kind })) await loadMap(map.data && map.data.systemId);
+  }
+
   /** Кнопка «Разведать» в карточке: разведка с одним зондом, форма — на виду. */
   function scanFromCard() {
     map.mission = 'SCAN';
@@ -4749,7 +4780,9 @@
   function renderPlanetInfo() {
     const base = activeBase();
     el.planetInfo.onclick = (event) => {
-      if (event.target.closest('.tc-scan-go')) scanFromCard();
+      const request = event.target.closest('.tc-gate-request');
+      if (request) void requestGateAccess(request.dataset.syndicate, request.dataset.kind);
+      else if (event.target.closest('.tc-scan-go')) scanFromCard();
     };
 
     if (deepSpaceSelected()) {
@@ -4780,7 +4813,8 @@
         tcHead(`Брама [${gate.tag}]`, `врата синдиката · ур. ${gate.level}`,
           friendly ? '<span class="tc-chip own">ваша сеть</span>' : '<span class="tc-chip foe">чужой синдикат</span>',
           '/assets/buildings/brama.webp') +
-        `<div class="tc-rows">${rows}</div>`);
+        `<div class="tc-rows">${rows}</div>` +
+        (friendly || gate.access === 'LEASED' ? '' : gateRequestBlock(gate)));
       // К своей Браме рейсов нет: через нее прыгают, а не летят к ней.
       el.dispatch.hidden = !base || friendly;
       if (!el.dispatch.hidden) showDispatch(base);
@@ -6570,8 +6604,58 @@
     } else {
       card.appendChild(synEl('div', 'hub-storage', 'Врата никому не сданы.'));
     }
+    if (data.canOffer && data.requests && data.requests.length) node.appendChild(renderGateRequestsCard(data));
     node.appendChild(card);
     node.appendChild(renderGateTollCard(data));
+  }
+
+  /*
+   * Заявки на доступ стоят первыми: на них ждут ответа. Ответ — это обычные
+   * действия владельца: на проход — открыть его с ценой, на аренду —
+   * предложить срок и плату, для чего форма аренды заполняется позывным
+   * просившего. Отказ — со словом, почему заявку можно повторить через сутки.
+   */
+  function renderGateRequestsCard(data) {
+    const card = synCard('Заявки на доступ');
+    card.appendChild(synEl('p', 'muted lease-note',
+      'Игроки просят пустить их в сеть Брам. Условия назначаете вы: цену прохода или срок и плату аренды.'));
+    for (const request of data.requests) {
+      const row = synEl('div', 'syn-member');
+      const info = synEl('div', 'syn-member-info');
+      const name = synEl('div', 'syn-member-name');
+      name.append(
+        synEl('b', null, request.nickname),
+        synEl('span', 'chip', request.kind === 'TOLL' ? 'разовый проход' : 'аренда'),
+      );
+      info.append(name, synEl('div', 'syn-member-meta', `${fmtTime(Math.max(1, Math.floor((Date.now() - request.createdAt) / 1000)))} назад`));
+      const actions = synEl('div', 'member-actions');
+      if (request.kind === 'TOLL' && !data.toll) {
+        const price = synNumber(kishForm.tollPrice || 100, 1);
+        price.classList.add('lease-price');
+        price.addEventListener('input', () => { kishForm.tollPrice = price.value; });
+        actions.append(price, synButton('Открыть проход', 'primary', async () => {
+          const value = synInt(price);
+          if (value && (await send('/api/war/gates/toll', { price: value }))) await loadGateLeases();
+        }));
+      } else {
+        actions.append(synButton('Предложить аренду', 'primary', () => {
+          kishForm.leaseKind = 'PLAYER';
+          kishForm.leaseTenant = request.nickname;
+          renderGateLeasesOwner();
+          const field = el.kishLeases && el.kishLeases.querySelector('.lease-form input[type="text"]');
+          if (field) {
+            field.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            field.focus();
+          }
+        }));
+      }
+      actions.append(synButton('Отклонить', 'ghost', async () => {
+        if (await send(`/api/war/gates/requests/${request.id}/decline`)) await loadGateLeases();
+      }));
+      row.append(info, actions);
+      card.appendChild(row);
+    }
+    return card;
   }
 
   /*

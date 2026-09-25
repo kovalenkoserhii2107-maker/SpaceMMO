@@ -4115,6 +4115,11 @@ button.war-row-head:hover { background: rgba(120, 160, 255, 0.06); }
 .tc-rich.hi { color: var(--ok); }
 .tc-rich.lo { color: var(--muted); }
 
+/* Заявка на доступ к вратам: подпись сверху, две кнопки под ней — на телефоне в строку они не влезают. */
+.tc-access { flex-wrap: wrap; }
+.tc-access-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.tc-scan-go.ghost { background: transparent; border: 1px solid var(--line); color: var(--text); }
+
 /* Разведка — одной строкой с действием: неизвестное лечится зондом, а не «???». */
 .tc-scan {
   display: flex;
@@ -4268,5 +4273,7 @@ button.war-row-head:hover { background: rgba(120, 160, 255, 0.06); }
   margin-bottom: 12px;
 }
 .lease-form .primary { padding: 9px 14px; }
+/* Цена прохода прямо в строке заявки: ответить можно, не листая к карточке прохода. */
+.member-actions .lease-price { width: 88px; }
 .lease-row.ended { opacity: 0.6; }
 .chip.ok { color: var(--ok); border-color: rgba(74, 222, 128, 0.4); }

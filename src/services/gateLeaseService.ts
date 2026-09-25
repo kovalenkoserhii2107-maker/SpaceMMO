@@ -21,7 +21,7 @@ import {
   isGateLeaseHours,
 } from '../game/syndicate.js';
 import { deliver } from './mailService.js';
-import { membershipOf, requirePermission } from './syndicateAccess.js';
+import { gateAccessFor, membershipOf, requirePermission } from './syndicateAccess.js';
 
 export type LeaseResult = { ok: true; message: string } | { ok: false; error: string; status: number };
 
@@ -52,6 +52,16 @@ export interface GateLeaseOverview {
   toll: number | null;
   /** Есть ли у своего синдиката хоть одна Брама — иначе сдавать нечего. */
   hasGates: boolean;
+  /** Заявки игроков на доступ к сети своего синдиката — видны тем, кто назначает условия. */
+  requests: GateRequestView[];
+}
+
+export interface GateRequestView {
+  id: string;
+  commanderId: string;
+  nickname: string;
+  kind: 'TOLL' | 'LEASE';
+  createdAt: number;
 }
 
 class LeaseError extends Error {
@@ -128,7 +138,129 @@ export async function getGateLeases(commanderId: string): Promise<GateLeaseOverv
     canOffer: canManage,
     toll: own?.gateToll ?? null,
     hasGates: (own?._count.gates ?? 0) > 0,
+    requests: canManage && syndicateId ? await pendingRequests(syndicateId, now) : [],
   };
+}
+
+/*
+ * Заявка на доступ к сети Брам.
+ *
+ * Условия назначает владелец, а не проситель: игрок называет только вид
+ * доступа — разовый проход (по умолчанию) или аренду, — а цену прохода,
+ * срок и плату аренды решает ранг с правом «цены Брам». Ответ на заявку —
+ * это обычные действия владельца: открыть проход с ценой или отправить
+ * предложение аренды, и тогда заявка закрывается сама. Отдельного «принять»
+ * нет: принять заявку без условий значило бы пустить бесплатно.
+ *
+ * Одна заявка на пару «синдикат — игрок»: повторная кнопка не засыпает
+ * ящик владельца. Висит неделя, отклоненную можно повторить через сутки.
+ */
+const REQUEST_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const REQUEST_RETRY_MS = 24 * 60 * 60 * 1000;
+
+const REQUEST_KIND_TEXT = { TOLL: 'разовый проход', LEASE: 'аренду' } as const;
+
+async function pendingRequests(syndicateId: string, now: number): Promise<GateRequestView[]> {
+  const rows = await prisma.gateAccessRequest.findMany({
+    where: { ownerSyndicateId: syndicateId, declinedAt: null, createdAt: { gt: new Date(now - REQUEST_TTL_MS) } },
+    include: { requester: { select: { nickname: true } } },
+    orderBy: { createdAt: 'desc' },
+  });
+  return rows.map((row) => ({
+    id: row.id,
+    commanderId: row.requesterId,
+    nickname: row.requester.nickname,
+    kind: row.kind,
+    createdAt: row.createdAt.getTime(),
+  }));
+}
+
+/** Кому писать о заявке: главарю и всем, чей ранг дает право «цены Брам». */
+async function gateManagers(syndicateId: string): Promise<string[]> {
+  const rows = await prisma.commander.findMany({
+    where: { syndicateId },
+    select: { id: true, syndicate: { select: { leaderId: true } }, syndicateRank: { select: { permissions: true } } },
+  });
+  return rows
+    .filter((row) => row.syndicate?.leaderId === row.id || (row.syndicateRank?.permissions ?? []).includes('GATES'))
+    .map((row) => row.id);
+}
+
+export async function requestGateAccess(
+  commanderId: string,
+  ownerSyndicateId: string,
+  kind: 'TOLL' | 'LEASE',
+): Promise<LeaseResult> {
+  const owner = await prisma.syndicate.findUnique({
+    where: { id: ownerSyndicateId },
+    select: { id: true, tag: true, name: true, gateToll: true, _count: { select: { gates: true } } },
+  });
+  if (!owner || owner._count.gates === 0) return { ok: false, error: 'У этого синдиката нет Брам', status: 404 };
+
+  const access = (await gateAccessFor(commanderId)).get(owner.id);
+  if (access === 'OWN') return { ok: false, error: 'Это врата твоего синдиката', status: 409 };
+  if (access === 'ALLY') return { ok: false, error: 'Врата союзника и так открыты для тебя', status: 409 };
+  if (access === 'LEASED') return { ok: false, error: 'Аренда этих врат у тебя уже действует', status: 409 };
+  if (kind === 'TOLL' && access === 'TOLL') {
+    return { ok: false, error: `Проход уже открыт: ${owner.gateToll} ₴ за корабль и прыжок — просить не нужно`, status: 409 };
+  }
+  const me = await prisma.commander.findUnique({ where: { id: commanderId }, select: { nickname: true, syndicateId: true } });
+  if (me?.syndicateId && (await atSyndicateWar(me.syndicateId, owner.id))) {
+    return { ok: false, error: 'С этим синдикатом идет война — сначала мир', status: 409 };
+  }
+
+  const now = Date.now();
+  const existing = await prisma.gateAccessRequest.findUnique({
+    where: { ownerSyndicateId_requesterId: { ownerSyndicateId: owner.id, requesterId: commanderId } },
+  });
+  if (existing?.declinedAt && existing.declinedAt.getTime() > now - REQUEST_RETRY_MS) {
+    const hours = Math.ceil((existing.declinedAt.getTime() + REQUEST_RETRY_MS - now) / 3_600_000);
+    return { ok: false, error: `Заявку отклонили — повторить можно через ${hours} ч`, status: 409 };
+  }
+  if (existing && !existing.declinedAt && existing.createdAt.getTime() > now - REQUEST_TTL_MS && existing.kind === kind) {
+    return { ok: false, error: 'Заявка уже отправлена и ждет ответа', status: 409 };
+  }
+  await prisma.gateAccessRequest.upsert({
+    where: { ownerSyndicateId_requesterId: { ownerSyndicateId: owner.id, requesterId: commanderId } },
+    create: { ownerSyndicateId: owner.id, requesterId: commanderId, kind },
+    update: { kind, createdAt: new Date(now), declinedAt: null },
+  });
+
+  const answer = kind === 'TOLL'
+    ? 'откройте разовый проход и назначьте цену за корабль'
+    : 'предложите аренду — срок и плату выбираете вы';
+  await notify(
+    await gateManagers(owner.id),
+    `Заявка на доступ к Брамам: ${me?.nickname ?? 'игрок'}`,
+    `${me?.nickname ?? 'Игрок'} просит ${REQUEST_KIND_TEXT[kind]} через Брамы [${owner.tag}]. ` +
+      `Условия назначаете вы: ${answer} — в «Отсеках» Коша, блок «Заявки на доступ». Там же заявку можно отклонить.`,
+  );
+  return {
+    ok: true,
+    message: `Заявка на ${REQUEST_KIND_TEXT[kind]} отправлена [${owner.tag}] — условия назначит владелец`,
+  };
+}
+
+export async function declineGateRequest(commanderId: string, requestId: string): Promise<LeaseResult> {
+  const access = await requirePermission(commanderId, 'GATES');
+  if (!access.ok) return { ok: false, error: 'Заявки разбирает ранг с правом «цены Брам»', status: access.status };
+  const request = await prisma.gateAccessRequest.findUnique({
+    where: { id: requestId },
+    include: { owner: { select: { tag: true } } },
+  });
+  if (!request || request.ownerSyndicateId !== access.syndicateId) return { ok: false, error: 'Заявка не найдена', status: 404 };
+  const declined = await prisma.gateAccessRequest.updateMany({
+    where: { id: request.id, declinedAt: null },
+    data: { declinedAt: new Date() },
+  });
+  if (declined.count === 0) return { ok: false, error: 'Заявку уже разобрали', status: 409 };
+  await notify(
+    [request.requesterId],
+    'Заявка на доступ к Брамам отклонена',
+    `Синдикат [${request.owner.tag}] отклонил заявку на ${REQUEST_KIND_TEXT[request.kind]} через свои Брамы. ` +
+      'Повторить ее можно через сутки.',
+  );
+  return { ok: true, message: 'Заявка отклонена' };
 }
 
 /**
@@ -149,6 +281,22 @@ export async function setGateToll(commanderId: string, price: number | null): Pr
     return { ok: false, error: `Цена прохода — целое число от 1 до ${GATE_TOLL_MAX} ₴ за корабль`, status: 400 };
   }
   await prisma.syndicate.update({ where: { id: access.syndicateId }, data: { gateToll: price } });
+  if (price !== null) {
+    // Открытый проход и есть ответ на заявки о нем: просившие узнают цену письмом.
+    const answered = await prisma.gateAccessRequest.findMany({
+      where: { ownerSyndicateId: access.syndicateId, kind: 'TOLL', declinedAt: null },
+      include: { owner: { select: { tag: true } } },
+    });
+    if (answered.length) {
+      await prisma.gateAccessRequest.deleteMany({ where: { id: { in: answered.map((row) => row.id) } } });
+      await notify(
+        answered.map((row) => row.requesterId),
+        'Проход через Брамы открыт',
+        `Синдикат [${answered[0]!.owner.tag}] открыл разовый проход через свои Брамы: ${price} ₴ за корабль и прыжок. ` +
+          'Платится при вылете, сумму показывает предпросмотр маршрута.',
+      );
+    }
+  }
   return { ok: true, message: price === null ? 'Проход через Брамы закрыт' : `Проход открыт: ${price} ₴ за корабль и прыжок` };
 }
 
@@ -266,6 +414,11 @@ export async function offerGateLease(commanderId: string, input: LeaseOfferInput
       offeredById: commanderId,
     },
   });
+
+  // Предложение аренды отвечает на заявку этого игрока, о чем бы он ни просил.
+  if (tenantCommanderId) {
+    await prisma.gateAccessRequest.deleteMany({ where: { ownerSyndicateId: access.syndicateId, requesterId: tenantCommanderId } });
+  }
 
   const owner = await prisma.syndicate.findUnique({ where: { id: access.syndicateId }, select: { tag: true, name: true } });
   await notify(

@@ -351,6 +351,8 @@ export interface GateView {
   disabledUntil: number | null;
   /** После осады врата неуязвимы до этого момента (мс). */
   siegeImmuneUntil: number | null;
+  /** Смотрящий уже попросил доступ, и заявка ждет ответа: какой вид доступа. */
+  requested: 'TOLL' | 'LEASE' | null;
 }
 
 /** Система на макро-карте галактики. */

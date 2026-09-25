@@ -10,8 +10,10 @@ import { currentCommander, requireAuth, requireCommander } from './middleware.js
 import { cancelPact, proposePact, respondPact } from '../services/pactService.js';
 import {
   cancelGateLease,
+  declineGateRequest,
   getGateLeases,
   offerGateLease,
+  requestGateAccess,
   respondGateLease,
   setGateToll,
   type GateLeaseOverview,
@@ -145,6 +147,31 @@ warRouter.post('/gates/leases/:id/respond', async (req, res: Response<ActionResp
     return;
   }
   const result = await respondGateLease(currentCommander(req).id, String(req.params.id), accept);
+  if (!result.ok) {
+    res.status(result.status).json({ error: result.error });
+    return;
+  }
+  res.json(result);
+});
+
+warRouter.post('/gates/requests', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const body = (req.body ?? {}) as { syndicateId?: unknown; kind?: unknown };
+  // Разовый проход — заявка по умолчанию: вид доступа можно не указывать.
+  const kind = body.kind === undefined ? 'TOLL' : body.kind;
+  if (typeof body.syndicateId !== 'string' || (kind !== 'TOLL' && kind !== 'LEASE')) {
+    res.status(400).json({ error: 'Укажи врата и вид доступа' });
+    return;
+  }
+  const result = await requestGateAccess(currentCommander(req).id, body.syndicateId, kind);
+  if (!result.ok) {
+    res.status(result.status).json({ error: result.error });
+    return;
+  }
+  res.json(result);
+});
+
+warRouter.post('/gates/requests/:id/decline', async (req, res: Response<ActionResponse | ErrorResponse>) => {
+  const result = await declineGateRequest(currentCommander(req).id, String(req.params.id));
   if (!result.ok) {
     res.status(result.status).json({ error: result.error });
     return;
