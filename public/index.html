@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Space Strategy MMO — Командный центр</title>
+  <title>Чумацький Шлях — космическая стратегия</title>
   <!--
     Превью ссылки в мессенджерах и соцсетях (Telegram, WhatsApp, Facebook, X).
     Картинка и адрес — абсолютные: сборщик превью открывает страницу без
@@ -12,22 +12,26 @@
     карточки. Telegram кеширует превью; после правки обновить его
     можно ботом @WebpageBot.
   -->
-  <meta name="description" content="Браузерная MMO-стратегия в космосе: строй колонии, собирай флот, торгуй на общей бирже, объединяйся в синдикаты и прыгай между системами через Брамы. Играй с телефона и компьютера." />
+  <meta name="description" content="Чумацький Шлях — браузерная MMO-стратегия в космосе: строй колонии, собирай флот, торгуй на общей бирже, объединяйся в синдикаты и прыгай между системами через Брамы. Играй с телефона и компьютера." />
   <meta property="og:type" content="website" />
-  <meta property="og:site_name" content="Space Strategy MMO" />
+  <meta property="og:site_name" content="Чумацький Шлях" />
   <meta property="og:locale" content="ru_RU" />
   <meta property="og:url" content="https://spacemmo.fly.dev/" />
-  <meta property="og:title" content="Space Strategy MMO — космическая стратегия в браузере" />
+  <meta property="og:title" content="Чумацький Шлях — космическая стратегия в браузере" />
   <meta property="og:description" content="Строй колонии, собирай флот, торгуй на общей бирже, объединяйся в синдикаты и прыгай между системами через Брамы. Играй с телефона и компьютера." />
   <meta property="og:image" content="https://spacemmo.fly.dev/og-image.jpg" />
   <meta property="og:image:type" content="image/jpeg" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
-  <meta property="og:image:alt" content="Space Strategy MMO: планета у звезды" />
+  <meta property="og:image:alt" content="Чумацький Шлях: планета у звезды" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Space Strategy MMO — космическая стратегия в браузере" />
+  <meta name="twitter:title" content="Чумацький Шлях — космическая стратегия в браузере" />
   <meta name="twitter:description" content="Строй колонии, собирай флот, торгуй на общей бирже и объединяйся в синдикаты." />
   <meta name="twitter:image" content="https://spacemmo.fly.dev/og-image.jpg" />
+  <!-- Шрифт фирменной надписи: широкий гротеск с полной кириллицей (включая і). Два начертания и только для логотипа. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@300;500&display=swap" />
   <link rel="stylesheet" href="/styles.css" />
   <meta name="theme-color" content="#04060d" />
   <link rel="manifest" href="/manifest.webmanifest" />
@@ -44,7 +48,7 @@
   -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black" />
-  <meta name="apple-mobile-web-app-title" content="SpaceMMO" />
+  <meta name="apple-mobile-web-app-title" content="Чумацький Шлях" />
   <meta name="mobile-web-app-capable" content="yes" />
 </head>
 <body>
@@ -187,8 +191,15 @@
   <!-- Экран входа и регистрации -->
   <section id="auth-screen" class="screen login">
     <div class="login-card">
-      <h1>Командный центр</h1>
-      <p class="muted">Авторизуйся, чтобы принять командование флотом.</p>
+      <h1 class="brand" aria-label="Чумацький Шлях">
+        <span class="brand-top" aria-hidden="true">Чумацький</span>
+        <span class="brand-main" aria-hidden="true">Шлях</span>
+        <svg class="brand-orbit" viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden="true">
+          <defs><linearGradient id="brandOrbit" x1="0" x2="1"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".5" stop-color="#fff" stop-opacity=".95"/><stop offset="1" stop-color="#fff" stop-opacity=".2"/></linearGradient></defs>
+          <path d="M0 32 C 30 40, 70 34, 100 6 C 72 30, 32 36, 0 32 Z" fill="url(#brandOrbit)"/>
+        </svg>
+      </h1>
+      <p class="muted">Космическая стратегия. Авторизуйся, чтобы принять командование флотом.</p>
 
       <div class="auth-tabs">
         <button type="button" class="auth-tab active" data-auth="login">Вход</button>

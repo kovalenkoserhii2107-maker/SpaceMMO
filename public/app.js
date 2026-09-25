@@ -576,12 +576,16 @@
     // Язык подписи выбирает сам Google по настройкам пользователя: параметр
     // locale он для отрисованной кнопки игнорирует, и держать его здесь значит
     // делать вид, что мы этим управляем.
+    // Ширина — по месту в карточке: кнопка Google рисуется iframe'ом
+    // фиксированной ширины и на телефоне распирала карточку за край экрана.
+    // Google принимает от 200 до 400 пикселей.
+    const room = el.googleButton.clientWidth || 320;
     window.google.accounts.id.renderButton(el.googleButton, {
       theme: 'filled_black',
       size: 'large',
       shape: 'pill',
       text: 'signin_with',
-      width: 320,
+      width: Math.max(200, Math.min(320, Math.floor(room))),
     });
   }
 
@@ -8850,7 +8854,7 @@
 
     if (step.welcome) {
       card.append(
-        synEl('span', 'tour-kicker', 'Добро пожаловать'),
+        synEl('span', 'tour-kicker', 'Добро пожаловать в «Чумацький Шлях»'),
         synEl('h2', 'tour-title', 'Привет, командир!'),
         synEl('p', 'tour-text', `Меня зовут ${AUTHOR.name}, и эту игру я делаю сам. Спасибо, что ты здесь: каждый новый командир для меня важен, и я читаю всё, что вы пишете.`),
         synEl('p', 'tour-text', 'Если интересно, что еще я создаю, — загляни на мою страничку с приложениями.'),
