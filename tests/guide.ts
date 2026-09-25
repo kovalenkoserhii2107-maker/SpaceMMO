@@ -4,7 +4,7 @@
  * сборка не роняется, числа в тексте настоящие, а каждая ссылка
  * «Как это работает» из интерфейса ведет на существующую статью.
  */
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { gameGuide } from '../src/game/guide.js';
 
 const results: Array<{ name: string; passed: boolean }> = [];
@@ -29,6 +29,22 @@ check('в тексте нет NaN, undefined и Infinity', broken === null, brok
 const tables = articles.flatMap((article) => article.blocks.filter((block) => block.kind === 'table'));
 check('строки таблиц той же ширины, что заголовок',
   tables.every((block) => block.kind === 'table' && block.rows.every((row) => row.length === block.head.length)));
+
+check('картинок в таблице столько же, сколько строк',
+  tables.every((block) => block.kind !== 'table' || !block.icons || block.icons.length === block.rows.length));
+
+/*
+ * Отсутствующий файл клиент прячет, а не ломает, поэтому глазами пропажу
+ * не заметить: статья просто окажется без картинки. Сверяем с диском.
+ */
+const images = articles.flatMap((article) => [
+  article.cover.src,
+  ...article.blocks.flatMap((block) =>
+    block.kind === 'figures' ? block.items.map((item) => item.src)
+      : block.kind === 'table' ? (block.icons ?? []).filter((icon): icon is string => icon !== null) : []),
+]);
+const lost = [...new Set(images)].filter((src) => !existsSync(new URL(`../public${src}`, import.meta.url)));
+check('у каждой статьи есть обложка, и все картинки лежат в public/assets', lost.length === 0, lost.join(', '));
 
 console.log('\n=== 2. Ссылки из интерфейса ===');
 const client = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8') +

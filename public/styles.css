@@ -70,7 +70,8 @@ body {
 
 .login-card h1 { margin: 0; font-size: 26px; letter-spacing: 0.5px; }
 
-input[type="text"] {
+input[type="text"],
+input[type="search"] {
   padding: 12px 14px;
   border-radius: 10px;
   border: 1px solid var(--line);
@@ -79,7 +80,8 @@ input[type="text"] {
   font-size: 15px;
   outline: none;
 }
-input[type="text"]:focus { border-color: var(--accent); }
+input[type="text"]:focus,
+input[type="search"]:focus { border-color: var(--accent); }
 
 button {
   cursor: pointer;
@@ -4301,21 +4303,66 @@ button.war-row-head:hover { background: rgba(120, 160, 255, 0.06); }
 .guide-link:hover { color: var(--accent); border-color: var(--line-strong); }
 .tc-scan + .guide-link, .tc-rows + .guide-link { justify-self: start; margin-top: 2px; }
 
-/* Слева оглавление с поиском, справа статья; на узком экране — одно под другим. */
-.guide { display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); gap: 16px; align-items: start; }
-.guide-index {
-  display: grid;
-  gap: 10px;
-  position: sticky;
-  top: calc(var(--header-h, 80px) + 12px);
-  max-height: calc(100vh - var(--header-h, 80px) - 32px);
-  overflow-y: auto;
-  padding-right: 4px;
+/*
+ * Статья во всю ширину, над ней — выпадающий выбор статьи. Оглавление
+ * сбоку съедало треть экрана, а на телефоне вставало над статьей
+ * на три экрана, и выбор уводил страницу вниз через весь список.
+ */
+.guide { display: grid; gap: 14px; max-width: 920px; }
+
+.guide-picker { position: relative; }
+.guide-picker-button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  text-align: left;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  cursor: pointer;
 }
-.guide-index input[type="search"] { width: 100%; }
-#guide-list { display: grid; gap: 4px; }
+.guide-picker-button:hover { border-color: rgba(77, 210, 255, 0.5); }
+.guide-picker-label { display: grid; gap: 2px; min-width: 0; }
+.guide-picker-label small { font-size: 11px; letter-spacing: 1.1px; text-transform: uppercase; color: var(--accent); }
+.guide-picker-label b { font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.guide-picker-caret { width: 20px; height: 20px; flex: none; color: var(--muted); transition: transform 0.2s ease; }
+.guide-picker-button[aria-expanded="true"] .guide-picker-caret { transform: rotate(180deg); }
+
+/* Список выпадает поверх статьи, а не сдвигает ее: открыл, выбрал, закрылся. */
+.guide-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+  background: #0d1426;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+}
+.guide-menu input[type="search"] {
+  width: 100%;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 10px 12px;
+  font-size: 14px;
+  background: #0a1020;
+  /* Тень цвета списка закрывает зазор над полем: пункты не просвечивают, пока листаешь. */
+  box-shadow: 0 -10px 0 #0d1426;
+}
+#guide-list { display: grid; gap: 2px; }
 .guide-section {
-  margin: 10px 0 2px;
+  margin: 8px 4px 2px;
   font-size: 11px;
   letter-spacing: 1.2px;
   text-transform: uppercase;
@@ -4323,32 +4370,71 @@ button.war-row-head:hover { background: rgba(120, 160, 255, 0.06); }
 }
 .guide-item {
   display: grid;
-  gap: 2px;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
   text-align: left;
-  padding: 8px 10px;
+  padding: 6px 8px;
   border-radius: 10px;
   border: 1px solid transparent;
   background: transparent;
   color: var(--text);
   cursor: pointer;
 }
-.guide-item b { font-size: 13px; font-weight: 600; }
-.guide-item span { font-size: 11.5px; color: var(--muted); line-height: 1.35; }
+.guide-item-text { display: grid; gap: 1px; min-width: 0; }
+.guide-item-text b { font-size: 13px; font-weight: 600; }
+.guide-item-text span { font-size: 11.5px; color: var(--muted); line-height: 1.35; }
 .guide-item:hover { background: var(--panel-2); }
 .guide-item.active { background: rgba(77, 210, 255, 0.08); border-color: rgba(77, 210, 255, 0.35); }
-.guide-empty { margin: 6px 2px; font-size: 12px; }
+.guide-empty { margin: 6px 4px; font-size: 12px; }
 
-/* Статья читается как текст, а не как карточка с плитками: строка до 72 знаков. */
-.guide-article { gap: 12px; padding: 22px 24px; outline: none; }
+/* Картинки: обычный арт обрезается по кадру, свечение (станции) вписывается под screen. */
+.guide-item-art, .guide-cell-art, .guide-figure-art, .guide-cover {
+  display: block;
+  overflow: hidden;
+  background: #060a14;
+}
+.guide-item-art img, .guide-cell-art img, .guide-figure-art img, .guide-cover > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.glow img { object-fit: contain; mix-blend-mode: screen; }
+.guide-item-art { width: 44px; height: 44px; border-radius: 8px; }
+.guide-cell-art { width: 34px; height: 34px; border-radius: 7px; flex: none; }
+.art-missing img { display: none; }
+
+.guide-article { gap: 14px; padding: 0 0 20px; overflow: hidden; outline: none; }
+.guide-article > :not(.guide-cover) { margin-left: 24px; margin-right: 24px; }
 .guide-article > p, .guide-article > ul, .guide-article > ol { max-width: 72ch; }
+
+/*
+ * Обложка — во всю ширину статьи, заголовок лежит на ней, по нижнему краю
+ * затемнение: на светлом арте текст иначе не читается.
+ */
+.guide-cover { position: relative; height: 220px; }
+.guide-cover.glow > img { object-fit: contain; }
+.guide-cover::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(6, 10, 20, 0) 30%, rgba(6, 10, 20, 0.92) 100%);
+  pointer-events: none;
+}
+.guide-cover.art-missing { height: auto; }
+.guide-cover.art-missing::after { display: none; }
+.guide-heading { position: absolute; left: 24px; right: 24px; bottom: 16px; z-index: 1; display: grid; gap: 4px; }
+.guide-cover.art-missing .guide-heading { position: static; padding: 20px 24px 0; }
 .guide-kicker { font-size: 11px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--accent); }
-.guide-title { margin: 0; font-size: 22px; line-height: 1.25; }
-.guide-summary { margin: 0; color: var(--muted); font-size: 14px; }
+.guide-title { margin: 0; font-size: 24px; line-height: 1.2; text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7); }
+.guide-summary { margin: 0; color: #b7c3e6; font-size: 14px; text-shadow: 0 1px 8px rgba(0, 0, 0, 0.7); }
 .guide-p { margin: 0; font-size: 14px; line-height: 1.6; }
-.guide-list, .guide-steps { margin: 0; padding-left: 22px; display: grid; gap: 6px; font-size: 14px; line-height: 1.55; }
+.guide-list, .guide-steps { margin-top: 0; margin-bottom: 0; padding-left: 22px; display: grid; gap: 6px; font-size: 14px; line-height: 1.55; }
 .guide-steps li::marker { color: var(--accent); font-weight: 700; }
 .guide-tip {
-  margin: 0;
+  margin-top: 0;
+  margin-bottom: 0;
   padding: 10px 12px;
   border-radius: 10px;
   border-left: 3px solid var(--ok);
@@ -4357,6 +4443,13 @@ button.war-row-head:hover { background: rgba(120, 160, 255, 0.06); }
   line-height: 1.55;
 }
 .guide-tip::before { content: 'Совет. '; font-weight: 700; color: var(--ok); }
+
+.guide-figures { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
+.guide-figure { margin: 0; display: grid; gap: 6px; }
+.guide-figure-art { aspect-ratio: 1 / 1; border-radius: 10px; border: 1px solid var(--line); }
+.guide-figure figcaption { font-size: 12px; line-height: 1.35; color: var(--muted); }
+.guide-figure-art.art-missing { display: none; }
+
 .guide-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
 .guide-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .guide-table th {
@@ -4370,9 +4463,35 @@ button.war-row-head:hover { background: rgba(120, 160, 255, 0.06); }
 }
 .guide-table td { padding: 8px 10px; border-top: 1px solid var(--line); vertical-align: top; line-height: 1.45; }
 .guide-table td:first-child { font-weight: 600; }
+.guide-table td.with-icon { min-width: 190px; }
+/* Ячейка остается ячейкой таблицы — иначе ее граница съезжает с соседних; раскладку держит обертка. */
+.guide-cell { display: flex; align-items: center; gap: 10px; }
+.guide-table td.with-icon .art-missing { display: none; }
+
+.guide-pager { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 6px; }
+.guide-pager-link {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  text-align: left;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.guide-pager-link.next { text-align: right; }
+.guide-pager-link small { font-size: 11px; color: var(--muted); }
+.guide-pager-link b { font-size: 13px; font-weight: 600; }
+.guide-pager-link:hover { border-color: var(--line-strong); }
 
 @media (max-width: 900px) {
-  .guide { grid-template-columns: 1fr; }
-  .guide-index { position: static; max-height: none; overflow: visible; }
-  .guide-article { padding: 16px; }
+  .guide-cover { height: 170px; }
+  .guide-article > :not(.guide-cover) { margin-left: 14px; margin-right: 14px; }
+  .guide-heading { left: 14px; right: 14px; bottom: 12px; }
+  .guide-title { font-size: 20px; }
+  .guide-figures { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
+  .guide-pager { grid-template-columns: 1fr; }
+  .guide-pager-link.next { text-align: left; }
 }
+

@@ -174,7 +174,16 @@ export type GuideBlock =
   | { kind: 'tip'; text: string }
   | { kind: 'list'; items: string[] }
   | { kind: 'steps'; items: string[] }
-  | { kind: 'table'; head: string[]; rows: string[][] };
+  /** `icons` — картинка к первой ячейке каждой строки; `null` — без картинки. */
+  | { kind: 'table'; head: string[]; rows: string[][]; icons?: (string | null)[] }
+  /** Плитки с картинками: постройки, ресурсы, модули — узнаются по арту раньше, чем по подписи. */
+  | { kind: 'figures'; items: { src: string; caption: string; glow?: boolean }[] };
+
+/** Картинка статьи. `glow` — свечение на черном (звезды, станции): его не обрезают, а вписывают. */
+export interface GuideCover {
+  src: string;
+  glow?: boolean;
+}
 
 /** Статья базы знаний: раздел, заголовок, одна строка «о чем» и содержание. */
 export interface GuideArticle {
@@ -182,6 +191,7 @@ export interface GuideArticle {
   section: string;
   title: string;
   summary: string;
+  cover: GuideCover;
   blocks: GuideBlock[];
 }
 

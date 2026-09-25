@@ -216,6 +216,10 @@
     guideSearch: $('guide-search'),
     guideList: $('guide-list'),
     guideArticle: $('guide-article'),
+    guidePicker: $('guide-picker'),
+    guidePickerSection: $('guide-picker-section'),
+    guidePickerTitle: $('guide-picker-title'),
+    guideMenu: $('guide-menu'),
     mailSummary: $('mail-summary'),
     mailReadAll: $('mail-read-all'),
     mailTo: $('mail-to'),
@@ -8359,18 +8363,54 @@
       item.type = 'button';
       item.className = `guide-item${article.id === guide.current ? ' active' : ''}`;
       item.dataset.article = article.id;
-      item.append(synEl('b', null, article.title), synEl('span', null, article.summary));
+      item.setAttribute('role', 'option');
+      item.setAttribute('aria-selected', String(article.id === guide.current));
+      const thumb = guideImage(article.cover.src, article.cover.glow, 'guide-item-art');
+      const text = synEl('span', 'guide-item-text');
+      text.append(synEl('b', null, article.title), synEl('span', null, article.summary));
+      item.append(thumb, text);
       el.guideList.appendChild(item);
     }
   }
 
+  /*
+   * Картинка статьи. Отсутствующий файл прячется целиком, а не остается
+   * рамкой с битой иконкой. Свечение на черном (звезды, станции) вписывается
+   * в кадр под `screen`, а не обрезается: у него нет края, и обрезка
+   * оставила бы от станции квадрат.
+   */
+  function guideImage(src, glow, className) {
+    const frame = synEl('span', `${className}${glow ? ' glow' : ''}`);
+    const image = document.createElement('img');
+    image.alt = '';
+    image.decoding = 'async';
+    image.addEventListener('error', () => frame.classList.add('art-missing'));
+    image.src = src;
+    frame.appendChild(image);
+    return frame;
+  }
+
+  function renderGuidePicker(article) {
+    el.guidePickerSection.textContent = article ? article.section : 'Раздел';
+    el.guidePickerTitle.textContent = article ? article.title : 'Выбери статью';
+  }
+
   function renderGuideArticle() {
-    const article = guide.articles && guide.articles.find((item) => item.id === guide.current);
+    const articles = guide.articles || [];
+    const index = articles.findIndex((item) => item.id === guide.current);
+    const article = articles[index];
     const root = el.guideArticle;
     root.innerHTML = '';
+    renderGuidePicker(article);
     if (!article) return;
-    root.append(synEl('span', 'guide-kicker', article.section), synEl('h2', 'guide-title', article.title));
-    root.appendChild(synEl('p', 'guide-summary', article.summary));
+
+    const hero = guideImage(article.cover.src, article.cover.glow, 'guide-cover');
+    const heading = synEl('div', 'guide-heading');
+    heading.append(synEl('span', 'guide-kicker', article.section), synEl('h2', 'guide-title', article.title));
+    heading.appendChild(synEl('p', 'guide-summary', article.summary));
+    hero.appendChild(heading);
+    root.appendChild(hero);
+
     for (const block of article.blocks) {
       if (block.kind === 'p') root.appendChild(synEl('p', 'guide-p', block.text));
       else if (block.kind === 'tip') root.appendChild(synEl('p', 'guide-tip', block.text));
@@ -8379,6 +8419,14 @@
         listNode.className = `guide-${block.kind}`;
         for (const text of block.items) listNode.appendChild(synEl('li', null, text));
         root.appendChild(listNode);
+      } else if (block.kind === 'figures') {
+        const grid = synEl('div', 'guide-figures');
+        for (const item of block.items) {
+          const figure = synEl('figure', 'guide-figure');
+          figure.append(guideImage(item.src, item.glow, 'guide-figure-art'), synEl('figcaption', null, item.caption));
+          grid.appendChild(figure);
+        }
+        root.appendChild(grid);
       } else if (block.kind === 'table') {
         // Широкие таблицы (корабли) листаются вбок внутри себя, а не растягивают экран.
         const wrap = synEl('div', 'guide-table-wrap');
@@ -8388,24 +8436,73 @@
         for (const cell of block.head) head.appendChild(synEl('th', null, cell));
         tableNode.createTHead().appendChild(head);
         const body = tableNode.createTBody();
-        for (const row of block.rows) {
+        block.rows.forEach((row, rowIndex) => {
           const tr = document.createElement('tr');
-          for (const cell of row) tr.appendChild(synEl('td', null, cell));
+          row.forEach((cell, cellIndex) => {
+            const td = synEl('td', null);
+            const icon = cellIndex === 0 && block.icons ? block.icons[rowIndex] : null;
+            if (icon) {
+              td.className = 'with-icon';
+              const wrap = synEl('span', 'guide-cell');
+              wrap.append(guideImage(icon, false, 'guide-cell-art'), synEl('span', null, cell));
+              td.appendChild(wrap);
+            } else {
+              td.textContent = cell;
+            }
+            tr.appendChild(td);
+          });
           body.appendChild(tr);
-        }
+        });
         wrap.appendChild(tableNode);
         root.appendChild(wrap);
       }
     }
+
+    // Внизу статьи — соседние: читающий подряд не возвращается к списку.
+    const pager = synEl('nav', 'guide-pager');
+    const neighbour = (target, direction) => {
+      if (!target) return synEl('span');
+      const link = synEl('button', `guide-pager-link ${direction}`);
+      link.type = 'button';
+      link.dataset.article = target.id;
+      link.append(synEl('small', null, direction === 'prev' ? '← Предыдущая' : 'Следующая →'), synEl('b', null, target.title));
+      return link;
+    };
+    pager.append(neighbour(articles[index - 1], 'prev'), neighbour(articles[index + 1], 'next'));
+    root.appendChild(pager);
   }
 
+  /*
+   * Выбор статьи не прокручивает страницу вниз. Прежде на телефоне список
+   * стоял над статьей, и выбор уносил экран к ее началу — через весь список,
+   * то есть почти в самый низ. Теперь список выпадает над статьей и сворачивается,
+   * а экран возвращается к началу статьи, только если она ушла выше экрана.
+   */
   function selectGuideArticle(id) {
     guide.current = id;
     guideMemory(id);
+    setGuideMenu(false);
     renderGuideList();
     renderGuideArticle();
-    // На телефоне список стоит над статьей: без прокрутки выбор выглядел бы как «ничего не случилось».
-    if (window.matchMedia('(max-width: 900px)').matches) el.guideArticle.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    revealGuideTop();
+  }
+
+  function revealGuideTop() {
+    const header = document.querySelector('.topbar, header');
+    const offset = (header ? header.getBoundingClientRect().height : 0) + 12;
+    const top = el.guidePicker.getBoundingClientRect().top;
+    if (top < offset) window.scrollBy({ top: top - offset, behavior: 'smooth' });
+  }
+
+  function setGuideMenu(open) {
+    el.guideMenu.hidden = !open;
+    el.guidePicker.setAttribute('aria-expanded', String(open));
+    if (open) {
+      renderGuideList();
+      el.guideSearch.focus({ preventScroll: true });
+      const active = el.guideList.querySelector('.guide-item.active');
+      if (active) active.scrollIntoView({ block: 'nearest' });
+    }
   }
 
   /** Переход к статье из любого раздела: кнопки «Как это работает». */
@@ -8414,17 +8511,40 @@
     guideMemory(id);
     guide.query = '';
     el.guideSearch.value = '';
+    setGuideMenu(false);
     showPanel('guide');
-    el.guideArticle.scrollIntoView({ block: 'start' });
+    window.scrollTo({ top: 0 });
   }
 
+  el.guidePicker.addEventListener('click', () => setGuideMenu(el.guideMenu.hidden));
   el.guideList.addEventListener('click', (event) => {
     const item = event.target.closest('.guide-item');
     if (item) selectGuideArticle(item.dataset.article);
   });
+  el.guideArticle.addEventListener('click', (event) => {
+    const link = event.target.closest('.guide-pager-link');
+    if (link) selectGuideArticle(link.dataset.article);
+  });
   el.guideSearch.addEventListener('input', () => {
     guide.query = el.guideSearch.value;
     renderGuideList();
+  });
+  el.guideSearch.addEventListener('keydown', (event) => {
+    // Enter открывает первую найденную статью: искать и тыкать мышью — два действия вместо одного.
+    if (event.key === 'Enter') {
+      const first = el.guideList.querySelector('.guide-item');
+      if (first) selectGuideArticle(first.dataset.article);
+    }
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !el.guideMenu.hidden) {
+      setGuideMenu(false);
+      el.guidePicker.focus();
+    }
+  });
+  // Щелчок мимо списка закрывает его, как у любого выпадающего списка.
+  document.addEventListener('click', (event) => {
+    if (!el.guideMenu.hidden && !event.target.closest('.guide-picker')) setGuideMenu(false);
   });
   document.addEventListener('click', (event) => {
     const link = event.target.closest('.guide-link[data-guide]');

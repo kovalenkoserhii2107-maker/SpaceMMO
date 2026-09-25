@@ -8,7 +8,7 @@
  * с балансом при первой же правке, и игрок узнал бы об этом дорогой ценой.
  * Модуль чистый: базу не читает, собирается один раз при первом запросе.
  */
-import type { GuideArticle, GuideBlock } from '../types/api.js';
+import type { GuideArticle, GuideBlock, GuideCover } from '../types/api.js';
 import { COMBAT_TECH_BONUS_PER_LEVEL, DEBRIS_SHARE, MAX_ROUNDS, defenseStats, shipStats } from './combat.js';
 import { DEFENSE_TYPES, defenseDescription, defenseLabel } from './defenses.js';
 import { DEEP_SPACE_POSITION } from './expeditions.js';
@@ -72,7 +72,25 @@ const p = (text: string): GuideBlock => ({ kind: 'p', text });
 const list = (...items: string[]): GuideBlock => ({ kind: 'list', items });
 const steps = (...items: string[]): GuideBlock => ({ kind: 'steps', items });
 const tip = (text: string): GuideBlock => ({ kind: 'tip', text });
-const table = (head: string[], rows: string[][]): GuideBlock => ({ kind: 'table', head, rows });
+const table = (head: string[], rows: string[][], icons?: (string | null)[]): GuideBlock =>
+  icons ? { kind: 'table', head, rows, icons } : { kind: 'table', head, rows };
+const figures = (...items: { src: string; caption: string; glow?: boolean }[]): GuideBlock => ({ kind: 'figures', items });
+
+/*
+ * Картинки — те же файлы, что на карточках и карте: путь собирается из типа
+ * в нижнем регистре, как и везде в клиенте. Отсутствующий файл клиент
+ * прячет, а не рисует битой иконкой.
+ */
+const art = {
+  building: (type: string) => `/assets/buildings/${type.toLowerCase()}.webp`,
+  ship: (type: string) => `/assets/ships/${type.toLowerCase()}.webp`,
+  defense: (type: string) => `/assets/defense/${type.toLowerCase()}.webp`,
+  tech: (type: string) => `/assets/tech/${type.toLowerCase()}.webp`,
+  syndicateTech: (type: string) => `/assets/tech/syndicate_${type.toLowerCase()}.webp`,
+  planet: (name: string) => `/assets/planets/${name}.webp`,
+};
+const cover = (src: string, glow = false): GuideCover => (glow ? { src, glow } : { src });
+const tile = (src: string, caption: string, glow = false) => (glow ? { src, caption, glow } : { src, caption });
 
 /** Сроки полетов считаются настоящим расчетом маршрута, без технологий. */
 function flightTable(): GuideBlock {
@@ -115,6 +133,7 @@ function buildGuide(): GuideArticle[] {
       section: 'Начало',
       title: 'Первый час: с чего начать',
       summary: 'Шахты, энергия, лаборатория и первый корабль — по порядку.',
+      cover: cover(art.building('ORE_MINE')),
       blocks: [
         p('На старте у колонии 1 500 руды, 800 полимеров, 400 плазмы и ₴1 000. Первые постройки ставятся за минуту-две, так что за первый час успеваешь потрогать всё главное.'),
         steps(
@@ -123,6 +142,13 @@ function buildGuide(): GuideArticle[] {
           `Построй научный центр и начни первое исследование — «${techLabel('ENERGY_TECH')}».`,
           `Поставь верфь: первый истребитель выходит примерно через час игры.`,
           `Добавь плазменный реактор: плазма — топливо для полетов и ресурс для науки.`,
+        ),
+        figures(
+          tile(art.building('ORE_MINE'), BUILDING_LABELS.ORE_MINE),
+          tile(art.building('POLYMER_PLANT'), BUILDING_LABELS.POLYMER_PLANT),
+          tile(art.building('POWER_PLANT'), BUILDING_LABELS.POWER_PLANT),
+          tile(art.building('SCIENCE_CENTER'), BUILDING_LABELS.SCIENCE_CENTER),
+          tile(art.building('SHIPYARD'), BUILDING_LABELS.SHIPYARD),
         ),
         tip('Раздел «Центр управления» сам говорит, что требует внимания: свободная очередь стройки, нехватка энергии, почти полный склад. Начинай каждый заход с него.'),
         p('Игра рассчитана на месяц: несколько коротких заходов в день. Поздние постройки и исследования идут часами и сутками — это нормально, ставь длинное перед уходом.'),
@@ -133,6 +159,7 @@ function buildGuide(): GuideArticle[] {
       section: 'Начало',
       title: 'Как устроен экран',
       summary: 'Шапка с ресурсами, меню разделов, карта и правая сводка.',
+      cover: cover('/assets/systems/galaxy_2.webp', true),
       blocks: [
         list(
           'Шапка — ресурсы колонии и их прирост в секунду. Красная надпись «склад полон» значит, что добыча этого ресурса стоит.',
@@ -152,6 +179,7 @@ function buildGuide(): GuideArticle[] {
       section: 'Экономика',
       title: 'Ресурсы и склады',
       summary: 'Четыре ресурса, раздельные склады и что уцелеет при набеге.',
+      cover: cover(art.building('ORE_STORAGE')),
       blocks: [
         table(['Ресурс', 'Откуда', 'Зачем'], [
           ['Руда', BUILDING_LABELS.ORE_MINE, 'Почти всё строится из нее'],
@@ -159,7 +187,12 @@ function buildGuide(): GuideArticle[] {
           ['Плазма', BUILDING_LABELS.PLASMA_REACTOR, 'Топливо в системе и наука'],
           ['Антиматерия', BUILDING_LABELS.ANTIMATTER_FACTORY, 'Топливо межзвездных прыжков'],
           ['Криптогривна ₴', BUILDING_LABELS.CRYPTO_FARM, 'Биржа, спешка, взносы синдикату'],
-        ]),
+        ], ['ORE_MINE', 'POLYMER_PLANT', 'PLASMA_REACTOR', 'ANTIMATTER_FACTORY', 'CRYPTO_FARM'].map(art.building)),
+        figures(
+          tile(art.building('ORE_STORAGE'), BUILDING_LABELS.ORE_STORAGE),
+          tile(art.building('POLYMER_STORAGE'), BUILDING_LABELS.POLYMER_STORAGE),
+          tile(art.building('PLASMA_STORAGE'), BUILDING_LABELS.PLASMA_STORAGE),
+        ),
         p(`У руды, полимеров и плазмы свои склады: «${BUILDING_LABELS.ORE_STORAGE}», «${BUILDING_LABELS.POLYMER_STORAGE}», «${BUILDING_LABELS.PLASMA_STORAGE}». Полный склад останавливает добычу только своего ресурса — остальные шахты работают. Антиматерия хранится без лимита.`),
         p(`При проигранной обороне каждый склад прячет ${percent(PROTECTED_STORAGE_SHARE)} своей вместимости — это несгораемый запас. С остального победитель увозит почти всё, сколько поместится в трюмы. «${techLabel('VAULT_TECH')}» добавляет по 2% несгораемой доли за уровень.`),
         tip('Не держи склад забитым под потолок: добыча стоит, а в набег уходит всё сверх несгораемой доли. Лишнее продай на бирже или вложи в стройку.'),
@@ -170,6 +203,7 @@ function buildGuide(): GuideArticle[] {
       section: 'Экономика',
       title: 'Энергия',
       summary: 'Почему шахты вдруг добывают вполсилы.',
+      cover: cover(art.building('POWER_PLANT')),
       blocks: [
         p(`Шахты, заводы и часть построек потребляют энергию, «${BUILDING_LABELS.POWER_PLANT}» ее вырабатывает. Пока выработки хватает, всё работает на полную. Когда потребление выше, мощность шахт падает пропорционально — кольцо «мощность шахт» в центре управления показывает, насколько.`),
         p(`На карточке постройки видно, на сколько вырастет расход после улучшения. «${techLabel('ENERGY_TECH')}» повышает выработку станций.`),
@@ -181,6 +215,7 @@ function buildGuide(): GuideArticle[] {
       section: 'Экономика',
       title: 'Стройка, очереди и отмена',
       summary: 'Одна стройка на колонию, одна наука на командира, верфь по очереди.',
+      cover: cover(art.tech('ROBOTICS')),
       blocks: [
         list(
           'Стройка — одна на колонию. Ресурсы списываются при запуске.',
@@ -197,6 +232,7 @@ function buildGuide(): GuideArticle[] {
       section: 'Экономика',
       title: 'Исследования и помощь лабораторий',
       summary: 'Одна наука за раз, но лаборатории других колоний могут помочь.',
+      cover: cover(art.building('SCIENCE_CENTER')),
       blocks: [
         p(`Изучается одна технология за раз, а действует она на все колонии. Время сокращает уровень научного центра той колонии, где исследование запущено.`),
         p('Если колоний несколько, свободная лаборатория может присоединиться к идущему исследованию. Лаборатория того же уровня или выше берет на себя половину срока и доплачивает половину цены технологии со своего склада; слабее — меньшую долю по отношению уровней. Две помощницы равного уровня доделывают исследование сразу — за полторы цены.'),
@@ -213,7 +249,10 @@ function buildGuide(): GuideArticle[] {
           [techLabel('CRYPTO_TECH'), 'Доход крипто-фермы, +15% за уровень'],
           [techLabel('VAULT_TECH'), 'Несгораемая доля складов, +2% за уровень'],
           [techLabel('TIME_COMPRESSION'), 'Все сроки вдвое короче за уровень, но много энергии'],
-        ]),
+        ], [
+          'ENERGY_TECH', 'MINING_TECH', 'WEAPONS_TECH', 'COMBUSTION_DRIVE', 'HYPERDRIVE', 'HYPERSPACE_PHYSICS',
+          'ASTROPHYSICS', 'ESPIONAGE', 'ROBOTICS', 'CRYPTO_TECH', 'VAULT_TECH', 'TIME_COMPRESSION',
+        ].map(art.tech)),
       ],
     },
     {
@@ -221,6 +260,7 @@ function buildGuide(): GuideArticle[] {
       section: 'Экономика',
       title: 'Криптогривна',
       summary: 'Единственная валюта: откуда берется и куда уходит.',
+      cover: cover(art.building('CRYPTO_FARM')),
       blocks: [
         p(`Деньги производит только «${BUILDING_LABELS.CRYPTO_FARM}». Она конкурирует с шахтами за энергию и дает меньше, чем шахта по рыночной цене, зато без рейсов на хаб и без риска, что товар не купят. «${techLabel('CRYPTO_TECH')}» поднимает доход на 15% за уровень.`),
         list(
@@ -239,6 +279,7 @@ function buildGuide(): GuideArticle[] {
       section: 'Флот',
       title: 'Корабли и оборона',
       summary: 'Двенадцать классов кораблей и пять установок обороны — кто для чего.',
+      cover: cover(art.ship('BATTLESHIP')),
       blocks: [
         p('У каждого класса своя роль, и они не дублируют друг друга. Характеристики — на единицу, без технологий.'),
         table(
@@ -247,6 +288,7 @@ function buildGuide(): GuideArticle[] {
             const stats = shipStats(type);
             return [shipLabel(type), num(stats.attack), num(stats.shield), num(stats.hull), shipDescription(type)];
           }),
+          SHIP_TYPES.map(art.ship),
         ),
         table(
           ['Оборона', 'Атака', 'Щит', 'Корпус', 'Роль'],
@@ -254,6 +296,7 @@ function buildGuide(): GuideArticle[] {
             const stats = defenseStats(type);
             return [defenseLabel(type), num(stats.attack), num(stats.shield), num(stats.hull), defenseDescription(type)];
           }),
+          DEFENSE_TYPES.map(art.defense),
         ),
         tip('Боевой симулятор в разделе «Инструменты» прогоняет любые составы тем же расчетом, что и настоящий бой. Защитника можно подставить из отчета разведки.'),
       ],
@@ -263,6 +306,7 @@ function buildGuide(): GuideArticle[] {
       section: 'Флот',
       title: 'Полеты, сроки и топливо',
       summary: 'Сколько лететь, на чем и почему большой флот везет меньше груза.',
+      cover: cover(art.tech('HYPERDRIVE')),
       blocks: [
         p(`Флот идет со скоростью самого медленного корабля. Внутри системы топливо — плазма, быстрее летать помогает «${techLabel('COMBUSTION_DRIVE')}». Между системами — гиперпрыжок на антиматерии, и только с технологией «${techLabel('HYPERDRIVE')}». Прыжок тем дольше, чем дальше система: время растет с квадратом расстояния.`),
         flightTable(),
@@ -277,6 +321,7 @@ function buildGuide(): GuideArticle[] {
       section: 'Флот',
       title: 'Миссии флота',
       summary: 'Что можно сделать с целью на карте.',
+      cover: cover(art.ship('LARGE_CARGO')),
       blocks: [
         table(['Миссия', 'Что делает'], [
           ['Транспорт', 'Везет груз к колонии и возвращается. «Без возврата» — корабли остаются у получателя: так передают флот'],
@@ -301,6 +346,7 @@ function buildGuide(): GuideArticle[] {
       section: 'Флот',
       title: 'Колонизация и экспедиции',
       summary: 'Как получить вторую колонию и что приносит глубокий космос.',
+      cover: cover(art.ship('COLONY_SHIP')),
       blocks: [
         p(`Новая колония основывается колониальным транспортом на свободной планете. Сколько колоний можно держать, решает «${techLabel('ASTROPHYSICS')}»: одна на старте и еще по одной за каждые два уровня. Корабль-основатель разбирается на первую инфраструктуру, остальной флот и груз остаются на новой колонии.`),
         p('Перед колонизацией стоит разведать планету: отчет зонда о свободной планете показывает богатство недр — от него зависит добыча.'),
@@ -315,6 +361,7 @@ function buildGuide(): GuideArticle[] {
       section: 'Война',
       title: 'Как идет бой',
       summary: 'Раунды, щиты, скорострел и кто побеждает при ничьей.',
+      cover: cover(art.ship('CARRIER')),
       blocks: [
         list(
           `Бой длится до ${MAX_ROUNDS} раундов. Каждый живой юнит раз в раунд стреляет по случайной цели.`,
@@ -323,6 +370,12 @@ function buildGuide(): GuideArticle[] {
           'Ионный фрегат бьет по щитам вдвое сильнее.',
           'Если за все раунды никто не победил — ничья, и она остается за защитником.',
           `${techLabel('WEAPONS_TECH')}, ${techLabel('SHIELDS_TECH')} и ${techLabel('ARMOR_TECH')} дают по +${percent(COMBAT_TECH_BONUS_PER_LEVEL)} за уровень и флоту, и обороне.`,
+        ),
+        figures(
+          tile(art.ship('HEAVY_FIGHTER'), `${shipLabel('HEAVY_FIGHTER')} косит легкие истребители`),
+          tile(art.ship('CRUISER'), `${shipLabel('CRUISER')} косит истребители`),
+          tile(art.ship('BATTLESHIP'), `${shipLabel('BATTLESHIP')} косит крейсера`),
+          tile(art.ship('BOMBER'), `${shipLabel('BOMBER')} разбирает оборону`),
         ),
         p('Оборона колонии после боя в основном восстанавливается сама — около 70% уничтоженных установок. Потерянные корабли не возвращаются.'),
         tip('Щит сильной установки восстанавливается каждый раунд. Если залп эскадры меньше щита, она не наносит установке ничего — такую оборону берут массой, а не числом раундов.'),
@@ -333,6 +386,7 @@ function buildGuide(): GuideArticle[] {
       section: 'Война',
       title: 'Грабеж и поля обломков',
       summary: 'Что увозит победитель и что остается на орбите.',
+      cover: cover(art.ship('RECYCLER')),
       blocks: [
         p(`Победившая атака увозит почти всё сверх несгораемой доли складов — по каждому ресурсу отдельно, в пределах трюмов уцелевших кораблей. Несгораемая доля — ${percent(PROTECTED_STORAGE_SHARE)} вместимости склада плюс «${techLabel('VAULT_TECH')}».`),
         p(`${percent(DEBRIS_SHARE)} стоимости уничтоженных кораблей обеих сторон оседает полем обломков на орбите. Разбитая оборона обломков не дает. Поле видно всем и собирается переработчиками — кто первый, того и обломки.`),
@@ -344,6 +398,7 @@ function buildGuide(): GuideArticle[] {
       section: 'Война',
       title: 'Разведка и контрразведка',
       summary: 'Сколько увидит зонд — решает разница уровней «Шпионажа».',
+      cover: cover(art.tech('ESPIONAGE')),
       blocks: [
         p(`Зонд сравнивает твой «${techLabel('ESPIONAGE')}» с уровнем цели. Та же технология работает и защитой: вложившийся видит больше и показывает меньше.`),
         table(['Разница уровней', 'Что привезет зонд'], [
@@ -364,6 +419,7 @@ function buildGuide(): GuideArticle[] {
       section: 'Война',
       title: 'Войны и дипломатия',
       summary: 'Война объявляется атакой; пакты и что они запрещают.',
+      cover: cover(art.tech('WEAPONS_TECH')),
       blocks: [
         list(
           'Отдельно объявлять войну не нужно: первая атака объявляет ее сама. Предпросмотр маршрута предупредит, если цель в синдикате и тот может ответить всем составом.',
@@ -389,6 +445,7 @@ function buildGuide(): GuideArticle[] {
       section: 'Торговля',
       title: 'Биржа',
       summary: 'Общий стакан, сведение по средней цене и комиссия.',
+      cover: cover(art.planet('hub'), true),
       blocks: [
         p('Биржа одна на весь сервер: торгуют руда и полимеры, покупают и продают только игроки (и боты наравне с ними). Станции-скупщика нет.'),
         list(
@@ -407,6 +464,7 @@ function buildGuide(): GuideArticle[] {
       section: 'Торговля',
       title: 'Склад на хабе',
       summary: 'Где лежит товар, как его привезти и сколько стоит место.',
+      cover: cover(art.syndicateTech('TRADE')),
       blocks: [
         list(
           'Продают со склада на хабе, а не из колонии: сначала товар надо привезти рейсом «Доставка на хаб».',
@@ -425,6 +483,7 @@ function buildGuide(): GuideArticle[] {
       section: 'Синдикат',
       title: 'Синдикат: ранги и права',
       summary: 'Как вступить, кто что может и почему нельзя быстро перебежать.',
+      cover: cover(art.planet('kish'), true),
       blocks: [
         p(`Синдикат — объединение игроков с общей казной, Кошем и технологиями. Набор бывает открытым, по заявке или закрытым; может требоваться рейтинг и вступительный взнос. Перед вступлением кандидат принимает кодекс — правила синдиката (до ${num(CODEX_MAX_LENGTH)} знаков).`),
         p(`Главарь настраивает до ${MAX_RANKS} рангов и раздает им права. У главаря все права всегда. Действовать на участника можно только при ранге выше его.`),
@@ -443,6 +502,7 @@ function buildGuide(): GuideArticle[] {
       section: 'Синдикат',
       title: 'Кіш, казна и модули',
       summary: 'Хаб синдиката: состав, казна, Скарбниця, Дозор, Академия.',
+      cover: cover(art.building('SKARBNYTSIA')),
       blocks: [
         p(`Кіш — станция синдиката в системе основателя. Он задает предел состава: ${KISH_BASE_MEMBERS} места на первом уровне и по одному за каждый следующий. Второй уровень стоит ₴${num(KISH_UPGRADE_BASE)}, дальше вдвое дороже.`),
         p('Казна хранит гривну (взносы) и руду, полимеры, плазму, антиматерию — их привозят только флотом рейсом «Доставка в Кіш». Вывозить может ранг с правом выдачи в пределах дневного лимита.'),
@@ -452,8 +512,12 @@ function buildGuide(): GuideArticle[] {
           ['Академия', 'Потолок уровня технологий синдиката; лишние уровни ускоряют изучение'],
           ['Дозор', 'Показывает всем участникам вражеские атаки на их колонии в радиусе от Коша'],
           ['Брама', 'Врата для мгновенных прыжков — см. статью «Брамы»'],
-        ]),
-        table(['Технология синдиката', 'Эффект за уровень'], SYNDICATE_TECHS.map((tech) => [SYNDICATE_TECH_LABELS[tech], SYNDICATE_TECH_EFFECTS[tech]])),
+        ], [art.planet('kish'), art.building('SKARBNYTSIA'), art.building('AKADEMIIA'), art.building('DOZOR'), art.building('BRAMA')]),
+        table(
+          ['Технология синдиката', 'Эффект за уровень'],
+          SYNDICATE_TECHS.map((tech) => [SYNDICATE_TECH_LABELS[tech], SYNDICATE_TECH_EFFECTS[tech]]),
+          SYNDICATE_TECHS.map(art.syndicateTech),
+        ),
         p('В режиме Коша меню говорит своими словами: «Мостик» — казна и тревоги, «Отсеки» — модули, «Академия» — технологии, «Флотилия» — караул и налеты, «Бастион» — оборона из казны.'),
         p(`Кіш можно перенести в систему со своей Брамой за ${num(KISH_MOVE_ANTIMATTER_PER_DISTANCE)} антиматерии казны за единицу расстояния, не чаще раза в сутки и не тогда, когда к нему летит налет.`),
       ],
@@ -463,6 +527,7 @@ function buildGuide(): GuideArticle[] {
       section: 'Синдикат',
       title: 'Налет на Кіш и защита',
       summary: 'Как грабят казну и кто ее защищает.',
+      cover: cover(art.defense('GAUSS')),
       blocks: [
         p(`Налет на чужой Кіш возможен только в войне синдикатов. Победитель увозит ${percent(KISH_RAID_SHARE)} уязвимой части руды, полимеров и плазмы казны в пределах трюмов; гривну не грабят. Несгораемую долю задает Скарбниця.`),
         list(
@@ -480,6 +545,7 @@ function buildGuide(): GuideArticle[] {
       section: 'Брамы',
       title: 'Брамы: мгновенные прыжки',
       summary: 'Как работают врата синдиката, их уровни и пропускная способность.',
+      cover: cover(art.building('BRAMA')),
       blocks: [
         p(`Брама — врата синдиката в конкретной системе. Строится из казны там, где есть колония хотя бы одного участника; первый уровень — ₴${num(BRAMA_BASE.credits)} и по ${num(BRAMA_BASE.ore)} руды и полимеров, дальше вдвое дороже.`),
         p(`Между двумя системами с доступными вратами флот прыгает мгновенно и без технологии «${techLabel('HYPERDRIVE')}»: время рейса — только путь до врат и от них по орбитам. Антиматерии уходит лишь доля от обычного прыжка, и чем выше уровень врат вылета, тем меньше.`),
@@ -491,6 +557,11 @@ function buildGuide(): GuideArticle[] {
             percent(gateAntimatterShare(level)),
             num(gateSiegeShield(level)),
           ]),
+        ),
+        figures(
+          tile(art.building('BRAMA'), 'Брама — врата синдиката'),
+          tile(art.planet('kish'), 'Кіш — хаб синдиката', true),
+          tile(art.planet('hub'), 'Торговая станция', true),
         ),
         p('Пропускная способность считается по вратам вылета, в часовом окне. Если окно заполнено, флот летит обычным гиперпрыжком (когда он есть) — предпросмотр маршрута всегда показывает путь, по которому пойдет вылет.'),
         list(
@@ -506,6 +577,7 @@ function buildGuide(): GuideArticle[] {
       section: 'Брамы',
       title: 'Аренда, разовый проход и заявка на доступ',
       summary: 'Как прыгать через чужие врата и как торговать доступом к своим.',
+      cover: cover(art.tech('HYPERSPACE_PHYSICS')),
       blocks: [
         p('Чужими вратами можно пользоваться двумя способами:'),
         table(['Способ', 'Как работает'], [
@@ -527,6 +599,7 @@ function buildGuide(): GuideArticle[] {
       section: 'Брамы',
       title: 'Осада Брамы',
       summary: 'Как выключить вражеские врата и сколько для этого нужно.',
+      cover: cover(art.ship('BOMBER')),
       blocks: [
         p(`Осада выключает чужие врата на ${hours(GATE_SIEGE_DOWN_MS)} часов: через них не прыгает никто. После этого врата ${hours(GATE_SIEGE_IMMUNE_MS)} часов неуязвимы. Сами врата не рушатся и не грабятся.`),
         steps(
