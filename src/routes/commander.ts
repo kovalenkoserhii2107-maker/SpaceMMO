@@ -15,6 +15,7 @@ import {
   validateTemplateName,
 } from '../services/fleetTemplateService.js';
 import { gameGuide } from '../game/guide.js';
+import { completeTour } from '../services/commanderService.js';
 import { listEspionageTargets } from '../services/mapService.js';
 import { simulateBattle, type SimulationStock } from '../services/simulationService.js';
 import { currentCommander, requireAuth, requireCommander } from './middleware.js';
@@ -107,6 +108,12 @@ commanderRouter.post('/simulate', (req, res: Response<SimulationResponse | Error
 });
 
 /* ------------------------- Шаблоны флотов ------------------------- */
+
+/** Вводное обучение пройдено или пропущено: больше оно само не откроется. */
+commanderRouter.post('/tour', async (req, res: Response<ActionResponse>) => {
+  await completeTour(currentCommander(req).id);
+  res.json({ ok: true, message: 'Обучение завершено' });
+});
 
 /** База знаний: статьи с числами, посчитанными игровыми формулами. */
 commanderRouter.get('/guide', (_req, res: Response<GuideResponse>) => {

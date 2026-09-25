@@ -41,14 +41,40 @@ export interface CommanderProfile {
   createdAt: number;
   homePlanet: string | null;
   achievements: AchievementView[];
+  /** Вводное обучение: доступно ли оно игроку и ждет ли его при входе. */
+  tour: { available: boolean; pending: boolean };
+}
+
+/*
+ * Кому показывать вводное обучение.
+ *
+ * Пока его проверяет автор, оно открыто только администраторам: действующим
+ * игрокам знакомство с меню ни к чему, а новичкам его откроет дата выпуска —
+ * все, кто создал командира после нее, увидят обучение при первом входе.
+ * `null` — выпуска еще не было.
+ */
+const TOUR_NEW_PLAYERS_SINCE: Date | null = null;
+
+function tourAvailable(role: string, createdAt: Date): boolean {
+  if (role === 'ADMIN') return true;
+  return TOUR_NEW_PLAYERS_SINCE !== null && createdAt >= TOUR_NEW_PLAYERS_SINCE;
+}
+
+/** Обучение пройдено или пропущено — больше оно само не откроется. */
+export async function completeTour(commanderId: string): Promise<void> {
+  await prisma.commander.updateMany({ where: { id: commanderId }, data: { onboardedAt: new Date() } });
 }
 
 export async function getCommanderProfile(commanderId: string): Promise<CommanderProfile | null> {
   const commander = await prisma.commander.findUnique({
     where: { id: commanderId },
-    include: { bases: { include: { planet: true }, orderBy: { createdAt: 'asc' }, take: 1 } },
+    include: {
+      bases: { include: { planet: true }, orderBy: { createdAt: 'asc' }, take: 1 },
+      user: { select: { role: true } },
+    },
   });
   if (!commander) return null;
+  const available = tourAvailable(commander.user.role, commander.createdAt);
 
   return {
     id: commander.id,
@@ -60,6 +86,7 @@ export async function getCommanderProfile(commanderId: string): Promise<Commande
     createdAt: commander.createdAt.getTime(),
     homePlanet: commander.bases[0]?.planet.name ?? null,
     achievements: await listAchievements(commander.id),
+    tour: { available, pending: available && commander.onboardedAt === null },
   };
 }
 

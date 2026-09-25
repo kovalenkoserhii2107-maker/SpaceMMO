@@ -57,6 +57,8 @@ model Commander {
   id       String @id @default(cuid())
   userId   String @unique
   nickname String @unique
+  /// Когда игрок прошел или пропустил вводное обучение; `null` — еще не видел.
+  onboardedAt DateTime?
   /// Идентификатор аватара из набора заглушек.
   avatarId String @default("nova")
 

@@ -4493,3 +4493,97 @@ button.war-row-head:hover { background: rgba(120, 160, 255, 0.06); }
   .guide-pager-link.next { text-align: left; }
 }
 
+
+/* ---------- Вводное обучение ---------- */
+
+/*
+ * Карточка плавает в углу и не закрывает игру: это подсказка, а не
+ * модальное окно. Приветствие — по центру и шире: это письмо, а не шаг.
+ */
+.tour-card {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 90;
+  width: min(380px, calc(100vw - 24px));
+  display: grid;
+  gap: 10px;
+  padding: 18px 18px 16px;
+  border: 1px solid rgba(77, 210, 255, 0.45);
+  border-radius: 16px;
+  background: #0d1426;
+  box-shadow: 0 22px 50px rgba(0, 0, 0, 0.6);
+  animation: tour-in 0.25s ease-out;
+}
+.tour-card[hidden] { display: none; }
+.tour-card.welcome {
+  right: 50%;
+  bottom: 50%;
+  transform: translate(50%, 50%);
+  width: min(480px, calc(100vw - 24px));
+  padding: 26px 26px 22px;
+  background: radial-gradient(120% 90% at 0% 0%, rgba(77, 210, 255, 0.12), transparent 60%), #0d1426;
+}
+.tour-kicker { font-size: 11px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--accent); }
+.tour-title { margin: 0; font-size: 18px; line-height: 1.25; }
+.tour-card.welcome .tour-title { font-size: 24px; }
+.tour-text { margin: 0; font-size: 14px; line-height: 1.55; color: #c3cdea; }
+.tour-link {
+  justify-self: start;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(77, 210, 255, 0.5);
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 14px;
+  text-decoration: none;
+}
+.tour-link:hover { background: rgba(77, 210, 255, 0.1); }
+.tour-sign { margin: 0; font-style: italic; color: var(--muted); font-size: 13px; }
+.tour-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 4px; }
+.tour-actions .primary, .tour-actions .ghost { padding: 9px 16px; }
+.tour-skip {
+  margin-left: auto;
+  padding: 6px 4px;
+  font-size: 12.5px;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* Подсвеченное — контуром цвета акцента и мягким пульсом: видно, о чем шаг. */
+.tour-focus {
+  position: relative;
+  z-index: 3;
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 12px;
+  animation: tour-pulse 1.8s ease-in-out infinite;
+}
+@keyframes tour-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(77, 210, 255, 0.35); }
+  50% { box-shadow: 0 0 0 8px rgba(77, 210, 255, 0); }
+}
+@keyframes tour-in {
+  from { opacity: 0; translate: 0 8px; }
+  to { opacity: 1; translate: 0 0; }
+}
+
+/* На телефоне карточка — во всю ширину снизу, а над подсвеченным внизу — сверху. */
+@media (max-width: 768px) {
+  .tour-card {
+    left: 12px;
+    right: 12px;
+    bottom: max(12px, env(safe-area-inset-bottom));
+    width: auto;
+  }
+  .tour-card.top { bottom: auto; top: calc(var(--header-h, 80px) + 8px); }
+  .tour-card.welcome { left: 12px; right: 12px; bottom: 50%; transform: translateY(50%); width: auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tour-card, .tour-focus { animation: none; }
+}

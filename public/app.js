@@ -220,6 +220,7 @@
     guidePickerSection: $('guide-picker-section'),
     guidePickerTitle: $('guide-picker-title'),
     guideMenu: $('guide-menu'),
+    tourReplay: $('tour-replay'),
     mailSummary: $('mail-summary'),
     mailReadAll: $('mail-read-all'),
     mailTo: $('mail-to'),
@@ -724,6 +725,8 @@
     // подтягивается сразу, а не при первом заходе в раздел синдиката.
     await loadSyndicate();
     syncOpsPanel();
+    syncTourOffer();
+    if (auth.profile && auth.profile.tour && auth.profile.tour.pending) startTour();
   }
 
   /**
@@ -980,7 +983,8 @@
     if (install.shown || installed() || installDismissed()) return;
     install.shown = true;
     setTimeout(() => {
-      if (!installed() && !installDismissed()) showInstallCard();
+      // Во время обучения своя карточка уже на экране: вторая спорила бы с ней.
+      if (!installed() && !installDismissed() && !tour.active) showInstallCard();
     }, 2500);
   }
 
@@ -8560,6 +8564,215 @@
     const link = event.target.closest('.guide-link[data-guide]');
     if (link) openGuide(link.dataset.guide);
   });
+
+  /* ------------------------------ Обучение ------------------------------ */
+
+  /*
+   * Вводное обучение: личное приветствие автора, короткий проход по шапке
+   * и меню с подсветкой и финал в базе знаний на статье о первых минутах.
+   *
+   * Это не модальное окно (правило 5): карточка плавает сбоку, игра под ней
+   * живет и нажимается, а пропустить обучение можно на любом шаге. Кому его
+   * показывать, решает сервер (`tour` в профиле), он же помнит, что обучение
+   * пройдено, — на другом устройстве оно не начнется заново.
+   */
+  const AUTHOR = {
+    name: 'Сергей Коваленко',
+    link: 'https://kovalenkoserhii2107-maker.github.io/Main-page/',
+  };
+
+  const tour = { active: false, step: 0, card: null, focus: null };
+  const phoneNav = window.matchMedia('(max-width: 768px)');
+  const tabGroup = (tab) => {
+    const button = document.querySelector(`#tabs [data-tab="${tab}"]`);
+    return button ? button.closest('.nav-group') : null;
+  };
+
+  const TOUR_STEPS = [
+    { welcome: true },
+    {
+      target: () => el.resourceBar,
+      title: 'Ресурсы колонии',
+      text: 'Руда, полимеры, плазма, антиматерия и криптогривна. Маленькая цифра — прирост в секунду. Если надпись покраснела и стоит «склад полон», добыча этого ресурса остановилась.',
+    },
+    {
+      target: () => $('base-switch'),
+      title: 'Твои колонии',
+      text: 'Здесь переключаются колонии. Когда вступишь в синдикат, тут же появится его станция — Кіш.',
+    },
+    {
+      nav: true,
+      target: () => tabGroup('overview'),
+      title: 'Центр управления',
+      text: 'Начинай с него каждый заход: он сам показывает, что требует внимания, — свободную стройку, нехватку энергии, почти полный склад, — и сразу предлагает, что сделать.',
+    },
+    {
+      nav: true,
+      target: () => tabGroup('buildings'),
+      title: 'Развитие',
+      text: 'Инфраструктура — шахты, склады, энергия и остальные постройки. Исследования — технологии: они общие для всех колоний и открывают новые корабли и постройки.',
+    },
+    {
+      nav: true,
+      target: () => tabGroup('shipyard'),
+      title: 'Армия',
+      text: 'Верфь строит корабли — для боя, перевозки грузов и разведки. Оборона защищает колонию, пока тебя нет в игре.',
+    },
+    {
+      nav: true,
+      target: () => tabGroup('map'),
+      title: 'Карты',
+      text: 'Карта системы и карта галактики. Нажми на планету, станцию или врата — откроется карточка цели и форма отправки флота.',
+    },
+    {
+      nav: true,
+      target: () => tabGroup('market'),
+      title: 'Операции',
+      text: 'Биржа — торговля с другими игроками. Синдикат — объединение с общей казной и технологиями. Экспедиции и войны, рейтинг командиров.',
+    },
+    {
+      nav: true,
+      target: () => tabGroup('simulator'),
+      title: 'Инструменты',
+      text: 'Боевой симулятор проверит бой до вылета, Центр связи — почта, а База знаний отвечает на вопрос «как это работает».',
+    },
+    {
+      target: () => el.mailButton,
+      title: 'Письма',
+      text: 'Отчеты о боях, разведке и рейсах приходят сюда. Цифра на значке — непрочитанные письма.',
+    },
+    {
+      guide: true,
+      title: 'База знаний',
+      text: 'Здесь всё о механиках игры. Открыта статья «Первый час» — что делать в первые минуты: шахты, энергия, лаборатория, верфь. В каждом разделе есть кнопка «Как это работает» — она ведет сюда же.',
+    },
+  ];
+
+  function openNav() {
+    el.sidebar.classList.add('open');
+    el.navScrim.hidden = false;
+    el.navToggle.setAttribute('aria-expanded', 'true');
+  }
+
+  function tourButton(label, className, onClick) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = className;
+    button.textContent = label;
+    button.addEventListener('click', onClick);
+    return button;
+  }
+
+  function clearTourFocus() {
+    if (tour.focus) tour.focus.classList.remove('tour-focus');
+    tour.focus = null;
+  }
+
+  function startTour() {
+    if (tour.active) return;
+    tour.active = true;
+    tour.step = 0;
+    hideInstallCard();
+    if (!tour.card) {
+      tour.card = document.createElement('section');
+      tour.card.className = 'tour-card';
+      tour.card.setAttribute('role', 'dialog');
+      tour.card.setAttribute('aria-live', 'polite');
+      document.body.appendChild(tour.card);
+    }
+    tour.card.hidden = false;
+    renderTourStep();
+  }
+
+  async function finishTour() {
+    tour.active = false;
+    clearTourFocus();
+    if (tour.card) tour.card.hidden = true;
+    if (phoneNav.matches) closeNav();
+    if (auth.profile && auth.profile.tour) auth.profile.tour.pending = false;
+    try {
+      await fetch('/api/commander/tour', { method: 'POST', headers: authHeaders() });
+    } catch (error) {
+      /* не записалось — обучение предложится еще раз при следующем входе */
+    }
+  }
+
+  function renderTourStep() {
+    const step = TOUR_STEPS[tour.step];
+    const card = tour.card;
+    clearTourFocus();
+    card.innerHTML = '';
+    card.classList.toggle('welcome', Boolean(step.welcome));
+    card.classList.remove('top');
+
+    if (step.welcome) {
+      card.append(
+        synEl('span', 'tour-kicker', 'Добро пожаловать'),
+        synEl('h2', 'tour-title', 'Привет, командир!'),
+        synEl('p', 'tour-text', `Меня зовут ${AUTHOR.name}, и эту игру я делаю сам. Спасибо, что ты здесь: каждый новый командир для меня важен, и я читаю всё, что вы пишете.`),
+        synEl('p', 'tour-text', 'Если интересно, что еще я создаю, — загляни на мою страничку с приложениями.'),
+      );
+      const link = document.createElement('a');
+      link.className = 'tour-link';
+      link.href = AUTHOR.link;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = 'Мои приложения ↗';
+      card.append(link, synEl('p', 'tour-sign', `— ${AUTHOR.name}`));
+      const actions = synEl('div', 'tour-actions');
+      actions.append(
+        tourButton('Показать, что где', 'primary', () => { tour.step += 1; renderTourStep(); }),
+        tourButton('Пропустить', 'ghost', () => void finishTour()),
+      );
+      card.appendChild(actions);
+      if (phoneNav.matches) closeNav();
+      return;
+    }
+
+    // Меню на телефоне — выезжающая панель: пункты видны, только когда она открыта.
+    if (phoneNav.matches) {
+      if (step.nav) openNav();
+      else closeNav();
+    }
+    if (step.guide) openGuide('start');
+
+    const target = step.target ? step.target() : null;
+    if (target) {
+      target.classList.add('tour-focus');
+      tour.focus = target;
+      target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      // Карточка уходит наверх, если подсвеченное внизу экрана: иначе она его закроет.
+      const rect = target.getBoundingClientRect();
+      if (phoneNav.matches && rect.top + rect.height / 2 > window.innerHeight / 2) card.classList.add('top');
+    }
+
+    const total = TOUR_STEPS.length - 1;
+    card.append(
+      synEl('span', 'tour-kicker', `Шаг ${tour.step} из ${total}`),
+      synEl('h2', 'tour-title', step.title),
+      synEl('p', 'tour-text', step.text),
+    );
+    const last = tour.step === total;
+    const actions = synEl('div', 'tour-actions');
+    actions.append(
+      tourButton(last ? 'Начать игру' : 'Далее', 'primary', () => {
+        if (last) void finishTour();
+        else {
+          tour.step += 1;
+          renderTourStep();
+        }
+      }),
+      tourButton('Назад', 'ghost', () => { tour.step -= 1; renderTourStep(); }),
+    );
+    if (!last) actions.appendChild(tourButton('Пропустить', 'tour-skip', () => void finishTour()));
+    card.appendChild(actions);
+  }
+
+  /** Повторить обучение можно из базы знаний — тем, кому оно открыто. */
+  function syncTourOffer() {
+    el.tourReplay.hidden = !(auth.profile && auth.profile.tour && auth.profile.tour.available);
+  }
+  el.tourReplay.addEventListener('click', () => startTour());
 
   function enterKish(tab) {
     if (!syndicate.data || !syndicate.data.mine) return;
