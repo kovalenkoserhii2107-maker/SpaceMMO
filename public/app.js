@@ -8581,7 +8581,7 @@
     link: 'https://kovalenkoserhii2107-maker.github.io/Main-page/',
   };
 
-  const tour = { active: false, step: 0, card: null, focus: null };
+  const tour = { active: false, step: 0, card: null, focus: null, spot: null, frame: 0 };
   const phoneNav = window.matchMedia('(max-width: 768px)');
   const tabGroup = (tab) => {
     const button = document.querySelector(`#tabs [data-tab="${tab}"]`);
@@ -8643,6 +8643,7 @@
     },
     {
       guide: true,
+      target: () => el.guideArticle,
       title: 'База знаний',
       text: 'Здесь всё о механиках игры. Открыта статья «Первый час» — что делать в первые минуты: шахты, энергия, лаборатория, верфь. В каждом разделе есть кнопка «Как это работает» — она ведет сюда же.',
     },
@@ -8664,15 +8665,54 @@
   }
 
   function clearTourFocus() {
-    if (tour.focus) tour.focus.classList.remove('tour-focus');
     tour.focus = null;
   }
+
+  /*
+   * Затемнение с окном вокруг подсвеченного. Без него пояснение терялось
+   * на пестром фоне игры: карточка лежала поверх шкал и цифр того же цвета.
+   * Окно — отдельный слой поверх всего с огромной тенью вокруг прозрачного
+   * прямоугольника, а не подсветка самого элемента: элементы живут в разных
+   * слоях (липкая шапка, выезжающее меню), и поднять любой из них над
+   * затемнением изнутри его слоя нельзя. Клики слой пропускает — игра
+   * под ним остается живой.
+   */
+  function placeTourSpot() {
+    tour.frame = 0;
+    const spot = tour.spot;
+    if (!spot || !tour.active) return;
+    const target = tour.focus;
+    spot.classList.toggle('full', !target);
+    if (!target) return;
+    const rect = target.getBoundingClientRect();
+    const pad = 6;
+    const top = Math.max(0, rect.top - pad);
+    const bottom = Math.min(window.innerHeight, rect.bottom + pad);
+    spot.style.left = `${Math.max(0, rect.left - pad)}px`;
+    spot.style.top = `${top}px`;
+    spot.style.width = `${Math.min(window.innerWidth, rect.right + pad) - Math.max(0, rect.left - pad)}px`;
+    spot.style.height = `${Math.max(0, bottom - top)}px`;
+  }
+
+  function scheduleTourSpot() {
+    if (tour.active && !tour.frame) tour.frame = requestAnimationFrame(placeTourSpot);
+  }
+  // Прокрутка любой колонки (true — ловим и меню, и страницу) и поворот экрана двигают цель.
+  window.addEventListener('scroll', scheduleTourSpot, true);
+  window.addEventListener('resize', scheduleTourSpot);
 
   function startTour() {
     if (tour.active) return;
     tour.active = true;
     tour.step = 0;
     hideInstallCard();
+    if (!tour.spot) {
+      tour.spot = document.createElement('div');
+      tour.spot.className = 'tour-spot full';
+      tour.spot.setAttribute('aria-hidden', 'true');
+      document.body.appendChild(tour.spot);
+    }
+    tour.spot.hidden = false;
     if (!tour.card) {
       tour.card = document.createElement('section');
       tour.card.className = 'tour-card';
@@ -8688,6 +8728,7 @@
     tour.active = false;
     clearTourFocus();
     if (tour.card) tour.card.hidden = true;
+    if (tour.spot) tour.spot.hidden = true;
     if (phoneNav.matches) closeNav();
     if (auth.profile && auth.profile.tour) auth.profile.tour.pending = false;
     try {
@@ -8726,6 +8767,7 @@
       );
       card.appendChild(actions);
       if (phoneNav.matches) closeNav();
+      placeTourSpot();
       return;
     }
 
@@ -8738,7 +8780,6 @@
 
     const target = step.target ? step.target() : null;
     if (target) {
-      target.classList.add('tour-focus');
       tour.focus = target;
       target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
       // Карточка уходит наверх, если подсвеченное внизу экрана: иначе она его закроет.
@@ -8766,6 +8807,10 @@
     );
     if (!last) actions.appendChild(tourButton('Пропустить', 'tour-skip', () => void finishTour()));
     card.appendChild(actions);
+    placeTourSpot();
+    // Меню выезжает с анимацией, а раздел открывается с прокруткой: окно
+    // догоняет цель, когда она встала на место.
+    setTimeout(placeTourSpot, 320);
   }
 
   /** Повторить обучение можно из базы знаний — тем, кому оно открыто. */
