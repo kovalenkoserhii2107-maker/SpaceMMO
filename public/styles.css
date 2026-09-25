@@ -4540,6 +4540,9 @@ button.war-row-head:hover { background: rgba(120, 160, 255, 0.06); }
 }
 .tour-link:hover { background: rgba(77, 210, 255, 0.1); }
 .tour-sign { margin: 0; font-style: italic; color: var(--muted); font-size: 13px; }
+.tour-steps { margin: 0; padding-left: 22px; display: grid; gap: 6px; font-size: 14px; line-height: 1.5; color: #e3e9fb; }
+.tour-steps li::marker { color: var(--accent); font-weight: 700; }
+.tour-note { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--muted); }
 .tour-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 4px; }
 .tour-actions .primary, .tour-actions .ghost { padding: 9px 16px; }
 .tour-skip {

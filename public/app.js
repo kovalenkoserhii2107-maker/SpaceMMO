@@ -922,28 +922,66 @@
     }
   }
 
+  function isAndroid() {
+    return /Android/i.test(navigator.userAgent);
+  }
+
+  /*
+   * Как поставить игру на этой платформе: пояснение, шаги и можно ли
+   * одной кнопкой. Общее для карточки установки и шага обучения, чтобы
+   * инструкция не разошлась между ними.
+   *
+   * Chrome на Android дает событие установки не всегда: страница могла
+   * быть установлена в другом профиле, или браузер еще не решил, что она
+   * «устанавливаемая». Тогда остается меню браузера, и его шаги названы
+   * прямо — «откройте меню» без подробностей на телефоне не находят.
+   * Samsung Internet устроен иначе: меню у него внизу.
+   */
+  function installInstructions() {
+    if (install.prompt) {
+      return {
+        text: 'Игра встанет на главный экран своим значком и будет открываться на весь экран, без адресной строки.',
+        steps: [],
+        button: true,
+      };
+    }
+    if (isIOS()) {
+      return {
+        text: 'Safari ставит приложения вручную. Это три касания:',
+        steps: [
+          'Нажмите «Поделиться» — квадрат со стрелкой вверх, внизу экрана.',
+          'Пролистайте список и выберите «На экран «Домой»».',
+          'Нажмите «Добавить» в правом верхнем углу.',
+        ],
+        button: false,
+      };
+    }
+    if (isAndroid()) {
+      return {
+        text: 'В Chrome это три касания:',
+        steps: [
+          'Нажмите меню браузера — три точки ⋮ в правом верхнем углу.',
+          'Выберите «Установить приложение» или «Добавить на главный экран».',
+          'Подтвердите «Установить» — значок игры появится на главном экране.',
+        ],
+        note: 'В Samsung Internet: меню ≡ внизу экрана → «Добавить страницу на» → «Главный экран».',
+        button: false,
+      };
+    }
+    return {
+      text: 'Откройте меню браузера и выберите «Установить приложение» или «Добавить на главный экран».',
+      steps: [],
+      button: false,
+    };
+  }
+
   /** Наполнение карточки зависит от того, чем платформа может помочь. */
   function fillInstallCard() {
-    const steps = [];
-    let text = '';
-
-    if (install.prompt) {
-      text = 'Игра встанет на рабочий стол своим значком и будет открываться на весь экран, без адресной строки.';
-      el.installGo.hidden = false;
-    } else if (isIOS()) {
-      text = 'Safari ставит приложения вручную. Это три касания:';
-      steps.push(
-        'Нажмите «Поделиться» — квадрат со стрелкой вверх, внизу экрана.',
-        'Пролистайте список и выберите «На экран «Домой»».',
-        'Нажмите «Добавить» в правом верхнем углу.',
-      );
-      el.installGo.hidden = true;
-    } else {
-      // Chrome не дал события: страница уже установлена в другом профиле,
-      // браузер другой или условия установки не выполнены. Остается меню.
-      text = 'Откройте меню браузера и выберите «Установить приложение» или «Добавить на главный экран».';
-      el.installGo.hidden = true;
-    }
+    const guide = installInstructions();
+    const steps = [...guide.steps];
+    if (guide.note) steps.push(guide.note);
+    const text = guide.text;
+    el.installGo.hidden = !guide.button;
 
     el.installText.textContent = text;
     el.installSteps.innerHTML = '';
@@ -8581,7 +8619,7 @@
     link: 'https://kovalenkoserhii2107-maker.github.io/Main-page/',
   };
 
-  const tour = { active: false, step: 0, card: null, focus: null, spot: null, frame: 0 };
+  const tour = { active: false, step: 0, steps: [], card: null, focus: null, spot: null, frame: 0 };
   const phoneNav = window.matchMedia('(max-width: 768px)');
   const tabGroup = (tab) => {
     const button = document.querySelector(`#tabs [data-tab="${tab}"]`);
@@ -8590,6 +8628,7 @@
 
   const TOUR_STEPS = [
     { welcome: true },
+    { install: true },
     {
       target: () => el.resourceBar,
       title: 'Ресурсы колонии',
@@ -8701,10 +8740,21 @@
   window.addEventListener('scroll', scheduleTourSpot, true);
   window.addEventListener('resize', scheduleTourSpot);
 
+  /*
+   * Шаг установки — сразу после приветствия и только на телефоне, где игра
+   * еще не стоит на главном экране: на компьютере значок на рабочем столе
+   * мало кому нужен, а установленной игре предлагать себя незачем.
+   */
+  function tourSteps() {
+    const phone = isIOS() || isAndroid() || phoneNav.matches;
+    return TOUR_STEPS.filter((step) => !step.install || (phone && !installed()));
+  }
+
   function startTour() {
     if (tour.active) return;
     tour.active = true;
     tour.step = 0;
+    tour.steps = tourSteps();
     hideInstallCard();
     if (!tour.spot) {
       tour.spot = document.createElement('div');
@@ -8738,8 +8788,60 @@
     }
   }
 
+  function nextTourStep() {
+    tour.step += 1;
+    renderTourStep();
+  }
+
+  function renderInstallStep(card) {
+    const guide = installInstructions();
+    card.append(
+      synEl('span', 'tour-kicker', 'Приложение'),
+      synEl('h2', 'tour-title', 'Поставь игру на телефон'),
+      synEl('p', 'tour-text', 'С главного экрана игра открывается в одно касание, на весь экран и без адресной строки — как обычное приложение.'),
+    );
+    // С кнопкой пояснение платформы повторило бы вступление; без нее оно ведет к шагам.
+    if (!guide.button) card.appendChild(synEl('p', 'tour-text', guide.text));
+    if (guide.steps.length) {
+      const list = document.createElement('ol');
+      list.className = 'tour-steps';
+      for (const text of guide.steps) list.appendChild(synEl('li', null, text));
+      card.appendChild(list);
+    }
+    if (guide.note) card.appendChild(synEl('p', 'tour-note', guide.note));
+
+    // Дальше — значит, игрок увидел, как ставить: отдельная карточка
+    // установки больше сама не всплывет, пункт в меню остается.
+    const leave = () => {
+      rememberInstallDismissed();
+      nextTourStep();
+    };
+    const actions = synEl('div', 'tour-actions');
+    if (guide.button) {
+      actions.appendChild(tourButton('Установить', 'primary', async () => {
+        const prompt = install.prompt;
+        if (!prompt) return leave();
+        prompt.prompt();
+        try {
+          await prompt.userChoice;
+        } finally {
+          // Событие одноразовое: второй раз тем же объектом не выстрелить.
+          install.prompt = null;
+          syncInstallOffer();
+          leave();
+        }
+      }));
+      actions.appendChild(tourButton('Позже', 'ghost', leave));
+    } else {
+      actions.appendChild(tourButton('Готово, дальше', 'primary', leave));
+    }
+    actions.appendChild(tourButton('Пропустить обучение', 'tour-skip', () => void finishTour()));
+    card.appendChild(actions);
+  }
+
   function renderTourStep() {
-    const step = TOUR_STEPS[tour.step];
+    const steps = tour.steps;
+    const step = steps[tour.step];
     const card = tour.card;
     clearTourFocus();
     card.innerHTML = '';
@@ -8762,11 +8864,18 @@
       card.append(link, synEl('p', 'tour-sign', `— ${AUTHOR.name}`));
       const actions = synEl('div', 'tour-actions');
       actions.append(
-        tourButton('Показать, что где', 'primary', () => { tour.step += 1; renderTourStep(); }),
+        tourButton('Показать, что где', 'primary', nextTourStep),
         tourButton('Пропустить', 'ghost', () => void finishTour()),
       );
       card.appendChild(actions);
       if (phoneNav.matches) closeNav();
+      placeTourSpot();
+      return;
+    }
+
+    if (step.install) {
+      if (phoneNav.matches) closeNav();
+      renderInstallStep(card);
       placeTourSpot();
       return;
     }
@@ -8787,21 +8896,21 @@
       if (phoneNav.matches && rect.top + rect.height / 2 > window.innerHeight / 2) card.classList.add('top');
     }
 
-    const total = TOUR_STEPS.length - 1;
+    // Нумеруются только шаги о самой игре: приветствие и установка — не шаги меню.
+    const numbered = steps.filter((item) => !item.welcome && !item.install);
+    const total = numbered.length;
+    const position = numbered.indexOf(step) + 1;
     card.append(
-      synEl('span', 'tour-kicker', `Шаг ${tour.step} из ${total}`),
+      synEl('span', 'tour-kicker', `Шаг ${position} из ${total}`),
       synEl('h2', 'tour-title', step.title),
       synEl('p', 'tour-text', step.text),
     );
-    const last = tour.step === total;
+    const last = tour.step === steps.length - 1;
     const actions = synEl('div', 'tour-actions');
     actions.append(
       tourButton(last ? 'Начать игру' : 'Далее', 'primary', () => {
         if (last) void finishTour();
-        else {
-          tour.step += 1;
-          renderTourStep();
-        }
+        else nextTourStep();
       }),
       tourButton('Назад', 'ghost', () => { tour.step -= 1; renderTourStep(); }),
     );
