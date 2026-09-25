@@ -8500,8 +8500,13 @@
     if (open) {
       renderGuideList();
       el.guideSearch.focus({ preventScroll: true });
+      // Текущая статья — в видимую часть списка. Прокручивается сам список,
+      // а не страница: `scrollIntoView` двигал бы и окно, уводя экран вниз.
       const active = el.guideList.querySelector('.guide-item.active');
-      if (active) active.scrollIntoView({ block: 'nearest' });
+      if (active) {
+        const menuTop = el.guideMenu.getBoundingClientRect().top;
+        el.guideMenu.scrollTop += active.getBoundingClientRect().top - menuTop - 70;
+      }
     }
   }
 

@@ -4486,6 +4486,14 @@ button.war-row-head:hover { background: rgba(120, 160, 255, 0.06); }
 .guide-pager-link:hover { border-color: var(--line-strong); }
 
 @media (max-width: 900px) {
+  /*
+   * На телефоне список не всплывает поверх статьи, а встает в поток и
+   * сдвигает ее вниз. Поверх статьи он закрывал экран целиком, а текст
+   * статьи проступал у его края и налезал на пункты.
+   */
+  .guide-menu { position: static; max-height: 62vh; box-shadow: none; }
+  .guide-item { grid-template-columns: 40px minmax(0, 1fr); }
+  .guide-item-art { width: 40px; height: 40px; }
   .guide-cover { height: 170px; }
   .guide-article > :not(.guide-cover) { margin-left: 14px; margin-right: 14px; }
   .guide-heading { left: 14px; right: 14px; bottom: 12px; }
