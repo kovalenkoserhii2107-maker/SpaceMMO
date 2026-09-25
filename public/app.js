@@ -2997,6 +2997,10 @@
     planTimer: null,
     /** Цель, найденная по координатам: может лежать вне текущей системы. */
     coordTarget: null,
+    /** Планеты на карте и их место отрисовки: кадры двигают их по орбитам. */
+    orbiters: [],
+    /** Слой рейсов карты системы, который правится на месте. */
+    fleetNodes: {},
     /** Выбранное действие. Пустое, пока цель не выбрана и меню не собрано. */
     mission: '',
   };
@@ -3172,7 +3176,44 @@
     };
   }
 
-  function planetPoint(position) {
+  /*
+   * Планеты медленно идут по орбитам — оборот за сорок пять минут, все
+   * вместе, как одно кольцо. Общий ход, а не свой у каждой орбиты: раскладку
+   * по углам (`planetSquash`) считают от соседства, и разные скорости свели бы
+   * соседей в одну точку вместе с подписями. Угол берется от часов, а не от
+   * момента отрисовки, поэтому перерисовка карты планету не дергает.
+   * Тем, кто просил систему не двигать экран, планеты стоят на месте.
+   */
+  const ORBIT_PERIOD_MS = 45 * 60 * 1000;
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+  function orbitDrift(now = Date.now()) {
+    return reduceMotion.matches ? 0 : ((now % ORBIT_PERIOD_MS) / ORBIT_PERIOD_MS) * 2 * Math.PI;
+  }
+
+  function planetPoint(position, now) {
+    return polar(orbitRadius(position), orbitAngle(position) + orbitDrift(now));
+  }
+
+  /** Расходящееся кольцо под выбранным телом: выбор видно и краем глаза. */
+  function selectHalo(group, x, y, radius) {
+    group.appendChild(svgEl('circle', { class: 'select-halo', cx: x, cy: y, r: radius + 6 }));
+  }
+
+  /**
+   * Сдвиг планет к их нынешнему месту на орбите. Группа планеты сдвигается
+   * целиком — вместе с подписью, точкой колонии и кольцом обломков, — и
+   * текст остается горизонтальным: поворот всего слоя перевернул бы его.
+   */
+  function moveOrbiters(now = Date.now()) {
+    for (const orbiter of map.orbiters || []) {
+      const point = planetPoint(orbiter.position, now);
+      orbiter.group.setAttribute('transform', `translate(${(point.x - orbiter.x).toFixed(2)} ${(point.y - orbiter.y).toFixed(2)})`);
+    }
+  }
+
+  /** Планета на месте отрисовки: дальше ее двигает сдвиг группы, а не пересборка. */
+  function planetBasePoint(position) {
     return polar(orbitRadius(position), orbitAngle(position));
   }
 
@@ -3185,46 +3226,51 @@
   const DEEP_SPACE_RADIUS = 24;
   const DEEP_SPACE_SPREAD = 2.4;
 
-  const HUB_ANGLE = (-145 * Math.PI) / 180;
   /** Станция мельче планет: она висит в тесном кольце у самой звезды. */
   const HUB_RADIUS = 20;
   const DEEP_SPACE_ANGLE = (52 * Math.PI) / 180;
 
-  function hubPoint() {
-    return polar(MAP.hubOrbit, HUB_ANGLE);
+  /*
+   * Хаб, Коши и Брамы делят одно кольцо у звезды поровну: хаб первым, за ним
+   * Коши, потом Брамы. Прежде у Кошей и Брам были свои сектора с шагом
+   * в тридцать градусов, и сектора шли навстречу друг другу: четвертый Кіш
+   * садился ровно на четвертую Браму. Равный шаг разводит станции сам,
+   * сколько бы синдикатов ни встало в системе.
+   *
+   * Сектор прямо под звездой пустует: там подпись системы, и станция,
+   * попавшая туда, ложилась на нее.
+   */
+  const STATION_GAP = (35 * Math.PI) / 180;
+
+  function stationAngles() {
+    const keys = [];
+    if (map.data && map.data.hub) keys.push('hub');
+    for (const kish of (map.data && map.data.kishes) || []) keys.push(`kish:${kish.syndicateId}`);
+    for (const gate of (map.data && map.data.gates) || []) keys.push(`gate:${gate.syndicateId}`);
+    const start = Math.PI / 2 + STATION_GAP;
+    const step = (2 * Math.PI - 2 * STATION_GAP) / Math.max(1, keys.length);
+    return new Map(keys.map((key, index) => [key, start + (index + 0.5) * step]));
   }
 
-  /*
-   * Коши стоят на кольце хаба с другой его стороны: станций в системе может
-   * быть несколько, и каждой следующей отводится свой угол, чтобы они
-   * не легли друг на друга и на торговый хаб.
-   */
-  const KISH_ANGLE = (-35 * Math.PI) / 180;
-  const KISH_ANGLE_STEP = (30 * Math.PI) / 180;
+  function stationPoint(key) {
+    const angle = stationAngles().get(key);
+    return angle === undefined ? null : polar(MAP.hubOrbit, angle);
+  }
+
+  function hubPoint() {
+    return stationPoint('hub') || polar(MAP.hubOrbit, -Math.PI / 2);
+  }
 
   function gatePointFor(syndicateId) {
-    const index = (map.data && map.data.gates ? map.data.gates : []).findIndex((gate) => gate.syndicateId === syndicateId);
-    return index < 0 ? null : gatePointAt(index);
+    return stationPoint(`gate:${syndicateId}`);
   }
 
   function kishPointFor(syndicateId) {
-    const index = (map.data && map.data.kishes ? map.data.kishes : []).findIndex((kish) => kish.syndicateId === syndicateId);
-    return index < 0 ? null : polar(MAP.hubOrbit, KISH_ANGLE + index * KISH_ANGLE_STEP);
+    return stationPoint(`kish:${syndicateId}`);
   }
 
   function deepSpacePoint() {
     return polar(MAP.deepOrbit, DEEP_SPACE_ANGLE);
-  }
-
-  /*
-   * Брамы стоят на кольце станций напротив Кошей: в системе их может быть
-   * несколько, по одной на синдикат, и каждой следующей — свой угол.
-   */
-  const GATE_ANGLE = (145 * Math.PI) / 180;
-  const GATE_ANGLE_STEP = (-30 * Math.PI) / 180;
-
-  function gatePointAt(index) {
-    return polar(MAP.hubOrbit, GATE_ANGLE + index * GATE_ANGLE_STEP);
   }
 
   /**
@@ -3240,7 +3286,7 @@
       if (!gate.access || gate.disabledUntil) return;
       if (best < 0 || rank[gate.access] < rank[gates[best].access]) best = index;
     });
-    return best >= 0 ? gatePointAt(best) : polar(0, 0);
+    return best >= 0 ? gatePointFor(gates[best].syndicateId) : polar(0, 0);
   }
 
   /*
@@ -3407,9 +3453,10 @@
     }
 
     renderStar();
+    map.orbiters = [];
 
     for (const planet of map.data.planets) {
-      const { x, y } = planetPoint(planet.position);
+      const { x, y } = planetBasePoint(planet.position);
 
       const group = svgEl('g', {
         class: `planet-dot${planet.planetId === map.selectedId ? ' selected' : ''}`,
@@ -3420,6 +3467,8 @@
       const radius = Math.round(
         PLANET_BASE_RADIUS * (PLANET_SCALE[planet.type] || 1) * planetSquash(),
       );
+
+      if (planet.planetId === map.selectedId && map.selectedKind === 'PLANET') selectHalo(group, x, y, radius);
 
       // Пунктирное кольцо обломков — под телом планеты, чтобы не перекрывать его.
       if (planet.debris && planet.debris.ore + planet.debris.polymers > 0) {
@@ -3469,15 +3518,21 @@
         }));
       }
 
-      group.addEventListener('mouseenter', () => showTooltip(planet, x, y, radius));
+      // Тултип встает к планете там, где она сейчас, а не где ее нарисовали.
+      group.addEventListener('mouseenter', () => {
+        const now = planetPoint(planet.position);
+        showTooltip(planet, now.x, now.y, radius);
+      });
       group.addEventListener('mouseleave', hideTooltip);
       group.addEventListener('click', () => selectPlanet(planet.planetId));
       svg.appendChild(group);
+      map.orbiters.push({ group, position: planet.position, x, y });
     }
+    moveOrbiters();
 
     if (map.data.hub) renderHub(map.data.hub);
-    (map.data.kishes || []).forEach((kish, index) => renderKish(kish, index));
-    (map.data.gates || []).forEach((gate, index) => renderGate(gate, index));
+    (map.data.kishes || []).forEach((kish) => renderKish(kish));
+    (map.data.gates || []).forEach((gate) => renderGate(gate));
     renderDeepSpace();
     renderFleetMarkers();
   }
@@ -3486,7 +3541,7 @@
   function renderStar() {
     const svg = el.systemMap;
     const hole = map.data.anomaly === 'BLACK_HOLE';
-    const group = svgEl('g', { class: 'star-node' });
+    const group = svgEl('g', { class: `star-node${hole ? ' hole' : ''}` });
 
     /*
      * Под картинкой пусто. Раньше здесь лежал нарисованный градиентом диск —
@@ -3624,9 +3679,9 @@
     const svg = el.systemMap;
     const { x, y } = hubPoint();
 
-    const group = svgEl('g', {
-      class: `hub-node${map.selectedKind === 'HUB' && map.selectedId === hub.hubId ? ' selected' : ''}`,
-    });
+    const selected = map.selectedKind === 'HUB' && map.selectedId === hub.hubId;
+    const group = svgEl('g', { class: `hub-node${selected ? ' selected' : ''}` });
+    if (selected) selectHalo(group, x, y, HUB_RADIUS);
     /*
      * Станция — светящееся тело, как звезда и туманность: черный фон картинки
      * растворяется режимом `screen`, обрезки нет. Под картинкой остается
@@ -3655,14 +3710,12 @@
     svg.appendChild(group);
   }
 
-  function renderKish(kish, index) {
+  function renderKish(kish) {
     const svg = el.systemMap;
-    const point = polar(MAP.hubOrbit, KISH_ANGLE + index * KISH_ANGLE_STEP);
-    const { x, y } = point;
-    const group = svgEl('g', {
-      class: `hub-node kish-node${kish.own ? ' own' : ''}` +
-        `${map.selectedKind === 'KISH' && map.selectedId === kish.syndicateId ? ' selected' : ''}`,
-    });
+    const { x, y } = kishPointFor(kish.syndicateId);
+    const selected = map.selectedKind === 'KISH' && map.selectedId === kish.syndicateId;
+    const group = svgEl('g', { class: `hub-node kish-node${kish.own ? ' own' : ''}${selected ? ' selected' : ''}` });
+    if (selected) selectHalo(group, x, y, HUB_RADIUS);
     celestialBody(group, x, y, HUB_RADIUS, {
       kind: 'glow',
       fill: kish.own ? 'rgba(77, 210, 255, 0.18)' : 'rgba(248, 180, 90, 0.14)',
@@ -3693,14 +3746,22 @@
   }
 
   /** Брама на карте системы: видна всем, прыгать может тот, у кого есть доступ. */
-  function renderGate(gate, index) {
+  function renderGate(gate) {
     const svg = el.systemMap;
-    const { x, y } = gatePointAt(index);
+    const { x, y } = gatePointFor(gate.syndicateId);
     const open = gate.access && !gate.disabledUntil;
     const selected = map.selectedKind === 'GATE' && map.selectedId === gate.syndicateId;
     const group = svgEl('g', {
       class: `hub-node gate-node${open ? ' open' : ''}${gate.disabledUntil ? ' down' : ''}${selected ? ' selected' : ''}`,
     });
+    if (selected) selectHalo(group, x, y, HUB_RADIUS);
+    /*
+     * Кольцо поля вокруг врат: вращается, пока врата работают, и гаснет,
+     * когда их выключила осада. Нарисовано поверх арта, а не вращением
+     * самой картинки — у станции на арте есть перспектива, и повернутая
+     * она выглядела бы опрокинутой.
+     */
+    group.appendChild(svgEl('circle', { class: 'gate-ring', cx: x, cy: y, r: HUB_RADIUS + 8 }));
     celestialBody(group, x, y, HUB_RADIUS, {
       kind: 'glow',
       fill: open ? 'rgba(77, 210, 255, 0.18)' : 'rgba(160, 170, 200, 0.12)',
@@ -3785,13 +3846,9 @@
   }
 
   /** Маркеры флотов двигаются между тиками по меткам времени. */
-  function renderFleetMarkers() {
+  function renderFleetMarkers(now = Date.now()) {
     if (!map.data) return;
-    const svg = el.systemMap;
-    for (const node of [...svg.querySelectorAll('.fleet-layer')]) node.remove();
-
-    const layer = svgEl('g', { class: 'fleet-layer' });
-    const now = Date.now();
+    const items = [];
     const here = map.data.systemId;
     const byId = new Map(map.data.planets.map((p) => [p.planetId, p]));
     const originPointOf = (fleet) => {
@@ -3854,19 +3911,67 @@
         note = firstLeg ? ' · к Браме' : ' · от Брамы';
       }
 
-      layer.appendChild(svgEl('line', {
-        class: `fleet-line${note ? ' gate-route' : ''}`, x1: a.x, y1: a.y, x2: b.x, y2: b.y,
-      }));
-      const cx = a.x + (b.x - a.x) * t;
-      const cy = a.y + (b.y - a.y) * t;
-      layer.appendChild(svgEl('circle', { class: 'fleet-marker', cx, cy, r: 5 }));
-
-      const label = svgEl('text', { x: cx, y: cy - 12, class: 'planet-label' });
-      label.textContent = `${fleet.missionLabel}${note} · ${fmtTime(fleet.etaSeconds)}`;
-      layer.appendChild(label);
+      items.push({
+        id: fleet.id,
+        a,
+        b,
+        t,
+        gate: Boolean(note),
+        text: `${fleet.missionLabel}${note} · ${fmtTime(fleet.etaSeconds)}`,
+      });
     }
 
-    svg.appendChild(layer);
+    syncFleetLayer(el.systemMap, map.fleetNodes, items);
+  }
+
+  /*
+   * Слой рейсов правится на месте, а не собирается заново. Его трогают
+   * и снимок раз в секунду, и кадры анимации; пересборка стирала бы линии
+   * между кадрами, и бегущий по ним пунктир начинался бы заново каждую
+   * секунду. Карта при перерисовке очищается целиком — тогда слой
+   * заводится снова.
+   */
+  function syncFleetLayer(svg, cache, items) {
+    if (!cache.layer || cache.layer.parentNode !== svg) {
+      cache.layer = svgEl('g', { class: 'fleet-layer' });
+      cache.nodes = new Map();
+    }
+    // Слой всегда сверху: тела, дорисованные после него, закрыли бы маркеры.
+    if (svg.lastChild !== cache.layer) svg.appendChild(cache.layer);
+
+    const seen = new Set();
+    for (const item of items) {
+      seen.add(item.id);
+      let node = cache.nodes.get(item.id);
+      if (!node) {
+        node = {
+          line: svgEl('line', {}),
+          marker: svgEl('circle', { class: 'fleet-marker', r: 5 }),
+          label: svgEl('text', { class: 'planet-label' }),
+        };
+        cache.layer.append(node.line, node.marker, node.label);
+        cache.nodes.set(item.id, node);
+      }
+      const cx = item.a.x + (item.b.x - item.a.x) * item.t;
+      const cy = item.a.y + (item.b.y - item.a.y) * item.t;
+      node.line.setAttribute('class', `fleet-line${item.gate ? ' gate-route' : ''}`);
+      node.line.setAttribute('x1', item.a.x.toFixed(1));
+      node.line.setAttribute('y1', item.a.y.toFixed(1));
+      node.line.setAttribute('x2', item.b.x.toFixed(1));
+      node.line.setAttribute('y2', item.b.y.toFixed(1));
+      node.marker.setAttribute('cx', cx.toFixed(1));
+      node.marker.setAttribute('cy', cy.toFixed(1));
+      node.label.setAttribute('x', cx.toFixed(1));
+      node.label.setAttribute('y', (cy - 12).toFixed(1));
+      if (node.label.textContent !== item.text) node.label.textContent = item.text;
+    }
+    for (const [id, node] of cache.nodes) {
+      if (seen.has(id)) continue;
+      node.line.remove();
+      node.marker.remove();
+      node.label.remove();
+      cache.nodes.delete(id);
+    }
   }
 
   /** Длина линии HUD от тела до панели, экранные пиксели. */
@@ -6852,7 +6957,7 @@
     const variant = (Math.abs(system.galaxyX * 31 + system.galaxyY * 17) % GALAXY_ART_VARIANTS) + 1;
     return `/assets/systems/galaxy_${variant}.webp`;
   }
-  const galaxy = { data: null, mode: 'system' };
+  const galaxy = { data: null, mode: 'system', fleetNodes: {} };
 
   async function loadGalaxy() {
     try {
@@ -6896,11 +7001,8 @@
    * Слой снимается и кладется заново, а не перерисовывается вся карта:
    * миниатюры систем тяжелые, а маркер двигается каждую секунду.
    */
-  function renderGalaxyFleetMarkers() {
+  function renderGalaxyFleetMarkers(now = Date.now()) {
     if (!galaxy.data) return;
-    const svg = el.galaxyMap;
-    for (const node of [...svg.querySelectorAll('.fleet-layer')]) node.remove();
-
     const systems = galaxy.data.systems;
     if (!systems.length) return;
     const bounds = {
@@ -6910,10 +7012,7 @@
       maxY: Math.max(...systems.map((s) => s.galaxyY)),
     };
     const byId = new Map(systems.map((s) => [s.systemId, s]));
-
-    const layer = svgEl('g', { class: 'fleet-layer' });
-    const now = Date.now();
-    let drawn = 0;
+    const items = [];
 
     for (const fleet of state.fleets) {
       if (!fleet.toSystemId || fleet.toSystemId === fleet.fromSystemId) continue;
@@ -6939,24 +7038,43 @@
       const jumped = viaGate && progress >= (outbound ? fleet.gateShare : 1 - fleet.gateShare);
       const t = viaGate ? (jumped ? 1 : 0) : progress;
 
-      // Классы те же, что на карте системы: рейс должен выглядеть рейсом
+      // Слой тот же, что на карте системы: рейс должен выглядеть рейсом
       // на обеих картах, а не двумя разными сущностями.
-      layer.appendChild(svgEl('line', {
-        class: `fleet-line${viaGate ? ' gate-route' : ''}`, x1: a.x, y1: a.y, x2: b.x, y2: b.y,
-      }));
-
-      const cx = a.x + (b.x - a.x) * t;
-      const cy = a.y + (b.y - a.y) * t;
-      layer.appendChild(svgEl('circle', { class: 'fleet-marker', cx, cy, r: 5 }));
-
-      const label = svgEl('text', { x: cx, y: cy - 12, class: 'planet-label' });
-      label.textContent = `${fleet.missionLabel}${viaGate ? (jumped ? ' · от Брамы' : ' · к Браме') : ''} · ${fmtTime(fleet.etaSeconds)}`;
-      layer.appendChild(label);
-      drawn += 1;
+      items.push({
+        id: fleet.id,
+        a,
+        b,
+        t,
+        gate: viaGate,
+        text: `${fleet.missionLabel}${viaGate ? (jumped ? ' · от Брамы' : ' · к Браме') : ''} · ${fmtTime(fleet.etaSeconds)}`,
+      });
     }
 
-    if (drawn > 0) svg.appendChild(layer);
+    syncFleetLayer(el.galaxyMap, galaxy.fleetNodes, items);
   }
+
+  /*
+   * Кадры карты: планеты по орбитам и рейсы по линиям идут плавно, а не
+   * шагом раз в секунду со снимком. Тридцати кадров хватает на такую
+   * скорость, а батарее телефона они вдвое дешевле шестидесяти. Кадры
+   * идут, только пока карта на экране: на других разделах двигать нечего,
+   * а в фоновой вкладке браузер их не присылает вовсе.
+   */
+  let lastMapFrame = 0;
+  function mapFrame(stamp) {
+    requestAnimationFrame(mapFrame);
+    if (reduceMotion.matches || document.hidden || !MAP_TABS.has(state.activeTab)) return;
+    if (stamp - lastMapFrame < 33) return;
+    lastMapFrame = stamp;
+    const now = Date.now();
+    if (galaxy.mode === 'galaxy') {
+      renderGalaxyFleetMarkers(now);
+    } else {
+      moveOrbiters(now);
+      renderFleetMarkers(now);
+    }
+  }
+  requestAnimationFrame(mapFrame);
 
   function renderGalaxy() {
     if (!galaxy.data) return;
@@ -7000,6 +7118,20 @@
         class: `system-node${system.isHome ? ' home' : ''}` +
           (map.data && map.data.systemId === system.systemId ? ' selected' : ''),
       });
+      /*
+       * Системы мерцают не в такт: фаза берется по координатам, как и арт,
+       * чтобы перерисовка не сбивала ее, а соседи не вспыхивали разом —
+       * синхронное мигание читается как сигнал, а не как небо.
+       */
+      group.style.setProperty('--twinkle', `${-((system.galaxyX * 7 + system.galaxyY * 13) % 11)}s`);
+
+      // Брама, через которую можно прыгнуть, — вращающимся кольцом поля,
+      // тем же, что у врат на карте системы: сеть видна без чтения подписей.
+      if (system.syndicateGate) {
+        group.appendChild(svgEl('circle', {
+          class: 'gate-ring galaxy', cx: point.x, cy: point.y, r: SYSTEM_ICON / 2 + 10,
+        }));
+      }
 
       // Своя колония отмечается кольцом: миниатюры систем похожи между собой,
       // и без метки свою пришлось бы искать по названию.

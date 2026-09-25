@@ -1148,6 +1148,103 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .fleet-marker { fill: var(--accent-2); }
 
 /*
+ * Живая карта. Двигается только то, что и в мире живое: звезда дышит,
+ * поле врат вращается, пунктир рейса бежит к цели, маркер флота светится,
+ * выбранное тело отмечено расходящимся кольцом. Планеты по орбитам ведет
+ * скрипт — их положение нужно и рейсам, и тултипу, а CSS его не расскажет.
+ *
+ * Анимируется только transform, opacity и сдвиг пунктира: они не трогают
+ * раскладку, и браузер считает их на видеокарте. `transform-box: fill-box`
+ * вращает и масштабирует элемент вокруг его собственного центра, а не
+ * вокруг угла карты.
+ */
+.star-node .body-art.glow,
+.select-halo,
+.gate-ring,
+.fleet-marker,
+.system-node .body-art.glow {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.star-node .body-art.glow { animation: star-breathe 9s ease-in-out infinite; }
+/* Черная дыра не дышит, а закручивает диск: медленно, на полторы минуты оборот. */
+.star-node.hole .body-art.glow { animation: hole-spin 90s linear infinite; }
+@keyframes star-breathe {
+  0%, 100% { transform: scale(1); opacity: 0.92; }
+  50% { transform: scale(1.04); opacity: 1; }
+}
+@keyframes hole-spin { to { transform: rotate(360deg); } }
+
+/* Станции светятся ровно и тихо: подложка под артом чуть разгорается и гаснет. */
+.hub-node .glow-body { animation: station-glow 6s ease-in-out infinite; }
+@keyframes station-glow {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 0.55; }
+}
+
+.gate-ring {
+  fill: none;
+  stroke: rgba(160, 170, 200, 0.35);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 7;
+  pointer-events: none;
+  animation: ring-spin 24s linear infinite;
+}
+/* Открытые для смотрящего врата — цветом врат, и поле крутится быстрее. */
+.gate-node.open .gate-ring { stroke: rgba(77, 210, 255, 0.75); animation-duration: 12s; }
+/* Выключенные осадой стоят: поля нет, кольцо тусклое и неподвижное. */
+.gate-node.down .gate-ring { stroke: rgba(255, 110, 110, 0.35); animation: none; }
+.gate-ring.galaxy { stroke: rgba(77, 210, 255, 0.55); animation-duration: 30s; }
+@keyframes ring-spin { to { transform: rotate(360deg); } }
+
+.select-halo {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  pointer-events: none;
+  animation: halo 2.2s ease-out infinite;
+}
+@keyframes halo {
+  from { transform: scale(1); opacity: 0.8; }
+  to { transform: scale(1.45); opacity: 0; }
+}
+
+/* Пунктир бежит от начала участка к его концу: направление рейса видно без подписи. */
+.fleet-line { animation: route-flow 1.2s linear infinite; }
+.fleet-line.gate-route { animation-name: route-flow-gate; animation-duration: 1.5s; }
+@keyframes route-flow { to { stroke-dashoffset: -8; } }
+@keyframes route-flow-gate { to { stroke-dashoffset: -9; } }
+.fleet-marker { animation: marker-pulse 1.6s ease-in-out infinite; filter: drop-shadow(0 0 4px var(--accent-2)); }
+@keyframes marker-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.3); }
+}
+
+/* Системы галактики мерцают вразнобой: фазу задает скрипт по координатам. */
+.system-node .body-art.glow { animation: twinkle 11s ease-in-out infinite; animation-delay: var(--twinkle, 0s); }
+@keyframes twinkle {
+  0%, 100% { opacity: 0.82; transform: scale(0.98); }
+  50% { opacity: 1; transform: scale(1.03); }
+}
+.home-ring { animation: home-pulse 4s ease-in-out infinite; }
+@keyframes home-pulse {
+  0%, 100% { stroke-opacity: 0.55; }
+  50% { stroke-opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .star-node .body-art.glow,
+  .hub-node .glow-body,
+  .gate-ring,
+  .select-halo,
+  .fleet-line,
+  .fleet-marker,
+  .system-node .body-art.glow,
+  .home-ring { animation: none; }
+  .select-halo { opacity: 0.8; }
+}
+
+/*
  * Карта круговая, поэтому холст квадратный. Карточка планеты рядом уезжает
  * под карту на узких экранах — на 900px .map-wrap уже переключается в колонку.
  */
