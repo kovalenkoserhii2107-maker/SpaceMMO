@@ -4349,17 +4349,7 @@ button.war-row-head:hover { background: rgba(120, 160, 255, 0.06); }
   border-radius: 12px;
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
 }
-.guide-menu input[type="search"] {
-  width: 100%;
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  padding: 10px 12px;
-  font-size: 14px;
-  background: #0a1020;
-  /* Тень цвета списка закрывает зазор над полем: пункты не просвечивают, пока листаешь. */
-  box-shadow: 0 -10px 0 #0d1426;
-}
+.guide-search { width: 100%; margin-bottom: 8px; padding: 11px 14px; font-size: 14px; }
 #guide-list { display: grid; gap: 2px; }
 .guide-section {
   margin: 8px 4px 2px;

@@ -8499,7 +8499,6 @@
     el.guidePicker.setAttribute('aria-expanded', String(open));
     if (open) {
       renderGuideList();
-      el.guideSearch.focus({ preventScroll: true });
       // Текущая статья — в видимую часть списка. Прокручивается сам список,
       // а не страница: `scrollIntoView` двигал бы и окно, уводя экран вниз.
       const active = el.guideList.querySelector('.guide-item.active');
@@ -8530,9 +8529,15 @@
     const link = event.target.closest('.guide-pager-link');
     if (link) selectGuideArticle(link.dataset.article);
   });
+  /*
+   * Поиск стоит над выбором статьи и виден всегда: набирать начинают сразу,
+   * не раскрывая список. Ввод раскрывает список с найденным, пустое поле
+   * возвращает полное оглавление.
+   */
   el.guideSearch.addEventListener('input', () => {
     guide.query = el.guideSearch.value;
-    renderGuideList();
+    if (el.guideMenu.hidden) setGuideMenu(true);
+    else renderGuideList();
   });
   el.guideSearch.addEventListener('keydown', (event) => {
     // Enter открывает первую найденную статью: искать и тыкать мышью — два действия вместо одного.

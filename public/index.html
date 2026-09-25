@@ -762,12 +762,12 @@
           <h3 class="panel-title">База знаний</h3>
           <div class="guide">
             <div class="guide-picker">
+              <input type="search" id="guide-search" class="guide-search" placeholder="Поиск: Брама, топливо, налог…" autocomplete="off" aria-controls="guide-menu">
               <button type="button" class="guide-picker-button" id="guide-picker" aria-haspopup="listbox" aria-expanded="false" aria-controls="guide-menu">
                 <span class="guide-picker-label"><small id="guide-picker-section">Раздел</small><b id="guide-picker-title">Выбери статью</b></span>
                 <svg class="guide-picker-caret" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </button>
               <div class="guide-menu" id="guide-menu" hidden>
-                <input type="search" id="guide-search" placeholder="Поиск: Брама, топливо, налог…" autocomplete="off">
                 <nav id="guide-list" aria-label="Статьи базы знаний"></nav>
               </div>
             </div>
