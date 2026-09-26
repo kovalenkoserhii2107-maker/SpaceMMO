@@ -316,7 +316,7 @@ export function storageUsed(storage: { ore: number; polymers: number }): number 
 }
 
 /** Максимальные разумные пределы ордера, чтобы нельзя было сломать биржу вводом. */
-const MAX_ORDER_QUANTITY = 1_000_000;
+export const MAX_ORDER_QUANTITY = 1_000_000;
 const MAX_ORDER_PRICE = 100_000;
 
 export interface OrderInput {

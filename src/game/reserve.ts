@@ -39,7 +39,7 @@
  * фрегат открыт у четверых из семи. Вчетверо — сделок 38 тысяч против
  * 15 тысяч без резерва, руда 10–18 вместо 11 781, колонизатор впервые открыт.
  */
-import type { TradeResource } from './market.js';
+import { MAX_ORDER_QUANTITY, type TradeResource } from './market.js';
 import { BASE_YIELD_PER_SECOND, CREDIT_BASE_PER_SECOND } from './rules.js';
 
 /** Учетная запись резерва: служебная, с ролью бота — войти в нее нельзя. */
@@ -91,7 +91,12 @@ export function reserveQuotes(fundCredits: number): ReserveQuote[] {
   for (const resource of ['ORE', 'POLYMERS'] as const) {
     const { floor, ceiling } = reserveBand(resource);
     quotes.push({ side: 'SELL', resource, price: ceiling, amount: RESERVE_IMPORT_LOT });
-    const buying = Math.floor((Math.max(0, fundCredits) * RESERVE_BUY_SHARE) / 2 / floor);
+    // Объем упирается в предел заявки биржи: фонд за ₴75 млн давал выкуп
+    // больше миллиона единиц, биржа отказывала, и пол не держался вовсе.
+    const buying = Math.min(
+      MAX_ORDER_QUANTITY,
+      Math.floor((Math.max(0, fundCredits) * RESERVE_BUY_SHARE) / 2 / floor),
+    );
     if (buying > 0) quotes.push({ side: 'BUY', resource, price: floor, amount: buying });
   }
   return quotes;

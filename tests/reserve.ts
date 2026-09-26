@@ -14,7 +14,7 @@ import {
   reserveQuotes,
 } from '../src/game/reserve.js';
 import { creditOutput, emptyLevels, NEUTRAL_MODIFIERS, productionPerSecond } from '../src/game/rules.js';
-import { buyerEscrow } from '../src/game/market.js';
+import { buyerEscrow, validateOrder } from '../src/game/market.js';
 
 const results: Array<{ name: string; passed: boolean }> = [];
 function check(name: string, passed: boolean, detail?: string): void {
@@ -67,6 +67,14 @@ console.log('\n=== 2. Денег резерв не печатает ===');
   check(
     'выкуп стоит по полу',
     reserveQuotes(fund).filter((quote) => quote.side === 'BUY').every((quote) => quote.price === reserveBand(quote.resource).floor),
+  );
+
+  // Живой фонд перерос ₴100 млн, и выкуп упирался в предел заявки биржи.
+  const rich = reserveQuotes(500_000_000);
+  check(
+    'выкуп большого фонда проходит проверку биржи',
+    rich.filter((quote) => quote.side === 'BUY').length === 2 &&
+      rich.every((quote) => validateOrder({ side: quote.side, resource: quote.resource, quantity: quote.amount, pricePerUnit: quote.price }) === null),
   );
 }
 
